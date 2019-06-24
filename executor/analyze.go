@@ -1075,6 +1075,8 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		collector.Samples = collector.Samples[:e.sampCursor]
 		sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].RowID < collector.Samples[j].RowID })
 		collector.CalcTotalSize()
+		// Scale the total column size.
+		collector.TotalSize *= rowCount / int64(len(collector.Samples))
 		if i < hasPKInfo {
 			hists[i], cms[i], err = e.buildColumnStats(e.pkInfo.ID, e.collectors[i], &e.pkInfo.FieldType, rowCount)
 		} else if i < hasPKInfo+len(e.colsInfo) {
