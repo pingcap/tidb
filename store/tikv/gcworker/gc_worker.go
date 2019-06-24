@@ -480,6 +480,18 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		useDistributedGC = false
 	}
 
+	// Save safe point to pd.
+	err = w.saveSafePoint(w.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] failed to save safe point to PD",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		w.gcIsRunning = false
+		metrics.GCJobFailureCounter.WithLabelValues("save_safe_point").Inc()
+		w.done <- errors.Trace(err)
+		return
+	}
+
 	if useDistributedGC {
 		err = w.uploadSafePointToPD(ctx, safePoint)
 		if err != nil {
@@ -1037,11 +1049,6 @@ func (w *GCWorker) genNextGCTask(bo *tikv.Backoffer, safePoint uint64, key kv.Ke
 
 func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("do_gc").Inc()
-
-	err := w.saveSafePoint(w.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
