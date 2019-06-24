@@ -336,7 +336,6 @@ const (
 	DefTiDBDDLSlowOprThreshold         = 300
 	DefTiDBUseFastAnalyze              = false
 	DefTiDBSkipIsolationLevelCheck     = false
-	DefTiDBWaitTableSplitFinish        = false
 	DefTiDBExpensiveQueryTimeThreshold = 60 // 60s
 	DefTiDBWaitSplitRegionFinish       = true
 	DefWaitSplitRegionTimeout          = 300 // 300s

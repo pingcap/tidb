@@ -20,7 +20,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -400,7 +399,7 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 		},
 	}
 	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
-	go handle.Run(time.Millisecond)
+	go handle.Run()
 	defer handle.Close()
 
 	_, err = se.Execute(context.Background(), "use test;")

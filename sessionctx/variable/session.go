@@ -698,9 +698,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
-		if timeoutMS < 0 {
-			timeoutMS = 0
-		}
 		s.MaxExecutionTime = uint64(timeoutMS)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
