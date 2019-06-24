@@ -659,7 +659,8 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 		childCols := ds.Schema().Columns
 		schema := expression.NewSchema(childCols...)
 		groupBy := []expression.Expression{childCols[1]}
-		aggFunc := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
+		aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
+		c.Assert(err, IsNil)
 		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 		exec := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
 		c.Assert(exec.Open(ctx), IsNil)
@@ -718,7 +719,8 @@ func (s *testExecSuite) TestHashAggParallelRequiredRows(c *C) {
 			childCols := ds.Schema().Columns
 			schema := expression.NewSchema(childCols...)
 			groupBy := []expression.Expression{childCols[1]}
-			aggFunc := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, hasDistinct)
+			aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, hasDistinct)
+			c.Assert(err, IsNil)
 			aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 			exec := buildHashAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
 			c.Assert(exec.Open(ctx), IsNil)
