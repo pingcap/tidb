@@ -14,6 +14,8 @@
 package bindinfo
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -63,4 +65,9 @@ func newBindRecord(row chunk.Row) *BindRecord {
 		Charset:     row.GetString(6),
 		Collation:   row.GetString(7),
 	}
+}
+
+func (m *BindMeta) size() float64 {
+	res := len(m.OriginalSQL) + len(m.BindSQL) + len(m.Db) + len(m.Status) + 2*int(unsafe.Sizeof(m.CreateTime)) + len(m.Charset) + len(m.Collation)
+	return float64(res)
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -36,10 +37,12 @@ func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 
 // appendBindMeta addes the BindMeta to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *SessionHandle) appendBindMeta(hash string, meta *BindMeta) {
+func (h *SessionHandle) appendBindMeta(hash string, meta *BindMeta) bool {
 	// Make sure there is only one goroutine writes the cache.
-	h.ch.removeStaleBindMetas(hash, meta)
+	removed := h.ch.removeStaleBindMetas(hash, meta, metrics.ScopeSession)
 	h.ch[hash] = append(h.ch[hash], meta)
+	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession).Add(float64(meta.size()))
+	return !removed
 }
 
 func (h *SessionHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
@@ -63,8 +66,12 @@ func (h *SessionHandle) AddBindRecord(record *BindRecord) error {
 
 	// update the BindMeta to the cache.
 	hash, meta, err := h.newBindMeta(record)
-	if err == nil {
-		h.appendBindMeta(hash, meta)
+	if err != nil {
+		return err
+	}
+
+	if h.appendBindMeta(hash, meta) && record.Status == Using {
+		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession).Inc()
 	}
 	return err
 }
@@ -74,7 +81,11 @@ func (h *SessionHandle) DropBindRecord(record *BindRecord) {
 	meta := &BindMeta{BindRecord: record}
 	meta.Status = deleted
 	hash := parser.DigestHash(record.OriginalSQL)
-	h.ch.removeDeletedBindMeta(hash, meta)
+	matchRecord := h.GetBindRecord(record.OriginalSQL, record.Db)
+	if matchRecord != nil && matchRecord.Status == Using {
+		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession).Dec()
+	}
+	h.ch.removeDeletedBindMeta(hash, meta, metrics.ScopeSession)
 	h.appendBindMeta(hash, meta)
 }
 
@@ -98,6 +109,25 @@ func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
 		bindRecords = append(bindRecords, bindRecord...)
 	}
 	return bindRecords
+}
+
+// Close closes the session handle.
+func (h *SessionHandle) Close() {
+	totalNum, totalSize := float64(0), float64(0)
+	for _, bindRecords := range h.ch {
+		for _, bindRecord := range bindRecords {
+			if bindRecord.Status == Using {
+				totalNum++
+			}
+			totalSize += bindRecord.size()
+		}
+	}
+	if totalNum > 0 {
+		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession).Sub(totalNum)
+	}
+	if totalSize > 0 {
+		metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession).Sub(totalSize)
+	}
 }
 
 // sessionBindInfoKeyType is a dummy type to avoid naming collision in context.

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
@@ -123,9 +124,10 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 			continue
 		}
 
-		newCache.removeStaleBindMetas(hash, meta)
+		newCache.removeStaleBindMetas(hash, meta, metrics.ScopeGlobal)
 		if meta.Status == Using {
 			newCache[hash] = append(newCache[hash], meta)
+			metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal).Add(meta.size())
 		}
 	}
 	return nil
@@ -165,7 +167,9 @@ func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 			return
 		}
 
-		h.appendBindMeta(hash, meta)
+		if h.appendBindMeta(hash, meta) {
+			metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal).Inc()
+		}
 		h.bindInfo.Unlock()
 	}()
 
@@ -219,7 +223,9 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 		}
 
 		hash, meta := newBindMetaWithoutAst(record)
-		h.removeBindMeta(hash, meta)
+		if h.removeBindMeta(hash, meta) {
+			metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal).Dec()
+		}
 	}()
 
 	txn, err1 := h.sctx.Context.Txn(true)
@@ -318,15 +324,17 @@ func newBindMetaWithoutAst(record *BindRecord) (hash string, meta *BindMeta) {
 
 // appendBindMeta addes the BindMeta to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *BindHandle) appendBindMeta(hash string, meta *BindMeta) {
+func (h *BindHandle) appendBindMeta(hash string, meta *BindMeta) bool {
 	newCache := h.bindInfo.Value.Load().(cache).copy()
-	newCache.removeStaleBindMetas(hash, meta)
+	removed := newCache.removeStaleBindMetas(hash, meta, metrics.ScopeGlobal)
 	newCache[hash] = append(newCache[hash], meta)
+	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal).Add(float64(meta.size()))
 	h.bindInfo.Value.Store(newCache)
+	return !removed
 }
 
 // removeBindMeta removes the BindMeta from the cache.
-func (h *BindHandle) removeBindMeta(hash string, meta *BindMeta) {
+func (h *BindHandle) removeBindMeta(hash string, meta *BindMeta) bool {
 	h.bindInfo.Lock()
 	newCache := h.bindInfo.Value.Load().(cache).copy()
 	defer func() {
@@ -334,44 +342,52 @@ func (h *BindHandle) removeBindMeta(hash string, meta *BindMeta) {
 		h.bindInfo.Unlock()
 	}()
 
-	newCache.removeDeletedBindMeta(hash, meta)
+	return newCache.removeDeletedBindMeta(hash, meta, metrics.ScopeGlobal)
 }
 
 // removeDeletedBindMeta removes all the BindMeta which originSQL and db are the same with the parameter's meta.
-func (c cache) removeDeletedBindMeta(hash string, meta *BindMeta) {
+func (c cache) removeDeletedBindMeta(hash string, meta *BindMeta, scope string) bool {
 	metas, ok := c[hash]
 	if !ok {
-		return
+		return false
 	}
 
+	var removed bool
 	for i := len(metas) - 1; i >= 0; i-- {
-		if meta.isSame(meta) {
+		if metas[i].isSame(meta) {
+			metrics.BindMemoryUsage.WithLabelValues(scope).Sub(metas[i].size())
+			removed = true
 			metas = append(metas[:i], metas[i+1:]...)
 			if len(metas) == 0 {
 				delete(c, hash)
-				return
+				return removed
 			}
 		}
 	}
+	return removed
 }
 
 // removeStaleBindMetas removes all the stale BindMeta in the cache.
-func (c cache) removeStaleBindMetas(hash string, meta *BindMeta) {
+func (c cache) removeStaleBindMetas(hash string, meta *BindMeta, scope string) bool {
 	metas, ok := c[hash]
 	if !ok {
-		return
+		return false
 	}
 
 	// remove stale bindMetas.
+	var removed bool
 	for i := len(metas) - 1; i >= 0; i-- {
 		if metas[i].isStale(meta) {
+			metrics.BindMemoryUsage.WithLabelValues(scope).Sub(metas[i].size())
+			removed = true
 			metas = append(metas[:i], metas[i+1:]...)
 			if len(metas) == 0 {
 				delete(c, hash)
-				return
+				return removed
 			}
 		}
 	}
+	return removed
 }
 
 func (c cache) copy() cache {

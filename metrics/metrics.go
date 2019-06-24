@@ -41,6 +41,9 @@ const (
 
 	opSucc   = "ok"
 	opFailed = "err"
+
+	ScopeGlobal  = "global"
+	ScopeSession = "session"
 )
 
 // RetLabel returns "ok" when err == nil and "err" when err != nil.
@@ -58,6 +61,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(AutoAnalyzeHistogram)
 	prometheus.MustRegister(AutoIDHistogram)
 	prometheus.MustRegister(BatchAddIdxHistogram)
+	prometheus.MustRegister(BindUsageCounter)
+	prometheus.MustRegister(BindTotalGauge)
+	prometheus.MustRegister(BindMemoryUsage)
 	prometheus.MustRegister(CampaignOwnerCounter)
 	prometheus.MustRegister(ConnGauge)
 	prometheus.MustRegister(PreparedStmtGauge)
