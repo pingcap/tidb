@@ -294,7 +294,7 @@ const (
 	DefOptAggPushDown                  = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
-	DefOptCorrelationExpFactor         = 0
+	DefOptCorrelationExpFactor         = 1
 	DefOptInSubqToJoinAndAgg           = true
 	DefBatchInsert                     = false
 	DefBatchDelete                     = false
@@ -328,7 +328,7 @@ const (
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
-	DefEnableWindowFunction            = false
+	DefEnableWindowFunction            = true
 	DefTiDBOptJoinReorderThreshold     = 0
 	DefTiDBDDLSlowOprThreshold         = 300
 	DefTiDBUseFastAnalyze              = false

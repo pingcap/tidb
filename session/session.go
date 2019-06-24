@@ -1346,13 +1346,6 @@ func getHostByIP(ip string) []string {
 	return addrs
 }
 
-func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
-	if n1 <= n2 {
-		return n1
-	}
-	return n2
-}
-
 // CreateSession4Test creates a new session environment for test.
 func CreateSession4Test(store kv.Storage) (Session, error) {
 	s, err := CreateSession(store)
@@ -1448,6 +1441,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	timeutil.SetSystemTZ(tz)
 	dom := domain.GetDomain(se)
+	dom.InitExpensiveQueryHandle()
 
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(se)
@@ -1461,6 +1455,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	err = executor.LoadExprPushdownBlacklist(se)
+	if err != nil {
+		return nil, err
 	}
 
 	se1, err := createSession(store)
@@ -1479,7 +1478,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	dom.InitExpensiveQueryHandle()
 	if raw, ok := store.(tikv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
@@ -1500,14 +1498,11 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
-	saveLease := schemaLease
-	schemaLease = chooseMinLease(schemaLease, 100*time.Millisecond)
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.Logger(context.Background()).Fatal("createSession error", zap.Error(err))
 	}
-	schemaLease = saveLease
 
 	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
@@ -1567,7 +1562,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 32
+	currentBootstrapVersion = 33
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

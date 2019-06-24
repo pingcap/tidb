@@ -91,7 +91,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	}
 
 	if e.isUnparallelExec() {
-		e.childResult = e.children[0].newFirstChunk()
+		e.childResult = newFirstChunk(e.children[0])
 	}
 
 	return nil
@@ -179,7 +179,7 @@ func (e *ProjectionExec) isUnparallelExec() bool {
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
 	// transmit the requiredRows
 	e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
-	err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
+	err := Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
 	if err != nil {
 		return err
 	}
@@ -236,11 +236,11 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 		})
 
 		e.fetcher.inputCh <- &projectionInput{
-			chk:          e.children[0].newFirstChunk(),
+			chk:          newFirstChunk(e.children[0]),
 			targetWorker: e.workers[i],
 		}
 		e.fetcher.outputCh <- &projectionOutput{
-			chk:  e.newFirstChunk(),
+			chk:  newFirstChunk(e),
 			done: make(chan error, 1),
 		}
 	}
@@ -312,7 +312,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		requiredRows := atomic.LoadInt64(&f.proj.parentReqRows)
 		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
-		err := f.child.Next(ctx, chunk.NewRecordBatch(input.chk))
+		err := Next(ctx, f.child, chunk.NewRecordBatch(input.chk))
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- err
 			return

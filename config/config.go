@@ -35,7 +35,9 @@ import (
 
 // Config number limitations
 const (
-	MaxLogFileSize = 4096 // MB
+	MaxLogFileSize    = 4096 // MB
+	MinPessimisticTTL = time.Second * 15
+	MaxPessimisticTTL = time.Second * 60
 )
 
 // Valid config maps
@@ -539,6 +541,9 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
 	}
 	c.OOMAction = strings.ToLower(c.OOMAction)
+	if c.OOMAction != OOMActionLog && c.OOMAction != OOMActionCancel {
+		return fmt.Errorf("unsupported OOMAction %v, TiDB only supports [%v, %v]", c.OOMAction, OOMActionLog, OOMActionCancel)
+	}
 
 	// lower_case_table_names is allowed to be 0, 1, 2
 	if c.LowerCaseTableNames < 0 || c.LowerCaseTableNames > 2 {
@@ -561,10 +566,9 @@ func (c *Config) Valid() error {
 		if err != nil {
 			return err
 		}
-		minDur := time.Second * 15
-		maxDur := time.Second * 60
-		if dur < minDur || dur > maxDur {
-			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]", dur, minDur, maxDur)
+		if dur < MinPessimisticTTL || dur > MaxPessimisticTTL {
+			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]",
+				dur, MinPessimisticTTL, MaxPessimisticTTL)
 		}
 	}
 	return nil

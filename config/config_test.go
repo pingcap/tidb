@@ -211,3 +211,21 @@ func (s *testConfigSuite) TestValid(c *C) {
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
 	}
 }
+
+func (s *testConfigSuite) TestOOMActionValid(c *C) {
+	c1 := NewConfig()
+	tests := []struct {
+		oomAction string
+		valid     bool
+	}{
+		{"log", true},
+		{"Log", true},
+		{"Cancel", true},
+		{"cANceL", true},
+		{"quit", false},
+	}
+	for _, tt := range tests {
+		c1.OOMAction = tt.oomAction
+		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
+}

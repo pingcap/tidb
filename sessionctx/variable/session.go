@@ -379,6 +379,9 @@ type SessionVars struct {
 
 	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
 	LowResolutionTSO bool
+
+	// Killed is a flag to indicate that this query is killed.
+	Killed uint32
 }
 
 // ConnectionInfo present connection used by audit.
@@ -699,7 +702,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptCorrelationThreshold:
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 	case TiDBOptCorrelationExpFactor:
-		s.CorrelationExpFactor = tidbOptPositiveInt32(val, DefOptCorrelationExpFactor)
+		s.CorrelationExpFactor = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:

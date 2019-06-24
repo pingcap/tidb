@@ -632,6 +632,9 @@ func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
 	tk.MustExec("alter table table4 drop partition PAR5;")
 	sql4 := "alter table table4 drop partition PAR0;"
 	assertErrorCode(c, tk, sql4, tmysql.ErrDropPartitionNonExistent)
+
+	tk.MustExec("CREATE TABLE t1 (a int(11), b varchar(64)) PARTITION BY HASH(a) PARTITIONS 3")
+	assertErrorCode(c, tk, "alter table t1 drop partition p2", tmysql.ErrOnlyOnRangeListPartition)
 }
 
 func (s *testIntegrationSuite11) TestAddPartitionTooManyPartitions(c *C) {

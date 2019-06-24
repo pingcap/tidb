@@ -255,7 +255,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.String(), Equals, "Table:39 Count:3000\n"+
+	c.Assert(tbl.String(), Equals, "Table:41 Count:3000\n"+
 		"column:1 ndv:3000 totColSize:0\n"+
 		"num: 603 lower_bound: 0 upper_bound: 658 repeats: 1\n"+
 		"num: 603 lower_bound: 663 upper_bound: 1248 repeats: 1\n"+
@@ -274,6 +274,20 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 		"num: 603 lower_bound: 1250 upper_bound: 1823 repeats: 1\n"+
 		"num: 603 lower_bound: 1830 upper_bound: 2379 repeats: 1\n"+
 		"num: 588 lower_bound: 2380 upper_bound: 2998 repeats: 1")
+
+	// Test CM Sketch built from fast analyze.
+	tk.MustExec("create table t1(a int, b int, index idx(a, b))")
+	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
+	tk.MustExec("analyze table t1")
+	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
+		"IndexReader_6 4.00 root index:IndexScan_5",
+		"└─IndexScan_5 4.00 cop table:t1, index:a, b, range:[1,1], keep order:false"))
+	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 1").Check(testkit.Rows(
+		"IndexReader_6 2.00 root index:IndexScan_5",
+		"└─IndexScan_5 2.00 cop table:t1, index:a, b, range:[1 1,1 1], keep order:false"))
+	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
+		"IndexReader_6 2.00 root index:IndexScan_5",
+		"└─IndexScan_5 2.00 cop table:t1, index:a, b, range:[1 2,1 2], keep order:false"))
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
@@ -392,6 +406,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key)")
+	c.Assert(s.dom.StatsHandle().Update(s.dom.InfoSchema()), IsNil)
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
