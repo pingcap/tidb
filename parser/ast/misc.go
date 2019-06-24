@@ -327,9 +327,10 @@ type Prepared struct {
 type ExecuteStmt struct {
 	stmtNode
 
-	Name      string
-	UsingVars []ExprNode
-	ExecID    uint32
+	Name       string
+	UsingVars  []ExprNode
+	BinaryArgs interface{}
+	ExecID     uint32
 }
 
 // Restore implements Node interface.
