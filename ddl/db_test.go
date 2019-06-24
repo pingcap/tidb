@@ -1684,6 +1684,13 @@ func (s *testDBSuite5) TestCreateTableWithLike(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tbl1.Meta().ForeignKeys, IsNil)
 
+	// for table partition
+	s.tk.MustExec("use ctwl_db")
+	s.tk.MustExec("create table pt1 (id int) partition by range columns (id) (partition p0 values less than (10))")
+	s.tk.MustExec("insert into pt1 values (1),(2),(3),(4);")
+	s.tk.MustExec("create table ctwl_db1.pt1 like ctwl_db.pt1;")
+	s.tk.MustQuery("select * from ctwl_db1.pt1").Check(testkit.Rows())
+
 	// for failure cases
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
