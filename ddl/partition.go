@@ -91,7 +91,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		}
 	}
 
-	// TODO: generate multiple global ID for paritions, reduce the times of obtaining the global ID from the storage.
 	if s.Partition.Tp == model.PartitionTypeRange {
 		if err := buildRangePartitionDefinitions(ctx, d, s, pi); err != nil {
 			return nil, errors.Trace(err)
@@ -105,13 +104,13 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 }
 
 func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	genIDs, err := d.genGlobalIDs(int(pi.Num))
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
-		pid, err := d.genGlobalID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defs[i].ID = pid
+		defs[i].ID = genIDs[i]
 		defs[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
 	}
 	pi.Definitions = defs
@@ -119,14 +118,14 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Create
 }
 
 func buildRangePartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
-	for _, def := range s.Partition.Definitions {
-		pid, err := d.genGlobalID()
-		if err != nil {
-			return errors.Trace(err)
-		}
+	genIDs, err := d.genGlobalIDs(len(s.Partition.Definitions))
+	if err != nil {
+		return err
+	}
+	for ith, def := range s.Partition.Definitions {
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
-			ID:      pid,
+			ID:      genIDs[ith],
 			Comment: def.Comment,
 		}
 
