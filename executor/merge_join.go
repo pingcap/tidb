@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -268,10 +267,6 @@ func (e *MergeJoinExec) prepare(ctx context.Context, requiredRows int) error {
 
 // Next implements the Executor Next interface.
 func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.Reset()
 	if !e.prepared {
 		if err := e.prepare(ctx, req.RequiredRows()); err != nil {

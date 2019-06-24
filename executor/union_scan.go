@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"sort"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -122,10 +121,6 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if us.runtimeStats != nil {
-		start := time.Now()
-		defer func() { us.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
