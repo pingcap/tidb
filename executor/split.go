@@ -332,16 +332,14 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	if err != nil {
 		return nil, err
 	}
-	recordRegions, err := getRegionMeta(recordRegionMetas, uniqueRegionMap)
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
+	recordRegions, err := getRegionMeta(recordRegionMetas, uniqueRegionMap, tablePrefix, recordPrefix, nil, physicalTableID, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
-	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
-	decodeRegionsKey(recordRegions, tablePrefix, recordPrefix, nil, physicalTableID, 0)
 	regions := recordRegions
-
 	// for indices
 	for _, index := range tableInfo.Indices {
 		if index.State != model.StatePublic {
@@ -352,12 +350,11 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 		if err != nil {
 			return nil, err
 		}
-		indexRegions, err := getRegionMeta(regionMetas, uniqueRegionMap)
+		indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, index.ID)
+		indexRegions, err := getRegionMeta(regionMetas, uniqueRegionMap, tablePrefix, recordPrefix, indexPrefix, physicalTableID, index.ID)
 		if err != nil {
 			return nil, err
 		}
-		indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, index.ID)
-		decodeRegionsKey(indexRegions, tablePrefix, recordPrefix, indexPrefix, physicalTableID, index.ID)
 		regions = append(regions, indexRegions...)
 	}
 	err = checkRegionsStatus(s, regions)
@@ -369,21 +366,19 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 
 func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore tikv.Storage, s splitableStore) ([]regionMeta, error) {
 	uniqueRegionMap := make(map[uint64]struct{})
-	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
-	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
-	indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, indexInfo.ID)
-
 	startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalTableID, indexInfo.ID)
 	regionCache := tikvStore.GetRegionCache()
 	regions, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackoffer(context.Background(), 20000), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
-	indexRegions, err := getRegionMeta(regions, uniqueRegionMap)
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
+	indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, indexInfo.ID)
+	indexRegions, err := getRegionMeta(regions, uniqueRegionMap, tablePrefix, recordPrefix, indexPrefix, physicalTableID, indexInfo.ID)
 	if err != nil {
 		return nil, err
 	}
-	decodeRegionsKey(indexRegions, tablePrefix, recordPrefix, indexPrefix, physicalTableID, indexInfo.ID)
 	err = checkRegionsStatus(s, indexRegions)
 	if err != nil {
 		return nil, err
@@ -458,7 +453,7 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 	return fmt.Sprintf("%x", key)
 }
 
-func getRegionMeta(regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getRegionMeta(regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct{}, tablePrefix, recordPrefix, indexPrefix []byte, physicalTableID, indexID int64) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(regionMetas))
 	for _, r := range regionMetas {
 		if _, ok := uniqueRegionMap[r.GetID()]; ok {
@@ -470,5 +465,6 @@ func getRegionMeta(regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct
 			leaderID: r.GetLeaderID(),
 		})
 	}
+	decodeRegionsKey(regions, tablePrefix, recordPrefix, indexPrefix, physicalTableID, indexID)
 	return regions, nil
 }
