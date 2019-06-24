@@ -1067,7 +1067,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		rowCount = mathutil.MinInt64(tblStats.Count, rowCount)
 	}
 	// Adjust the row count in case the count of `tblStats` is not accurate and too small.
-	rowCount = mathutil.MaxInt64(rowCount, int64(len(e.collectors[0].Samples)))
+	rowCount = mathutil.MaxInt64(rowCount, int64(e.sampCursor))
 	hists, cms := make([]*statistics.Histogram, length), make([]*statistics.CMSketch, length)
 	for i := 0; i < length; i++ {
 		// Build collector properties.
