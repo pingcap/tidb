@@ -652,6 +652,19 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 		}
 	}
 	if m.Op == kvrpcpb.Op_PessimisticLock && m.Assertion == kvrpcpb.Assertion_NotExist {
+		// Skip rollback keys.
+		for dec.value.valueType == typeRollback {
+			ok, err = dec.Decode(iter)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !ok {
+				return nil
+			}
+		}
+		if dec.value.valueType == typeDelete {
+			return nil
+		}
 		return &ErrKeyAlreadyExist{
 			Key: m.Key,
 		}
