@@ -160,6 +160,14 @@ func (s *testSuite3) TestRole(c *C) {
 	result.Check(nil)
 	dropRoleSQL = `DROP ROLE 'test'@'localhost', r_1, r_2;`
 	tk.MustExec(dropRoleSQL)
+
+	ctx := tk.Se.(sessionctx.Context)
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
+	c.Assert(tk.ExecToErr("SET ROLE role1, role2"), NotNil)
+	tk.MustExec("SET ROLE ALL")
+	tk.MustExec("SET ROLE ALL EXCEPT role1, role2")
+	tk.MustExec("SET ROLE DEFAULT")
+	tk.MustExec("SET ROLE NONE")
 }
 
 func (s *testSuite3) TestDefaultRole(c *C) {
@@ -412,12 +420,12 @@ func (s *testSuite3) TestDropStats(c *C) {
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
-	h.Lease = 1
+	h.SetLease(1)
 	testKit.MustExec("drop stats t")
 	h.Update(is)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
-	h.Lease = 0
+	h.SetLease(0)
 }
 
 func (s *testSuite3) TestFlushTables(c *C) {

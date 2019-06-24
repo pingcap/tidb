@@ -16,7 +16,6 @@ package server
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -125,7 +124,7 @@ func (s *Server) startHTTPServer() {
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
 		sr := router.PathPrefix("/web/trace/").Subrouter()
 		if _, err := traceapp.New(traceapp.NewRouter(sr), baseURL); err != nil {
-			logutil.Logger(context.Background()).Error("new failed", zap.Error(err))
+			logutil.BgLogger().Error("new failed", zap.Error(err))
 		}
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
@@ -228,7 +227,7 @@ func (s *Server) startHTTPServer() {
 	err = router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		pathTemplate, err = route.GetPathTemplate()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("get HTTP router path failed", zap.Error(err))
+			logutil.BgLogger().Error("get HTTP router path failed", zap.Error(err))
 		}
 		name := route.GetName()
 		// If the name attribute is not set, GetName returns "".
@@ -239,18 +238,18 @@ func (s *Server) startHTTPServer() {
 		return nil
 	})
 	if err != nil {
-		logutil.Logger(context.Background()).Error("generate root failed", zap.Error(err))
+		logutil.BgLogger().Error("generate root failed", zap.Error(err))
 	}
 	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
 	httpRouterPage.WriteString("</table></body></html>")
 	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
 		_, err = responseWriter.Write([]byte(httpRouterPage.String()))
 		if err != nil {
-			logutil.Logger(context.Background()).Error("write HTTP index page failed", zap.Error(err))
+			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
 		}
 	})
 
-	logutil.Logger(context.Background()).Info("for status and metrics report", zap.String("listening on addr", addr))
+	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
 	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
@@ -260,7 +259,7 @@ func (s *Server) startHTTPServer() {
 	}
 
 	if err != nil {
-		logutil.Logger(context.Background()).Info("listen failed", zap.Error(err))
+		logutil.BgLogger().Info("listen failed", zap.Error(err))
 	}
 }
 
@@ -282,7 +281,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	js, err := json.Marshal(st)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		logutil.Logger(context.Background()).Error("encode json failed", zap.Error(err))
+		logutil.BgLogger().Error("encode json failed", zap.Error(err))
 	} else {
 		_, err = w.Write(js)
 		terror.Log(errors.Trace(err))

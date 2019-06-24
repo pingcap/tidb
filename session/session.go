@@ -97,7 +97,7 @@ var (
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 )
 
-// Session context
+// Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
 	sessionctx.Context
 	Status() uint16                                               // Flag of current status, such as autocommit.
@@ -185,6 +185,59 @@ type session struct {
 	statsCollector *handle.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
+	// lockedTables use to record the table locks hold by the session.
+	lockedTables map[int64]model.TableLockTpInfo
+}
+
+// AddTableLock adds table lock to the session lock map.
+func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
+	for _, l := range locks {
+		s.lockedTables[l.TableID] = l
+	}
+}
+
+// ReleaseTableLocks releases table lock in the session lock map.
+func (s *session) ReleaseTableLocks(locks []model.TableLockTpInfo) {
+	for _, l := range locks {
+		delete(s.lockedTables, l.TableID)
+	}
+}
+
+// ReleaseTableLockByTableIDs releases table lock in the session lock map by table ID.
+func (s *session) ReleaseTableLockByTableIDs(tableIDs []int64) {
+	for _, tblID := range tableIDs {
+		delete(s.lockedTables, tblID)
+	}
+}
+
+// CheckTableLocked checks the table lock.
+func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
+	lt, ok := s.lockedTables[tblID]
+	if !ok {
+		return false, model.TableLockNone
+	}
+	return true, lt.Tp
+}
+
+// GetAllTableLocks gets all table locks table id and db id hold by the session.
+func (s *session) GetAllTableLocks() []model.TableLockTpInfo {
+	lockTpInfo := make([]model.TableLockTpInfo, 0, len(s.lockedTables))
+	for _, tl := range s.lockedTables {
+		lockTpInfo = append(lockTpInfo, tl)
+	}
+	return lockTpInfo
+}
+
+// HasLockedTables uses to check whether this session locked any tables.
+// If so, the session can only visit the table which locked by self.
+func (s *session) HasLockedTables() bool {
+	b := len(s.lockedTables) > 0
+	return b
+}
+
+// ReleaseAllTableLocks releases all table locks hold by the session.
+func (s *session) ReleaseAllTableLocks() {
+	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
@@ -268,10 +321,6 @@ func (s *session) SetCommandValue(command byte) {
 	atomic.StoreUint32(&s.sessionVars.CommandValue, uint32(command))
 }
 
-func (s *session) GetTLSState() *tls.ConnectionState {
-	return s.sessionVars.TLSConnectionState
-}
-
 func (s *session) SetCollation(coID int) error {
 	cs, co, err := charset.GetCharsetInfoByID(coID)
 	if err != nil {
@@ -300,13 +349,13 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	if s.statsCollector != nil {
 		do, err := GetDomain(s.store)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("domain not found", zap.Error(err))
+			logutil.BgLogger().Debug("domain not found", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
 		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("store query feedback", zap.Error(err))
+			logutil.BgLogger().Debug("store query feedback", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
@@ -733,7 +782,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 		}
 		defer func() {
 			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				logutil.Logger(context.Background()).Error("set tidbSnapshot error", zap.Error(err))
+				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 			}
 		}()
 	}
@@ -1218,7 +1267,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
 		if err := s.txn.changePendingToValid(txnCap); err != nil {
-			logutil.Logger(context.Background()).Error("active transaction fail",
+			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			s.txn.cleanup()
 			s.sessionVars.TxnCtx.StartTS = 0
@@ -1285,7 +1334,17 @@ func (s *session) ClearValue(key fmt.Stringer) {
 }
 
 // Close function does some clean work when session end.
+// Close should release the table locks which hold by the session.
 func (s *session) Close() {
+	// TODO: do clean table locks when session exited without execute Close.
+	// TODO: do clean table locks when tidb-server was `kill -9`.
+	if s.HasLockedTables() && config.TableLockEnabled() {
+		lockedTables := s.GetAllTableLocks()
+		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
+		if err != nil {
+			logutil.BgLogger().Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
+		}
+	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
@@ -1312,7 +1371,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
 	} else if user.Hostname == variable.DefHostname {
-		logutil.Logger(context.Background()).Error("user connection verification failed",
+		logutil.BgLogger().Error("user connection verification failed",
 			zap.Stringer("user", user))
 		return false
 	}
@@ -1332,7 +1391,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		}
 	}
 
-	logutil.Logger(context.Background()).Error("user connection verification failed",
+	logutil.BgLogger().Error("user connection verification failed",
 		zap.Stringer("user", user))
 	return false
 }
@@ -1344,13 +1403,6 @@ func getHostByIP(ip string) []string {
 	addrs, err := net.LookupAddr(ip)
 	terror.Log(errors.Trace(err))
 	return addrs
-}
-
-func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
-	if n1 <= n2 {
-		return n1
-	}
-	return n2
 }
 
 // CreateSession4Test creates a new session environment for test.
@@ -1402,7 +1454,7 @@ func loadSystemTZ(se *session) (string, error) {
 	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
 	defer func() {
 		if err := rss[0].Close(); err != nil {
-			logutil.Logger(context.Background()).Error("close result set error", zap.Error(err))
+			logutil.BgLogger().Error("close result set error", zap.Error(err))
 		}
 	}()
 	req := rss[0].NewRecordBatch()
@@ -1448,6 +1500,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	timeutil.SetSystemTZ(tz)
 	dom := domain.GetDomain(se)
+	dom.InitExpensiveQueryHandle()
 
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(se)
@@ -1461,6 +1514,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	err = executor.LoadExprPushdownBlacklist(se)
+	if err != nil {
+		return nil, err
 	}
 
 	se1, err := createSession(store)
@@ -1479,7 +1537,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	dom.InitExpensiveQueryHandle()
 	if raw, ok := store.(tikv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
@@ -1500,14 +1557,11 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
-	saveLease := schemaLease
-	schemaLease = chooseMinLease(schemaLease, 100*time.Millisecond)
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
-		logutil.Logger(context.Background()).Fatal("createSession error", zap.Error(err))
+		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
-	schemaLease = saveLease
 
 	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
@@ -1535,6 +1589,7 @@ func createSession(store kv.Storage) (*session, error) {
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
@@ -1558,6 +1613,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
@@ -1567,7 +1623,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 32
+	currentBootstrapVersion = 33
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1589,7 +1645,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 	})
 
 	if err != nil {
-		logutil.Logger(context.Background()).Fatal("check bootstrapped failed",
+		logutil.BgLogger().Fatal("check bootstrapped failed",
 			zap.Error(err))
 	}
 
@@ -1612,7 +1668,7 @@ func finishBootstrap(store kv.Storage) {
 		return err
 	})
 	if err != nil {
-		logutil.Logger(context.Background()).Fatal("finish bootstrap failed",
+		logutil.BgLogger().Fatal("finish bootstrap failed",
 			zap.Error(err))
 	}
 }
@@ -1710,7 +1766,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		rows, fields, err = s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
 		if err != nil {
 			vars.CommonGlobalLoaded = false
-			logutil.Logger(context.Background()).Error("failed to load common global variables.")
+			logutil.BgLogger().Error("failed to load common global variables.")
 			return err
 		}
 		gvc.Update(rows, fields)
@@ -1822,13 +1878,13 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		user := vars.User
 		schemaVersion := vars.TxnCtx.SchemaVersion
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			logutil.Logger(context.Background()).Info("CRUCIAL OPERATION",
+			logutil.BgLogger().Info("CRUCIAL OPERATION",
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("secure text", ss.SecureText()),
 				zap.Stringer("user", user))
 		} else {
-			logutil.Logger(context.Background()).Info("CRUCIAL OPERATION",
+			logutil.BgLogger().Info("CRUCIAL OPERATION",
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("cur_db", vars.CurrentDB),
@@ -1843,7 +1899,7 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		logutil.Logger(context.Background()).Info("GENERAL_LOG",
+		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
 			zap.Stringer("user", vars.User),
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),

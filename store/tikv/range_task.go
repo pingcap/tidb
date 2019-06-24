@@ -29,6 +29,7 @@ import (
 
 const (
 	rangeTaskDefaultStatLogInterval = time.Minute * 10
+	defaultRegionsPerTask           = 128
 
 	lblCompletedRegions = "completed-regions"
 )
@@ -42,6 +43,7 @@ type RangeTaskRunner struct {
 	concurrency     int
 	handler         RangeTaskHandler
 	statLogInterval time.Duration
+	regionsPerTask  int
 
 	completedRegions int32
 }
@@ -67,7 +69,17 @@ func NewRangeTaskRunner(
 		concurrency:     concurrency,
 		handler:         handler,
 		statLogInterval: rangeTaskDefaultStatLogInterval,
+		regionsPerTask:  defaultRegionsPerTask,
 	}
+}
+
+// SetRegionsPerTask sets how many regions is in a divided task. Since regions may split and merge, it's possible that
+// a sub task contains not exactly specified number of regions.
+func (s *RangeTaskRunner) SetRegionsPerTask(regionsPerTask int) {
+	if regionsPerTask < 1 {
+		panic("RangeTaskRunner: regionsPerTask should be at least 1")
+	}
+	s.regionsPerTask = regionsPerTask
 }
 
 // SetStatLogInterval sets the time interval to log the stats.
@@ -127,6 +139,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 
 	// Iterate all regions and send each region's range as a task to the workers.
 	key := startKey
+Loop:
 	for {
 		select {
 		case <-statLogTicker.C:
@@ -142,7 +155,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 
 		bo := NewBackoffer(ctx, locateRegionMaxBackoff)
 
-		loc, err := s.store.GetRegionCache().LocateKey(bo, key)
+		rangeEndKey, err := s.store.GetRegionCache().BatchLoadRegionsFromKey(bo, key, s.regionsPerTask)
 		if err != nil {
 			logutil.Logger(ctx).Info("range task failed",
 				zap.String("name", s.name),
@@ -154,7 +167,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		}
 		task := &kv.KeyRange{
 			StartKey: key,
-			EndKey:   loc.EndKey,
+			EndKey:   rangeEndKey,
 		}
 
 		isLast := len(task.EndKey) == 0 || (len(endKey) > 0 && bytes.Compare(task.EndKey, endKey) >= 0)
@@ -168,7 +181,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		select {
 		case taskCh <- task:
 		case <-ctx.Done():
-			break
+			break Loop
 		}
 		metrics.TiKVRangeTaskPushDuration.WithLabelValues(s.name).Observe(time.Since(pushTaskStartTime).Seconds())
 

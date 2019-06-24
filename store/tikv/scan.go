@@ -153,7 +153,7 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 }
 
 func (s *Scanner) getData(bo *Backoffer) error {
-	logutil.Logger(context.Background()).Debug("txn getData",
+	logutil.BgLogger().Debug("txn getData",
 		zap.Binary("nextStartKey", s.nextStartKey),
 		zap.Binary("nextEndKey", s.nextEndKey),
 		zap.Bool("reverse", s.reverse),
@@ -213,7 +213,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			logutil.Logger(context.Background()).Debug("scanner getData failed",
+			logutil.BgLogger().Debug("scanner getData failed",
 				zap.Stringer("regionErr", regionErr))
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {

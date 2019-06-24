@@ -658,8 +658,6 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 	))
 	h := dom.StatsHandle()
 	h.Clear()
-	h.Lease = 1
-	defer func() { h.Lease = 0 }()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t where b = 1").Check(testkit.Rows(
 		"TableReader_7 0.00 root data:Selection_6",
@@ -908,8 +906,8 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 		"├─TableReader_12 9980.01 root data:Selection_11",
 		"│ └─Selection_11 9980.01 cop not(isnull(test.t1.a)), not(isnull(test.t1.c))",
 		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─IndexReader_8 0.00 root index:Selection_7",
-		"  └─Selection_7 0.00 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
+		"└─IndexReader_8 9.98 root index:Selection_7",
+		"  └─Selection_7 9.98 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
 		"    └─IndexScan_6 10.00 cop table:t2, index:a, b, c, range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo",
 	))
 
@@ -1074,10 +1072,9 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1").Check(testkit.Rows(
 		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_19 1.00 root index:TopN_18",
-		"  └─TopN_18 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─Selection_17 6.00 cop gt(test.t.a, 0)",
-		"      └─IndexScan_16 6.00 cop table:t, index:b, range:[2,2], keep order:false",
+		"└─IndexReader_16 1.00 root index:TopN_15",
+		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
+		"    └─IndexScan_14 7.50 cop table:t, index:b, range:(2 0,2 +inf], keep order:false",
 	))
 	// Multi-column filter.
 	tk.MustExec("drop table t")
