@@ -265,3 +265,16 @@ func (s *testPessimisticSuite) TestKeyExistsCheck(c *C) {
 	tk.MustExec("insert chk values (2)")
 	tk.MustExec("commit")
 }
+
+func (s *testPessimisticSuite) TestInsertOnDup(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists dup")
+	tk.MustExec("create table dup (id int primary key, c int)")
+	tk.MustExec("begin pessimistic")
+
+	tk2.MustExec("insert dup values (1, 1)")
+	tk.MustExec("insert dup values (1, 1) on duplicate key update c = c + 1")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from dup").Check(testkit.Rows("1 2"))
+}
