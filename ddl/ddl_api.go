@@ -2708,9 +2708,6 @@ func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 
 			// If there is an index on the generated column which we are trying to modify, return an error.
 			for _, idx := range t.Indices() {
-				if idx.Meta().State != model.StatePublic {
-					continue
-				}
 				for _, col := range idx.Meta().Columns {
 					if col.Name.L == specNewColumn.Name.Name.L {
 						return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
