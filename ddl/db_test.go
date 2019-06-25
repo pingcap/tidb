@@ -2811,6 +2811,27 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk.MustExec("admin check table gcai_table")
 }
 
+func (s *testDBSuite5) TestModifyIndexedGeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(b));")
+	tk.MustExec("insert into t1 set a=1")
+	_, err = tk.Exec("alter table t1 modify column b int as (a+2)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:3106]'modifying an indexed column' is not supported for generated columns.")
+
+	tk.MustExec("drop index idx on t1;")
+	tk.MustExec("alter table t1 modify b int as (a + 2);")
+
+	s.mustExec(c, "drop table t1;")
+}
+
 func (s *testDBSuite4) TestIssue9100(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
