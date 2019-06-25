@@ -187,6 +187,17 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
 
+	// Check gc life time small than min.
+	s.oracle.AddOffset(time.Minute * 40)
+	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	lifeTime, err := s.gcWorker.loadDuration(gcLifeTimeKey)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, gcMinLifeTime)
+
 	// Change auto concurrency
 	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanFalse)
 	c.Assert(err, IsNil)

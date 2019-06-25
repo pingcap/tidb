@@ -113,6 +113,7 @@ const (
 
 	gcLifeTimeKey        = "tikv_gc_life_time"
 	gcDefaultLifeTime    = time.Minute * 10
+	gcMinLifeTime        = time.Minute * 10
 	gcSafePointKey       = "tikv_gc_safe_point"
 	gcConcurrencyKey     = "tikv_gc_concurrency"
 	gcDefaultConcurrency = 2
@@ -417,10 +418,28 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	return true, nil
 }
 
+// checkGCLifeTimeValid checks whether life time is small than min gc life time.
+func (w *GCWorker) checkGCLifeTimeValid(lifeTime time.Duration) (time.Duration, error) {
+	if lifeTime >= gcMinLifeTime {
+		return lifeTime, nil
+	}
+
+	logutil.BgLogger().Info("[gc worker] check gc life time invalid",
+		zap.Duration("get gc life time", lifeTime),
+		zap.Duration("min gc life time", gcMinLifeTime))
+
+	err := w.saveDuration(gcLifeTimeKey, gcMinLifeTime)
+	return gcMinLifeTime, err
+}
+
 func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	lifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	*lifeTime, err = w.checkGCLifeTimeValid(*lifeTime)
+	if err != nil {
+		return nil, err
 	}
 	metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
 	lastSafePoint, err := w.loadTime(gcSafePointKey)
