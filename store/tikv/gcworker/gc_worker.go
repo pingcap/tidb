@@ -421,22 +421,23 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 
 // checkGCLifeTimeValid checks whether life time is small than min gc life time.
 func (w *GCWorker) checkGCLifeTimeValid(lifeTime time.Duration) (time.Duration, error) {
-	if lifeTime >= gcMinLifeTime {
-		return lifeTime, nil
-	}
-
-	logutil.BgLogger().Info("[gc worker] check gc life time invalid",
-		zap.Duration("get gc life time", lifeTime),
-		zap.Duration("min gc life time", gcMinLifeTime))
-
 	minLifeTime := gcMinLifeTime
 	// max-txn-time-use value is less than gc_life_time - 10s.
 	maxTxnTime := time.Duration(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse+10) * time.Second
 	if minLifeTime < maxTxnTime {
 		minLifeTime = maxTxnTime
 	}
+
+	if lifeTime >= minLifeTime {
+		return lifeTime, nil
+	}
+
+	logutil.BgLogger().Info("[gc worker] check gc life time invalid",
+		zap.Duration("get gc life time", lifeTime),
+		zap.Duration("min gc life time", minLifeTime))
+
 	err := w.saveDuration(gcLifeTimeKey, minLifeTime)
-	return gcMinLifeTime, err
+	return minLifeTime, err
 }
 
 func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
