@@ -256,17 +256,6 @@ var (
 
 // checkPartitionFuncValid checks partition function validly.
 func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
-	buf := new(bytes.Buffer)
-	expr.Format(buf)
-	partCols, err := extractPartitionColumns(ctx, buf.String(), tblInfo)
-	if err != nil {
-		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
-	}
-
-	if len(partCols) == 0 {
-		return errors.Trace(errWrongExprInPartitionFunc)
-	}
-
 	switch v := expr.(type) {
 	case *ast.FuncCastExpr, *ast.CaseExpr:
 		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
@@ -279,6 +268,10 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 			// but we want to allow such expressions when opening existing tables for
 			// easier maintenance. This exception should be deprecated at some point in future so that we always throw an error.
 			// See https://github.com/mysql/mysql-server/blob/5.7/sql/sql_partition.cc#L1072
+			partCols, err := partitionColumns(ctx, tblInfo, expr)
+			if err != nil {
+				return err
+			}
 			if !f(partCols) {
 				return errors.Trace(errWrongExprInPartitionFunc)
 			}
@@ -297,8 +290,27 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 		if v.Op == opcode.BitNeg {
 			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
+		return nil
 	}
-	return nil
+
+	// check constant.
+	_, err := partitionColumns(ctx, tblInfo, expr)
+	return err
+}
+
+func partitionColumns(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) ([]*expression.Column, error) {
+	buf := new(bytes.Buffer)
+	expr.Format(buf)
+	partCols, err := extractPartitionColumns(ctx, buf.String(), tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(partCols) == 0 {
+		return nil, errors.Trace(errWrongExprInPartitionFunc)
+	}
+
+	return partCols, nil
 }
 
 // checkPartitionFuncType checks partition function return type.
