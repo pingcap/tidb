@@ -161,7 +161,6 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	);`)
 	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
 
-	// this sql is not allowed in mysql because of the result is const
 	sql9 := `create TABLE t9 (
 	col1 int
 	)
@@ -1530,6 +1529,14 @@ func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
 		);`
 	assertErrorCode(c, tk, sql8, tmysql.ErrWrongExprInPartitionFunc)
 
+	sql9 := `create table t1 ( id int ) 
+		partition by hash(4) partitions 4;`
+	assertErrorCode(c, tk, sql9, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql10 := `create table t1 ( id int ) 
+		partition by hash(ed) partitions 4;`
+	assertErrorCode(c, tk, sql10, tmysql.ErrBadField)
+
 	tk.MustExec(`create table t2 ( time_recorded datetime ) 
 	partition by range(TO_DAYS(time_recorded)) (
 	partition p0 values less than (1));`)
@@ -1537,7 +1544,6 @@ func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
 	tk.MustExec(`create table t3 ( time_recorded date ) 
 	partition by range(TO_DAYS(time_recorded)) (
 	partition p0 values less than (1));`)
-
 }
 
 func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
