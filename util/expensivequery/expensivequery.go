@@ -78,11 +78,6 @@ func (eqh *Handle) Run() {
 	}
 }
 
-// Close closes the handle and release the background goroutine.
-func (eqh *Handle) Close() {
-	close(eqh.exitCh)
-}
-
 // LogOnQueryExceedMemQuota prints a log when memory usage of connID is out of memory quota.
 func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	if log.GetLevel() > zapcore.WarnLevel {
