@@ -2706,7 +2706,7 @@ func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 				return errors.Trace(err)
 			}
 
-			// If there is an index on the generated column we are modifying, throw an error
+			// If there is an index on the generated column which we are trying to modify, return an error.
 			if tables.FindIndexByColName(t, specNewColumn.Name.Name.L) != nil {
 				return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
 			}
