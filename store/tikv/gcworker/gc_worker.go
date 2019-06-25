@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/pd/client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -428,7 +429,13 @@ func (w *GCWorker) checkGCLifeTimeValid(lifeTime time.Duration) (time.Duration, 
 		zap.Duration("get gc life time", lifeTime),
 		zap.Duration("min gc life time", gcMinLifeTime))
 
-	err := w.saveDuration(gcLifeTimeKey, gcMinLifeTime)
+	minLifeTime := gcMinLifeTime
+	// max-txn-time-use value is less than gc_life_time - 10s.
+	maxTxnTime := time.Duration(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse+10) * time.Second
+	if minLifeTime < maxTxnTime {
+		minLifeTime = maxTxnTime
+	}
+	err := w.saveDuration(gcLifeTimeKey, minLifeTime)
 	return gcMinLifeTime, err
 }
 
