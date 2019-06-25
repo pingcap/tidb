@@ -96,7 +96,6 @@ var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testRecoverTable{})
-var _ = Suite(&testSplitTable{&testSuite{}})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -2033,9 +2032,7 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
-type testSplitTable struct{ *testSuite }
-
-func (s *testSplitTable) TestSplitRegionTimeout(c *C) {
+func (s *testSuite4) TestSplitRegionTimeout(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
