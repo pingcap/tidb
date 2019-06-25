@@ -361,7 +361,7 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	if err := s.SplitRegion(tableStartKey); err != nil {
 		// It will be automatically split by TiKV later.
-		logutil.Logger(ddlLogCtx).Warn("[ddl] split table region failed", zap.Error(err))
+		logutil.BgLogger().Warn("[ddl] split table region failed", zap.Error(err))
 	}
 }
 
@@ -406,7 +406,7 @@ func preSplitTableShardRowIDBitsRegion(store kv.Storage, tblInfo *model.TableInf
 		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
 		regionID, err := s.SplitRegionAndScatter(key)
 		if err != nil {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table region failed", zap.Int64("recordID", recordID), zap.Error(err))
+			logutil.BgLogger().Warn("[ddl] pre split table region failed", zap.Int64("recordID", recordID), zap.Error(err))
 		} else {
 			regionIDs = append(regionIDs, regionID)
 		}
@@ -417,7 +417,7 @@ func preSplitTableShardRowIDBitsRegion(store kv.Storage, tblInfo *model.TableInf
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
 		regionID, err := s.SplitRegionAndScatter(indexPrefix)
 		if err != nil {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table index region failed", zap.String("index", idx.Name.L), zap.Error(err))
+			logutil.BgLogger().Warn("[ddl] pre split table index region failed", zap.String("index", idx.Name.L), zap.Error(err))
 		} else {
 			regionIDs = append(regionIDs, regionID)
 		}
@@ -428,7 +428,7 @@ func preSplitTableShardRowIDBitsRegion(store kv.Storage, tblInfo *model.TableInf
 	for _, regionID := range regionIDs {
 		err := s.WaitScatterRegionFinish(regionID)
 		if err != nil {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
+			logutil.BgLogger().Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 		}
 	}
 }

@@ -252,7 +252,7 @@ func (w *flushWatcher) watchLoop() {
 		case <-watchChan:
 			err := w.manifest.OnFlush(w.ctx, w.manifest)
 			if err != nil {
-				logutil.Logger(context.Background()).Error("notify plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
+				logutil.BgLogger().Error("notify plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
 			}
 		}
 	}

@@ -226,6 +226,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.syncLog = val.(bool)
 	case kv.KeyOnly:
 		txn.snapshot.keyOnly = val.(bool)
+	case kv.SnapshotTS:
+		txn.snapshot.version.Ver = val.(uint64)
 	}
 }
 
@@ -329,11 +331,11 @@ func (txn *tikvTxn) Rollback() error {
 	if txn.IsPessimistic() && txn.committer != nil {
 		err := txn.rollbackPessimisticLocks()
 		if err != nil {
-			logutil.Logger(context.Background()).Error(err.Error())
+			logutil.BgLogger().Error(err.Error())
 		}
 	}
 	txn.close()
-	logutil.Logger(context.Background()).Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
+	logutil.BgLogger().Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
 	tikvTxnCmdCountWithRollback.Inc()
 
 	return nil
@@ -387,6 +389,9 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
 		err := txn.committer.pessimisticLockKeys(bo, keys)
 		if err != nil {
+			for _, key := range keys {
+				txn.us.DeleteConditionPair(key)
+			}
 			wg := txn.asyncPessimisticRollback(ctx, keys)
 			if dl, ok := errors.Cause(err).(*ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
 				dl.IsRetryable = true

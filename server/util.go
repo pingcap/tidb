@@ -88,6 +88,9 @@ func parseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
 		return
 	}
 
+	// https://dev.mysql.com/doc/internals/en/integer.html#length-encoded-integer: If the first byte of a packet is a length-encoded integer and its byte value is 0xfe, you must check the length of the packet to verify that it has enough space for a 8-byte integer.
+	// TODO: 0xff is undefined
+
 	// 0-250: value of first byte
 	num = uint64(b[0])
 	n = 1
