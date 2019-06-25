@@ -29,7 +29,9 @@ import (
 
 const (
 	rangeTaskDefaultStatLogInterval = time.Minute * 10
-	rangeTaskMetricsUpdateInterval  = time.Second * 10
+	defaultRegionsPerTask           = 128
+
+	lblCompletedRegions = "completed-regions"
 )
 
 // RangeTaskRunner splits a range into many ranges to process concurrently, and convenient to send requests to all
@@ -41,6 +43,7 @@ type RangeTaskRunner struct {
 	concurrency     int
 	handler         RangeTaskHandler
 	statLogInterval time.Duration
+	regionsPerTask  int
 
 	completedRegions int32
 }
@@ -66,7 +69,17 @@ func NewRangeTaskRunner(
 		concurrency:     concurrency,
 		handler:         handler,
 		statLogInterval: rangeTaskDefaultStatLogInterval,
+		regionsPerTask:  defaultRegionsPerTask,
 	}
+}
+
+// SetRegionsPerTask sets how many regions is in a divided task. Since regions may split and merge, it's possible that
+// a sub task contains not exactly specified number of regions.
+func (s *RangeTaskRunner) SetRegionsPerTask(regionsPerTask int) {
+	if regionsPerTask < 1 {
+		panic("RangeTaskRunner: regionsPerTask should be at least 1")
+	}
+	s.regionsPerTask = regionsPerTask
 }
 
 // SetStatLogInterval sets the time interval to log the stats.
@@ -78,6 +91,7 @@ func (s *RangeTaskRunner) SetStatLogInterval(interval time.Duration) {
 // Empty startKey or endKey means unbounded.
 func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKey []byte) error {
 	s.completedRegions = 0
+	metrics.TiKVRangeTaskStats.WithLabelValues(s.name, lblCompletedRegions).Set(0)
 
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
 		logutil.Logger(ctx).Info("empty range task executed. ignored",
@@ -95,8 +109,6 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 
 	// Periodically log the progress
 	statLogTicker := time.NewTicker(s.statLogInterval)
-	// Periodically update metrics
-	metricsTicker := time.NewTicker(rangeTaskMetricsUpdateInterval)
 
 	ctx, cancel := context.WithCancel(ctx)
 	taskCh := make(chan *kv.KeyRange, s.concurrency)
@@ -121,12 +133,13 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 			wg.Wait()
 		}
 		statLogTicker.Stop()
-		metricsTicker.Stop()
 		cancel()
+		metrics.TiKVRangeTaskStats.WithLabelValues(s.name, lblCompletedRegions).Set(0)
 	}()
 
 	// Iterate all regions and send each region's range as a task to the workers.
 	key := startKey
+Loop:
 	for {
 		select {
 		case <-statLogTicker.C:
@@ -137,14 +150,12 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 				zap.Int("concurrency", s.concurrency),
 				zap.Duration("cost time", time.Since(startTime)),
 				zap.Int32("completed regions", s.CompletedRegions()))
-		case <-metricsTicker.C:
-			metrics.TiKVRangeTaskStats.WithLabelValues(s.name, "completed").Set(float64(s.CompletedRegions()))
 		default:
 		}
 
 		bo := NewBackoffer(ctx, locateRegionMaxBackoff)
 
-		loc, err := s.store.GetRegionCache().LocateKey(bo, key)
+		rangeEndKey, err := s.store.GetRegionCache().BatchLoadRegionsFromKey(bo, key, s.regionsPerTask)
 		if err != nil {
 			logutil.Logger(ctx).Info("range task failed",
 				zap.String("name", s.name),
@@ -156,7 +167,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		}
 		task := &kv.KeyRange{
 			StartKey: key,
-			EndKey:   loc.EndKey,
+			EndKey:   rangeEndKey,
 		}
 
 		isLast := len(task.EndKey) == 0 || (len(endKey) > 0 && bytes.Compare(task.EndKey, endKey) >= 0)
@@ -170,7 +181,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		select {
 		case taskCh <- task:
 		case <-ctx.Done():
-			break
+			break Loop
 		}
 		metrics.TiKVRangeTaskPushDuration.WithLabelValues(s.name).Observe(time.Since(pushTaskStartTime).Seconds())
 
@@ -261,5 +272,6 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 			break
 		}
 		atomic.AddInt32(w.completedRegions, int32(completedRegions))
+		metrics.TiKVRangeTaskStats.WithLabelValues(w.name, lblCompletedRegions).Add(float64(completedRegions))
 	}
 }

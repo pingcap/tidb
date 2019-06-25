@@ -51,7 +51,7 @@ type QueryCtx interface {
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
 
-	SetProcessInfo(sql string, t time.Time, command byte)
+	SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64)
 
 	// CommitTxn commits the transaction operations.
 	CommitTxn(ctx context.Context) error
@@ -87,7 +87,7 @@ type QueryCtx interface {
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 
 	// ShowProcess shows the information about the session.
-	ShowProcess() util.ProcessInfo
+	ShowProcess() *util.ProcessInfo
 
 	// GetSessionVars return SessionVars.
 	GetSessionVars() *variable.SessionVars

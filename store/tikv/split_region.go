@@ -35,7 +35,7 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 }
 
 func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
-	logutil.Logger(context.Background()).Info("start split region",
+	logutil.BgLogger().Info("start split region",
 		zap.Binary("at", splitKey))
 	bo := NewBackoffer(context.Background(), splitRegionBackoff)
 	sender := NewRegionRequestSender(s.regionCache, s.client)
@@ -52,7 +52,7 @@ func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
 			return nil, errors.Trace(err)
 		}
 		if bytes.Equal(splitKey, loc.StartKey) {
-			logutil.Logger(context.Background()).Info("skip split region",
+			logutil.BgLogger().Info("skip split region",
 				zap.Binary("at", splitKey))
 			return nil, nil
 		}
@@ -71,7 +71,7 @@ func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
 			}
 			continue
 		}
-		logutil.Logger(context.Background()).Info("split region complete",
+		logutil.BgLogger().Info("split region complete",
 			zap.Binary("at", splitKey),
 			zap.Stringer("new region left", res.SplitRegion.GetLeft()),
 			zap.Stringer("new region right", res.SplitRegion.GetRight()))
@@ -80,7 +80,7 @@ func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
 }
 
 func (s *tikvStore) scatterRegion(regionID uint64) error {
-	logutil.Logger(context.Background()).Info("start scatter region",
+	logutil.BgLogger().Info("start scatter region",
 		zap.Uint64("regionID", regionID))
 	bo := NewBackoffer(context.Background(), scatterRegionBackoff)
 	for {
@@ -94,13 +94,13 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 		}
 		break
 	}
-	logutil.Logger(context.Background()).Info("scatter region complete",
+	logutil.BgLogger().Info("scatter region complete",
 		zap.Uint64("regionID", regionID))
 	return nil
 }
 
 func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
-	logutil.Logger(context.Background()).Info("wait scatter region",
+	logutil.BgLogger().Info("wait scatter region",
 		zap.Uint64("regionID", regionID))
 	bo := NewBackoffer(context.Background(), waitScatterRegionFinishBackoff)
 	logFreq := 0
@@ -108,14 +108,14 @@ func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
 		if err == nil && resp != nil {
 			if !bytes.Equal(resp.Desc, []byte("scatter-region")) || resp.Status != pdpb.OperatorStatus_RUNNING {
-				logutil.Logger(context.Background()).Info("wait scatter region finished",
+				logutil.BgLogger().Info("wait scatter region finished",
 					zap.Uint64("regionID", regionID))
 				return nil
 			}
 			if logFreq%10 == 0 {
-				logutil.Logger(context.Background()).Info("wait scatter region",
+				logutil.BgLogger().Info("wait scatter region",
 					zap.Uint64("regionID", regionID),
-					zap.String("desc", string(resp.Desc)),
+					zap.String("reverse", string(resp.Desc)),
 					zap.String("status", pdpb.OperatorStatus_name[int32(resp.Status)]))
 			}
 			logFreq++

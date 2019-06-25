@@ -54,6 +54,9 @@ check-mb4-value-in-utf8 = true
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
 
+# enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
+enable-table-lock = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -167,6 +170,9 @@ pseudo-estimate-ratio = 0.8
 # Force the priority of all statements in a specified priority.
 # The value could be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY" or "DELAYED".
 force-priority = "NO_PRIORITY"
+
+# Bind info lease duration, which influences the duration of loading bind info and handling invalid bind.
+bind-info-lease = "3s"
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.

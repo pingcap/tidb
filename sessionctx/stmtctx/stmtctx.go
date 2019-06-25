@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 const (
@@ -344,14 +345,6 @@ func (sc *StatementContext) SetHistogramsNotLoad() {
 	sc.mu.Unlock()
 }
 
-// HistogramsNotLoad gets histogramsNotLoad.
-func (sc *StatementContext) HistogramsNotLoad() bool {
-	sc.mu.Lock()
-	notLoad := sc.mu.histogramsNotLoad
-	sc.mu.Unlock()
-	return notLoad
-}
-
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
@@ -486,4 +479,22 @@ type CopTasksDetails struct {
 	P90WaitTime    time.Duration
 	MaxWaitAddress string
 	MaxWaitTime    time.Duration
+}
+
+// ToZapFields wraps the CopTasksDetails as zap.Fileds.
+func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
+	if d.NumCopTasks == 0 {
+		return
+	}
+	fields = make([]zap.Field, 0, 10)
+	fields = append(fields, zap.Int("num_cop_tasks", d.NumCopTasks))
+	fields = append(fields, zap.String("process_avg_time", strconv.FormatFloat(d.AvgProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("process_p90_time", strconv.FormatFloat(d.P90ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("process_max_time", strconv.FormatFloat(d.MaxProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("process_max_addr", d.MaxProcessAddress))
+	fields = append(fields, zap.String("wait_avg_time", strconv.FormatFloat(d.AvgWaitTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("wait_p90_time", strconv.FormatFloat(d.P90WaitTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
+	return fields
 }

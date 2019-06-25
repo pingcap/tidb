@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -38,6 +39,7 @@ var _ = Suite(&testCommitterSuite{})
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
+	PessimisticLockTTL = uint64(config.MinPessimisticTTL / time.Millisecond)
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
 	mvccStore, err := mocktikv.NewMVCCLevelDB("")
 	c.Assert(err, IsNil)
@@ -457,4 +459,51 @@ func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	req := commiter.buildPrewriteRequest(batch)
 	c.Assert(len(req.Prewrite.IsPessimisticLock), Greater, 0)
 	c.Assert(req.Prewrite.ForUpdateTs, Equals, uint64(100))
+}
+
+func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
+	// This test checks that the isPessimisticLock field is set in the request even when no keys are pessimistic lock.
+	key := kv.Key("key")
+	txn := s.begin(c)
+	c.Assert(txn.Set(key, key), IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+
+	txn = s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+	txn.SetOption(kv.PresumeKeyNotExists, nil)
+	_, _ = txn.us.Get(key)
+	c.Assert(txn.Set(key, key), IsNil)
+	txn.DelOption(kv.PresumeKeyNotExists)
+	err := txn.LockKeys(context.Background(), txn.startTS, key)
+	c.Assert(err, NotNil)
+	c.Assert(txn.Delete(key), IsNil)
+	key2 := kv.Key("key2")
+	c.Assert(txn.Set(key2, key2), IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+}
+
+func (s *testCommitterSuite) TestPessimisticLockedKeysDedup(c *C) {
+	txn := s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+	err := txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	c.Assert(err, IsNil)
+	err = txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	c.Assert(err, IsNil)
+	c.Assert(txn.lockKeys, HasLen, 2)
+}
+
+func (s *testCommitterSuite) TestPessimistOptimisticConflict(c *C) {
+	txnPes := s.begin(c)
+	txnPes.SetOption(kv.Pessimistic, true)
+	err := txnPes.LockKeys(context.Background(), txnPes.startTS, kv.Key("pes"))
+	c.Assert(err, IsNil)
+	c.Assert(txnPes.IsPessimistic(), IsTrue)
+	c.Assert(txnPes.lockKeys, HasLen, 1)
+	txnOpt := s.begin(c)
+	err = txnOpt.Set(kv.Key("pes"), []byte("v"))
+	c.Assert(err, IsNil)
+	err = txnOpt.Commit(context.Background())
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue)
+	c.Assert(txnPes.Commit(context.Background()), IsNil)
 }

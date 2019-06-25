@@ -70,7 +70,7 @@ type Handle struct {
 	// feedback is used to store query feedback info.
 	feedback []*statistics.QueryFeedback
 
-	Lease time.Duration
+	lease atomic2.Duration
 }
 
 // Clear the StatsCache, only for test.
@@ -99,9 +99,9 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		ddlEventCh: make(chan *util.Event, 100),
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:  make(tableDeltaMap),
-		Lease:      lease,
 		feedback:   make([]*statistics.QueryFeedback, 0, MaxQueryFeedbackCount.Load()),
 	}
+	handle.lease.Store(lease)
 	// It is safe to use it concurrently because the exec won't touch the ctx.
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
@@ -110,6 +110,16 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.StatsCache.Store(StatsCache{})
 	return handle
+}
+
+// Lease returns the stats lease.
+func (h *Handle) Lease() time.Duration {
+	return h.lease.Load()
+}
+
+// SetLease sets the stats lease.
+func (h *Handle) SetLease(lease time.Duration) {
+	h.lease.Store(lease)
 }
 
 // GetQueryFeedback gets the query feedback. It is only use in test.
@@ -133,7 +143,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := DurationToTS(3 * h.Lease)
+	offset := DurationToTS(3 * h.Lease())
 	if lastVersion >= offset {
 		lastVersion = lastVersion - offset
 	} else {
@@ -157,7 +167,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		table, ok := h.getTableByPhysicalID(is, physicalID)
 		h.mu.Unlock()
 		if !ok {
-			logutil.Logger(context.Background()).Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
+			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
@@ -165,7 +175,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false, nil)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
+			logutil.BgLogger().Debug("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
 		}
 		if tbl == nil {
@@ -307,14 +317,14 @@ func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
-			logutil.Logger(context.Background()).Debug("[stats] handle ddl event fail", zap.Error(err))
+			logutil.BgLogger().Debug("[stats] handle ddl event fail", zap.Error(err))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
-		logutil.Logger(context.Background()).Debug("[stats] dump stats delta fail", zap.Error(err))
+		logutil.BgLogger().Debug("[stats] dump stats delta fail", zap.Error(err))
 	}
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
-		logutil.Logger(context.Background()).Debug("[stats] dump stats feedback fail", zap.Error(err))
+		logutil.BgLogger().Debug("[stats] dump stats feedback fail", zap.Error(err))
 	}
 }
 
@@ -326,11 +336,8 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64, history
 	} else {
 		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil, nil
+	if err != nil || len(rows) == 0 {
+		return nil, err
 	}
 	return statistics.LoadCMSketchWithTopN(h.restrictedExec, tblID, isIndex, histID, rows[0].GetBytes(0))
 }
@@ -370,7 +377,7 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, t
 	if idx != nil {
 		table.Indices[histID] = idx
 	} else {
-		logutil.Logger(context.Background()).Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
+		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
 	}
 	return nil
 }
@@ -402,7 +409,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 		// 2. this column is not handle, and:
 		// 3. the column doesn't has buckets before, and:
 		// 4. loadAll is false.
-		notNeedLoad := h.Lease > 0 &&
+		notNeedLoad := h.Lease() > 0 &&
 			!isHandle &&
 			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
 			!loadAll
@@ -459,7 +466,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
 		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
 		// avoid error.
-		logutil.Logger(context.Background()).Debug("we cannot find column in table info now. It may be deleted", zap.Int64("colID", histID), zap.String("table", tableInfo.Name.O))
+		logutil.BgLogger().Debug("we cannot find column in table info now. It may be deleted", zap.Int64("colID", histID), zap.String("table", tableInfo.Name.O))
 	}
 	return nil
 }
@@ -491,22 +498,18 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	} else {
 		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	}
-	if err != nil {
-		return nil, err
-	}
 	// Check deleted table.
-	if len(rows) == 0 {
+	if err != nil || len(rows) == 0 {
 		return nil, nil
 	}
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
-			if err := h.indexStatsFromStorage(row, table, tableInfo, historyStatsExec); err != nil {
-				return nil, errors.Trace(err)
-			}
+			err = h.indexStatsFromStorage(row, table, tableInfo, historyStatsExec)
 		} else {
-			if err := h.columnStatsFromStorage(row, table, tableInfo, loadAll, historyStatsExec); err != nil {
-				return nil, errors.Trace(err)
-			}
+			err = h.columnStatsFromStorage(row, table, tableInfo, loadAll, historyStatsExec)
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	return table, nil
@@ -531,49 +534,29 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 
 	version := txn.StartTS()
-	var sql string
+	sqls := make([]string, 0, 4)
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
-		sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
+		sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count))
 	} else {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d", version, tableID)
-	}
-	_, err = exec.Execute(ctx, sql)
-	if err != nil {
-		return
+		sqls = append(sqls, fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d", version, tableID))
 	}
 	data, err := statistics.EncodeCMSketchWithoutTopN(cms)
 	if err != nil {
 		return
 	}
 	// Delete outdated data
-	deleteOutdatedTopNSQL := fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
-	_, err = exec.Execute(ctx, deleteOutdatedTopNSQL)
-	if err != nil {
-		return
-	}
+	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
 	for _, meta := range cms.TopN() {
-		insertSQL := fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count)
-		_, err = exec.Execute(ctx, insertSQL)
-		if err != nil {
-			return
-		}
+		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count))
 	}
 	flag := 0
 	if isAnalyzed == 1 {
 		flag = statistics.AnalyzeFlag
 	}
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d, %f)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statistics.CurStatsVersion, flag, hg.Correlation)
-	_, err = exec.Execute(ctx, replaceSQL)
-	if err != nil {
-		return
-	}
-	deleteSQL := fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
-	_, err = exec.Execute(ctx, deleteSQL)
-	if err != nil {
-		return
-	}
+	sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d, %f)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statistics.CurStatsVersion, flag, hg.Correlation))
+	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	var lastAnalyzePos []byte
 	for i := range hg.Buckets {
@@ -594,20 +577,12 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		if err != nil {
 			return
 		}
-		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes())
-		_, err = exec.Execute(ctx, insertSQL)
-		if err != nil {
-			return
-		}
+		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes()))
 	}
 	if isAnalyzed == 1 && len(lastAnalyzePos) > 0 {
-		sql = fmt.Sprintf("update mysql.stats_histograms set last_analyze_pos = X'%X' where table_id = %d and is_index = %d and hist_id = %d", lastAnalyzePos, tableID, isIndex, hg.ID)
-		_, err = exec.Execute(ctx, sql)
-		if err != nil {
-			return
-		}
+		sqls = append(sqls, fmt.Sprintf("update mysql.stats_histograms set last_analyze_pos = X'%X' where table_id = %d and is_index = %d and hist_id = %d", lastAnalyzePos, tableID, isIndex, hg.ID))
 	}
-	return
+	return execSQLs(context.Background(), exec, sqls)
 }
 
 // SaveMetaToStorage will save stats_meta to storage.

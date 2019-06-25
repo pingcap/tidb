@@ -171,7 +171,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			logutil.Logger(context.Background()).Error("analyze worker panicked", zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- analyzeResult{
 				Err: errAnalyzeWorkerPanic,
@@ -331,7 +331,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		if needCMS {
 			if resp.Cms == nil {
 				logutil.Logger(context.TODO()).Warn("nil CMS in response", zap.String("table", e.idxInfo.Table.O), zap.String("index", e.idxInfo.Name.O))
-			} else if err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms)); err != nil {
+			} else if err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms), 0); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -702,7 +702,6 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	// Do get regions row count.
 	bo := tikv.NewBackoffer(context.Background(), 500)
-	e.rowCount = 0
 	needRebuildForRoutine := make([]bool, e.concurrency)
 	errs := make([]error, e.concurrency)
 	sampTasksForRoutine := make([][]*AnalyzeFastTask, e.concurrency)
@@ -733,6 +732,13 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	targetKey, err := e.getNextSampleKey(bo, startKey)
 	if err != nil {
 		return false, err
+	}
+	e.rowCount = 0
+	for _, task := range e.sampTasks {
+		cnt := task.EndOffset - task.BeginOffset
+		task.BeginOffset = e.rowCount
+		task.EndOffset = e.rowCount + cnt
+		e.rowCount += cnt
 	}
 	for {
 		// Search for the region which contains the targetKey.
@@ -949,7 +955,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			keys = append(keys, tablecodec.EncodeRowKeyWithHandle(tableID, randKey))
 		}
 
-		var kvMap map[string][]byte
+		kvMap := make(map[string][]byte, len(keys))
 		for _, key := range keys {
 			var iter kv.Iterator
 			iter, *err = snapshot.Iter(key, endKey)
@@ -966,11 +972,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 	}
 }
 
-func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollector, tp *types.FieldType) (*statistics.Histogram, error) {
-	// build collector properties.
-	collector.Samples = collector.Samples[:e.sampCursor]
-	sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].RowID < collector.Samples[j].RowID })
-	collector.CalcTotalSize()
+func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.SampleCollector, tp *types.FieldType, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, error) {
 	data := make([][]byte, 0, len(collector.Samples))
 	for i, sample := range collector.Samples {
 		sample.Ordinal = i
@@ -980,24 +982,49 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 		}
 		bytes, err := tablecodec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, sample.Value)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		data = append(data, bytes)
 	}
-	stats := domain.GetDomain(e.ctx).StatsHandle()
-	rowCount := int64(e.rowCount)
-	if stats.Lease > 0 {
-		rowCount = mathutil.MinInt64(stats.GetTableStats(e.tblInfo).Count, rowCount)
-	}
-	// build CMSketch
-	var ndv, scaleRatio uint64
-	collector.CMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, 20, uint64(rowCount))
-	// build Histogram
+	// Build CMSketch.
+	cmSketch, ndv, scaleRatio := statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, 20, uint64(rowCount))
+	// Build Histogram.
 	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.maxNumBuckets), ID, collector, tp, rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
-	if err != nil {
-		return nil, err
+	return hist, cmSketch, err
+}
+
+func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *statistics.SampleCollector, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, error) {
+	data := make([][][]byte, len(idxInfo.Columns), len(idxInfo.Columns))
+	for _, sample := range collector.Samples {
+		var preLen int
+		remained := sample.Value.GetBytes()
+		// We need to insert each prefix values into CM Sketch.
+		for i := 0; i < len(idxInfo.Columns); i++ {
+			var err error
+			var value []byte
+			value, remained, err = codec.CutOne(remained)
+			if err != nil {
+				return nil, nil, err
+			}
+			preLen += len(value)
+			data[i] = append(data[i], sample.Value.GetBytes()[:preLen])
+		}
 	}
-	return hist, nil
+	numTop := uint32(20)
+	cmSketch, ndv, scaleRatio := statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[0], numTop, uint64(rowCount))
+	// Build CM Sketch for each prefix and merge them into one.
+	for i := 1; i < len(idxInfo.Columns); i++ {
+		var curCMSketch *statistics.CMSketch
+		// `ndv` should be the ndv of full index, so just rewrite it here.
+		curCMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[i], numTop, uint64(rowCount))
+		err := cmSketch.MergeCMSketch(curCMSketch, numTop)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	// Build Histogram.
+	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.maxNumBuckets), idxInfo.ID, collector, types.NewFieldType(mysql.TypeBlob), rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
+	return hist, cmSketch, err
 }
 
 func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMSketch, error) {
@@ -1033,19 +1060,32 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		return nil, nil, err
 	}
 
+	stats := domain.GetDomain(e.ctx).StatsHandle()
+	rowCount := int64(e.rowCount)
+	if stats.Lease() > 0 {
+		rowCount = mathutil.MinInt64(stats.GetTableStats(e.tblInfo).Count, rowCount)
+	}
 	hists, cms := make([]*statistics.Histogram, length), make([]*statistics.CMSketch, length)
 	for i := 0; i < length; i++ {
+		// Build collector properties.
+		collector := e.collectors[i]
+		collector.Samples = collector.Samples[:e.sampCursor]
+		sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].RowID < collector.Samples[j].RowID })
+		collector.CalcTotalSize()
+		// Adjust the row count in case the count of `tblStats` is not accurate and too small.
+		rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
+		// Scale the total column size.
+		collector.TotalSize *= rowCount / int64(len(collector.Samples))
 		if i < hasPKInfo {
-			hists[i], err = e.buildHist(e.pkInfo.ID, e.collectors[i], &e.pkInfo.FieldType)
+			hists[i], cms[i], err = e.buildColumnStats(e.pkInfo.ID, e.collectors[i], &e.pkInfo.FieldType, rowCount)
 		} else if i < hasPKInfo+len(e.colsInfo) {
-			hists[i], err = e.buildHist(e.colsInfo[i-hasPKInfo].ID, e.collectors[i], &e.colsInfo[i-hasPKInfo].FieldType)
+			hists[i], cms[i], err = e.buildColumnStats(e.colsInfo[i-hasPKInfo].ID, e.collectors[i], &e.colsInfo[i-hasPKInfo].FieldType, rowCount)
 		} else {
-			hists[i], err = e.buildHist(e.idxsInfo[i-hasPKInfo-len(e.colsInfo)].ID, e.collectors[i], types.NewFieldType(mysql.TypeBlob))
+			hists[i], cms[i], err = e.buildIndexStats(e.idxsInfo[i-hasPKInfo-len(e.colsInfo)], e.collectors[i], rowCount)
 		}
 		if err != nil {
 			return nil, nil, err
 		}
-		cms[i] = e.collectors[i].CMSketch
 	}
 	return hists, cms, nil
 }

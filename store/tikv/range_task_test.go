@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sort"
 
 	. "github.com/pingcap/check"
@@ -137,7 +138,27 @@ func (s *testRangeTaskSuite) checkRanges(c *C, obtained []kv.KeyRange, expected 
 	c.Assert(obtained, DeepEquals, expected)
 }
 
+func batchRanges(ranges []kv.KeyRange, batchSize int) []kv.KeyRange {
+	result := make([]kv.KeyRange, 0, len(ranges))
+
+	for i := 0; i < len(ranges); i += batchSize {
+		lastRange := i + batchSize - 1
+		if lastRange >= len(ranges) {
+			lastRange = len(ranges) - 1
+		}
+
+		result = append(result, kv.KeyRange{
+			StartKey: ranges[i].StartKey,
+			EndKey:   ranges[lastRange].EndKey,
+		})
+	}
+
+	return result
+}
+
 func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
+	c.Logf("Test RangeTask, concurrency: %v", concurrency)
+
 	ranges := make(chan *kv.KeyRange, 100)
 
 	handler := func(ctx context.Context, r kv.KeyRange) (int, error) {
@@ -145,24 +166,54 @@ func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
 		return 1, nil
 	}
 
-	runner := NewRangeTaskRunner(
-		"test-runner",
-		s.store,
-		concurrency,
-		handler)
+	runner := NewRangeTaskRunner("test-runner", s.store, concurrency, handler)
 
-	for i, r := range s.testRanges {
-		expectedRanges := s.expectedRanges[i]
+	for regionsPerTask := 1; regionsPerTask <= 5; regionsPerTask++ {
+		for i, r := range s.testRanges {
+			runner.SetRegionsPerTask(regionsPerTask)
 
-		err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
-		c.Assert(err, IsNil)
-		s.checkRanges(c, collect(ranges), expectedRanges)
-		c.Assert(int(runner.completedRegions), Equals, len(expectedRanges))
+			expectedRanges := batchRanges(s.expectedRanges[i], regionsPerTask)
+
+			err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
+			c.Assert(err, IsNil)
+			s.checkRanges(c, collect(ranges), expectedRanges)
+			c.Assert(int(runner.completedRegions), Equals, len(expectedRanges))
+		}
 	}
 }
 
 func (s *testRangeTaskSuite) TestRangeTask(c *C) {
 	for concurrency := 1; concurrency < 5; concurrency++ {
 		s.testRangeTaskImpl(c, concurrency)
+	}
+}
+
+func (s *testRangeTaskSuite) testRangeTaskErrorImpl(c *C, concurrency int) {
+	for i, r := range s.testRanges {
+		// Iterate all sub tasks and make it an error
+		subRanges := s.expectedRanges[i]
+		for _, subRange := range subRanges {
+			errKey := subRange.StartKey
+			c.Logf("Test RangeTask Error concurrency: %v, range: [%+q, %+q), errKey: %+q", concurrency, r.StartKey, r.EndKey, errKey)
+
+			handler := func(ctx context.Context, r kv.KeyRange) (int, error) {
+				if bytes.Equal(r.StartKey, errKey) {
+					return 0, errors.New("test error")
+				}
+				return 1, nil
+			}
+
+			runner := NewRangeTaskRunner("test-error-runner", s.store, concurrency, handler)
+			runner.SetRegionsPerTask(1)
+			err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
+			// RunOnRange returns no error only when all sub tasks are done successfully.
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
+func (s *testRangeTaskSuite) TestRangeTaskError(c *C) {
+	for concurrency := 1; concurrency < 5; concurrency++ {
+		s.testRangeTaskErrorImpl(c, concurrency)
 	}
 }

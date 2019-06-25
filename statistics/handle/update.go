@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
@@ -159,13 +160,9 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 }
 
 func mergeQueryFeedback(lq []*statistics.QueryFeedback, rq []*statistics.QueryFeedback) []*statistics.QueryFeedback {
-	for _, q := range rq {
-		if len(lq) >= int(MaxQueryFeedbackCount.Load()) {
-			break
-		}
-		lq = append(lq, q)
-	}
-	return lq
+	remained := mathutil.MinInt64(int64(len(rq)), MaxQueryFeedbackCount.Load()-int64(len(lq)))
+	remained = mathutil.MaxInt64(0, remained)
+	return append(lq, rq[:remained]...)
 }
 
 var (
@@ -337,10 +334,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	} else {
 		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", startTS, delta.Delta, delta.Count, id)
 	}
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
-	if err != nil {
-		return
-	}
+	err = execSQLs(context.Background(), exec, []string{sql})
 	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	return
 }
@@ -391,7 +385,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 	vals, err := statistics.EncodeFeedback(fb)
 	if err != nil {
-		logutil.Logger(context.Background()).Debug("error occurred when encoding feedback", zap.Error(err))
+		logutil.BgLogger().Debug("error occurred when encoding feedback", zap.Error(err))
 		return nil
 	}
 	var isIndex int64
@@ -559,9 +553,9 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	q := &statistics.QueryFeedback{}
 	for _, row := range rows {
-		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, mysql.HasUnsignedFlag(hist.Tp.Flag))
+		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, hist.Tp)
 		if err1 != nil {
-			logutil.Logger(context.Background()).Debug("decode feedback failed", zap.Error(err))
+			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err))
 		}
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
@@ -691,10 +685,7 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 		return s, s, errors.Trace(err)
 	}
 	e, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, end, time.UTC)
-	if err != nil {
-		return s, e, errors.Trace(err)
-	}
-	return s, e, nil
+	return s, e, err
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
@@ -704,7 +695,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
 	if err != nil {
-		logutil.Logger(context.Background()).Error("[stats] parse auto analyze period failed", zap.Error(err))
+		logutil.BgLogger().Error("[stats] parse auto analyze period failed", zap.Error(err))
 		return
 	}
 	for _, db := range dbs {
@@ -740,18 +731,15 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
-	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()); needAnalyze {
-		logutil.Logger(context.Background()).Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
+	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
+		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
 		h.execAutoAnalyze(sql)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
-		if idx.State != model.StatePublic {
-			continue
-		}
-		if _, ok := statsTbl.Indices[idx.ID]; !ok {
+		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
-			logutil.Logger(context.Background()).Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
+			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
 			h.execAutoAnalyze(sql)
 			return true
 		}
@@ -765,7 +753,7 @@ func (h *Handle) execAutoAnalyze(sql string) {
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
-		logutil.Logger(context.Background()).Error("[stats] auto analyze failed", zap.String("sql", sql), zap.Duration("cost_time", dur), zap.Error(err))
+		logutil.BgLogger().Error("[stats] auto analyze failed", zap.String("sql", sql), zap.Duration("cost_time", dur), zap.Error(err))
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
@@ -820,7 +808,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	if idx.CMSketch == nil || idx.StatsVer != statistics.Version1 {
 		for i, ran := range ranges {
-			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("rangeStr", logForIndexRange(idx, ran, actual[i], factor)))
+			logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("rangeStr", logForIndexRange(idx, ran, actual[i], factor)))
 		}
 		return
 	}
@@ -828,7 +816,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 		rangePosition := statistics.GetOrdinalOfRangeCond(sc, ran)
 		// only contains range or equality query
 		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
-			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("rangeStr", logForIndexRange(idx, ran, actual[i], factor)))
+			logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("rangeStr", logForIndexRange(idx, ran, actual[i], factor)))
 			continue
 		}
 		equalityString, err := types.DatumsToString(ran.LowVal[:rangePosition], true)
@@ -848,18 +836,21 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 		// prefer index stats over column stats
 		if idxHist := t.IndexStartWithColumn(colName); idxHist != nil && idxHist.Histogram.Len() > 0 {
 			rangeString := logForIndexRange(idxHist, &rang, -1, factor)
-			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
+			logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
 				zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
 				zap.String("range", rangeString))
 		} else if colHist := t.ColumnByName(colName); colHist != nil && colHist.Histogram.Len() > 0 {
-			rangeString := colRangeToStr(colHist, &rang, -1, factor)
-			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
-				zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
-				zap.String("range", rangeString))
+			err = convertRangeType(&rang, colHist.Tp, time.UTC)
+			if err == nil {
+				rangeString := colRangeToStr(colHist, &rang, -1, factor)
+				logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
+					zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
+					zap.String("range", rangeString))
+			}
 		} else {
 			count, err := statistics.GetPseudoRowCountByColumnRanges(sc, float64(t.Count), []*ranger.Range{&rang}, 0)
 			if err == nil {
-				logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
+				logutil.BgLogger().Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
 					zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
 					zap.Stringer("range", &rang), zap.Float64("pseudo count", math.Round(count)))
 			}
@@ -875,7 +866,7 @@ func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
 	isIndex := q.Hist.IsIndexHist()
 	ranges, err := q.DecodeToRanges(isIndex)
 	if err != nil {
-		logutil.Logger(context.Background()).Debug("decode to ranges failed", zap.Error(err))
+		logutil.BgLogger().Debug("decode to ranges failed", zap.Error(err))
 		return
 	}
 	actual := make([]int64, 0, len(q.Feedback))
@@ -903,7 +894,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 		if ran.LowVal[0].GetInt64()+1 >= ran.HighVal[0].GetInt64() {
 			continue
 		}
-		logutil.Logger(context.Background()).Debug(prefix, zap.String("column", c.Info.Name.O), zap.String("rangeStr", colRangeToStr(c, ran, actual[i], factor)))
+		logutil.BgLogger().Debug(prefix, zap.String("column", c.Info.Name.O), zap.String("rangeStr", colRangeToStr(c, ran, actual[i], factor)))
 	}
 }
 
@@ -941,11 +932,8 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount)
 		expected *= c.GetIncreaseFactor(t.Count)
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
 	q.Expected = int64(expected)
-	return nil
+	return err
 }
 
 func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Range, rangeCount float64, q *statistics.QueryFeedback) error {
@@ -974,7 +962,7 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 	}
 	ranges, ok := q.Hist.SplitRange(sc, []*ranger.Range{ran}, q.Tp == statistics.IndexType)
 	if !ok {
-		logutil.Logger(context.Background()).Debug("type of histogram and ranges mismatch")
+		logutil.BgLogger().Debug("type of histogram and ranges mismatch")
 		return nil
 	}
 	counts := make([]float64, 0, len(ranges))
@@ -1004,6 +992,14 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 	return errors.Trace(h.DumpFeedbackToKV(q))
 }
 
+func convertRangeType(ran *ranger.Range, ft *types.FieldType, loc *time.Location) error {
+	err := statistics.ConvertDatumsType(ran.LowVal, ft, loc)
+	if err != nil {
+		return err
+	}
+	return statistics.ConvertDatumsType(ran.HighVal, ft, loc)
+}
+
 // DumpFeedbackForIndex dumps the feedback for index.
 // For queries that contains both equality and range query, we will split them and Update accordingly.
 func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics.Table) error {
@@ -1017,7 +1013,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 	}
 	ranges, err := q.DecodeToRanges(true)
 	if err != nil {
-		logutil.Logger(context.Background()).Debug("decode feedback ranges fail", zap.Error(err))
+		logutil.BgLogger().Debug("decode feedback ranges fail", zap.Error(err))
 		return nil
 	}
 	for i, ran := range ranges {
@@ -1029,11 +1025,11 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 
 		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("encode keys fail", zap.Error(err))
+			logutil.BgLogger().Debug("encode keys fail", zap.Error(err))
 			continue
 		}
 		equalityCount := float64(idx.CMSketch.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
-		rang := ranger.Range{
+		rang := &ranger.Range{
 			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
 			HighVal: []types.Datum{ran.HighVal[rangePosition]},
 		}
@@ -1042,25 +1038,28 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		rangeFB := &statistics.QueryFeedback{PhysicalID: q.PhysicalID}
 		// prefer index stats over column stats
 		if idx := t.IndexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
-			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{&rang})
+			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{rang})
 			rangeFB.Tp, rangeFB.Hist = statistics.IndexType, &idx.Histogram
 		} else if col := t.ColumnByName(colName); col != nil && col.Histogram.Len() != 0 {
-			rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{&rang})
-			rangeFB.Tp, rangeFB.Hist = statistics.ColType, &col.Histogram
+			err = convertRangeType(rang, col.Tp, time.UTC)
+			if err == nil {
+				rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{rang})
+				rangeFB.Tp, rangeFB.Hist = statistics.ColType, &col.Histogram
+			}
 		} else {
 			continue
 		}
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("get row count by ranges fail", zap.Error(err))
+			logutil.BgLogger().Debug("get row count by ranges fail", zap.Error(err))
 			continue
 		}
 
 		equalityCount, rangeCount = getNewCountForIndex(equalityCount, rangeCount, float64(t.Count), float64(q.Feedback[i].Count))
 		value := types.NewBytesDatum(bytes)
 		q.Feedback[i] = statistics.Feedback{Lower: &value, Upper: &value, Count: int64(equalityCount)}
-		err = h.dumpRangeFeedback(sc, &rang, rangeCount, rangeFB)
+		err = h.dumpRangeFeedback(sc, rang, rangeCount, rangeFB)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("dump range feedback fail", zap.Error(err))
+			logutil.BgLogger().Debug("dump range feedback fail", zap.Error(err))
 			continue
 		}
 	}

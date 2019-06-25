@@ -105,6 +105,16 @@ PARTITION BY RANGE ( a ) (
 	}
 }
 
+func (s *testSuite1) TestAnalyzeRestrict(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	ctx := tk.Se.(sessionctx.Context)
+	ctx.GetSessionVars().InRestrictedSQL = true
+	tk.MustExec("analyze table t")
+}
+
 func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -234,12 +244,9 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	tk.MustExec("create table t(a int primary key, b int, c char(10), index index_b(b))")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
-	for i := 0; i < 3000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
@@ -248,6 +255,9 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	splitKeys := generateTableSplitKeyForInt(tid, []int{600, 1200, 1800, 2400})
 	manipulateCluster(cluster, splitKeys)
 
+	for i := 0; i < 3000; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "char")`, i, i))
+	}
 	tk.MustExec("analyze table t with 5 buckets")
 
 	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
@@ -255,49 +265,41 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	sTbl := fmt.Sprintln(tbl)
-	matched := false
-	if sTbl == "Table:39 Count:3000\n"+
+	c.Assert(tbl.String(), Equals, "Table:41 Count:3000\n"+
 		"column:1 ndv:3000 totColSize:0\n"+
-		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
+		"num: 603 lower_bound: 0 upper_bound: 658 repeats: 1\n"+
+		"num: 603 lower_bound: 663 upper_bound: 1248 repeats: 1\n"+
+		"num: 603 lower_bound: 1250 upper_bound: 1823 repeats: 1\n"+
+		"num: 603 lower_bound: 1830 upper_bound: 2379 repeats: 1\n"+
+		"num: 588 lower_bound: 2380 upper_bound: 2998 repeats: 1\n"+
 		"column:2 ndv:3000 totColSize:0\n"+
-		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
+		"num: 603 lower_bound: 0 upper_bound: 658 repeats: 1\n"+
+		"num: 603 lower_bound: 663 upper_bound: 1248 repeats: 1\n"+
+		"num: 603 lower_bound: 1250 upper_bound: 1823 repeats: 1\n"+
+		"num: 603 lower_bound: 1830 upper_bound: 2379 repeats: 1\n"+
+		"num: 588 lower_bound: 2380 upper_bound: 2998 repeats: 1\n"+
+		"column:3 ndv:1 totColSize:12000\n"+
+		"num: 3000 lower_bound: char upper_bound: char repeats: 3000\n"+
 		"index:1 ndv:3000\n"+
-		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" ||
-		sTbl == "Table:39 Count:3000\n"+
-			"column:2 ndv:3000 totColSize:0\n"+
-			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
-			"column:1 ndv:3000 totColSize:0\n"+
-			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
-			"index:1 ndv:3000\n"+
-			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" {
-		matched = true
-	}
-	c.Assert(matched, Equals, true)
+		"num: 603 lower_bound: 0 upper_bound: 658 repeats: 1\n"+
+		"num: 603 lower_bound: 663 upper_bound: 1248 repeats: 1\n"+
+		"num: 603 lower_bound: 1250 upper_bound: 1823 repeats: 1\n"+
+		"num: 603 lower_bound: 1830 upper_bound: 2379 repeats: 1\n"+
+		"num: 588 lower_bound: 2380 upper_bound: 2998 repeats: 1")
+
+	// Test CM Sketch built from fast analyze.
+	tk.MustExec("create table t1(a int, b int, index idx(a, b))")
+	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
+	tk.MustExec("analyze table t1")
+	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
+		"IndexReader_6 4.00 root index:IndexScan_5",
+		"└─IndexScan_5 4.00 cop table:t1, index:a, b, range:[1,1], keep order:false"))
+	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 1").Check(testkit.Rows(
+		"IndexReader_6 2.00 root index:IndexScan_5",
+		"└─IndexScan_5 2.00 cop table:t1, index:a, b, range:[1 1,1 1], keep order:false"))
+	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
+		"IndexReader_6 2.00 root index:IndexScan_5",
+		"└─IndexScan_5 2.00 cop table:t1, index:a, b, range:[1 2,1 2], keep order:false"))
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
@@ -415,7 +417,8 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	tk.MustExec("create table t(a int primary key)")
+	c.Assert(s.dom.StatsHandle().Update(s.dom.InfoSchema()), IsNil)
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -425,12 +428,14 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	splitKeys := generateTableSplitKeyForInt(tid, []int{6, 12, 18, 24, 30})
 	regionIDs := manipulateCluster(s.cluster, splitKeys)
 	for i := 0; i < 30; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
 	s.cli.setFailRegion(regionIDs[4])
 	tk.MustExec("analyze table t")
 	// 4 regions will be sampled, and it will retry the last failed region.
 	c.Assert(s.cli.mu.count, Equals, int64(5))
+	row := tk.MustQuery(`show stats_meta where db_name = "test" and table_name = "t"`).Rows()[0]
+	c.Assert(row[5], Equals, "30")
 }
 
 func (s *testSuite1) TestFailedAnalyzeRequest(c *C) {

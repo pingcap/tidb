@@ -79,7 +79,7 @@ type ShowExec struct {
 func (e *ShowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
-		e.result = e.newFirstChunk()
+		e.result = newFirstChunk(e)
 		err := e.fetchAll()
 		if err != nil {
 			return errors.Trace(err)
@@ -269,7 +269,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 		if !hasProcessPriv && pi.User != loginUser.Username {
 			continue
 		}
-		row := pi.ToRow(e.Full)
+		row := pi.ToRowForShow(e.Full)
 		e.appendRow(row)
 	}
 	return nil
@@ -784,9 +784,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		fmt.Fprintf(&buf, " COMPRESSION='%s'", tb.Meta().Compression)
 	}
 
-	// add partition info here.
-	appendPartitionInfo(tb.Meta().Partition, &buf)
-
 	if hasAutoIncID {
 		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
 		if err != nil {
@@ -809,6 +806,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if len(tb.Meta().Comment) > 0 {
 		fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
 	}
+	// add partition info here.
+	appendPartitionInfo(tb.Meta().Partition, &buf)
+
 	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
 	return nil
 }

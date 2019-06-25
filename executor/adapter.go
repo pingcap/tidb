@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -49,7 +50,7 @@ import (
 
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
-	SetProcessInfo(string, time.Time, byte)
+	SetProcessInfo(string, time.Time, byte, uint64)
 }
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
@@ -100,12 +101,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
 func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("recordSet.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
-	err := a.executor.Next(ctx, req)
+	err := Next(ctx, a.executor, req)
 	if err != nil {
 		a.lastErr = err
 		return err
@@ -125,7 +121,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 // NewRecordBatch create a recordBatch base on top-level executor's newFirstChunk().
 func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
-	return chunk.NewRecordBatch(a.executor.newFirstChunk())
+	return chunk.NewRecordBatch(newFirstChunk(a.executor))
 }
 
 func (a *recordSet) Close() error {
@@ -141,8 +137,8 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan plannercore.Plan
-	// Expensive represents whether this query is an expensive one.
-	Expensive bool
+	// LowerPriority represents whether to lower the execution priority of a query.
+	LowerPriority bool
 	// Cacheable represents whether the physical plan can be cached.
 	Cacheable bool
 	// Text represents the origin query text.
@@ -175,7 +171,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 	if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
 		s, err := getPreparedStmt(execStmt, vars)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("getPreparedStmt failed", zap.Error(err))
+			logutil.BgLogger().Error("getPreparedStmt failed", zap.Error(err))
 			return false
 		}
 		return ast.IsReadOnly(s)
@@ -202,7 +198,7 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
-func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
+func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	a.StartTime = time.Now()
 	sctx := a.Ctx
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
@@ -244,8 +240,9 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 				sql = ss.SecureText()
 			}
 		}
+		maxExecutionTime := getMaxExecutionTime(sctx, a.StmtNode)
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd)
+		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
 	}
 
@@ -284,6 +281,20 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	}, nil
 }
 
+// getMaxExecutionTime get the max execution timeout value.
+func getMaxExecutionTime(sctx sessionctx.Context, stmtNode ast.StmtNode) uint64 {
+	ret := sctx.GetSessionVars().MaxExecutionTime
+	if sel, ok := stmtNode.(*ast.SelectStmt); ok {
+		for _, hint := range sel.TableHints {
+			if hint.HintName.L == variable.MaxExecutionTime {
+				ret = hint.MaxExecutionTime
+				break
+			}
+		}
+	}
+	return ret
+}
+
 type chunkRowRecordSet struct {
 	rows   []chunk.Row
 	idx    int
@@ -306,7 +317,7 @@ func (c *chunkRowRecordSet) Next(ctx context.Context, req *chunk.RecordBatch) er
 }
 
 func (c *chunkRowRecordSet) NewRecordBatch() *chunk.RecordBatch {
-	return chunk.NewRecordBatch(c.e.newFirstChunk())
+	return chunk.NewRecordBatch(newFirstChunk(c.e))
 }
 
 func (c *chunkRowRecordSet) Close() error {
@@ -384,7 +395,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		a.logAudit()
 	}()
 
-	err = e.Next(ctx, chunk.NewRecordBatch(e.newFirstChunk()))
+	err = Next(ctx, e, chunk.NewRecordBatch(newFirstChunk(e)))
 	if err != nil {
 		return nil, err
 	}
@@ -427,40 +438,56 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	if err == nil {
 		return nil, nil
 	}
-	if !terror.ErrorEqual(kv.ErrWriteConflict, err) {
+	txnCtx := a.Ctx.GetSessionVars().TxnCtx
+	var newForUpdateTS uint64
+	if deadlock, ok := errors.Cause(err).(*tikv.ErrDeadlock); ok {
+		if !deadlock.IsRetryable {
+			return nil, ErrDeadlock
+		}
+		logutil.Logger(ctx).Info("single statement deadlock, retry statement",
+			zap.Uint64("txn", txnCtx.StartTS),
+			zap.Uint64("lockTS", deadlock.LockTs),
+			zap.Binary("lockKey", deadlock.LockKey),
+			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
+	} else if terror.ErrorEqual(kv.ErrWriteConflict, err) {
+		conflictCommitTS := extractConflictCommitTS(err.Error())
+		if conflictCommitTS == 0 {
+			logutil.Logger(ctx).Warn("failed to extract conflictCommitTS from a conflict error")
+		}
+		forUpdateTS := txnCtx.GetForUpdateTS()
+		logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
+			zap.Uint64("txn", txnCtx.StartTS),
+			zap.Uint64("forUpdateTS", forUpdateTS),
+			zap.Uint64("conflictCommitTS", conflictCommitTS))
+		if conflictCommitTS > forUpdateTS {
+			newForUpdateTS = conflictCommitTS
+		}
+	} else {
 		return nil, err
 	}
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
-	conflictCommitTS := extractConflictCommitTS(err.Error())
-	if conflictCommitTS == 0 {
-		logutil.Logger(ctx).Warn("failed to extract conflictCommitTS from a conflict error")
-	}
-	sctx := a.Ctx
-	txnCtx := sctx.GetSessionVars().TxnCtx
-	forUpdateTS := txnCtx.GetForUpdateTS()
-	logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
-		zap.Uint64("txn", txnCtx.StartTS),
-		zap.Uint64("forUpdateTS", forUpdateTS),
-		zap.Uint64("conflictCommitTS", conflictCommitTS))
-	if conflictCommitTS > txnCtx.GetForUpdateTS() {
-		txnCtx.SetForUpdateTS(conflictCommitTS)
-	} else {
-		ts, err1 := sctx.GetStore().GetOracle().GetTimestamp(ctx)
-		if err1 != nil {
-			return nil, err1
+	if newForUpdateTS == 0 {
+		newForUpdateTS, err = a.Ctx.GetStore().GetOracle().GetTimestamp(ctx)
+		if err != nil {
+			return nil, err
 		}
-		txnCtx.SetForUpdateTS(ts)
 	}
+	txnCtx.SetForUpdateTS(newForUpdateTS)
+	txn, err := a.Ctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	txn.SetOption(kv.SnapshotTS, newForUpdateTS)
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
 	}
 	// Rollback the statement change before retry it.
-	sctx.StmtRollback()
-	sctx.GetSessionVars().StmtCtx.ResetForRetry()
+	a.Ctx.StmtRollback()
+	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -503,7 +530,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 			return nil, err
 		}
 		if useMaxTS {
-			logutil.Logger(context.Background()).Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
+			logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else if ctx.GetSessionVars().SnapshotTS != 0 {
 			if _, ok := a.Plan.(*plannercore.CheckTable); ok {
@@ -519,7 +546,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 			switch {
 			case useMaxTS:
 				stmtCtx.Priority = kv.PriorityHigh
-			case a.Expensive:
+			case a.LowerPriority:
 				stmtCtx.Priority = kv.PriorityLow
 			}
 		}
@@ -542,6 +569,9 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		}
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
+		if executorExec.lowerPriority {
+			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+		}
 		e = executorExec.stmtExec
 	}
 	a.isSelectForUpdate = b.isSelectForUpdate
@@ -597,7 +627,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
-	statsInfos := a.getStatsInfo()
+	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
@@ -628,28 +658,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			Internal: sessVars.InRestrictedSQL,
 		})
 	}
-}
-
-func (a *ExecStmt) getStatsInfo() map[string]uint64 {
-	var physicalPlan plannercore.PhysicalPlan
-	switch p := a.Plan.(type) {
-	case *plannercore.Insert:
-		physicalPlan = p.SelectPlan
-	case *plannercore.Update:
-		physicalPlan = p.SelectPlan
-	case *plannercore.Delete:
-		physicalPlan = p.SelectPlan
-	case plannercore.PhysicalPlan:
-		physicalPlan = p
-	}
-
-	if physicalPlan == nil {
-		return nil
-	}
-
-	statsInfos := make(map[string]uint64)
-	statsInfos = plannercore.CollectPlanStatsVersion(physicalPlan, statsInfos)
-	return statsInfos
 }
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
