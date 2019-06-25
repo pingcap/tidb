@@ -330,7 +330,6 @@ func (ts ConnTestSuite) TestDispatch(c *C) {
 }
 
 func (ts ConnTestSuite) testGetSessionVarsWaitTimeout(c *C) {
-	c.Parallel()
 	var err error
 	ts.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -370,7 +369,6 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	//There is no underlying netCon, use failpoint to avoid panic
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
 
-	c.Parallel()
 	var err error
 	ts.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
