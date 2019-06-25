@@ -211,6 +211,17 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(*lifeTime, Equals, 20*time.Minute)
 
+	// check the tikv_gc_life_time more than config.max-txn-use-time situation.
+	s.oracle.AddOffset(time.Minute * 40)
+	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute*30)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	lifeTime, err = s.gcWorker.loadDuration(gcLifeTimeKey)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, 30*time.Minute)
+
 	// Change auto concurrency
 	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanFalse)
 	c.Assert(err, IsNil)
