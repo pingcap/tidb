@@ -193,7 +193,7 @@ func hasDateField(columns []*expression.Column) bool {
 // See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L412
 func hasTimeField(columns []*expression.Column) bool {
 	for _, c := range columns {
-		if c.GetType().Tp == mysql.TypeDatetime {
+		if c.GetType().Tp == mysql.TypeDatetime || c.GetType().Tp == mysql.TypeDuration {
 			return true
 		}
 	}
