@@ -161,14 +161,14 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
 
 	// this sql is not allowed in mysql because of the result is const
-	//sql9 := `create TABLE t9 (
-	//col1 int
-	//)
-	//partition by range( case when col1 > 0 then 10 else 20 end ) (
-	//	partition p0 values less than (2),
-	//	partition p1 values less than (6)
-	//);`
-	//assertErrorCode(c, tk, sql9, tmysql.ErrPartitionFunctionIsNotAllowed)
+	sql9 := `create TABLE t9 (
+	col1 int
+	)
+	partition by range( case when col1 > 0 then 10 else 20 end ) (
+		partition p0 values less than (2),
+		partition p1 values less than (6)
+	);`
+	assertErrorCode(c, tk, sql9, tmysql.ErrPartitionFunctionIsNotAllowed)
 
 	assertErrorCode(c, tk, `create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
 
