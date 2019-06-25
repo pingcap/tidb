@@ -1157,6 +1157,10 @@ func (s *testIntegrationSuite2) TestPartitionCancelAddIndex(c *C) {
 	var checkErr error
 	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
+	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s.store, s.ctx, hook)
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
