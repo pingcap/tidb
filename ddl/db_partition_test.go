@@ -1534,6 +1534,10 @@ func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
 	partition by range(TO_DAYS(time_recorded)) (
 	partition p0 values less than (1));`)
 
+	tk.MustExec(`create table t3 ( time_recorded date ) 
+	partition by range(TO_DAYS(time_recorded)) (
+	partition p0 values less than (1));`)
+
 }
 
 func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
