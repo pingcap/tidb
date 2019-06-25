@@ -463,6 +463,8 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		w.done <- errors.Trace(err)
 		return
 	}
+	// Sleep to wait for all other tidb instances update their safepoint cache.
+	time.Sleep(gcSafePointCacheInterval)
 
 	err = w.deleteRanges(ctx, safePoint, concurrency)
 	if err != nil {
@@ -1049,10 +1051,6 @@ func (w *GCWorker) genNextGCTask(bo *tikv.Backoffer, safePoint uint64, key kv.Ke
 
 func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("do_gc").Inc()
-
-	// Sleep to wait for all other tidb instances update their safepoint cache.
-	time.Sleep(gcSafePointCacheInterval)
-
 	logutil.Logger(ctx).Info("[gc worker]",
 		zap.String("uuid", w.uuid),
 		zap.Int("concurrency", concurrency),
@@ -1314,6 +1312,8 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Sleep to wait for all other tidb instances update their safepoint cache.
+	time.Sleep(gcSafePointCacheInterval)
 
 	err = gcWorker.doGC(ctx, safePoint, concurrency)
 	if err != nil {
