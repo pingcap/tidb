@@ -1523,6 +1523,17 @@ func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
 		partition p1 values less than (1559192604)
 		);`
 	assertErrorCode(c, tk, sql7, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql8 := `create table t2332 ( time_recorded time )
+         partition by range(TO_DAYS(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql8, tmysql.ErrWrongExprInPartitionFunc)
+
+	tk.MustExec(`create table t2 ( time_recorded datetime ) 
+	partition by range(TO_DAYS(time_recorded)) (
+	partition p0 values less than (1));`)
+
 }
 
 func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
