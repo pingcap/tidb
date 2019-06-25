@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"context"
 	"strings"
 
 	"github.com/pingcap/parser/ast"
@@ -172,7 +171,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, err error) error {
 	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
-	logutil.Logger(context.Background()).Error("data too long for column", zap.String("colName", colName), zap.Int("rowIndex", rowIdx))
+	logutil.BgLogger().Error("data too long for column", zap.String("colName", colName), zap.Int("rowIndex", rowIdx))
 	return newErr
 }
 

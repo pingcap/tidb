@@ -15,7 +15,6 @@ package core
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 
@@ -444,7 +443,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		indexInfo := path.index
 		err := helper.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("build index join failed", zap.Error(err))
+			logutil.BgLogger().Warn("build index join failed", zap.Error(err))
 		}
 	}
 	if helper.chosenIndexInfo != nil {
@@ -599,7 +598,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	if len(indexConds) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, indexConds)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
 		path.countAfterIndex = rowCount * selectivity

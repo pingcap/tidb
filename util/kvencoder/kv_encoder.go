@@ -257,7 +257,7 @@ func initGlobal() error {
 
 	if storeGlobal != nil {
 		if err1 := storeGlobal.Close(); err1 != nil {
-			logutil.Logger(context.Background()).Error("storeGlobal close error", zap.Error(err1))
+			logutil.BgLogger().Error("storeGlobal close error", zap.Error(err1))
 		}
 	}
 	if domGlobal != nil {

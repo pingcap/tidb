@@ -296,3 +296,16 @@ func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(newpwd, Equals, "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")
 }
+
+func (s *testBootstrapSuite) TestBootstrapInitExpensiveQueryHandle(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	defer store.Close()
+	se, err := createSession(store)
+	c.Assert(err, IsNil)
+	dom := domain.GetDomain(se)
+	c.Assert(dom, NotNil)
+	defer dom.Close()
+	dom.InitExpensiveQueryHandle()
+	c.Assert(dom.ExpensiveQueryHandle(), NotNil)
+}

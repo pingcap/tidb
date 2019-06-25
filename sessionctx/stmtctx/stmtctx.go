@@ -345,14 +345,6 @@ func (sc *StatementContext) SetHistogramsNotLoad() {
 	sc.mu.Unlock()
 }
 
-// HistogramsNotLoad gets histogramsNotLoad.
-func (sc *StatementContext) HistogramsNotLoad() bool {
-	sc.mu.Lock()
-	notLoad := sc.mu.histogramsNotLoad
-	sc.mu.Unlock()
-	return notLoad
-}
-
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	// TODO: At present we have not checked whether the error can be ignored or treated as warning.

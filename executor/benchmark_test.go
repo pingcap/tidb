@@ -129,7 +129,7 @@ func (mds *mockDataSource) Next(ctx context.Context, req *chunk.RecordBatch) err
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	baseExec := newBaseExecutor(opt.ctx, opt.schema, nil)
 	m := &mockDataSource{baseExec, opt, nil, nil, 0}
-	types := m.retTypes()
+	types := retTypes(m)
 	colData := make([][]interface{}, len(types))
 	for i := 0; i < len(types); i++ {
 		colData[i] = m.genColDatums(i)
@@ -137,12 +137,12 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 
 	m.genData = make([]*chunk.Chunk, (m.p.rows+m.initCap-1)/m.initCap)
 	for i := range m.genData {
-		m.genData[i] = chunk.NewChunkWithCapacity(m.retTypes(), m.ctx.GetSessionVars().MaxChunkSize)
+		m.genData[i] = chunk.NewChunkWithCapacity(retTypes(m), m.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	for i := 0; i < m.p.rows; i++ {
 		idx := i / m.maxChunkSize
-		retTypes := m.retTypes()
+		retTypes := retTypes(m)
 		for colIdx := 0; colIdx < len(types); colIdx++ {
 			switch retTypes[colIdx].Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
@@ -229,7 +229,10 @@ func buildAggExecutor(b *testing.B, testCase *aggTestCase, child Executor) Execu
 	childCols := testCase.columns()
 	schema := expression.NewSchema(childCols...)
 	groupBy := []expression.Expression{childCols[1]}
-	aggFunc := aggregation.NewAggFuncDesc(testCase.ctx, testCase.aggFunc, []expression.Expression{childCols[0]}, testCase.hasDistinct)
+	aggFunc, err := aggregation.NewAggFuncDesc(testCase.ctx, testCase.aggFunc, []expression.Expression{childCols[0]}, testCase.hasDistinct)
+	if err != nil {
+		b.Fatal(err)
+	}
 	aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 
 	var aggExec Executor
@@ -260,7 +263,7 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 		b.StopTimer() // prepare a new agg-executor
 		aggExec := buildAggExecutor(b, casTest, dataSource)
 		tmpCtx := context.Background()
-		chk := aggExec.newFirstChunk()
+		chk := newFirstChunk(aggExec)
 		dataSource.prepareChunks()
 
 		b.StartTimer()

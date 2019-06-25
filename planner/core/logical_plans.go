@@ -14,7 +14,6 @@
 package core
 
 import (
-	"context"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -319,7 +318,7 @@ type LogicalUnionScan struct {
 	conditions []expression.Expression
 }
 
-// DataSource represents a tablescan without condition push down.
+// DataSource represents a tableScan without condition push down.
 type DataSource struct {
 	logicalSchemaProducer
 
@@ -538,7 +537,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	if path.indexFilters != nil {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
 		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)

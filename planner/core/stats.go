@@ -14,7 +14,6 @@
 package core
 
 import (
-	"context"
 	"math"
 
 	"github.com/pingcap/tidb/expression"
@@ -106,7 +105,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 	ds.tableStats = tableStats
 	selectivity, nodes, err := tableStats.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
-		logutil.Logger(context.Background()).Debug("an error happened, use the default selectivity", zap.Error(err))
+		logutil.BgLogger().Debug("an error happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
 	ds.stats = tableStats.Scale(selectivity)
@@ -201,7 +200,7 @@ func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo) (*property.
 func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
-		logutil.Logger(context.Background()).Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
+		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
 		return 0
 	}
 	var cardinality = 1.0

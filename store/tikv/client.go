@@ -35,10 +35,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	gcodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
-	gstatus "google.golang.org/grpc/status"
 )
 
 // MaxSendMsgSize set max gRPC request message size sent to server. If any request message size is larger than
@@ -125,10 +123,10 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
-			logutil.Logger(context.Background()).Error("batchRecvLoop",
+			logutil.BgLogger().Error("batchRecvLoop",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
-			logutil.Logger(context.Background()).Info("restart batchRecvLoop")
+			logutil.BgLogger().Info("restart batchRecvLoop")
 			go c.batchRecvLoop(cfg)
 		}
 	}()
@@ -142,7 +140,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				if c.isStopped() {
 					return
 				}
-				logutil.Logger(context.Background()).Error(
+				logutil.BgLogger().Error(
 					"batchRecvLoop error when receive",
 					zap.String("target", c.target),
 					zap.Error(err),
@@ -158,14 +156,14 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				c.clientLock.Unlock()
 
 				if err == nil {
-					logutil.Logger(context.Background()).Info(
+					logutil.BgLogger().Info(
 						"batchRecvLoop re-create streaming success",
 						zap.String("target", c.target),
 					)
 					c.client = streamClient
 					break
 				}
-				logutil.Logger(context.Background()).Error(
+				logutil.BgLogger().Error(
 					"batchRecvLoop re-create streaming fail",
 					zap.String("target", c.target),
 					zap.Error(err),
@@ -434,10 +432,10 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
-			logutil.Logger(context.Background()).Error("batchSendLoop",
+			logutil.BgLogger().Error("batchSendLoop",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
-			logutil.Logger(context.Background()).Info("restart batchSendLoop")
+			logutil.BgLogger().Info("restart batchSendLoop")
 			go a.batchSendLoop(cfg)
 		}
 	}()
@@ -504,7 +502,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		err := batchCommandsClient.client.Send(request)
 		batchCommandsClient.clientLock.Unlock()
 		if err != nil {
-			logutil.Logger(context.Background()).Error(
+			logutil.BgLogger().Error(
 				"batch commands send error",
 				zap.String("target", a.target),
 				zap.Error(err),
@@ -617,8 +615,9 @@ func sendBatchRequest(
 	select {
 	case connArray.batchCommandsCh <- entry:
 	case <-ctx1.Done():
-		logutil.Logger(context.Background()).Warn("send request is timeout", zap.String("to", addr))
-		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
+		logutil.BgLogger().Warn("send request is cancelled",
+			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
+		return nil, errors.Trace(ctx1.Err())
 	}
 
 	select {
@@ -629,8 +628,9 @@ func sendBatchRequest(
 		return tikvrpc.FromBatchCommandsResponse(res), nil
 	case <-ctx1.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
-		logutil.Logger(context.Background()).Warn("send request is canceled", zap.String("to", addr))
-		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
+		logutil.BgLogger().Warn("wait response is cancelled",
+			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
+		return nil, errors.Trace(ctx1.Err())
 	}
 }
 
@@ -697,7 +697,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		if errors.Cause(err) != io.EOF {
 			return nil, errors.Trace(err)
 		}
-		logutil.Logger(context.Background()).Debug("copstream returns nothing for the request.")
+		logutil.BgLogger().Debug("copstream returns nothing for the request.")
 	}
 	copStream.Response = first
 	return resp, nil
@@ -723,7 +723,7 @@ func (c *rpcClient) recycleIdleConnArray() {
 		conn, ok := c.conns[addr]
 		if ok {
 			delete(c.conns, addr)
-			logutil.Logger(context.Background()).Info("recycle idle connection",
+			logutil.BgLogger().Info("recycle idle connection",
 				zap.String("target", addr))
 		}
 		c.Unlock()
