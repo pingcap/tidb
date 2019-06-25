@@ -50,7 +50,7 @@ import (
 
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
-	SetProcessInfo(string, time.Time, byte)
+	SetProcessInfo(string, time.Time, byte, uint64)
 }
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
@@ -240,8 +240,9 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 				sql = ss.SecureText()
 			}
 		}
+		maxExecutionTime := getMaxExecutionTime(sctx, a.StmtNode)
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd)
+		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
 	}
 
@@ -278,6 +279,20 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+// getMaxExecutionTime get the max execution timeout value.
+func getMaxExecutionTime(sctx sessionctx.Context, stmtNode ast.StmtNode) uint64 {
+	ret := sctx.GetSessionVars().MaxExecutionTime
+	if sel, ok := stmtNode.(*ast.SelectStmt); ok {
+		for _, hint := range sel.TableHints {
+			if hint.HintName.L == variable.MaxExecutionTime {
+				ret = hint.MaxExecutionTime
+				break
+			}
+		}
+	}
+	return ret
 }
 
 type chunkRowRecordSet struct {

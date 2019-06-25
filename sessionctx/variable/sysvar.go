@@ -174,6 +174,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_max_undo_log_size", ""},
 	{ScopeGlobal | ScopeSession, "range_alloc_block_size", "4096"},
 	{ScopeGlobal, ConnectTimeout, "10"},
+	{ScopeGlobal | ScopeSession, MaxExecutionTime, "0"},
 	{ScopeGlobal | ScopeSession, CollationServer, mysql.DefaultCollationName},
 	{ScopeNone, "have_rtree_keys", "YES"},
 	{ScopeGlobal, "innodb_old_blocks_pct", "37"},

@@ -51,7 +51,7 @@ type QueryCtx interface {
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
 
-	SetProcessInfo(sql string, t time.Time, command byte)
+	SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64)
 
 	// CommitTxn commits the transaction operations.
 	CommitTxn(ctx context.Context) error
