@@ -1537,13 +1537,59 @@ func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
 		partition by hash(ed) partitions 4;`
 	assertErrorCode(c, tk, sql10, tmysql.ErrBadField)
 
-	tk.MustExec(`create table t2 ( time_recorded datetime ) 
+	sql11 := `create table t2332 ( time_recorded time )
+         partition by range(TO_SECONDS(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql11, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql12 := `create table t2332 ( time_recorded time )
+         partition by range(TO_SECONDS(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql12, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql13 := `create table t2332 ( time_recorded time )
+         partition by range(day(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql13, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql14 := `create table t2332 ( time_recorded timestamp )
+         partition by range(day(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql14, tmysql.ErrWrongExprInPartitionFunc)
+}
+
+func (s *testIntegrationSuite5) TestConstAndTimezoneDepent2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// add partition
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop database if exists test_db_with_partition_const")
+	tk.MustExec("create database test_db_with_partition_const")
+	tk.MustExec("use test_db_with_partition_const")
+
+	tk.MustExec(`create table t1 ( time_recorded datetime ) 
+	partition by range(TO_DAYS(time_recorded)) (
+	partition p0 values less than (1));`)
+
+	tk.MustExec(`create table t2 ( time_recorded date ) 
 	partition by range(TO_DAYS(time_recorded)) (
 	partition p0 values less than (1));`)
 
 	tk.MustExec(`create table t3 ( time_recorded date ) 
-	partition by range(TO_DAYS(time_recorded)) (
+	partition by range(TO_SECONDS(time_recorded)) (
 	partition p0 values less than (1));`)
+
+	tk.MustExec(`create table t4 ( time_recorded date ) 
+	partition by range(TO_SECONDS(time_recorded)) (
+	partition p0 values less than (1));`)
+
+	tk.MustExec(`create table t5 ( time_recorded timestamp )
+	partition by range(unix_timestamp(time_recorded)) (
+		partition p1 values less than (1559192604)
+	);`)
 }
 
 func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
