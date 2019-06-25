@@ -1046,7 +1046,7 @@ var (
 	recordPrefixSep = []byte("_r")
 )
 
-// FindIndexByColName implements table.Table FindIndexByColName interface.
+// FindIndexByColName returns a public table index containing only one column named `name`.
 func FindIndexByColName(t table.Table, name string) table.Index {
 	for _, idx := range t.Indices() {
 		// only public index can be read.
