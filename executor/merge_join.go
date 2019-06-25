@@ -77,8 +77,6 @@ type mergeJoinInnerTable struct {
 	joinKeys []*expression.Column
 	ctx      context.Context
 
-	// The following fields are used for chunk executions
-
 	sameKeyRows    []chunk.Row
 	keyCmpFuncs    []chunk.CompareFunc
 	firstRow4Key   chunk.Row
