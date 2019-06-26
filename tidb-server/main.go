@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/meta/autoid"
 	"os"
 	"runtime"
 	"strconv"
@@ -492,6 +493,7 @@ func setGlobalVars() {
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 	tikv.PessimisticLockTTL = uint64(parseDuration(cfg.PessimisticTxn.TTL).Seconds() * 1000)
+	autoid.SetStep(cfg.Performance.AutoIDStep)
 }
 
 func setupLog() {

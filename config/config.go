@@ -192,6 +192,7 @@ type Performance struct {
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	AutoIDStep          int64   `toml:"auto-id-step" json:"auto-id-step"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -359,6 +360,7 @@ var defaultConf = Config{
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
 		BindInfoLease:       "3s",
+		AutoIDStep:          30000,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
