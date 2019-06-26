@@ -203,7 +203,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 	var results = make([]*accessPath, 0, usedIndexCount)
 	for i := 0; i < usedIndexCount; i++ {
 		path := &accessPath{}
-		var err error = nil
+		var err error
 		if ds.possibleAccessPaths[i].isTablePath {
 			path.isTablePath = true
 			_, err = ds.deriveTablePathStats(path, conditions)
