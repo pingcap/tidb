@@ -73,7 +73,7 @@ func (e *PointGetExecutor) Close() error {
 }
 
 // Next implements the Executor interface.
-func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
@@ -129,7 +129,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 		}
 		return nil
 	}
-	return e.decodeRowValToChunk(val, req.Chunk)
+	return e.decodeRowValToChunk(val, req)
 }
 
 func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {

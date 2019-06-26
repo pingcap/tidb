@@ -52,7 +52,7 @@ type SimpleExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SimpleExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
+func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}

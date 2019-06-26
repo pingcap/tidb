@@ -213,7 +213,7 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			required := int(atomic.LoadInt64(&e.requiredRows))
 			outerResult.SetRequiredRows(required, e.maxChunkSize)
 		}
-		err := Next(ctx, e.outerExec, chunk.NewRecordBatch(outerResult))
+		err := Next(ctx, e.outerExec, outerResult)
 		if err != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{
 				err: err,
@@ -281,7 +281,7 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 				return
 			}
 			chk := chunk.NewChunkWithCapacity(e.children[e.innerIdx].base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
-			err = e.innerExec.Next(ctx, chunk.NewRecordBatch(chk))
+			err = e.innerExec.Next(ctx, chk)
 			if err != nil {
 				e.innerFinished <- errors.Trace(err)
 				return
@@ -509,7 +509,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 // hash join constructs the result following these steps:
 // step 1. fetch data from inner child and build a hash table;
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
-func (e *HashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
+func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -670,7 +670,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
 		if e.outerChunkCursor >= e.outerChunk.NumRows() {
-			err := Next(ctx, e.outerExec, chunk.NewRecordBatch(e.outerChunk))
+			err := Next(ctx, e.outerExec, e.outerChunk)
 			if err != nil {
 				return nil, err
 			}
@@ -707,7 +707,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	e.innerList.Reset()
 	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
 	for {
-		err := Next(ctx, e.innerExec, chunk.NewRecordBatch(e.innerChunk))
+		err := Next(ctx, e.innerExec, e.innerChunk)
 		if err != nil {
 			return err
 		}
@@ -728,7 +728,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 }
 
 // Next implements the Executor interface.
-func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
+func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -737,9 +737,9 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) 
 	for {
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
 			if e.outerRow != nil && !e.hasMatch {
-				e.joiner.onMissMatch(e.hasNull, *e.outerRow, req.Chunk)
+				e.joiner.onMissMatch(e.hasNull, *e.outerRow, req)
 			}
-			e.outerRow, err = e.fetchSelectedOuterRow(ctx, req.Chunk)
+			e.outerRow, err = e.fetchSelectedOuterRow(ctx, req)
 			if e.outerRow == nil || err != nil {
 				return err
 			}
@@ -757,7 +757,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) 
 			e.innerIter.Begin()
 		}
 
-		matched, isNull, err := e.joiner.tryToMatch(*e.outerRow, e.innerIter, req.Chunk)
+		matched, isNull, err := e.joiner.tryToMatch(*e.outerRow, e.innerIter, req)
 		e.hasMatch = e.hasMatch || matched
 		e.hasNull = e.hasNull || isNull
 

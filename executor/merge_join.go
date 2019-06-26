@@ -142,7 +142,7 @@ func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 		if t.curRow == t.curIter.End() {
 			t.reallocReaderResult()
 			oldMemUsage := t.curResult.MemoryUsage()
-			err := Next(t.ctx, t.reader, chunk.NewRecordBatch(t.curResult))
+			err := Next(t.ctx, t.reader, t.curResult)
 			// error happens or no more data.
 			if err != nil || t.curResult.NumRows() == 0 {
 				t.curRow = t.curIter.End()
@@ -267,7 +267,7 @@ func (e *MergeJoinExec) prepare(ctx context.Context, requiredRows int) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -280,7 +280,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 
 	for !req.IsFull() {
-		hasMore, err := e.joinToChunk(ctx, req.Chunk)
+		hasMore, err := e.joinToChunk(ctx, req)
 		if err != nil || !hasMore {
 			return err
 		}
@@ -389,7 +389,7 @@ func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context, requiredRows int
 		e.outerTable.chk.SetRequiredRows(requiredRows, e.maxChunkSize)
 	}
 
-	err = Next(ctx, e.outerTable.reader, chunk.NewRecordBatch(e.outerTable.chk))
+	err = Next(ctx, e.outerTable.reader, e.outerTable.chk)
 	if err != nil {
 		return err
 	}
