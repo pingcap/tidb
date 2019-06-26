@@ -14,7 +14,6 @@
 package core
 
 import (
-	"context"
 	"math"
 
 	"github.com/pingcap/parser/ast"
