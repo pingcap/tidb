@@ -875,8 +875,8 @@ func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *a
 	for i, expr := range ts.filterCondition {
 		ts.filterCondition[i] = expression.ColumnSubstitute(expr, ds.virtualColSchema, ds.virtualColExprs)
 	}
-	cantBePushed := ts.filterCondition // all Cast cannot be pushed down now
-	ts.filterCondition = ts.filterCondition[:0]
+	var cantBePushed []expression.Expression
+	_, ts.filterCondition, cantBePushed = expression.ExpressionsToPB(ds.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ds.ctx.GetClient())
 	ds.addPushedDownTableScan(copTask, ts, stats)
 	if len(cantBePushed) > 0 { // for filters cannot be pushed down, we add a root Selection to handle them
 		sel := PhysicalSelection{Conditions: cantBePushed}.Init(ds.ctx, stats)
