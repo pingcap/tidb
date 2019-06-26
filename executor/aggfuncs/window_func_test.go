@@ -44,7 +44,8 @@ func (s *testSuite) testWindowFunc(c *C, p windowTest) {
 		srcChk.AppendDatum(0, &dt)
 	}
 
-	desc := aggregation.NewAggFuncDesc(s.ctx, p.funcName, p.args, false)
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, p.args, false)
+	c.Assert(err, IsNil)
 	finalFunc := aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, p.orderByCols)
 	finalPr := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)

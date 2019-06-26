@@ -140,7 +140,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 	}
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			logutil.Logger(context.Background()).Debug("snapshot batchGet failed",
+			logutil.BgLogger().Debug("snapshot batchGet failed",
 				zap.Error(e),
 				zap.Uint64("txnStartTS", s.version.Ver))
 			err = e
@@ -295,13 +295,14 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 
 // Iter return a list of key-value pair after `k`.
 func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	scanner, err := newScanner(s, k, upperBound, scanBatchSize)
+	scanner, err := newScanner(s, k, upperBound, scanBatchSize, false)
 	return scanner, errors.Trace(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
-	return nil, kv.ErrNotImplemented
+	scanner, err := newScanner(s, nil, k, scanBatchSize, true)
+	return scanner, errors.Trace(err)
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
@@ -327,7 +328,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
-		logutil.Logger(context.Background()).Warn("error", zap.Error(err))
+		logutil.BgLogger().Warn("error", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
@@ -346,12 +347,12 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 	if err == nil {
 		_, err1 := fmt.Fprintf(buf, "{tableID=%d, indexID=%d, indexValues={", tableID, indexID)
 		if err1 != nil {
-			logutil.Logger(context.Background()).Error("error", zap.Error(err1))
+			logutil.BgLogger().Error("error", zap.Error(err1))
 		}
 		for _, v := range indexValues {
 			_, err2 := fmt.Fprintf(buf, "%s, ", v)
 			if err2 != nil {
-				logutil.Logger(context.Background()).Error("error", zap.Error(err2))
+				logutil.BgLogger().Error("error", zap.Error(err2))
 			}
 		}
 		buf.WriteString("}}")
@@ -362,13 +363,13 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 	if err == nil {
 		_, err3 := fmt.Fprintf(buf, "{tableID=%d, handle=%d}", tableID, handle)
 		if err3 != nil {
-			logutil.Logger(context.Background()).Error("error", zap.Error(err3))
+			logutil.BgLogger().Error("error", zap.Error(err3))
 		}
 		return
 	}
 
 	_, err4 := fmt.Fprintf(buf, "%#v", key)
 	if err4 != nil {
-		logutil.Logger(context.Background()).Error("error", zap.Error(err4))
+		logutil.BgLogger().Error("error", zap.Error(err4))
 	}
 }

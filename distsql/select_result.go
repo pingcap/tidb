@@ -123,14 +123,14 @@ func (r *selectResult) fetch(ctx context.Context) {
 }
 
 // NextRaw returns the next raw partial result.
-func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
+func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 	re := <-r.results
 	r.partialCount++
 	r.feedback.Invalidate()
-	if re.result == nil || re.err != nil {
-		return nil, errors.Trace(re.err)
+	if re.result != nil && re.err == nil {
+		data = re.result.GetData()
 	}
-	return re.result.GetData(), nil
+	return data, re.err
 }
 
 // Next reads data to the chunk.
@@ -202,7 +202,7 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		logutil.Logger(context.Background()).Error("invalid cop task execution summaries length",
+		logutil.BgLogger().Error("invalid cop task execution summaries length",
 			zap.Int("expected", len(r.copPlanIDs)),
 			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
 

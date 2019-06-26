@@ -36,25 +36,25 @@ type testExecSuite struct {
 
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager struct {
-	PS []util.ProcessInfo
+	PS []*util.ProcessInfo
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
-	ret := make(map[uint64]util.ProcessInfo)
+func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	ret := make(map[uint64]*util.ProcessInfo)
 	for _, item := range msm.PS {
 		ret[item.ID] = item
 	}
 	return ret
 }
 
-func (msm *mockSessionManager) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
+func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	for _, item := range msm.PS {
 		if item.ID == id {
 			return item, true
 		}
 	}
-	return util.ProcessInfo{}, false
+	return &util.ProcessInfo{}, false
 }
 
 // Kill implements the SessionManager.Kill interface.
@@ -70,8 +70,8 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	schema := buildSchema(names, ftypes)
 
 	// Compose a mocked session manager.
-	ps := make([]util.ProcessInfo, 0, 1)
-	pi := util.ProcessInfo{
+	ps := make([]*util.ProcessInfo, 0, 1)
+	pi := &util.ProcessInfo{
 		ID:      0,
 		User:    "test",
 		Host:    "127.0.0.1",
@@ -98,17 +98,17 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	err := e.Open(ctx)
 	c.Assert(err, IsNil)
 
-	chk := e.newFirstChunk()
+	chk := newFirstChunk(e)
 	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
-		err = e.Next(context.Background(), chunk.NewRecordBatch(chk))
+		err = e.Next(context.Background(), chk)
 		c.Assert(err, IsNil)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			c.Assert(row.GetUint64(0), Equals, p.ID)
 		}
 	}
-	err = e.Next(context.Background(), chunk.NewRecordBatch(chk))
+	err = e.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 0)
 	err = e.Close()

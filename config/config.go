@@ -15,7 +15,6 @@ package config
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -35,7 +34,9 @@ import (
 
 // Config number limitations
 const (
-	MaxLogFileSize = 4096 // MB
+	MaxLogFileSize    = 4096 // MB
+	MinPessimisticTTL = time.Second * 15
+	MaxPessimisticTTL = time.Second * 60
 )
 
 // Valid config maps
@@ -82,11 +83,14 @@ type Config struct {
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
-	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic_txn"`
+	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	// EnableTableLock indicate whether enable table lock.
+	// TODO: remove this after table lock features stable.
+	EnableTableLock bool `toml:"enable-table-lock" json:"enable-table-lock"`
 }
 
 // Log is the log section of config.
@@ -187,6 +191,7 @@ type Performance struct {
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
+	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -320,6 +325,7 @@ var defaultConf = Config{
 	EnableStreaming:              false,
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,
+	EnableTableLock:              false,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 2048000,
@@ -352,6 +358,7 @@ var defaultConf = Config{
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
+		BindInfoLease:       "3s",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -463,7 +470,7 @@ func ReloadGlobalConfig() error {
 
 	confReloader(nc, c)
 	globalConf.Store(nc)
-	logutil.Logger(context.Background()).Info("reload config changes" + formattedDiff.String())
+	logutil.BgLogger().Info("reload config changes" + formattedDiff.String())
 	return nil
 }
 
@@ -537,6 +544,9 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
 	}
 	c.OOMAction = strings.ToLower(c.OOMAction)
+	if c.OOMAction != OOMActionLog && c.OOMAction != OOMActionCancel {
+		return fmt.Errorf("unsupported OOMAction %v, TiDB only supports [%v, %v]", c.OOMAction, OOMActionLog, OOMActionCancel)
+	}
 
 	// lower_case_table_names is allowed to be 0, 1, 2
 	if c.LowerCaseTableNames < 0 || c.LowerCaseTableNames > 2 {
@@ -559,10 +569,9 @@ func (c *Config) Valid() error {
 		if err != nil {
 			return err
 		}
-		minDur := time.Second * 15
-		maxDur := time.Second * 60
-		if dur < minDur || dur > maxDur {
-			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]", dur, minDur, maxDur)
+		if dur < MinPessimisticTTL || dur > MaxPessimisticTTL {
+			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]",
+				dur, MinPessimisticTTL, MaxPessimisticTTL)
 		}
 	}
 	return nil
@@ -570,6 +579,11 @@ func (c *Config) Valid() error {
 
 func hasRootPrivilege() bool {
 	return os.Geteuid() == 0
+}
+
+// TableLockEnabled uses to check whether enabled the table lock feature.
+var TableLockEnabled = func() bool {
+	return GetGlobalConfig().EnableTableLock
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

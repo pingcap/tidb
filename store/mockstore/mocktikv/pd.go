@@ -88,6 +88,11 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.
 	return region, peer, nil
 }
 
+func (c *pdClient) ScanRegions(ctx context.Context, key []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+	regions, peers := c.cluster.ScanRegions(key, limit)
+	return regions, peers, nil
+}
+
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	select {
 	case <-ctx.Done():
@@ -103,7 +108,7 @@ func (c *pdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) 
 }
 
 func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
-	panic("unimplemented")
+	return 0, nil
 }
 
 func (c *pdClient) Close() {

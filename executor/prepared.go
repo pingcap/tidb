@@ -100,7 +100,7 @@ func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt str
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
@@ -201,17 +201,18 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 type ExecuteExec struct {
 	baseExecutor
 
-	is        infoschema.InfoSchema
-	name      string
-	usingVars []expression.Expression
-	id        uint32
-	stmtExec  Executor
-	stmt      ast.StmtNode
-	plan      plannercore.Plan
+	is            infoschema.InfoSchema
+	name          string
+	usingVars     []expression.Expression
+	id            uint32
+	stmtExec      Executor
+	stmt          ast.StmtNode
+	plan          plannercore.Plan
+	lowerPriority bool
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *ExecuteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
@@ -235,7 +236,7 @@ func (e *ExecuteExec) Build(b *executorBuilder) error {
 	}
 	e.stmtExec = stmtExec
 	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
-	logExpensiveQuery(e.stmt, e.plan)
+	e.lowerPriority = needLowerPriority(e.plan)
 	return nil
 }
 
@@ -247,7 +248,7 @@ type DeallocateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
