@@ -183,11 +183,6 @@ type Executor interface {
 // Next is a wrapper function on e.Next(), it handles some common codes.
 func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	sessVars := e.base().ctx.GetSessionVars()
-	base := e.base()
-	if base.runtimeStats != nil {
-		start := time.Now()
-		defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
 		return ErrQueryInterrupted
 	}
