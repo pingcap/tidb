@@ -2472,7 +2472,6 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	s.mustExec(c, "create table t1 (c1 int, c2 int);")
 
 	tbl := s.testGetTable(c, "t1")
-
 	getModifyColumn := func() *table.Column {
 		t := s.testGetTable(c, "t1")
 		for _, col := range t.Cols() {
@@ -2483,134 +2482,58 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 		return nil
 	}
 
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	// Check insert null before job first update.
+	times := 0
 	hook := &ddl.TestDDLCallback{}
-
-	// Check for prevent not null flag status.
-	runBeforeJobTime := 0
-	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if tbl.Meta().ID != job.TableID {
-			return
-		}
-		if checkErr != nil {
-			return
-		}
-		runBeforeJobTime++
-		c2 := getModifyColumn()
-		if runBeforeJobTime == 1 {
-			if mysql.HasPreventNullInsertFlag(c2.Flag) == true {
-				checkErr = errors.New("c2.flag should not have prevent not null flag in first time job run before")
-			}
-		}
-		if runBeforeJobTime == 2 {
-			if mysql.HasPreventNullInsertFlag(c2.Flag) == false {
-				checkErr = errors.New("c2.flag should have prevent not null flag in second time job run before")
-			}
-		}
-	}
-
-	updatedJobTime := 0
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if checkErr != nil {
+		if job.State != model.JobStateRunning {
 			return
 		}
-		updatedJobTime++
-		c2 := getModifyColumn()
-		if updatedJobTime == 1 {
-			if mysql.HasPreventNullInsertFlag(c2.Flag) == true {
-				checkErr = errors.New("c2.flag should not have prevent not null flag in first time update job")
-			}
+		if times == 0 {
+			tk2.MustExec("insert into t1 values (null,null);")
 		}
-		if updatedJobTime == 2 {
-			if mysql.HasPreventNullInsertFlag(c2.Flag) == false {
-				checkErr = errors.New("c2.flag should have prevent not null flag in second time update job")
-			}
-		}
-	}
-
-	originalHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	s.mustExec(c, "alter table t1 change c2 c2 bigint not null;")
-	c.Assert(checkErr, IsNil)
-	c.Assert(runBeforeJobTime, Equals, 2)
-	// none, prevent null, done, sync.
-	c.Assert(updatedJobTime, Equals, 4)
-
-	// Check insert null before job first time run.
-	s.mustExec(c, "alter table t1 change c2 c2 bigint;")
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if tbl.Meta().ID != job.TableID {
-			return
-		}
-		if checkErr != nil {
-			return
-		}
-		tk2.MustExec("insert into t1 values ();")
+		times++
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	_, err := s.tk.Exec("alter table t1 change c2 c2 bigint not null;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows(""))
 
-	// Check insert null before job first update.
-	s.mustExec(c, "alter table t1 change c2 c2 bigint;")
-	s.mustExec(c, "delete from t1")
-	hook.OnJobUpdatedExported = func(job *model.Job) {
-		if tbl.Meta().ID != job.TableID {
-			return
-		}
-		tk2.MustExec("insert into t1 values ();")
-	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	_, err = s.tk.Exec("alter table t1 change c2 c2 bigint not null;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
-
-	// Test insert null error by prevent null flag.
-	s.mustExec(c, "alter table t1 change c2 c2 bigint;")
-	s.mustExec(c, "delete from t1")
-	runBeforeJobTime = 0
 	var insertErr error
-	hook.OnJobUpdatedExported = nil
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if checkErr != nil {
+		if job.State != model.JobStateRunning {
 			return
 		}
-		runBeforeJobTime++
 		c2 := getModifyColumn()
-		if runBeforeJobTime == 1 {
-			if mysql.HasPreventNullInsertFlag(c2.Flag) == true {
-				checkErr = errors.New("c2.flag should not have prevent not null flag in first time job run before")
-			}
-		}
-		if runBeforeJobTime == 2 {
-			if mysql.HasPreventNullInsertFlag(c2.Flag) == false {
-				checkErr = errors.New("c2.flag should have prevent not null flag in second time job run before")
-			}
-			_, insertErr = tk2.Exec("insert into t1 values ();")
+		if mysql.HasPreventNullInsertFlag(c2.Flag) {
+			_, insertErr = s.tk.Exec("insert into t1 values ();")
 		}
 	}
+
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	_, err = s.tk.Exec("alter table t1 change c2 c2 bigint not null;")
+	done := make(chan error, 1)
+	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
+	err = <-done
 	c.Assert(err, IsNil)
-	c.Assert(checkErr, IsNil)
-	c.Assert(runBeforeJobTime, Equals, 2)
-	c.Assert(insertErr, NotNil)
-	c.Assert(insertErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
 
 	c2 := getModifyColumn()
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
 	c.Assert(mysql.HasPreventNullInsertFlag(c2.Flag), IsFalse)
+	c.Assert(insertErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
 	_, insertErr = s.tk.Exec("insert into t1 values ();")
 	c.Assert(insertErr.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.mustExec(c, "drop table t1")
 }
 
 func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
