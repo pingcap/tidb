@@ -42,7 +42,7 @@ type DeleteExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeleteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.IsMultiTable {
 		return e.deleteMultiTablesByChunk(ctx)
@@ -99,7 +99,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return err
 		}
@@ -181,7 +181,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	chk := newFirstChunk(e.children[0])
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
-		err := Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return err
 		}
