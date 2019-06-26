@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
@@ -149,7 +148,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		}
 	}
 	// consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
-	if len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 2 && ds.ctx.GetSessionVars().EnableIndexMerge {
+	if len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1 && ds.ctx.GetSessionVars().EnableIndexMerge {
 		needConsiderIndexMerge := true
 		for i := 1; i < len(ds.possibleAccessPaths); i++ {
 			if len(ds.possibleAccessPaths[i].accessConds) != 0 {
@@ -166,9 +165,9 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
 func (ds *DataSource) generateIndexMergeOrPaths() {
-	usedIndexCount := len(ds.possibleAccessPaths) - 1
+	usedIndexCount := len(ds.possibleAccessPaths)
 	for i, cond := range ds.pushedDownConds {
-		var idxMergePartialIdxPaths = make([]*accessPath, 0, usedIndexCount)
+		var partialPaths = make([]*accessPath, 0, usedIndexCount)
 
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
@@ -180,18 +179,18 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 			cnfItems := expression.SplitCNFItems(item)
 			itemPaths = ds.accessPathsForConds(cnfItems, usedIndexCount)
 			if len(itemPaths) == 0 {
-				idxMergePartialIdxPaths = nil
+				partialPaths = nil
 				break
 			}
 			partialPath := ds.buildIndexMergePartialPath(itemPaths)
 			if partialPath == nil {
-				idxMergePartialIdxPaths = nil
+				partialPaths = nil
 				break
 			}
-			idxMergePartialIdxPaths = append(idxMergePartialIdxPaths, partialPath)
+			partialPaths = append(partialPaths, partialPath)
 		}
-		if len(idxMergePartialIdxPaths) > 1 {
-			possiblePath := ds.buildIndexMergeOrPath(idxMergePartialIdxPaths, i)
+		if len(partialPaths) > 1 {
+			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
 			if possiblePath != nil {
 				ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
 			}
@@ -202,57 +201,29 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 // accessPathsForConds generates all possible index paths for conditions.
 func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, usedIndexCount int) []*accessPath {
 	var results = make([]*accessPath, 0, usedIndexCount)
-	for i := 1; i <= usedIndexCount; i++ {
-		path := &accessPath{index: ds.possibleAccessPaths[i].index}
-		_, err := ds.deriveIndexPathStats(path, conditions)
-		if err != nil {
-			return nil
+	for i := 0; i < usedIndexCount; i++ {
+		path := &accessPath{}
+		var err error = nil
+		if ds.possibleAccessPaths[i].isTablePath {
+			path.isTablePath = true
+			_, err = ds.deriveTablePathStats(path, conditions)
+		} else {
+			// if accessConds is empty or tableFilter is not empty, we ignore the access path.
+			// now these conditions are too strict.
+			// for example, a sql `select * from t where a > 1 or (b < 2 and c >3)` and table `t` with indexes on a and b separately.
+			// we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c >3)`.
+			// TODO: solve the above case
+			path.index = ds.possibleAccessPaths[i].index
+			_, err = ds.deriveIndexPathStats(path, conditions)
 		}
-		// if accessConds is empty or tableFilter is not empty, we ignore the access path.
-		// now these conditions are too strict.
-		// for example, a sql `select * from t where a > 1 or (b < 2 and c >3)` and table `t` with indexes on a and b separately.
-		// we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c >3)`.
-		// TODO: solve the above case
+		if err != nil {
+			return results
+		}
 		if len(path.tableFilters) > 0 || len(path.accessConds) == 0 {
 			continue
 		}
 		results = append(results, path)
-	}
-	// if there is no index satisfy condition;
-	// make sure one of args are column and check it is primary key
-	// remember check the type
-	if len(results) == 0 && len(conditions) == 1 {
-		sf, ok := conditions[0].(*expression.ScalarFunction)
-		if ok {
-			if c, ok := sf.GetArgs()[0].(*expression.Column); ok && ds.getPKIsHandleCol().ID == c.ID {
-				typeOk := c.RetType.Tp == mysql.TypeLong || c.RetType.Tp == mysql.TypeLonglong || c.RetType.Tp == mysql.TypeTiny || c.RetType.Tp == mysql.TypeShort || c.RetType.Tp == mysql.TypeInt24
-				if _, ok := sf.GetArgs()[1].(*expression.Constant); ok && typeOk {
-					// add tableAccessPath, this access path just return pk
-					// index merge we just get pk from access path
-					path := &accessPath{isTablePath: true}
-					_, err := ds.deriveTablePathStats(path, conditions)
-					if err != nil {
-						return results
-					}
-					if len(path.accessConds) > 0 {
-						results = append(results, path)
-					}
-				}
-			}
-			if c, ok := sf.GetArgs()[1].(*expression.Column); ok && ds.getPKIsHandleCol().ID == c.ID {
-				typeOk := c.RetType.Tp == mysql.TypeLong || c.RetType.Tp == mysql.TypeLonglong || c.RetType.Tp == mysql.TypeTiny || c.RetType.Tp == mysql.TypeShort || c.RetType.Tp == mysql.TypeInt24
-				if _, ok := sf.GetArgs()[0].(*expression.Constant); ok && typeOk {
-					path := &accessPath{isTablePath: true}
-					_, err := ds.deriveTablePathStats(path, conditions)
-					if err != nil {
-						return results
-					}
-					if len(path.accessConds) > 0 {
-						results = append(results, path)
-					}
-				}
-			}
-		}
+
 	}
 	return results
 }
