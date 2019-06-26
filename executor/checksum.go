@@ -83,7 +83,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ChecksumTableExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *ChecksumTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil

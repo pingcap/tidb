@@ -83,7 +83,7 @@ func (r *recordSet) getNext() []types.Datum {
 	return row
 }
 
-func (r *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (r *recordSet) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	row := r.getNext()
 	if row != nil {
@@ -94,12 +94,12 @@ func (r *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	return nil
 }
 
-func (r *recordSet) NewRecordBatch() *chunk.RecordBatch {
+func (r *recordSet) NewChunk() *chunk.Chunk {
 	fields := make([]*types.FieldType, 0, len(r.fields))
 	for _, field := range r.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewRecordBatch(chunk.NewChunkWithCapacity(fields, 32))
+	return chunk.NewChunkWithCapacity(fields, 32)
 }
 
 func (r *recordSet) Close() error {
@@ -177,7 +177,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	ctx := context.Background()
 	for {
-		req := records.NewRecordBatch()
+		req := records.NewChunk()
 		err := records.Next(ctx, req)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -185,7 +185,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 		if req.NumRows() == 0 {
 			break
 		}
-		it := chunk.NewIterator4Chunk(req.Chunk)
+		it := chunk.NewIterator4Chunk(req)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, records.Fields())
 			err = b.Iterate(datums[0])
@@ -201,8 +201,8 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.R
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
-	req := records.NewRecordBatch()
-	it := chunk.NewIterator4Chunk(req.Chunk)
+	req := records.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
 	for {
 		err := records.Next(ctx, req)
 		if err != nil {

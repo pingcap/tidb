@@ -29,7 +29,7 @@ type ReloadExprPushdownBlacklistExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.RecordBatch) error {
+func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	return LoadExprPushdownBlacklist(e.ctx)
 }
 
