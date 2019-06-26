@@ -566,6 +566,9 @@ func (c *Config) Valid() error {
 	if c.TiKVClient.MaxTxnTimeUse == 0 {
 		return fmt.Errorf("max-txn-time-use should be greater than 0")
 	}
+	if c.Performance.AutoIDStep <= 0 {
+		return fmt.Errorf("auto-id-step should be greater than 0")
+	}
 	if c.PessimisticTxn.TTL != "" {
 		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)
 		if err != nil {

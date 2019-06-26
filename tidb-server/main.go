@@ -494,9 +494,7 @@ func setGlobalVars() {
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 	tikv.PessimisticLockTTL = uint64(parseDuration(cfg.PessimisticTxn.TTL).Seconds() * 1000)
 
-	if cfg.Performance.AutoIDStep > 0 {
-		autoid.SetStep(cfg.Performance.AutoIDStep)
-	}
+	autoid.SetStep(cfg.Performance.AutoIDStep)
 }
 
 func setupLog() {
