@@ -342,14 +342,12 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	colSize := make(map[int64]int64)
 	encodedCol := make([]byte, 0, 16)
 	for id, col := range t.Cols() {
-		encodedCol = encodedCol[:0]
-		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol, newData[id])
+		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], newData[id])
 		if err != nil {
 			continue
 		}
 		newLen := len(encodedCol) - 1
-		encodedCol = encodedCol[:0]
-		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol, oldData[id])
+		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], oldData[id])
 		if err != nil {
 			continue
 		}
@@ -549,8 +547,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	colSize := make(map[int64]int64)
 	encodedCol := make([]byte, 0, 16)
 	for id, col := range t.Cols() {
-		encodedCol = encodedCol[:0]
-		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol, r[id])
+		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], r[id])
 		if err != nil {
 			continue
 		}
@@ -733,8 +730,7 @@ func (t *tableCommon) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Da
 	encodedCol := make([]byte, 0, 16)
 	sc := ctx.GetSessionVars().StmtCtx
 	for id, col := range t.Cols() {
-		encodedCol = encodedCol[:0]
-		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol, r[id])
+		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], r[id])
 		if err != nil {
 			continue
 		}
