@@ -2432,3 +2432,29 @@ func (s *testSessionSuite) TestTxnGoString(c *C) {
 	tk.MustExec("rollback")
 	c.Assert(fmt.Sprintf("%#v", txn), Equals, "Txn{state=invalid}")
 }
+
+func (s *testSessionSuite) TestMaxExeucteTime(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table MaxExecTime( id int,name varchar(128),age int);")
+	tk.MustExec("begin")
+	tk.MustExec("insert into MaxExecTime (id,name,age) values (1,'john',18),(2,'lary',19),(3,'lily',18);")
+
+	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(1000) */ * FROM MaxExecTime;")
+
+	tk.MustExec("set @@global.MAX_EXECUTION_TIME = 300;")
+	tk.MustQuery("select * FROM MaxExecTime;")
+
+	tk.MustExec("set @@MAX_EXECUTION_TIME = 150;")
+	tk.MustQuery("select * FROM MaxExecTime;")
+
+	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("300"))
+	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("150"))
+
+	tk.MustExec("set @@global.MAX_EXECUTION_TIME = 0;")
+	tk.MustExec("set @@MAX_EXECUTION_TIME = 0;")
+	tk.MustExec("commit")
+	tk.MustExec("drop table if exists MaxExecTime;")
+}

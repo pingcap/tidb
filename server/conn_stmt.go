@@ -223,7 +223,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	if prepared, ok := cc.ctx.GetStatement(int(stmtID)).(*TiDBStatement); ok {
 		sql = prepared.sql
 	}
-	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute)
+	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute, 0)
 	rs := stmt.GetResultSet()
 	if rs == nil {
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,

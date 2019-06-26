@@ -333,6 +333,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBDDLReorgBatchSize:
 		return checkUInt64SystemVar(name, value, uint64(MinDDLReorgBatchSize), uint64(MaxDDLReorgBatchSize), vars)
+	case MaxExecutionTime:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
 		TiDBIndexLookupSize,
 		TiDBHashJoinConcurrency,
