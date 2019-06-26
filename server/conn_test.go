@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 type ConnTestSuite struct {
@@ -39,7 +40,22 @@ type ConnTestSuite struct {
 
 var _ = Suite(ConnTestSuite{})
 
-func (ts ConnTestSuite) TestMalformHandshakeHeader(c *C) {
+func (ts *ConnTestSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	ts.dom, err = session.BootstrapSession(ts.store)
+	c.Assert(err, IsNil)
+}
+
+func (ts *ConnTestSuite) TearDownSuite(c *C) {
+	ts.dom.Close()
+	ts.store.Close()
+	testleak.AfterTest(c)()
+}
+
+func (ts *ConnTestSuite) TestMalformHandshakeHeader(c *C) {
 	c.Parallel()
 	data := []byte{0x00}
 	var p handshakeResponse41
@@ -47,7 +63,7 @@ func (ts ConnTestSuite) TestMalformHandshakeHeader(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (ts ConnTestSuite) TestParseHandshakeResponse(c *C) {
+func (ts *ConnTestSuite) TestParseHandshakeResponse(c *C) {
 	c.Parallel()
 	// test data from http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse41
 	data := []byte{
@@ -115,7 +131,7 @@ func (ts ConnTestSuite) TestParseHandshakeResponse(c *C) {
 	c.Assert(p.User, Equals, "root")
 }
 
-func (ts ConnTestSuite) TestIssue1768(c *C) {
+func (ts *ConnTestSuite) TestIssue1768(c *C) {
 	c.Parallel()
 	// this data is from captured handshake packet, using mysql client.
 	// TiDB should handle authorization correctly, even mysql client set
@@ -142,7 +158,7 @@ func (ts ConnTestSuite) TestIssue1768(c *C) {
 	c.Assert(len(p.Auth) > 0, IsTrue)
 }
 
-func (ts ConnTestSuite) TestInitialHandshake(c *C) {
+func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Parallel()
 	var outBuffer bytes.Buffer
 	cc := &clientConn{
@@ -176,7 +192,7 @@ func (ts ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
 }
 
-func (ts ConnTestSuite) TestDispatch(c *C) {
+func (ts *ConnTestSuite) TestDispatch(c *C) {
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)
 	userData = append(userData, 0x0)
@@ -279,11 +295,7 @@ func (ts ConnTestSuite) TestDispatch(c *C) {
 		},
 	}
 
-	store, err := mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	_, err = session.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	se, err := session.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 	tc := &TiDBContext{
 		session: se,
@@ -295,7 +307,7 @@ func (ts ConnTestSuite) TestDispatch(c *C) {
 	c.Assert(err, IsNil)
 
 	var outBuffer bytes.Buffer
-	tidbdrv := NewTiDBDriver(store)
+	tidbdrv := NewTiDBDriver(ts.store)
 	cfg := config.NewConfig()
 	cfg.Port = 4005
 	cfg.Status.ReportStatus = false
@@ -329,13 +341,8 @@ func (ts ConnTestSuite) TestDispatch(c *C) {
 	}
 }
 
-func (ts ConnTestSuite) testGetSessionVarsWaitTimeout(c *C) {
+func (ts *ConnTestSuite) testGetSessionVarsWaitTimeout(c *C) {
 	c.Parallel()
-	var err error
-	ts.store, err = mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	ts.dom, err = session.BootstrapSession(ts.store)
-	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 	tc := &TiDBContext{
@@ -366,16 +373,11 @@ func mapBelong(m1, m2 map[string]string) bool {
 	return true
 }
 
-func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
+func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	//There is no underlying netCon, use failpoint to avoid panic
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
 
 	c.Parallel()
-	var err error
-	ts.store, err = mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	ts.dom, err = session.BootstrapSession(ts.store)
-	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
@@ -400,7 +402,6 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	}
 	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
 	go handle.Run()
-	defer handle.Close()
 
 	_, err = se.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
