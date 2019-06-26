@@ -111,7 +111,6 @@ func (s *testSuite) TestSelectNormal(c *C) {
 }
 
 func (s *testSuite) TestSelectMemTracker(c *C) {
-
 	response, colTypes := s.createSelectNormal(2, 6, c, nil)
 	response.Fetch(context.TODO())
 

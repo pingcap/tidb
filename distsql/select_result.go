@@ -66,8 +66,9 @@ type selectResult struct {
 	fieldTypes []*types.FieldType
 	ctx        sessionctx.Context
 
-	selectResp *tipb.SelectResponse
-	respChkIdx int
+	selectResp     *tipb.SelectResponse
+	selectRespSize int // record the selectResp.Size() when it is initialized.
+	respChkIdx     int
 
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
@@ -103,6 +104,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 		if err != nil {
 			result.err = err
 		} else if resultSubset == nil {
+			// If the result is drained, the resultSubset would be nil
 			return
 		} else {
 			result.result = resultSubset
@@ -166,7 +168,7 @@ func (r *selectResult) getSelectResp() error {
 			return errors.Trace(re.err)
 		}
 		if r.selectResp != nil {
-			r.memConsume(-int64(r.selectResp.Size()))
+			r.memConsume(-int64(r.selectRespSize))
 		}
 		if re.result == nil {
 			r.selectResp = nil
@@ -178,9 +180,8 @@ func (r *selectResult) getSelectResp() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if r.selectResp != nil {
-			r.memConsume(int64(r.selectResp.Size()))
-		}
+		r.selectRespSize = r.selectResp.Size()
+		r.memConsume(int64(r.selectRespSize))
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
 		}
@@ -223,7 +224,6 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
-	originMemory := r.selectResp.Size()
 	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
 	for !chk.IsFull() && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
@@ -234,7 +234,6 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 		}
 	}
 	r.selectResp.Chunks[r.respChkIdx].RowsData = rowsData
-	r.memConsume(-int64(originMemory - r.selectResp.Size()))
 	return nil
 }
 
@@ -250,7 +249,7 @@ func (r *selectResult) Close() error {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
-	// Close this channel tell fetch goroutine to exit.
+	// Close this channel to tell the fetch goroutine to exit.
 	close(r.closed)
 	for re := range r.results {
 		if re.result != nil {
@@ -258,7 +257,7 @@ func (r *selectResult) Close() error {
 		}
 	}
 	if r.selectResp != nil {
-		r.memConsume(-int64(r.selectResp.Size()))
+		r.memConsume(-int64(r.selectRespSize))
 	}
 	return r.resp.Close()
 }
