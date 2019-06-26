@@ -2502,9 +2502,9 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 		times++
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	_, err := s.tk.Exec("alter table t1 change c2 c2 bigint not null;")
+	_, err := s.tk.Exec("alter table t1 change c2 c2 int not null;")
 	c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
+	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
 	// Check insert error when column has prevent null flag.
