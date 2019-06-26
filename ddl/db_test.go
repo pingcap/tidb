@@ -2488,6 +2488,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	// Check insert null before job first update.
 	times := 0
 	hook := &ddl.TestDDLCallback{}
+	s.tk.MustExec("delete from t1")
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
@@ -2496,17 +2497,20 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 			return
 		}
 		if times == 0 {
-			tk2.MustExec("insert into t1 values (null,null);")
+			tk2.MustExec("insert into t1 values ();")
 		}
 		times++
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	_, err := s.tk.Exec("alter table t1 change c2 c2 bigint not null;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
-	s.tk.MustQuery("select * from t1").Check(testkit.Rows(""))
+	//c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
+	// Check insert error when column has prevent null flag.
 	var insertErr error
+	s.tk.MustExec("delete from t1")
+	hook.OnJobUpdatedExported = nil
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
@@ -2516,7 +2520,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 		}
 		c2 := getModifyColumn()
 		if mysql.HasPreventNullInsertFlag(c2.Flag) {
-			_, insertErr = s.tk.Exec("insert into t1 values ();")
+			_, insertErr = s.tk.Exec("insert into t1 values (null,null);")
 		}
 	}
 
@@ -2532,8 +2536,6 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	c.Assert(insertErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
 	_, insertErr = s.tk.Exec("insert into t1 values ();")
 	c.Assert(insertErr.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	s.mustExec(c, "drop table t1")
 }
 
 func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
