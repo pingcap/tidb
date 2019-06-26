@@ -574,7 +574,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (ds *DataSource) addPushedDownIndexScan(copTask *copTask, path *accessPath, finalStats *property.StatsInfo) {
+func (ds *DataSource) addPushedDownIndexScan(copTask *copTask, path *accessPath) {
 	// Add filter condition to table plan now.
 	is := copTask.indexPlan.(*PhysicalIndexScan)
 	indexConds, tableConds := path.indexFilters, path.tableFilters
@@ -857,7 +857,7 @@ func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *a
 	// step 1
 	t = copTask
 	if copTask.indexPlan != nil {
-		ds.addPushedDownIndexScan(copTask, path, stats)
+		ds.addPushedDownIndexScan(copTask, path)
 	}
 	if copTask.tablePlan == nil { // don't need to handle virtual columns in IndexScan
 		return
