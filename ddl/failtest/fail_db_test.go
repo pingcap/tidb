@@ -110,7 +110,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Make sure that the table's data has not been deleted.
 	rs, err := s.se.Execute(context.Background(), "select count(*) from t")
 	c.Assert(err, IsNil)
-	req := rs[0].NewRecordBatch()
+	req := rs[0].NewChunk()
 	err = rs[0].Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -146,7 +146,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Make sure that the table's data has not been deleted.
 	rs, err = s.se.Execute(context.Background(), "select count(*) from tx")
 	c.Assert(err, IsNil)
-	req = rs[0].NewRecordBatch()
+	req = rs[0].NewChunk()
 	err = rs[0].Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
