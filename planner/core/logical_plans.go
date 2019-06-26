@@ -307,7 +307,10 @@ type LogicalMaxOneRow struct {
 type LogicalTableDual struct {
 	logicalSchemaProducer
 
-	RowCount    int
+	RowCount int
+	// placeHolder indicates if this dual plan is a place holder in query optimization
+	// for data sources like `Show`, if true, the dual plan would be substituted by
+	// `Show` in the final plan.
 	placeHolder bool
 }
 
