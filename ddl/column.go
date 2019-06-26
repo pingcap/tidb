@@ -384,10 +384,18 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		}
 	})
 
-	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) && !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
+	// Column from null to not null.
+	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
+		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)
 		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 		ver, err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
-		return ver, errors.Trace(err)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// The column should get into prevent not null status first.
+		if noPreventNullFlag {
+			return ver, nil
+		}
 	}
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
