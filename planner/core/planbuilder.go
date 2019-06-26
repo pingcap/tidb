@@ -1160,12 +1160,10 @@ func substitutePlaceHolderDual(src PhysicalPlan, dst PhysicalPlan) PhysicalPlan 
 	if dual, ok := src.(*PhysicalTableDual); ok && dual.placeHolder {
 		return dst
 	}
-	newChildren := make([]PhysicalPlan, 0, len(src.Children()))
-	for _, child := range src.Children() {
+	for i, child := range src.Children() {
 		newChild := substitutePlaceHolderDual(child, dst)
-		newChildren = append(newChildren, newChild)
+		src.SetChild(i, newChild)
 	}
-	src.SetChildren(newChildren...)
 	return src
 }
 
