@@ -2231,19 +2231,6 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
 		return ErrUnknownCharacterSet.GenWithStack("Unknown character set: '%s', collation: '%s'", toCharset, toCollate)
 	}
-	if toCharset == charset.CharsetUTF8MB4 && origCharset == charset.CharsetUTF8 {
-		// TiDB only allow utf8 to be changed to utf8mb4.
-		return nil
-	}
-
-	if toCharset != origCharset {
-		msg := fmt.Sprintf("charset from %s to %s", origCharset, toCharset)
-		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
-	}
-	if toCollate != origCollate {
-		msg := fmt.Sprintf("collate from %s to %s", origCollate, toCollate)
-		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
-	}
 	return nil
 }
 
