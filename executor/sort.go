@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"

@@ -209,10 +209,6 @@ type CancelDDLJobsExec struct {
 
 // Next implements the Executor Next interface.
 func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobIDs) {
 		return nil

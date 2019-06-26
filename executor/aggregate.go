@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
