@@ -964,10 +964,10 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 	//+----------------------------+-------+------+-------------------------------------------------------------------------------------------------+----------------------------------+
 	//| Projection_7               | 0.12  | root | test.t1.id, test.t2.a                                                                           | time:3.844593ms, loops:1, rows:0 |
 	//| └─IndexJoin_11             | 0.12  | root | inner join, inner:IndexLookUp_10, outer key:test.t1.a, inner key:test.t2.d                      | time:3.830714ms, loops:1, rows:0 |
-	//|   ├─Projection_20          | 0.10  | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                                      | time:3.735174ms, loops:1, rows:0 |
-	//|   │ └─IndexLookUp_21       | 0.10  | root |                                                                                                 | time:3.569946ms, loops:1, rows:0 |
-	//|   │   ├─IndexScan_18       | 0.10  | cop  | table:t1, index:d, b, c, range:[4 "t2",4 "t2"], keep order:false, stats:pseudo                  | time:50.542µs, loops:1, rows:0   |
-	//|   │   └─TableScan_19       | 0.10  | cop  | table:t1, keep order:false, stats:pseudo                                                        | time:0s, loops:0, rows:0         |
+	//|   ├─Projection_21          | 0.10  | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                                      | time:3.735174ms, loops:1, rows:0 |
+	//|   │ └─IndexLookUp_22       | 0.10  | root |                                                                                                 | time:3.569946ms, loops:1, rows:0 |
+	//|   │   ├─IndexScan_19       | 0.10  | cop  | table:t1, index:d, b, c, range:[4 "t2",4 "t2"], keep order:false, stats:pseudo                  | time:50.542µs, loops:1, rows:0   |
+	//|   │   └─TableScan_20       | 0.10  | cop  | table:t1, keep order:false, stats:pseudo                                                        | time:0s, loops:0, rows:0         |
 	//|   └─IndexLookUp_10         | 10.00 | root |                                                                                                 | time:0ns, loops:0, rows:0        |
 	//|     ├─IndexScan_8          | 10.00 | cop  | table:t2, index:d, range: decided by [eq(test.t2.d, test.t1.a)], keep order:false, stats:pseudo | time:0ns, loops:0, rows:0        |
 	//|     └─TableScan_9          | 10.00 | cop  | table:t2, keep order:false, stats:pseudo                                                        | time:0ns, loops:0, rows:0        |
@@ -976,19 +976,19 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 	//
 	c.Assert(rs.Rows(), HasLen, 9)
 	hasIndexLookUp10 := false
-	hasIndexLookUp21 := false
+	hasIndexLookUp22 := false
 	for _, row := range rs.Rows() {
 		c.Assert(row, HasLen, 5)
-		if strings.HasSuffix(row[0].(string), "IndexLookUp_10") {
+		if strings.Contains(row[0].(string), "IndexLookUp_10") {
 			hasIndexLookUp10 = true
 			c.Assert(row[4], Equals, "time:0ns, loops:0, rows:0")
 		}
-		if strings.HasSuffix(row[0].(string), "IndexLookUp_21") {
-			hasIndexLookUp21 = true
+		if strings.Contains(row[0].(string), "IndexLookUp_22") {
+			hasIndexLookUp22 = true
 		}
 	}
 	c.Assert(hasIndexLookUp10, IsTrue)
-	c.Assert(hasIndexLookUp21, IsTrue)
+	c.Assert(hasIndexLookUp22, IsTrue)
 }
 
 func (s *testAnalyzeSuite) TestVirtualGeneratedColumn(c *C) {
