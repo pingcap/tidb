@@ -309,7 +309,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 	batchSize := sessVars.DMLBatchSize
 
 	for {
-		err := selectExec.Next(ctx, chunk.NewRecordBatch(chk))
+		err := selectExec.Next(ctx, chk)
 		if err != nil {
 			return err
 		}

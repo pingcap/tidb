@@ -27,7 +27,7 @@ type MockExec struct {
 	curRowIdx int
 }
 
-func (m *MockExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (m *MockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	colTypes := retTypes(m)
 	for ; m.curRowIdx < len(m.Rows) && req.NumRows() < req.Capacity(); m.curRowIdx++ {
@@ -98,7 +98,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	joinChk := newFirstChunk(join)
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
-		err := join.Next(ctx, chunk.NewRecordBatch(joinChk))
+		err := join.Next(ctx, joinChk)
 		c.Check(err, IsNil)
 		if joinChk.NumRows() == 0 {
 			break

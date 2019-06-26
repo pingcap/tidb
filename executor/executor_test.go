@@ -261,7 +261,7 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	req := r.NewRecordBatch()
+	req := r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
@@ -272,7 +272,7 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	// show ddl test;
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	req = r.NewRecordBatch()
+	req = r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
@@ -292,7 +292,7 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	c.Assert(row.GetString(2), Equals, serverInfo.IP+":"+
 		strconv.FormatUint(uint64(serverInfo.Port), 10))
 	c.Assert(row.GetString(3), Equals, "")
-	req = r.NewRecordBatch()
+	req = r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsTrue)
@@ -302,7 +302,7 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
-	req = r.NewRecordBatch()
+	req = r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
@@ -318,7 +318,7 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 
 	r, err = tk.Exec("admin show ddl jobs 20")
 	c.Assert(err, IsNil)
-	req = r.NewRecordBatch()
+	req = r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
@@ -943,7 +943,7 @@ func (s *testSuiteP1) TestIssue2612(c *C) {
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetDuration(0, 0).String(), Equals, "-46:09:02")
@@ -2900,7 +2900,7 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
-	req := r.NewRecordBatch()
+	req := r.NewChunk()
 	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(req.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
@@ -3529,7 +3529,7 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	rs, err := tk.Exec(`select (select t1.a from t1 where t1.a > t2.a) as a from t2;`)
 	c.Assert(err, IsNil)
 
-	err = rs.Next(context.TODO(), rs.NewRecordBatch())
+	err = rs.Next(context.TODO(), rs.NewChunk())
 	c.Assert(err.Error(), Equals, "subquery returns more than 1 row")
 
 	err = rs.Close()
