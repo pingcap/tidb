@@ -432,7 +432,7 @@ func (w *GCWorker) checkGCLifeTimeValid(lifeTime time.Duration) (time.Duration, 
 		return lifeTime, nil
 	}
 
-	logutil.BgLogger().Info("[gc worker] check gc life time invalid",
+	logutil.BgLogger().Info("[gc worker] invalid gc life time",
 		zap.Duration("get gc life time", lifeTime),
 		zap.Duration("min gc life time", minLifeTime))
 
