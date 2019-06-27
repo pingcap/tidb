@@ -383,6 +383,21 @@ func ForeachPlugin(kind Kind, fn func(plugin *Plugin) error) error {
 	return nil
 }
 
+// IsEnable checks plugin's enable state.
+func IsEnable(kind Kind) bool {
+	plugins := pluginGlobal.plugins()
+	if plugins == nil {
+		return false
+	}
+	for i := range plugins.plugins[kind] {
+		p := &plugins.plugins[kind][i]
+		if p.State == Ready {
+			return true
+		}
+	}
+	return false
+}
+
 // GetAll finds and returns all plugins.
 func GetAll() map[Kind][]Plugin {
 	plugins := pluginGlobal.plugins()
