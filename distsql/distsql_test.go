@@ -41,6 +41,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C) (*selectResul
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
+		SetMemTracker(s.sctx, stringutil.StringerStr("testSuite.createSelectNormal")).
 		Build()
 	c.Assert(err, IsNil)
 
@@ -94,6 +95,21 @@ func (s *testSuite) TestSelectNormal(c *C) {
 	c.Assert(numAllRows, Equals, 2)
 	err := response.Close()
 	c.Assert(err, IsNil)
+	c.Assert(response.memTracker.BytesConsumed(), Equals, int64(0))
+}
+
+func (s *testSuite) TestSelectMemTracker(c *C) {
+	response, colTypes := s.createSelectNormal(2, 6, c, nil)
+	response.Fetch(context.TODO())
+
+	// Test Next.
+	chk := chunk.New(colTypes, 3, 3)
+	err := response.Next(context.TODO(), chk)
+	c.Assert(err, IsNil)
+	c.Assert(chk.IsFull(), Equals, true)
+	err = response.Close()
+	c.Assert(err, IsNil)
+	c.Assert(response.memTracker.BytesConsumed(), Equals, int64(0))
 }
 
 func (s *testSuite) TestSelectNormalChunkSize(c *C) {
@@ -101,6 +117,7 @@ func (s *testSuite) TestSelectNormalChunkSize(c *C) {
 	response.Fetch(context.TODO())
 	s.testChunkSize(response, colTypes, c)
 	c.Assert(response.Close(), IsNil)
+	c.Assert(response.memTracker.BytesConsumed(), Equals, int64(0))
 }
 
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
