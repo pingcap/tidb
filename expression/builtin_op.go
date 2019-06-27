@@ -799,7 +799,11 @@ func (c *isNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig = &builtinRealIsNullSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_RealIsNull)
 	case types.ETDatetime:
-		sig = &builtinTimeIsNullSig{bf}
+		isNotNull := false
+		if mysql.HasNotNullFlag(args[0].GetType().Flag) {
+			isNotNull = true
+		}
+		sig = &builtinTimeIsNullSig{bf, isNotNull}
 		sig.setPbCode(tipb.ScalarFuncSig_TimeIsNull)
 	case types.ETDuration:
 		sig = &builtinDurationIsNullSig{bf}
@@ -900,6 +904,17 @@ func (b *builtinStringIsNullSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 type builtinTimeIsNullSig struct {
 	baseBuiltinFunc
+	isNotNull bool
+}
+
+func (b *builtinTimeIsNullSig) implicitArgs() []types.Datum {
+	args := b.baseBuiltinFunc.implicitArgs()
+	if b.isNotNull {
+		args = append(args, types.NewIntDatum(1))
+	} else {
+		args = append(args, types.NewIntDatum(0))
+	}
+	return args
 }
 
 func (b *builtinTimeIsNullSig) Clone() builtinFunc {
