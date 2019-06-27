@@ -66,8 +66,9 @@ type selectResult struct {
 	fieldTypes []*types.FieldType
 	ctx        sessionctx.Context
 
-	selectResp *tipb.SelectResponse
-	respChkIdx int
+	selectResp     *tipb.SelectResponse
+	selectRespSize int // record the selectResp.Size() when it is initialized.
+	respChkIdx     int
 
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
@@ -103,20 +104,25 @@ func (r *selectResult) fetch(ctx context.Context) {
 		if err != nil {
 			result.err = err
 		} else if resultSubset == nil {
+			// If the result is drained, the resultSubset would be nil
 			return
 		} else {
 			result.result = resultSubset
-			if r.memTracker != nil {
-				r.memTracker.Consume(int64(resultSubset.MemSize()))
-			}
+			r.memConsume(int64(resultSubset.MemSize()))
 		}
 
 		select {
 		case r.results <- result:
 		case <-r.closed:
 			// If selectResult called Close() already, make fetch goroutine exit.
+			if resultSubset != nil {
+				r.memConsume(-int64(resultSubset.MemSize()))
+			}
 			return
 		case <-ctx.Done():
+			if resultSubset != nil {
+				r.memConsume(-int64(resultSubset.MemSize()))
+			}
 			return
 		}
 	}
@@ -161,24 +167,21 @@ func (r *selectResult) getSelectResp() error {
 		if re.err != nil {
 			return errors.Trace(re.err)
 		}
-		if r.memTracker != nil && r.selectResp != nil {
-			r.memTracker.Consume(-int64(r.selectResp.Size()))
+		if r.selectResp != nil {
+			r.memConsume(-int64(r.selectRespSize))
 		}
 		if re.result == nil {
 			r.selectResp = nil
 			return nil
 		}
-		if r.memTracker != nil {
-			r.memTracker.Consume(-int64(re.result.MemSize()))
-		}
+		r.memConsume(-int64(re.result.MemSize()))
 		r.selectResp = new(tipb.SelectResponse)
 		err := r.selectResp.Unmarshal(re.result.GetData())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if r.memTracker != nil && r.selectResp != nil {
-			r.memTracker.Consume(int64(r.selectResp.Size()))
-		}
+		r.selectRespSize = r.selectResp.Size()
+		r.memConsume(int64(r.selectRespSize))
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
 		}
@@ -234,13 +237,27 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	return nil
 }
 
+func (r *selectResult) memConsume(bytes int64) {
+	if r.memTracker != nil {
+		r.memTracker.Consume(bytes)
+	}
+}
+
 // Close closes selectResult.
 func (r *selectResult) Close() error {
-	// Close this channel tell fetch goroutine to exit.
 	if r.feedback.Actual() >= 0 {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
+	// Close this channel to tell the fetch goroutine to exit.
 	close(r.closed)
+	for re := range r.results {
+		if re.result != nil {
+			r.memConsume(-int64(re.result.MemSize()))
+		}
+	}
+	if r.selectResp != nil {
+		r.memConsume(-int64(r.selectRespSize))
+	}
 	return r.resp.Close()
 }
