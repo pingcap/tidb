@@ -39,11 +39,11 @@ func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 	}
 }
 
-func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
-	fieldTp := pbTypeToFieldType(tp)
+func getSignatureByPB(ctx sessionctx.Context, expr *tipb.Expr, args []Expression) (f builtinFunc, e error) {
+	fieldTp := pbTypeToFieldType(expr.FieldType)
 	base := newBaseBuiltinFunc(ctx, args)
 	base.tp = fieldTp
-	switch sigCode {
+	switch expr.GetSig() {
 	case tipb.ScalarFuncSig_CastIntAsInt:
 		f = &builtinCastIntAsIntSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastRealAsInt:
@@ -336,7 +336,12 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_RealIsNull:
 		f = &builtinRealIsNullSig{base}
 	case tipb.ScalarFuncSig_TimeIsNull:
-		f = &builtinTimeIsNullSig{base, false}
+		isNotNull := false
+		if len(expr.Children) > 0 && mysql.HasNotNullFlag(uint(expr.Children[0].FieldType.Flag)) {
+			isNotNull = true
+		}
+
+		f = &builtinTimeIsNullSig{base, isNotNull}
 	case tipb.ScalarFuncSig_StringIsNull:
 		f = &builtinStringIsNullSig{base}
 	case tipb.ScalarFuncSig_IntIsNull:
@@ -466,16 +471,16 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinDateFormatSig{base}
 
 	default:
-		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
+		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", expr.GetSig())
 		return nil, e
 	}
 	return f, nil
 }
 
-func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
+func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, expr *tipb.Expr, args []Expression) (Expression, error) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = sc
-	f, err := getSignatureByPB(ctx, sigCode, tp, args)
+	f, err := getSignatureByPB(ctx, expr, args)
 	if err != nil {
 		return nil, err
 	}
@@ -542,7 +547,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		args = append(args, arg)
 	}
 
-	return newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
+	return newDistSQLFunctionBySig(sc, expr, args)
 }
 
 func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constant, error) {
