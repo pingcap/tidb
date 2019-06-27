@@ -116,7 +116,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
-	SetProcessInfo(string, time.Time, byte)
+	SetProcessInfo(string, time.Time, byte, uint64)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -349,13 +349,13 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	if s.statsCollector != nil {
 		do, err := GetDomain(s.store)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("domain not found", zap.Error(err))
+			logutil.BgLogger().Debug("domain not found", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
 		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("store query feedback", zap.Error(err))
+			logutil.BgLogger().Debug("store query feedback", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
@@ -782,7 +782,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 		}
 		defer func() {
 			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				logutil.Logger(context.Background()).Error("set tidbSnapshot error", zap.Error(err))
+				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 			}
 		}()
 	}
@@ -829,6 +829,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, err
 		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		return se, nil
@@ -845,6 +849,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, err
 		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		return se, nil
@@ -853,17 +861,17 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 
 func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
 			return rows, err
 		}
-		iter := chunk.NewIterator4Chunk(req.Chunk)
+		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		req.Chunk = chunk.Renew(req.Chunk, se.sessionVars.MaxChunkSize)
+		req = chunk.Renew(req, se.sessionVars.MaxChunkSize)
 	}
 }
 
@@ -956,18 +964,19 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
+func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
 	pi := util.ProcessInfo{
-		ID:            s.sessionVars.ConnectionID,
-		DB:            s.sessionVars.CurrentDB,
-		Command:       command,
-		Plan:          s.currentPlan,
-		Time:          t,
-		State:         s.Status(),
-		Info:          sql,
-		CurTxnStartTS: s.sessionVars.TxnCtx.StartTS,
-		StmtCtx:       s.sessionVars.StmtCtx,
-		StatsInfo:     plannercore.GetStatsInfo,
+		ID:               s.sessionVars.ConnectionID,
+		DB:               s.sessionVars.CurrentDB,
+		Command:          command,
+		Plan:             s.currentPlan,
+		Time:             t,
+		State:            s.Status(),
+		Info:             sql,
+		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+		StmtCtx:          s.sessionVars.StmtCtx,
+		StatsInfo:        plannercore.GetStatsInfo,
+		MaxExecutionTime: maxExecutionTime,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
@@ -1267,7 +1276,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
 		if err := s.txn.changePendingToValid(txnCap); err != nil {
-			logutil.Logger(context.Background()).Error("active transaction fail",
+			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			s.txn.cleanup()
 			s.sessionVars.TxnCtx.StartTS = 0
@@ -1342,7 +1351,7 @@ func (s *session) Close() {
 		lockedTables := s.GetAllTableLocks()
 		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
+			logutil.BgLogger().Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
 		}
 	}
 	if s.statsCollector != nil {
@@ -1371,7 +1380,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
 	} else if user.Hostname == variable.DefHostname {
-		logutil.Logger(context.Background()).Error("user connection verification failed",
+		logutil.BgLogger().Error("user connection verification failed",
 			zap.Stringer("user", user))
 		return false
 	}
@@ -1391,7 +1400,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		}
 	}
 
-	logutil.Logger(context.Background()).Error("user connection verification failed",
+	logutil.BgLogger().Error("user connection verification failed",
 		zap.Stringer("user", user))
 	return false
 }
@@ -1403,13 +1412,6 @@ func getHostByIP(ip string) []string {
 	addrs, err := net.LookupAddr(ip)
 	terror.Log(errors.Trace(err))
 	return addrs
-}
-
-func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
-	if n1 <= n2 {
-		return n1
-	}
-	return n2
 }
 
 // CreateSession4Test creates a new session environment for test.
@@ -1461,10 +1463,10 @@ func loadSystemTZ(se *session) (string, error) {
 	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
 	defer func() {
 		if err := rss[0].Close(); err != nil {
-			logutil.Logger(context.Background()).Error("close result set error", zap.Error(err))
+			logutil.BgLogger().Error("close result set error", zap.Error(err))
 		}
 	}()
-	req := rss[0].NewRecordBatch()
+	req := rss[0].NewChunk()
 	if err := rss[0].Next(context.Background(), req); err != nil {
 		return "", err
 	}
@@ -1564,14 +1566,11 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
-	saveLease := schemaLease
-	schemaLease = chooseMinLease(schemaLease, 100*time.Millisecond)
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
-		logutil.Logger(context.Background()).Fatal("createSession error", zap.Error(err))
+		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
-	schemaLease = saveLease
 
 	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
@@ -1655,7 +1654,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 	})
 
 	if err != nil {
-		logutil.Logger(context.Background()).Fatal("check bootstrapped failed",
+		logutil.BgLogger().Fatal("check bootstrapped failed",
 			zap.Error(err))
 	}
 
@@ -1678,7 +1677,7 @@ func finishBootstrap(store kv.Storage) {
 		return err
 	})
 	if err != nil {
-		logutil.Logger(context.Background()).Fatal("finish bootstrap failed",
+		logutil.BgLogger().Fatal("finish bootstrap failed",
 			zap.Error(err))
 	}
 }
@@ -1776,7 +1775,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		rows, fields, err = s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
 		if err != nil {
 			vars.CommonGlobalLoaded = false
-			logutil.Logger(context.Background()).Error("failed to load common global variables.")
+			logutil.BgLogger().Error("failed to load common global variables.")
 			return err
 		}
 		gvc.Update(rows, fields)
@@ -1888,13 +1887,13 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		user := vars.User
 		schemaVersion := vars.TxnCtx.SchemaVersion
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			logutil.Logger(context.Background()).Info("CRUCIAL OPERATION",
+			logutil.BgLogger().Info("CRUCIAL OPERATION",
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("secure text", ss.SecureText()),
 				zap.Stringer("user", user))
 		} else {
-			logutil.Logger(context.Background()).Info("CRUCIAL OPERATION",
+			logutil.BgLogger().Info("CRUCIAL OPERATION",
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("cur_db", vars.CurrentDB),
@@ -1909,7 +1908,7 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		logutil.Logger(context.Background()).Info("GENERAL_LOG",
+		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
 			zap.Stringer("user", vars.User),
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),

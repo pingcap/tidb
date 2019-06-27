@@ -57,7 +57,7 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
@@ -277,4 +277,61 @@ func (s *testPessimisticSuite) TestKeyExistsCheck(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert chk values (2)")
 	tk.MustExec("commit")
+}
+
+func (s *testPessimisticSuite) TestInsertOnDup(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists dup")
+	tk.MustExec("create table dup (id int primary key, c int)")
+	tk.MustExec("begin pessimistic")
+
+	tk2.MustExec("insert dup values (1, 1)")
+	tk.MustExec("insert dup values (1, 1) on duplicate key update c = c + 1")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from dup").Check(testkit.Rows("1 2"))
+}
+
+func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists point")
+	tk.MustExec("create table point (id int primary key, u int unique, c int)")
+	syncCh := make(chan struct{})
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update point set c = c + 1 where id = 1")
+	tk.MustExec("delete from point where u = 2")
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		_, err1 := tk2.Exec("insert point values (1, 1, 1)")
+		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		_, err1 = tk2.Exec("insert point values (2, 2, 2)")
+		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		tk2.MustExec("rollback")
+		<-syncCh
+	}()
+	time.Sleep(time.Millisecond * 10)
+	tk.MustExec("insert point values (1, 1, 1)")
+	tk.MustExec("insert point values (2, 2, 2)")
+	tk.MustExec("commit")
+	syncCh <- struct{}{}
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from point where id = 3 for update")
+	tk.MustExec("select * from point where u = 4 for update")
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		_, err1 := tk2.Exec("insert point values (3, 3, 3)")
+		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		_, err1 = tk2.Exec("insert point values (4, 4, 4)")
+		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		tk2.MustExec("rollback")
+		<-syncCh
+	}()
+	time.Sleep(time.Millisecond * 10)
+	tk.MustExec("insert point values (3, 3, 3)")
+	tk.MustExec("insert point values (4, 4, 4)")
+	tk.MustExec("commit")
+	syncCh <- struct{}{}
 }

@@ -44,6 +44,7 @@ const (
 	tableSchemata                           = "SCHEMATA"
 	tableTables                             = "TABLES"
 	tableColumns                            = "COLUMNS"
+	tableColumnStatistics                   = "COLUMN_STATISTICS"
 	tableStatistics                         = "STATISTICS"
 	tableCharacterSets                      = "CHARACTER_SETS"
 	tableCollations                         = "COLLATIONS"
@@ -187,6 +188,13 @@ var columnsCols = []columnInfo{
 	{"PRIVILEGES", mysql.TypeVarchar, 80, 0, nil, nil},
 	{"COLUMN_COMMENT", mysql.TypeVarchar, 1024, 0, nil, nil},
 	{"GENERATION_EXPRESSION", mysql.TypeBlob, 589779, mysql.NotNullFlag, nil, nil},
+}
+
+var columnStatisticsCols = []columnInfo{
+	{"SCHEMA_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"COLUMN_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"HISTOGRAM", mysql.TypeJSON, 51, 0, nil, nil},
 }
 
 var statisticsCols = []columnInfo{
@@ -1715,6 +1723,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
+	tableColumnStatistics:                   columnStatisticsCols,
 	tableStatistics:                         statisticsCols,
 	tableCharacterSets:                      charsetCols,
 	tableCollations:                         collationsCols,

@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"context"
 	"strings"
 	"sync/atomic"
 
@@ -106,7 +105,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	ft := expr.GetType()
 	d, err := expr.Eval(chunk.Row{})
 	if err != nil {
-		logutil.Logger(context.Background()).Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
+		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
 		return nil
 	}
 	tp, val, ok := pc.encodeDatum(ft, d)
@@ -154,7 +153,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 		var err error
 		val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		if err != nil {
-			logutil.Logger(context.Background()).Error("encode decimal", zap.Error(err))
+			logutil.BgLogger().Error("encode decimal", zap.Error(err))
 			return tp, nil, false
 		}
 	case types.KindMysqlTime:
@@ -162,7 +161,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 			tp = tipb.ExprType_MysqlTime
 			val, err := codec.EncodeMySQLTime(pc.sc, d, ft.Tp, nil)
 			if err != nil {
-				logutil.Logger(context.Background()).Error("encode mysql time", zap.Error(err))
+				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
 			}
 			return tp, val, true
@@ -243,9 +242,20 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		children = append(children, pbArg)
 	}
 
+	var implicitArgs []byte
+	if args := expr.Function.implicitArgs(); len(args) > 0 {
+		encoded, err := codec.EncodeValue(pc.sc, nil, args...)
+		if err != nil {
+			logutil.BgLogger().Error("encode implicit parameters", zap.Any("datums", args), zap.Error(err))
+			return nil
+		}
+		implicitArgs = encoded
+	}
+
 	// construct expression ProtoBuf.
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
+		Val:       implicitArgs,
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(expr.RetType),

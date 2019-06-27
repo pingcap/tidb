@@ -252,7 +252,7 @@ func (w *flushWatcher) watchLoop() {
 		case <-watchChan:
 			err := w.manifest.OnFlush(w.ctx, w.manifest)
 			if err != nil {
-				logutil.Logger(context.Background()).Error("notify plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
+				logutil.BgLogger().Error("notify plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
 			}
 		}
 	}
@@ -372,6 +372,21 @@ func ForeachPlugin(kind Kind, fn func(plugin *Plugin) error) error {
 		}
 	}
 	return nil
+}
+
+// IsEnable checks plugin's enable state.
+func IsEnable(kind Kind) bool {
+	plugins := pluginGlobal.plugins()
+	if plugins == nil {
+		return false
+	}
+	for i := range plugins.plugins[kind] {
+		p := &plugins.plugins[kind][i]
+		if p.State == Ready {
+			return true
+		}
+	}
+	return false
 }
 
 // GetAll finds and returns all plugins.

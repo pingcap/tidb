@@ -115,13 +115,13 @@ func (mds *mockDataSource) prepareChunks() {
 	mds.chunkPtr = 0
 }
 
-func (mds *mockDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (mds *mockDataSource) Next(ctx context.Context, req *chunk.Chunk) error {
 	if mds.chunkPtr >= len(mds.chunks) {
 		req.Reset()
 		return nil
 	}
 	dataChk := mds.chunks[mds.chunkPtr]
-	dataChk.SwapColumns(req.Chunk)
+	dataChk.SwapColumns(req)
 	mds.chunkPtr++
 	return nil
 }
@@ -228,7 +228,10 @@ func buildAggExecutor(b *testing.B, testCase *aggTestCase, child Executor) Execu
 	childCols := testCase.columns()
 	schema := expression.NewSchema(childCols...)
 	groupBy := []expression.Expression{childCols[1]}
-	aggFunc := aggregation.NewAggFuncDesc(testCase.ctx, testCase.aggFunc, []expression.Expression{childCols[0]}, testCase.hasDistinct)
+	aggFunc, err := aggregation.NewAggFuncDesc(testCase.ctx, testCase.aggFunc, []expression.Expression{childCols[0]}, testCase.hasDistinct)
+	if err != nil {
+		b.Fatal(err)
+	}
 	aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 
 	var aggExec Executor
@@ -266,9 +269,8 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 		if err := aggExec.Open(tmpCtx); err != nil {
 			b.Fatal(err)
 		}
-		batch := chunk.NewRecordBatch(chk)
 		for {
-			if err := aggExec.Next(tmpCtx, batch); err != nil {
+			if err := aggExec.Next(tmpCtx, chk); err != nil {
 				b.Fatal(b)
 			}
 			if chk.NumRows() == 0 {

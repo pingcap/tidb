@@ -15,7 +15,6 @@ package config
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -471,7 +470,7 @@ func ReloadGlobalConfig() error {
 
 	confReloader(nc, c)
 	globalConf.Store(nc)
-	logutil.Logger(context.Background()).Info("reload config changes" + formattedDiff.String())
+	logutil.BgLogger().Info("reload config changes" + formattedDiff.String())
 	return nil
 }
 
@@ -583,7 +582,7 @@ func hasRootPrivilege() bool {
 }
 
 // TableLockEnabled uses to check whether enabled the table lock feature.
-func TableLockEnabled() bool {
+var TableLockEnabled = func() bool {
 	return GetGlobalConfig().EnableTableLock
 }
 

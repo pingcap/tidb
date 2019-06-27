@@ -15,7 +15,6 @@ package mocktikv
 
 import (
 	"bytes"
-	"context"
 	"math"
 	"sync"
 
@@ -342,7 +341,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()
 	if err != nil {
-		logutil.Logger(context.Background()).Error("scan new iterator fail", zap.Error(err))
+		logutil.BgLogger().Error("scan new iterator fail", zap.Error(err))
 		return nil
 	}
 
@@ -366,7 +365,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 		skip := skipDecoder{currKey}
 		ok, err = skip.Decode(iter)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("seek to next key error", zap.Error(err))
+			logutil.BgLogger().Error("seek to next key error", zap.Error(err))
 			break
 		}
 		currKey = skip.currKey
@@ -421,7 +420,7 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 			helper.entry.values = append(helper.entry.values, value)
 		}
 		if err != nil {
-			logutil.Logger(context.Background()).Error("unmarshal fail", zap.Error(err))
+			logutil.BgLogger().Error("unmarshal fail", zap.Error(err))
 			break
 		}
 		succ = iter.Prev()
@@ -726,7 +725,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	// Check assertions.
 	if (ok && mutation.Assertion == kvrpcpb.Assertion_NotExist) ||
 		(!ok && mutation.Assertion == kvrpcpb.Assertion_Exist) {
-		logutil.Logger(context.Background()).Error("ASSERTION FAIL!!!", zap.Stringer("mutation", mutation))
+		logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", mutation))
 	}
 
 	batch.Put(writeKey, writeValue)

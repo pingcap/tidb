@@ -219,7 +219,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if types.ErrTruncated.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			logutil.Logger(context.Background()).Warn("truncate error", zap.Error(err1))
+			logutil.BgLogger().Warn("truncate error", zap.Error(err1))
 		}
 		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
@@ -309,7 +309,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 	batchSize := sessVars.DMLBatchSize
 
 	for {
-		err := selectExec.Next(ctx, chunk.NewRecordBatch(chk))
+		err := selectExec.Next(ctx, chk)
 		if err != nil {
 			return err
 		}

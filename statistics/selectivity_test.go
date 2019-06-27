@@ -60,13 +60,13 @@ func (s *testStatsSuite) SetUpSuite(c *C) {
 	// Add the hook here to avoid data race.
 	s.registerHook()
 	var err error
-	s.store, s.do, err = newStoreWithBootstrap(0)
+	s.store, s.do, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 }
 
 func (s *testStatsSuite) TearDownSuite(c *C) {
 	s.do.Close()
-	s.store.Close()
+	c.Assert(s.store.Close(), IsNil)
 	testleak.AfterTest(c)()
 }
 
@@ -115,13 +115,13 @@ func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.Chec
 	return ce
 }
 
-func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain, error) {
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	session.SetSchemaLease(0)
-	session.SetStatsLease(statsLease)
+	session.DisableStats4Test()
 	domain.RunAutoAnalyze = false
 	do, err := session.BootstrapSession(store)
 	do.SetStatsUpdating(true)
@@ -209,7 +209,8 @@ func (s *testStatsSuite) prepareSelectivity(testKit *testkit.TestKit, c *C) *sta
 	statsTbl := mockStatsTable(tbl, 540)
 
 	// Set the value of columns' histogram.
-	colValues, _ := s.generateIntDatum(1, 54)
+	colValues, err := s.generateIntDatum(1, 54)
+	c.Assert(err, IsNil)
 	for i := 1; i <= 5; i++ {
 		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
 	}
@@ -355,12 +356,12 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
 	h := s.do.StatsHandle()
-	h.DumpStatsDeltaToKV(handle.DumpAll)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	for i := 0; i < 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
 	}
-	h.DumpStatsDeltaToKV(handle.DumpAll)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -459,7 +460,8 @@ func BenchmarkSelectivity(b *testing.B) {
 	p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
-	file, _ := os.Create("cpu.profile")
+	file, err := os.Create("cpu.profile")
+	c.Assert(err, IsNil)
 	defer file.Close()
 	pprof.StartCPUProfile(file)
 

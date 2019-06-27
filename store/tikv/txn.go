@@ -331,11 +331,11 @@ func (txn *tikvTxn) Rollback() error {
 	if txn.IsPessimistic() && txn.committer != nil {
 		err := txn.rollbackPessimisticLocks()
 		if err != nil {
-			logutil.Logger(context.Background()).Error(err.Error())
+			logutil.BgLogger().Error(err.Error())
 		}
 	}
 	txn.close()
-	logutil.Logger(context.Background()).Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
+	logutil.BgLogger().Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
 	tikvTxnCmdCountWithRollback.Inc()
 
 	return nil
