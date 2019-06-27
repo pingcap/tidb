@@ -39,7 +39,7 @@ func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 	}
 }
 
-func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression, impArgs []types.Datum) (f builtinFunc, e error) {
+func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
 	fieldTp := pbTypeToFieldType(tp)
 	base := newBaseBuiltinFunc(ctx, args)
 	base.tp = fieldTp
@@ -336,11 +336,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_RealIsNull:
 		f = &builtinRealIsNullSig{base}
 	case tipb.ScalarFuncSig_TimeIsNull:
-		isNotNull := false
-		if len(impArgs) > 0 && impArgs[0].GetInt64() > 0 {
-			isNotNull = true
-		}
-		f = &builtinTimeIsNullSig{base, isNotNull}
+		f = &builtinTimeIsNullSig{base, false}
 	case tipb.ScalarFuncSig_StringIsNull:
 		f = &builtinStringIsNullSig{base}
 	case tipb.ScalarFuncSig_IntIsNull:
@@ -476,10 +472,10 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	return f, nil
 }
 
-func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression, impArgs []types.Datum) (Expression, error) {
+func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = sc
-	f, err := getSignatureByPB(ctx, sigCode, tp, args, impArgs)
+	f, err := getSignatureByPB(ctx, sigCode, tp, args)
 	if err != nil {
 		return nil, err
 	}
@@ -546,16 +542,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		args = append(args, arg)
 	}
 
-	// decode implicit arguments
-	var impArgs []types.Datum
-	var err error
-	if len(expr.Val) > 0 {
-		if impArgs, err = codec.Decode(expr.Val, 1); err != nil {
-			return nil, err
-		}
-	}
-
-	return newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args, impArgs)
+	return newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
 }
 
 func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constant, error) {

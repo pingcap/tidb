@@ -907,16 +907,6 @@ type builtinTimeIsNullSig struct {
 	isNotNull bool
 }
 
-func (b *builtinTimeIsNullSig) implicitArgs() []types.Datum {
-	args := b.baseBuiltinFunc.implicitArgs()
-	if b.isNotNull {
-		args = append(args, types.NewIntDatum(1))
-	} else {
-		args = append(args, types.NewIntDatum(0))
-	}
-	return args
-}
-
 func (b *builtinTimeIsNullSig) Clone() builtinFunc {
 	newSig := &builtinTimeIsNullSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
