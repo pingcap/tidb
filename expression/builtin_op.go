@@ -925,6 +925,10 @@ func (b *builtinTimeIsNullSig) Clone() builtinFunc {
 }
 
 func (b *builtinTimeIsNullSig) evalInt(row chunk.Row) (int64, bool, error) {
+	//	Description below are from MySQL document:
+	//		For DATE and DATETIME columns that are declared as NOT NULL,
+	//		you can find the special date '0000-00-00' by using a statement like this:
+	//		"SELECT * FROM tbl_name WHERE date_column IS NULL"
 	t, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	return evalIsNull(isNull || (b.isNotNull && t.IsZero()), err)
 }
