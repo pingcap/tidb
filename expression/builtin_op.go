@@ -920,10 +920,11 @@ func (b *builtinTimeIsNullSig) implicitArgs() []types.Datum {
 func (b *builtinTimeIsNullSig) Clone() builtinFunc {
 	newSig := &builtinTimeIsNullSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.isNotNull = b.isNotNull
 	return newSig
 }
 
 func (b *builtinTimeIsNullSig) evalInt(row chunk.Row) (int64, bool, error) {
-	_, isNull, err := b.args[0].EvalTime(b.ctx, row)
-	return evalIsNull(isNull, err)
+	t, isNull, err := b.args[0].EvalTime(b.ctx, row)
+	return evalIsNull(isNull || (b.isNotNull && t.IsZero()), err)
 }
