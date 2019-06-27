@@ -2194,7 +2194,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 
 	updt := Update{OrderedList: orderedList}.init(b.ctx)
 	updt.SetSchema(p.Schema())
-	updt.SelectPlan, err = doOptimize(b.optFlag, p)
+	updt.SelectPlan, err = doOptimize(b.optFlag&^flagEliminateProjection, p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
