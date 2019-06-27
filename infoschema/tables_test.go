@@ -48,7 +48,7 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
@@ -140,23 +140,23 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
-	h.DumpStatsDeltaToKV(handle.DumpAll)
-	h.Update(is)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 17 51 3"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
-	h.DumpStatsDeltaToKV(handle.DumpAll)
-	h.Update(is)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("4 17 68 4"))
 	tk.MustExec("delete from t where c >= 3")
-	h.DumpStatsDeltaToKV(handle.DumpAll)
-	h.Update(is)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 17 34 2"))
 	tk.MustExec("delete from t where c=3")
-	h.DumpStatsDeltaToKV(handle.DumpAll)
-	h.Update(is)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 17 34 2"))
 }
@@ -404,4 +404,9 @@ func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][4], Equals, "2")
 	c.Assert(result.Rows()[1][5], NotNil)
 	c.Assert(result.Rows()[1][6], Equals, "finished")
+}
+
+func (s *testTableSuite) TestColumnStatistics(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from information_schema.column_statistics").Check(testkit.Rows())
 }
