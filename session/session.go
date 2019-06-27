@@ -861,17 +861,17 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 
 func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
 			return rows, err
 		}
-		iter := chunk.NewIterator4Chunk(req.Chunk)
+		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		req.Chunk = chunk.Renew(req.Chunk, se.sessionVars.MaxChunkSize)
+		req = chunk.Renew(req, se.sessionVars.MaxChunkSize)
 	}
 }
 
@@ -1466,7 +1466,7 @@ func loadSystemTZ(se *session) (string, error) {
 			logutil.BgLogger().Error("close result set error", zap.Error(err))
 		}
 	}()
-	req := rss[0].NewRecordBatch()
+	req := rss[0].NewChunk()
 	if err := rss[0].Next(context.Background(), req); err != nil {
 		return "", err
 	}

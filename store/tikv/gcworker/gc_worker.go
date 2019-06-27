@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/pd/client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -113,6 +114,7 @@ const (
 
 	gcLifeTimeKey        = "tikv_gc_life_time"
 	gcDefaultLifeTime    = time.Minute * 10
+	gcMinLifeTime        = time.Minute * 10
 	gcSafePointKey       = "tikv_gc_safe_point"
 	gcConcurrencyKey     = "tikv_gc_concurrency"
 	gcDefaultConcurrency = 2
@@ -417,10 +419,35 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	return true, nil
 }
 
+// validateGCLiftTime checks whether life time is small than min gc life time.
+func (w *GCWorker) validateGCLiftTime(lifeTime time.Duration) (time.Duration, error) {
+	minLifeTime := gcMinLifeTime
+	// max-txn-time-use value is less than gc_life_time - 10s.
+	maxTxnTime := time.Duration(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse+10) * time.Second
+	if minLifeTime < maxTxnTime {
+		minLifeTime = maxTxnTime
+	}
+
+	if lifeTime >= minLifeTime {
+		return lifeTime, nil
+	}
+
+	logutil.BgLogger().Info("[gc worker] invalid gc life time",
+		zap.Duration("get gc life time", lifeTime),
+		zap.Duration("min gc life time", minLifeTime))
+
+	err := w.saveDuration(gcLifeTimeKey, minLifeTime)
+	return minLifeTime, err
+}
+
 func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	lifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	*lifeTime, err = w.validateGCLiftTime(*lifeTime)
+	if err != nil {
+		return nil, err
 	}
 	metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
 	lastSafePoint, err := w.loadTime(gcSafePointKey)
@@ -1259,7 +1286,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	req := rs[0].NewRecordBatch()
+	req := rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	if err != nil {
 		return "", errors.Trace(err)

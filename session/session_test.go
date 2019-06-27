@@ -72,7 +72,7 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
@@ -1155,7 +1155,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).IsNull(0), IsTrue)
@@ -1703,7 +1703,7 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	s.store = store
 	s.lease = 20 * time.Millisecond
 	session.SetSchemaLease(s.lease)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom = dom
@@ -1915,7 +1915,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}()
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	var count int
 	var numChunks int
 	for {
@@ -1952,7 +1952,7 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		req := rs.NewRecordBatch()
+		req := rs.NewChunk()
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 		if req.NumRows() == 0 {
@@ -1986,7 +1986,7 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		req := rs.NewRecordBatch()
+		req := rs.NewChunk()
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 		if req.NumRows() == 0 {
@@ -2021,7 +2021,7 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
 
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows(), Equals, 1)
@@ -2053,7 +2053,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 
 	var idx int
 	for {
-		req := rs.NewRecordBatch()
+		req := rs.NewChunk()
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 
@@ -2073,7 +2073,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	rs, err = tk.Exec("select * from chk2")
 	c.Assert(err, IsNil)
 
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows(), Equals, 0)
@@ -2096,7 +2096,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	tk.Se.GetSessionVars().IndexLookupSize = 10
 	rs, err := tk.Exec("select * from chk order by k")
 	c.Assert(err, IsNil)
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	var count int
 	for {
 		err = rs.Next(context.TODO(), req)
@@ -2116,7 +2116,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 
 	rs, err = tk.Exec("select k from chk where c < 90 order by k")
 	c.Assert(err, IsNil)
-	req = rs.NewRecordBatch()
+	req = rs.NewChunk()
 	count = 0
 	for {
 		err = rs.Next(context.TODO(), req)

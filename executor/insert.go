@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -134,7 +133,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *InsertExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if len(e.children) > 0 && e.children[0] != nil {
 		return e.insertRowsFromSelect(ctx, e.exec)
