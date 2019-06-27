@@ -337,7 +337,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinRealIsNullSig{base}
 	case tipb.ScalarFuncSig_TimeIsNull:
 		isNotNull := false
-		if len(impArgs) > 0 && impArgs[0].GetInt64()> 0 {
+		if len(impArgs) > 0 && impArgs[0].GetInt64() > 0 {
 			isNotNull = true
 		}
 		f = &builtinTimeIsNullSig{base, isNotNull}
