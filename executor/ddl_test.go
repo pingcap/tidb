@@ -93,8 +93,8 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	req := rs.NewRecordBatch()
-	it := chunk.NewIterator4Chunk(req.Chunk)
+	req := rs.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
@@ -107,8 +107,8 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
-	req = rs.NewRecordBatch()
-	it = chunk.NewIterator4Chunk(req.Chunk)
+	req = rs.NewChunk()
+	it = chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
@@ -260,7 +260,7 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-time.Duration(1 * time.Millisecond)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	req := r.NewRecordBatch()
+	req := r.NewChunk()
 	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)

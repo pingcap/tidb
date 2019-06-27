@@ -154,7 +154,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //  |                              |       |                      |
 //  +------------------------------+       +----------------------+
 //
-func (e *ProjectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *ProjectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("projection.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -166,9 +166,9 @@ func (e *ProjectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {
-		return e.unParallelExecute(ctx, req.Chunk)
+		return e.unParallelExecute(ctx, req)
 	}
-	return e.parallelExecute(ctx, req.Chunk)
+	return e.parallelExecute(ctx, req)
 
 }
 
@@ -179,7 +179,7 @@ func (e *ProjectionExec) isUnparallelExec() bool {
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
 	// transmit the requiredRows
 	e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
-	err := Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
+	err := Next(ctx, e.children[0], e.childResult)
 	if err != nil {
 		return err
 	}
@@ -312,7 +312,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		requiredRows := atomic.LoadInt64(&f.proj.parentReqRows)
 		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
-		err := Next(ctx, f.child, chunk.NewRecordBatch(input.chk))
+		err := Next(ctx, f.child, input.chk)
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- err
 			return
