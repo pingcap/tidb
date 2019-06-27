@@ -451,6 +451,12 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
 
+	// For issue 10955, make sure the new session load `max_execution_time` into sessionVars.
+	s.dom.GetGlobalVarsCache().Disable()
+	tk1.MustExec("set @@global.max_execution_time = 100")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk2.Se.GetSessionVars().MaxExecutionTime, Equals, uint64(100))
+
 	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
 	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
 	result = tk.MustQuery("show session variables  where variable_name='sql_select_limit';")
