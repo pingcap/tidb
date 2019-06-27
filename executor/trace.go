@@ -48,7 +48,7 @@ type TraceExec struct {
 }
 
 // Next executes real query and collects span later.
-func (e *TraceExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.exhausted {
 		return nil
@@ -92,7 +92,7 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		}
 		trace := traces[0]
 		sortTraceByStartTime(trace)
-		dfsTree(trace, "", false, req.Chunk)
+		dfsTree(trace, "", false, req)
 		e.exhausted = true
 		return nil
 	}
@@ -116,18 +116,18 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
-		iter := chunk.NewIterator4Chunk(req.Chunk)
+		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
+		req = chunk.Renew(req, sctx.GetSessionVars().MaxChunkSize)
 	}
 }
 
