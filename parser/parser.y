@@ -5016,6 +5016,9 @@ SelectStmtBasic:
 			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
 		}
+		if st.SelectStmtOpts.TableHints != nil {
+			st.TableHints = st.SelectStmtOpts.TableHints
+		}
 		$$ = st
 	}
 
@@ -5039,9 +5042,6 @@ SelectStmtFromTable:
 	{
 		st := $1.(*ast.SelectStmt)
 		st.From = $3.(*ast.TableRefsClause)
-		if st.SelectStmtOpts.TableHints != nil {
-			st.TableHints = st.SelectStmtOpts.TableHints
-		}
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-5])
