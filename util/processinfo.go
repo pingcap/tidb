@@ -32,6 +32,9 @@ type ProcessInfo struct {
 	State   uint16
 	Info    string
 	StmtCtx *stmtctx.StatementContext
+	// MaxExecutionTime is the timeout for select statement, in milliseconds.
+	// If the query takes too long, kill it.
+	MaxExecutionTime uint64
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".

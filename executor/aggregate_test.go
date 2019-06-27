@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
@@ -333,6 +334,15 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
 	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
+	_, err = tk.Exec("select std(a) from t")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
+	_, err = tk.Exec("select stddev(a) from t")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev")
+	_, err = tk.Exec("select stddev_pop(a) from t")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
+	_, err = tk.Exec("select std_samp(a) from t")
+	// TODO: Fix this error message.
+	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION std_samp does not exist")
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {

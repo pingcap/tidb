@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -52,22 +53,23 @@ import (
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store           kv.Storage
-	infoHandle      *infoschema.Handle
-	privHandle      *privileges.Handle
-	statsHandle     unsafe.Pointer
-	statsLease      time.Duration
-	statsUpdating   sync2.AtomicInt32
-	ddl             ddl.DDL
-	info            *InfoSyncer
-	m               sync.Mutex
-	SchemaValidator SchemaValidator
-	sysSessionPool  *sessionPool
-	exit            chan struct{}
-	etcdClient      *clientv3.Client
-	wg              sync.WaitGroup
-	gvc             GlobalVariableCache
-	slowQuery       *topNSlowQueries
+	store                kv.Storage
+	infoHandle           *infoschema.Handle
+	privHandle           *privileges.Handle
+	statsHandle          unsafe.Pointer
+	statsLease           time.Duration
+	statsUpdating        sync2.AtomicInt32
+	ddl                  ddl.DDL
+	info                 *InfoSyncer
+	m                    sync.Mutex
+	SchemaValidator      SchemaValidator
+	sysSessionPool       *sessionPool
+	exit                 chan struct{}
+	etcdClient           *clientv3.Client
+	wg                   sync.WaitGroup
+	gvc                  GlobalVariableCache
+	slowQuery            *topNSlowQueries
+	expensiveQueryHandle *expensivequery.Handle
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -978,6 +980,16 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 			return
 		}
 	}
+}
+
+// ExpensiveQueryHandle returns the expensive query handle.
+func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
+	return do.expensiveQueryHandle
+}
+
+// InitExpensiveQueryHandle init the expensive query handler.
+func (do *Domain) InitExpensiveQueryHandle() {
+	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 }
 
 const privilegeKey = "/tidb/privilege"
