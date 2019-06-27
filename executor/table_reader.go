@@ -131,7 +131,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
-func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tableReader.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -140,7 +140,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	if err := e.resultHandler.nextChunk(ctx, req.Chunk); err != nil {
+	if err := e.resultHandler.nextChunk(ctx, req); err != nil {
 		e.feedback.Invalidate()
 		return err
 	}

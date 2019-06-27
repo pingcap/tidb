@@ -39,7 +39,7 @@ type SQLBindExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SQLBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("SQLBindExec.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()

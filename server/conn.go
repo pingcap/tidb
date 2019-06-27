@@ -1279,7 +1279,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 // serverStatus, a flag bit represents server information
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	gotColumnInfo := false
 	for {
 		// Here server.tidbResultSet implements Next method.
@@ -1327,7 +1327,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	fetchedRows := rs.GetFetchedRows()
 
 	// if fetchedRows is not enough, getting data from recordSet.
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	for len(fetchedRows) < fetchSize {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
@@ -1342,7 +1342,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		for i := 0; i < rowCount; i++ {
 			fetchedRows = append(fetchedRows, req.GetRow(i))
 		}
-		req.Chunk = chunk.Renew(req.Chunk, cc.ctx.GetSessionVars().MaxChunkSize)
+		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
