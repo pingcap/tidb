@@ -428,15 +428,16 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 }
 
 // ShowProcessList implements the SessionManager interface.
-func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
+func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
-	rs := make(map[uint64]util.ProcessInfo, len(s.clients))
+	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
 		}
-		pi := client.ctx.ShowProcess()
-		rs[pi.ID] = pi
+		if pi := client.ctx.ShowProcess(); pi != nil {
+			rs[pi.ID] = pi
+		}
 	}
 	s.rwlock.RUnlock()
 	return rs

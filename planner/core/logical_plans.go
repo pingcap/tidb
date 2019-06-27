@@ -312,7 +312,7 @@ type LogicalUnionScan struct {
 	conditions []expression.Expression
 }
 
-// DataSource represents a tablescan without condition push down.
+// DataSource represents a tableScan without condition push down.
 type DataSource struct {
 	logicalSchemaProducer
 

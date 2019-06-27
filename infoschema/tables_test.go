@@ -17,13 +17,18 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -87,6 +92,18 @@ func (s *testSuite) TestInfoschemaFieldValue(c *C) {
 	}, nil, nil), IsTrue)
 
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
+
+	// Fix issue 9836
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
+		ID:      1,
+		User:    "root",
+		Host:    "127.0.0.1",
+		Command: mysql.ComQuery,
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
+	tk.Se.SetSessionManager(sm)
+	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
 }
 
 func (s *testSuite) TestDataForTableStatsField(c *C) {
@@ -225,6 +242,98 @@ func (s *testSuite) TestCharacterSetCollations(c *C) {
 		"c_year <nil> <nil>",
 	))
 	tk.MustExec("DROP DATABASE charset_collate_test")
+}
+
+var _ = Suite(&testTableSuite{})
+
+type testTableSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+}
+
+func (s *testTableSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+
+	var err error
+	s.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	session.SetStatsLease(0)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testTableSuite) TearDownSuite(c *C) {
+	defer testleak.AfterTest(c)()
+	s.dom.Close()
+	s.store.Close()
+}
+
+type mockSessionManager struct {
+	processInfoMap map[uint64]*util.ProcessInfo
+}
+
+func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo { return sm.processInfoMap }
+
+func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	rs, ok := sm.processInfoMap[id]
+	return rs, ok
+}
+
+func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
+
+func (s *testTableSuite) TestSomeTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
+		testkit.Rows("utf8mb4_bin utf8mb4"))
+	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
+	// cherry-pick https://github.com/pingcap/tidb/pull/7831
+	//tk.MustQuery("select * from information_schema.ENGINES;").Check(testkit.Rows("InnoDB DEFAULT Supports transactions, row-level locking, and foreign keys YES YES YES"))
+	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
+	tk.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';").Check(
+		testkit.Rows("def mysql tbl def mysql stats_meta table_id 1 <nil> <nil> <nil> <nil>"))
+	// https://github.com/pingcap/tidb/pull/9898
+	//tk.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Check(
+	//	testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
+	tk.MustQuery("select * from information_schema.USER_PRIVILEGES where PRIVILEGE_TYPE='Select';").Check(testkit.Rows("'root'@'%' def Select YES"))
+
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
+		ID:      1,
+		User:    "user-1",
+		Host:    "localhost",
+		DB:      "information_schema",
+		Command: byte(1),
+		State:   1,
+		Info:    "do something",
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
+	sm.processInfoMap[2] = &util.ProcessInfo{
+		ID:      2,
+		User:    "user-2",
+		Host:    "localhost",
+		DB:      "test",
+		Command: byte(2),
+		State:   2,
+		Info:    strings.Repeat("x", 101),
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
+	tk.Se.SetSessionManager(sm)
+	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s 0", strings.Repeat("x", 100)),
+		))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
+		))
 }
 
 func (s *testSuite) TestSchemataCharacterSet(c *C) {

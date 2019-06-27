@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"golang.org/x/net/context"
@@ -37,12 +38,12 @@ type testExecSuite struct {
 
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager struct {
-	PS []util.ProcessInfo
+	PS []*util.ProcessInfo
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
-	ret := make(map[uint64]util.ProcessInfo)
+func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	ret := make(map[uint64]*util.ProcessInfo)
 	for _, item := range msm.PS {
 		ret[item.ID] = item
 	}
@@ -62,15 +63,18 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	schema := buildSchema(names, ftypes)
 
 	// Compose a mocked session manager.
-	ps := make([]util.ProcessInfo, 0, 1)
-	pi := util.ProcessInfo{
+	ps := make([]*util.ProcessInfo, 0, 1)
+	pi := &util.ProcessInfo{
 		ID:      0,
 		User:    "test",
 		Host:    "127.0.0.1",
 		DB:      "test",
-		Command: "select * from t",
+		Command: 't',
 		State:   1,
 		Info:    "",
+		StmtCtx: &stmtctx.StatementContext{
+			MemTracker: memory.NewTracker("", -1),
+		},
 	}
 	ps = append(ps, pi)
 	sm := &mockSessionManager{

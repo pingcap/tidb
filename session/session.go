@@ -65,7 +65,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-// Session context
+// Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
 	sessionctx.Context
 	Status() uint16                                               // Flag of current status, such as autocommit.
@@ -89,7 +89,7 @@ type Session interface {
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
-	ShowProcess() util.ProcessInfo
+	ShowProcess() *util.ProcessInfo
 	// PrePareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
@@ -795,10 +795,11 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	pi := util.ProcessInfo{
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
-		Command: mysql.Command2Str[command],
+		Command: command,
 		Time:    t,
 		State:   s.Status(),
 		Info:    sql,
+		StmtCtx: s.sessionVars.StmtCtx,
 
 		MaxExecutionTime: maxExecutionTime,
 	}
@@ -806,7 +807,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
 	}
-	s.processInfo.Store(pi)
+	s.processInfo.Store(&pi)
 }
 
 func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet) ([]sqlexec.RecordSet, error) {
@@ -1539,12 +1540,11 @@ func (s *session) GetStore() kv.Storage {
 	return s.store
 }
 
-func (s *session) ShowProcess() util.ProcessInfo {
-	var pi util.ProcessInfo
+func (s *session) ShowProcess() *util.ProcessInfo {
+	var pi *util.ProcessInfo
 	tmp := s.processInfo.Load()
 	if tmp != nil {
-		pi = tmp.(util.ProcessInfo)
-		pi.Mem = s.GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
+		pi = tmp.(*util.ProcessInfo)
 	}
 	return pi
 }
