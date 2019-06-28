@@ -374,7 +374,7 @@ func recoveryProjection(output *projectionOutput, r interface{}) {
 		output.done <- errors.Errorf("%v", r)
 	}
 	buf := util.GetStack()
-	logutil.Logger(context.Background()).Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.String("stack", string(buf)))
+	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.String("stack", string(buf)))
 }
 
 func readProjectionInput(inputCh <-chan *projectionInput, finishCh <-chan struct{}) *projectionInput {
