@@ -2860,6 +2860,14 @@ func (s *testDBSuite5) TestModifyGeneratedColumn(c *C) {
 	tk.MustExec("alter table t1 modify column b bigint as (a + 1) stored;")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
 
+	// Modify column with index to the same expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(b));")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b bigint as (a+1);")
+	tk.MustExec("alter table t1 modify column b bigint as (a + 1);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+
 	// Modify column from non-generated to stored generated.
 	tk.MustExec("drop table t1;")
 	tk.MustExec("create table t1 (a int, b int);")

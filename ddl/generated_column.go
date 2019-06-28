@@ -217,7 +217,11 @@ func checkGeneratedWithAutoInc(tableInfo *model.TableInfo, newColumnDef *ast.Col
 }
 
 func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
-	if newCol.GeneratedStored && oldCol.GeneratedExprString != newCol.GeneratedExprString {
+	if oldCol.GeneratedExprString == newCol.GeneratedExprString {
+		return nil
+	}
+
+	if newCol.GeneratedStored {
 		return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
 	}
 
