@@ -315,8 +315,8 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	if consumeDur.Nanoseconds() == 0 {
 		return curStep
 	}
-	y := defaultComsumeTime.Nanoseconds() / consumeDur.Nanoseconds()
-	res := curStep * y
+	y := defaultComsumeTime.Seconds() / consumeDur.Seconds()
+	res := int64(float64(curStep) * y)
 	if res < minStep {
 		return minStep
 	} else if res > maxStep {
