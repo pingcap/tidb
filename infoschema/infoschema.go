@@ -303,8 +303,8 @@ func (h *Handle) Get() InfoSchema {
 	return schema
 }
 
-// IsNil uses to check whether handle value is nil.
-func (h *Handle) IsNil() bool {
+// IsValid uses to check whether handle value is nil.
+func (h *Handle) IsValid() bool {
 	return h.value.Load() == nil
 }
 
