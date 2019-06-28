@@ -392,6 +392,9 @@ type SessionVars struct {
 
 	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
 	ConnectionInfo *ConnectionInfo
+
+	// use noop funcs or not
+	EnableNoopFuncs bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -444,6 +447,7 @@ func NewSessionVars() *SessionVars {
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
+		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -818,6 +822,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
+	case TiDBEnableNoopFuncs:
+		s.EnableNoopFuncs = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
