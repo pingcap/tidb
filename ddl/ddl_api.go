@@ -2632,7 +2632,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(t.Cols(), col, newCol); err != nil {
+	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -2692,29 +2692,6 @@ func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	}
 	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
 		return ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
-	}
-
-	// If the modified column is generated, check whether it refers to any auto-increment columns.
-	for _, option := range specNewColumn.Options {
-		if option.Tp == ast.ColumnOptionGenerated {
-			_, t, err := d.getSchemaAndTableByIdent(ctx, ident)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			_, dependColNames := findDependedColumnNames(specNewColumn)
-			if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
-				return errors.Trace(err)
-			}
-
-			// If there is an index on the generated column which we are trying to modify, return an error.
-			for _, idx := range t.Indices() {
-				for _, col := range idx.Meta().Columns {
-					if col.Name.L == specNewColumn.Name.Name.L {
-						return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
-					}
-				}
-			}
-		}
 	}
 
 	originalColName := specNewColumn.Name.Name
