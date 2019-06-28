@@ -177,10 +177,10 @@ func (ds *DataSource) buildKeyInfo() {
 	ds.schema.Keys = nil
 	ds.baseLogicalPlan.buildKeyInfo()
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			continue
 		}
-		idx := path.index
+		idx := path.Index
 		if !idx.Unique {
 			continue
 		}

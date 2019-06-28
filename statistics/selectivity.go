@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
@@ -147,7 +148,12 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 // Currently the time complexity is o(n^2).
-func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Expression) (float64, []*StatsNode, error) {
+func (coll *HistColl) Selectivity(
+	ctx sessionctx.Context,
+	handleCol *expression.Column,
+	exprs []expression.Expression,
+	paths []*util.AccessPath,
+) (float64, []*StatsNode, error) {
 	// If table's count is zero or conditions are empty, we should return 100% selectivity.
 	if coll.Count == 0 || len(exprs) == 0 {
 		return 1, nil, nil
@@ -189,7 +195,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	for id, colInfo := range coll.Columns {
 		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
 		if col != nil {
-			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, col)
+			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -211,6 +217,13 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.Count)
 		}
 	}
+	id2Paths := make(map[int64]*util.AccessPath)
+	for _, path := range paths {
+		if path.IsTablePath {
+			continue
+		}
+		id2Paths[path.Index.ID] = path
+	}
 	for id, idxInfo := range coll.Indices {
 		idxCols := expression.FindPrefixOfIndex(extractedCols, coll.Idx2ColumnIDs[id])
 		if len(idxCols) > 0 {
@@ -218,7 +231,13 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			for i := 0; i < len(idxCols); i++ {
 				lengths = append(lengths, idxInfo.Info.Columns[i].Length)
 			}
-			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, idxCols...)
+			if !idxInfo.Info.Unique && !idxInfo.Info.Primary && len(idxInfo.Info.Columns) == len(idxCols) {
+				if handleCol != nil {
+					idxCols = append(idxCols, handleCol)
+					lengths = append(lengths, types.UnspecifiedLength)
+				}
+			}
+			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, id2Paths[idxInfo.Info.ID], lengths, idxCols...)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -259,8 +278,14 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	return ret, nodes, nil
 }
 
-func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType,
-	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.Range, partCover bool, err error) {
+func getMaskAndRanges(
+	ctx sessionctx.Context,
+	exprs []expression.Expression,
+	rangeType ranger.RangeType,
+	path *util.AccessPath,
+	lengths []int,
+	cols ...*expression.Column,
+) (mask int64, ranges []*ranger.Range, partCover bool, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	isDNF := false
 	var accessConds, remainedConds []expression.Expression
@@ -269,9 +294,13 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0].UniqueID)
 		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType, types.UnspecifiedLength)
 	case ranger.IndexRangeType:
-		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
-		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
+		if path == nil {
+			var res *ranger.DetachRangeResult
+			res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
+			ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
+		} else {
+			ranges, accessConds, remainedConds, isDNF = path.Ranges, path.AccessConds, path.TableFilters, path.IsDNFCond
+		}
 	default:
 		panic("should never be here")
 	}

@@ -1071,10 +1071,9 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─IndexScan_14 7.50 cop table:t, index:b, range:(2 0,2 +inf], keep order:false",
+		"TopN_10 1.00 root test.t.a:asc, offset:0, count:1",
+		"└─IndexReader_18 2.00 root index:IndexScan_17",
+		"  └─IndexScan_17 2.00 cop table:t, index:b, range:(2 0,2 +inf], keep order:false",
 	))
 	// Multi-column filter.
 	tk.MustExec("drop table t")

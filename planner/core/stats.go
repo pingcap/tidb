@@ -14,8 +14,10 @@
 package core
 
 import (
+	"fmt"
 	"math"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
@@ -89,7 +91,7 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	return ndv
 }
 
-func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
+func (ds *DataSource) initStats() {
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.Count),
 		Cardinality:  make([]float64, len(ds.Columns)),
@@ -103,12 +105,15 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 		tableStats.Cardinality[i] = ds.getColumnNDV(col.ID)
 	}
 	ds.tableStats = tableStats
-	selectivity, nodes, err := tableStats.HistColl.Selectivity(ds.ctx, conds)
+}
+
+func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
+	selectivity, nodes, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ds.getHandleCol(), conds, ds.possibleAccessPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("an error happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
-	ds.stats = tableStats.Scale(selectivity)
+	ds.stats = ds.tableStats.Scale(selectivity)
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
 		ds.stats.HistColl = ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
 	}
@@ -120,27 +125,45 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
+	ds.initStats()
+	for _, path := range ds.possibleAccessPaths {
+		if path.IsTablePath {
+			continue
+		}
+		err := ds.fillRangesForIndexPath(path)
+		if err != nil {
+			return nil, err
+		}
+	}
 	ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
 			if err != nil {
 				return nil, err
 			}
 			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.ranges) == 0 {
+			if noIntervalRanges || len(path.Ranges) == 0 {
 				ds.possibleAccessPaths[0] = path
 				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 				break
 			}
 			continue
 		}
+		log.Warn("derive index path before",
+			zap.String("index", fmt.Sprintf("%v", path.IdxCols)),
+			zap.Float64("count after access", path.CountAfterAccess),
+		)
 		noIntervalRanges, err := ds.deriveIndexPathStats(path)
+		log.Warn("derive index path after",
+			zap.String("index", fmt.Sprintf("%v", path.IdxCols)),
+			zap.Float64("count after access", path.CountAfterAccess),
+		)
 		if err != nil {
 			return nil, err
 		}
 		// If we have empty range, or point range on unique index, just remove other possible paths.
-		if (noIntervalRanges && path.index.Unique) || len(path.ranges) == 0 {
+		if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
 			ds.possibleAccessPaths[0] = path
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 			break

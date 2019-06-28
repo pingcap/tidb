@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -408,9 +409,9 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			return nil
 		}
 	}
-	var tblPath *accessPath
+	var tblPath *util.AccessPath
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			tblPath = path
 			break
 		}
@@ -435,10 +436,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	}
 	helper := &indexJoinBuildHelper{join: p}
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			continue
 		}
-		indexInfo := path.index
+		indexInfo := path.Index
 		err := helper.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
 		if err != nil {
 			logutil.BgLogger().Warn("build index join failed", zap.Error(err))
@@ -587,19 +588,19 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, idx.Columns, ds.tableInfo)
-	path := &accessPath{
-		indexFilters:     indexConds,
-		tableFilters:     tblConds,
-		countAfterAccess: rowCount,
+	path := &util.AccessPath{
+		IndexFilters:     indexConds,
+		TableFilters:     tblConds,
+		CountAfterAccess: rowCount,
 	}
 	// Assume equal conditions used by index join and other conditions are independent.
 	if len(indexConds) > 0 {
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, indexConds)
+		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ds.getHandleCol(), indexConds, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
-		path.countAfterIndex = rowCount * selectivity
+		path.CountAfterIndex = rowCount * selectivity
 	}
 	selectivity := ds.stats.RowCount / ds.tableStats.RowCount
 	finalStats := ds.stats.ScaleByExpectCnt(selectivity * rowCount)
