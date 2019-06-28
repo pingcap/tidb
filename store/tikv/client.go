@@ -258,7 +258,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithUnaryInterceptor(unaryInterceptor),
 			grpc.WithStreamInterceptor(streamInterceptor),
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxRecvMsgSize)),
-			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxSendMsgSize)),
+			//grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxSendMsgSize)),
 			grpc.WithBackoffMaxDelay(time.Second*3),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:                time.Duration(keepAlive) * time.Second,
