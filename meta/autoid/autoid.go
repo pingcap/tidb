@@ -33,7 +33,7 @@ import (
 const (
 	minStep            = 1000
 	maxStep            = 2000000
-	defaultComsumeTime = 10 * time.Second
+	defaultConsumeTime = 10 * time.Second
 )
 
 // Test needs to change it, so it's a variable.
