@@ -16,15 +16,15 @@ package executor_test
 import (
 	"context"
 
-	"github.com/pingcap/tidb/planner/core"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
@@ -394,6 +394,10 @@ func (s *testSuite3) TestFlushPrivileges(c *C) {
 	// After flush.
 	_, err = se.Execute(ctx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, IsNil)
+
+	config.GetGlobalConfig().Security.SkipGrantTable = true
+	tk.MustExec("FLUSH PRIVILEGES")
+	config.GetGlobalConfig().Security.SkipGrantTable = false
 }
 
 func (s *testSuite3) TestDropStats(c *C) {
