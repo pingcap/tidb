@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -260,6 +261,10 @@ func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
 }
 
 func (s *testSuite) TestRenameTable(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database rename1")
