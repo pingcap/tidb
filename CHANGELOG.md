@@ -71,7 +71,6 @@ All notable changes to this project will be documented in this file. See also [R
     - Add the `tidb_skip_isolation_level_check` variable to control whether to report errors when the isolation level is set to SERIALIZABLE 
     - Modify the `tidb_disable_txn_auto_retry` system variable to make it work on all retryable errors  
 
-
 ## Permission Management
 * Perform permission check on the `ANALYZE`, `USE`, `SET GLOBAL`, and  `SHOW PROCESSLIST` statements
 * Support Role Based Access Control (RBAC) (Experimental)
