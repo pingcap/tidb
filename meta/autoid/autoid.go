@@ -304,7 +304,7 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 }
 
 func NextStep(curStep int64, consumeDur time.Duration) int64 {
-	x, y := consumeDur.Nanoseconds() / 1000000, defaultComsumeTime.Nanoseconds() / 1000000
+	x, y := consumeDur.Nanoseconds()/1000000, defaultComsumeTime.Nanoseconds()/1000000
 	if x == 0 {
 		return curStep
 	}
