@@ -2181,7 +2181,7 @@ func (s *testDBSuite5) TestRebaseAutoID(c *C) {
 	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1"))
 	s.tk.MustExec("alter table tidb.test auto_increment = 6000;")
 	s.tk.MustExec("insert tidb.test values (null, 1);")
-	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1"))
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "1500001 1"))
 	s.tk.MustExec("alter table tidb.test auto_increment = 5;")
 	s.tk.MustExec("insert tidb.test values (null, 1);")
 	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1"))
@@ -2869,7 +2869,7 @@ func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {
 	// Test increase shard_row_id_bits failed by overflow global auto ID.
 	_, err := tk.Exec("alter table t1 SHARD_ROW_ID_BITS = 10;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID 72057594037932936 overflow")
+	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID 72057594039427936 overflow")
 
 	// Test reduce shard_row_id_bits will be ok.
 	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 3;")

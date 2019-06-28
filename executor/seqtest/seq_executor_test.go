@@ -727,7 +727,7 @@ func (s *seqTestSuite) TestAdminShowNextID(c *C) {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21"))
+	r.Check(testkit.Rows("test t _tidb_rowid 10011"))
 
 	// test for a table with the primary key
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")

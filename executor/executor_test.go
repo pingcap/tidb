@@ -4209,7 +4209,7 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	tk.MustExec("insert into t_recover values (4),(5),(6)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 	// check rebase auto id.
-	tk.MustQuery("select a,_tidb_rowid from t_recover;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003"))
+	tk.MustQuery("select a,_tidb_rowid from t_recover;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 1500001", "5 1500002", "6 1500003"))
 
 	// recover table by none exits job.
 	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", 10000000))
