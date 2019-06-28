@@ -3,6 +3,7 @@ package infoschema
 import (
 	"fmt"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"math/rand"
 	"os"
@@ -157,6 +158,17 @@ func (*testSlowLogBufferSuit) TestSlowQueryReader(c *C) {
 
 	err = os.Remove(logFile)
 	c.Assert(err, IsNil)
+}
+
+// ParseSlowLogRows reads slow log data by parse slow log file.
+// It won't use the cache data.
+// It is exporting for testing.
+func ParseSlowLogRows(filePath string, tz *time.Location) ([][]types.Datum, error) {
+	tuples, err := parseSlowLogDataFromFile(tz, filePath, 0, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return convertSlowLogTuplesToDatums(tuples), nil
 }
 
 func prepareSlowLogFile(filePath string, c *C, num int) {

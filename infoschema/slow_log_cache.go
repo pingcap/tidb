@@ -48,7 +48,7 @@ func (s *slowLogReader) getSlowLogData(filePath string, tz *time.Location) ([][]
 		return s.getSlowLogDataWithCache(tz)
 
 	}
-	return s.parseSlowLogFileAndUpdateCache(tz, filePath, 0, nil, nil)
+	return s.parseSlowLogFileAndUpdateCache(tz, filePath, 0)
 }
 
 // getSlowLogDataWithCache gets data from cache and get the remain data by parse slow log file.
@@ -93,8 +93,8 @@ func (s *slowLogReader) getSlowLogDataWithCache(tz *time.Location) ([][]types.Da
 }
 
 // parseSlowLogFileAndUpdateCache gets data by parse the slow log file, and then update the cache.
-func (s *slowLogReader) parseSlowLogFileAndUpdateCache(tz *time.Location, filePath string, offset int64, filterFn func(t time.Time) bool, bypassFn func(t time.Time) bool) ([][]types.Datum, error) {
-	tuples, err := parseSlowLogDataFromFile(tz, filePath, offset, filterFn, bypassFn)
+func (s *slowLogReader) parseSlowLogFileAndUpdateCache(tz *time.Location, filePath string, offset int64) ([][]types.Datum, error) {
+	tuples, err := parseSlowLogDataFromFile(tz, filePath, offset, nil, nil)
 	if err != nil {
 		return nil, err
 	}
