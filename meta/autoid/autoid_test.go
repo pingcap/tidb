@@ -326,3 +326,13 @@ func (*testSuite) TestRollbackAlloc(c *C) {
 	c.Assert(alloc.Base(), Equals, int64(0))
 	c.Assert(alloc.End(), Equals, int64(0))
 }
+
+// TestNextStep tests generate next auto id step.
+func (*testSuite) TestNextStep(c *C) {
+	nextStep := autoid.NextStep(2000000, 1*time.Nanosecond)
+	c.Assert(nextStep, Equals, int64(2000000))
+	nextStep = autoid.NextStep(678910, 10*time.Second)
+	c.Assert(nextStep, Equals, int64(678910))
+	nextStep = autoid.NextStep(50000, 10*time.Minute)
+	c.Assert(nextStep, Equals, int64(1000))
+}
