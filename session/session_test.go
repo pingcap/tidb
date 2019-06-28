@@ -72,7 +72,7 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
@@ -456,6 +456,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	tk1.MustExec("set @@global.max_execution_time = 100")
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	c.Assert(tk2.Se.GetSessionVars().MaxExecutionTime, Equals, uint64(100))
+	tk1.MustExec("set @@global.max_execution_time = 0")
 
 	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
 	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
@@ -1709,7 +1710,7 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	s.store = store
 	s.lease = 20 * time.Millisecond
 	session.SetSchemaLease(s.lease)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom = dom
