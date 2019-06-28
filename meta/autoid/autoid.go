@@ -311,10 +311,7 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 			failpoint.Return(step)
 		}
 	})
-
-	if consumeDur.Nanoseconds() == 0 {
-		return curStep
-	}
+	
 	y := defaultComsumeTime.Seconds() / consumeDur.Seconds()
 	res := int64(float64(curStep) * y)
 	if res < minStep {
