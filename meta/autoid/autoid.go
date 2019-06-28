@@ -312,7 +312,7 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 		}
 	})
 
-	consumeRate := defaultComsumeTime.Seconds() / consumeDur.Seconds()
+	consumeRate := defaultConsumeTime.Seconds() / consumeDur.Seconds()
 	res := int64(float64(curStep) * consumeRate)
 	if res < minStep {
 		return minStep
