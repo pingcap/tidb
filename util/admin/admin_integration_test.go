@@ -43,7 +43,7 @@ func (s *testAdminSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)

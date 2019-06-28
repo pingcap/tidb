@@ -533,8 +533,23 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	c.Assert(err, IsNil)
 	gcWorker.Start()
-	gcWorker.(*GCWorker).runGCJob(context.Background(), 0, 1)
+	useDistributedGC, err := gcWorker.(*GCWorker).checkUseDistributedGC()
+	c.Assert(useDistributedGC, IsTrue)
+	c.Assert(err, IsNil)
+	safePoint := uint64(time.Now().Unix())
+	gcWorker.(*GCWorker).runGCJob(context.Background(), safePoint, 1)
+	getSafePoint, err := loadSafePoint(gcWorker.(*GCWorker).store.GetSafePointKV())
+	c.Assert(err, IsNil)
+	c.Assert(getSafePoint, Equals, safePoint)
 	gcWorker.Close()
+}
+
+func loadSafePoint(kv tikv.SafePointKV) (uint64, error) {
+	val, err := kv.Get(tikv.GcSavedSafePoint)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(val, 10, 64)
 }
 
 func (s *testGCWorkerSuite) TestRunDistGCJob(c *C) {
