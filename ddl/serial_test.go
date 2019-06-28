@@ -429,3 +429,17 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 }
+
+// TestRunDDLJobPanic tests recover panic when run ddl job panic.
+func (s *testSerialSuite) TestRunDDLJobPanic(c *C) {
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob", `1*return(true)`), IsNil)
+	_, err := tk.Exec("create table t(c1 int, c2 int)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+}

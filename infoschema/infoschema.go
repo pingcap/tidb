@@ -303,6 +303,11 @@ func (h *Handle) Get() InfoSchema {
 	return schema
 }
 
+// IsNil uses to check whether handle value is nil.
+func (h *Handle) IsNil() bool {
+	return h.value.Load() == nil
+}
+
 // EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
 func (h *Handle) EmptyClone() *Handle {
 	newHandle := &Handle{

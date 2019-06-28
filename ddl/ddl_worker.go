@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
@@ -471,6 +472,22 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.BgLogger().Error("run ddl job panic",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
+			job.State = model.JobStateCancelling
+		}
+	}()
+
+	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("panic test")
+		}
+	})
+
 	logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	timeStart := time.Now()
 	defer func() {
