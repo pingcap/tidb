@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -343,6 +344,10 @@ func (s *testSuite3) TestDefaultDBAfterDropCurDB(c *C) {
 }
 
 func (s *testSuite3) TestRenameTable(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database rename1")
@@ -356,7 +361,7 @@ func (s *testSuite3) TestRenameTable(c *C) {
 	tk.MustExec("insert rename2.t values ()")
 	tk.MustExec("rename table rename2.t to rename3.t")
 	tk.MustExec("insert rename3.t values ()")
-	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "1500001", "2000001"))
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001"))
 	// Make sure the drop old database doesn't affect the rename3.t's operations.
 	tk.MustExec("drop database rename2")
 	tk.MustExec("insert rename3.t values ()")

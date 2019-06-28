@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -39,6 +40,11 @@ type testSuite struct {
 }
 
 func (*testSuite) TestT(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -130,6 +136,11 @@ func (*testSuite) TestT(c *C) {
 }
 
 func (*testSuite) TestUnsignedAutoid(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()

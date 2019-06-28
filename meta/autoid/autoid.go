@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -305,11 +306,17 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 
 // NextStep return new auto id step according to previous step and consuming time.
 func NextStep(curStep int64, consumeDur time.Duration) int64 {
-	x, y := consumeDur.Nanoseconds()/1000000, defaultComsumeTime.Nanoseconds()/1000000
-	if x == 0 {
+	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(step)
+		}
+	})
+
+	if consumeDur.Nanoseconds() == 0 {
 		return curStep
 	}
-	res := (curStep / x) * y
+	y := defaultComsumeTime.Nanoseconds() / consumeDur.Nanoseconds()
+	res := curStep * y
 	if res < minStep {
 		return minStep
 	} else if res > maxStep {
