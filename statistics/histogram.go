@@ -607,7 +607,7 @@ func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0)
 	for _, bucket := range protoHg.Buckets {
 		lower, upper := types.NewBytesDatum(bucket.LowerBound), types.NewBytesDatum(bucket.UpperBound)
-		hg.AppendBucket(&lower, &upper, bucket.Count, bucket.Repeats)
+		hg.AppendBucket(lower.Copy(), upper.Copy(), bucket.Count, bucket.Repeats)
 	}
 	return hg
 }
