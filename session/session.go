@@ -1705,6 +1705,7 @@ var builtinGlobalVariable = []string{
 	variable.AutoIncrementIncrement,
 	variable.CollationServer,
 	variable.NetWriteTimeout,
+	variable.MaxExecutionTime,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
