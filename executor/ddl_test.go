@@ -93,8 +93,8 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	req := rs.NewRecordBatch()
-	it := chunk.NewIterator4Chunk(req.Chunk)
+	req := rs.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
@@ -107,8 +107,8 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
-	req = rs.NewRecordBatch()
-	it = chunk.NewIterator4Chunk(req.Chunk)
+	req = rs.NewChunk()
+	it = chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
@@ -260,7 +260,7 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-time.Duration(1 * time.Millisecond)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	req := r.NewRecordBatch()
+	req := r.NewChunk()
 	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
@@ -778,10 +778,13 @@ func (s *testSuite3) TestGeneratedColumnRelatedDDL(c *C) {
 	_, err = tk.Exec("alter table t1 add column d bigint generated always as (a + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
 
-	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
+	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1);")
 
 	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	_, err = tk.Exec("alter table t1 add column e bigint as (z + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrBadField.GenWithStackByArgs("z", "generated column function").Error())
 
 	tk.MustExec("drop table t1;")
 }

@@ -119,7 +119,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 			h.lastUpdateTime = meta.UpdateTime
 		}
 		if err != nil {
-			logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
+			logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 			continue
 		}
 
@@ -246,7 +246,7 @@ func (h *BindHandle) DropInvalidBindRecord() {
 		if invalidBindRecord.droppedTime.IsZero() {
 			err := h.DropBindRecord(invalidBindRecord.bindRecord)
 			if err != nil {
-				logutil.Logger(context.Background()).Error("DropInvalidBindRecord failed", zap.Error(err))
+				logutil.BgLogger().Error("DropInvalidBindRecord failed", zap.Error(err))
 			}
 			invalidBindRecord.droppedTime = time.Now()
 			continue

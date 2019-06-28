@@ -433,6 +433,9 @@ id	count	task	operator info
 Projection_3	10000.00	root	or(NULL, gt(test.t.a, 1))
 └─TableReader_5	10000.00	root	data:TableScan_4
   └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where a = 1 for update;
+id	count	task	operator info
+Point_Get_1	1.00	root	table:t, handle:1
 drop table if exists ta, tb;
 create table ta (a varchar(20));
 create table tb (a varchar(20));
@@ -455,10 +458,8 @@ TableReader_7	10000.00	root	data:TableScan_6
 └─TableScan_6	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 id	count	task	operator info
-StreamAgg_18	8000.00	root	group by:col_2, col_3, funcs:firstrow(col_0), firstrow(col_1)
-└─IndexReader_19	8000.00	root	index:StreamAgg_10
-  └─StreamAgg_10	8000.00	cop	group by:test.t1.a, test.t1.b, funcs:firstrow(test.t1.a), firstrow(test.t1.b)
-    └─IndexScan_17	10000.00	cop	table:t1, index:a, b, range:[NULL,+inf], keep order:true, stats:pseudo
+TableReader_9	10000.00	root	data:TableScan_8
+└─TableScan_8	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
 explain select ifnull(a, 0) from t;

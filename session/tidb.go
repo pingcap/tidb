@@ -19,7 +19,6 @@ package session
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
@@ -64,12 +63,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return
 	}
 
-	ddlLease := time.Duration(0)
-	statisticLease := time.Duration(0)
-	ddlLease = schemaLease
-	statisticLease = statsLease
+	ddlLease := schemaLease
+	statisticLease := statsLease
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
-		logutil.Logger(context.Background()).Info("new domain",
+		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
 			zap.Stringer("stats lease", statisticLease))
@@ -80,7 +77,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
-			logutil.Logger(context.Background()).Error("[ddl] init domain failed",
+			logutil.BgLogger().Error("[ddl] init domain failed",
 				zap.Error(err1))
 		}
 		return true, err1
@@ -131,9 +128,14 @@ func SetStatsLease(lease time.Duration) {
 	statsLease = lease
 }
 
+// DisableStats4Test disables the stats for tests.
+func DisableStats4Test() {
+	statsLease = -1
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
-	logutil.Logger(context.Background()).Debug("compiling", zap.String("source", src))
+	logutil.BgLogger().Debug("compiling", zap.String("source", src))
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
 	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
@@ -143,7 +145,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("compiling",
+		logutil.BgLogger().Warn("compiling",
 			zap.String("source", src),
 			zap.Error(err))
 		return nil, err
@@ -161,10 +163,10 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
-			logutil.Logger(context.Background()).Info("rollbackTxn for ddl/autocommit error.")
+			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit error.")
 			se.RollbackTxn(ctx)
 		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
-			logutil.Logger(context.Background()).Info("rollbackTxn for deadlock error", zap.Uint64("txn", se.txn.StartTS()))
+			logutil.BgLogger().Info("rollbackTxn for deadlock error", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
 		}
 		return meetsErr
@@ -223,7 +225,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	// All the history should be added here.
 	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly(sessVars) {
-		if err == nil {
+		if err == nil && !sessVars.TxnCtx.IsPessimistic {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
 		if txn, err1 := sctx.Txn(false); err1 == nil {
@@ -235,7 +237,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				}
 			}
 		} else {
-			logutil.Logger(context.Background()).Error("get txn error", zap.Error(err1))
+			logutil.BgLogger().Error("get txn error", zap.Error(err1))
 		}
 	}
 
@@ -271,10 +273,10 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		return nil, nil
 	}
 	var rows []chunk.Row
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	for {
 		// Since we collect all the rows, we can not reuse the chunk.
-		iter := chunk.NewIterator4Chunk(req.Chunk)
+		iter := chunk.NewIterator4Chunk(req)
 
 		err := rs.Next(ctx, req)
 		if err != nil {
@@ -287,41 +289,9 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			rows = append(rows, row)
 		}
-		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
+		req = chunk.Renew(req, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
-}
-
-var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
-
-func trimSQL(sql string) string {
-	// Trim space.
-	sql = strings.TrimSpace(sql)
-	// Trim leading /*comment*/
-	// There may be multiple comments
-	for strings.HasPrefix(sql, "/*") {
-		i := strings.Index(sql, "*/")
-		if i != -1 && i < len(sql)+1 {
-			sql = sql[i+2:]
-			sql = strings.TrimSpace(sql)
-			continue
-		}
-		break
-	}
-	// Trim leading '('. For `(select 1);` is also a query.
-	return strings.TrimLeft(sql, "( ")
-}
-
-// IsQuery checks if a sql statement is a query statement.
-func IsQuery(sql string) bool {
-	sqlText := strings.ToLower(trimSQL(sql))
-	for _, key := range queryStmtTable {
-		if strings.HasPrefix(sqlText, key) {
-			return true
-		}
-	}
-
-	return false
 }
 
 var (

@@ -15,10 +15,8 @@ package executor
 
 import (
 	"context"
-	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -52,24 +50,16 @@ func (e *WindowExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *WindowExec) Next(ctx context.Context, chk *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("windowExec.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
-	}
+func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.meetNewGroup && e.remainingRowsInGroup > 0 {
-		err := e.appendResult2Chunk(chk.Chunk)
+		err := e.appendResult2Chunk(chk)
 		if err != nil {
 			return err
 		}
 	}
 	for !e.executed && (chk.NumRows() == 0 || e.remainingRowsInChunk > 0) {
-		err := e.consumeOneGroup(ctx, chk.Chunk)
+		err := e.consumeOneGroup(ctx, chk)
 		if err != nil {
 			e.executed = true
 			return errors.Trace(err)
@@ -130,8 +120,8 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk
 		return errors.Trace(err)
 	}
 
-	childResult := e.children[0].newFirstChunk()
-	err = e.children[0].Next(ctx, &chunk.RecordBatch{Chunk: childResult})
+	childResult := newFirstChunk(e.children[0])
+	err = Next(ctx, e.children[0], childResult)
 	if err != nil {
 		return errors.Trace(err)
 	}

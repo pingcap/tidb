@@ -58,7 +58,7 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 	}
 	kvResp, err := h.Store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
 	if err != nil {
-		logutil.Logger(context.Background()).Info("get MVCC by encoded key failed",
+		logutil.BgLogger().Info("get MVCC by encoded key failed",
 			zap.Binary("encodeKey", encodedKey),
 			zap.Reflect("region", keyLocation.Region),
 			zap.Binary("startKey", keyLocation.StartKey),
@@ -130,7 +130,7 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
 		}
 	}()
 	var regionResp StoreHotRegionInfos
@@ -181,7 +181,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 	for regionID, regionMetric := range metrics {
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("locate region failed", zap.Error(err))
+			logutil.BgLogger().Error("locate region failed", zap.Error(err))
 			continue
 		}
 
@@ -284,7 +284,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
-		logutil.Logger(context.Background()).Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
+		logutil.BgLogger().Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
 		// Ignore decode errors.
 		err = nil
 		return
@@ -431,7 +431,7 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
 		}
 	}()
 	var regionsInfo RegionsInfo
@@ -510,7 +510,7 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
 		}
 	}()
 	var storesStat StoresStat
