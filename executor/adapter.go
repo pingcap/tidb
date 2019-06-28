@@ -100,7 +100,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) error {
 	err := Next(ctx, a.executor, req)
 	if err != nil {
 		a.lastErr = err
@@ -119,9 +119,9 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	return nil
 }
 
-// NewRecordBatch create a recordBatch base on top-level executor's newFirstChunk().
-func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
-	return chunk.NewRecordBatch(newFirstChunk(a.executor))
+// NewChunk create a chunk base on top-level executor's newFirstChunk().
+func (a *recordSet) NewChunk() *chunk.Chunk {
+	return newFirstChunk(a.executor)
 }
 
 func (a *recordSet) Close() error {
@@ -306,8 +306,7 @@ func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
 	return c.fields
 }
 
-func (c *chunkRowRecordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	chk := req.Chunk
+func (c *chunkRowRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for !chk.IsFull() && c.idx < len(c.rows) {
 		chk.AppendRow(c.rows[c.idx])
@@ -316,8 +315,8 @@ func (c *chunkRowRecordSet) Next(ctx context.Context, req *chunk.RecordBatch) er
 	return nil
 }
 
-func (c *chunkRowRecordSet) NewRecordBatch() *chunk.RecordBatch {
-	return chunk.NewRecordBatch(newFirstChunk(c.e))
+func (c *chunkRowRecordSet) NewChunk() *chunk.Chunk {
+	return newFirstChunk(c.e)
 }
 
 func (c *chunkRowRecordSet) Close() error {
@@ -349,7 +348,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 	var rows []chunk.Row
 	var err error
 	fields := rs.Fields()
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	for {
 		err = rs.Next(ctx, req)
 		if err != nil {
@@ -359,11 +358,11 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 		if req.NumRows() == 0 {
 			return &chunkRowRecordSet{rows: rows, fields: fields, e: e}, nil
 		}
-		iter := chunk.NewIterator4Chunk(req.Chunk)
+		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		req.Chunk = chunk.Renew(req.Chunk, a.Ctx.GetSessionVars().MaxChunkSize)
+		req = chunk.Renew(req, a.Ctx.GetSessionVars().MaxChunkSize)
 	}
 	return nil, err
 }
@@ -395,7 +394,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		a.logAudit()
 	}()
 
-	err = Next(ctx, e, chunk.NewRecordBatch(newFirstChunk(e)))
+	err = Next(ctx, e, newFirstChunk(e))
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +411,12 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	for {
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if err != nil {
-			return err
+			// It is possible the DML has point get plan that locks the key.
+			e, err = a.handlePessimisticLockError(ctx, err)
+			if err != nil {
+				return err
+			}
+			continue
 		}
 		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 		if err1 != nil {
@@ -423,21 +427,18 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
 		err = txn.LockKeys(ctx, forUpdateTS, keys...)
+		if err == nil {
+			return nil
+		}
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
 			return err
-		}
-		if e == nil {
-			return nil
 		}
 	}
 }
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
 func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (Executor, error) {
-	if err == nil {
-		return nil, nil
-	}
 	txnCtx := a.Ctx.GetSessionVars().TxnCtx
 	var newForUpdateTS uint64
 	if deadlock, ok := errors.Cause(err).(*tikv.ErrDeadlock); ok {
