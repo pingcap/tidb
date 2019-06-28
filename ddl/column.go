@@ -392,7 +392,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// The column should get into prevent not null status first.
+		// The column should get into prevent null status first.
 		if noPreventNullFlag {
 			return ver, nil
 		}
