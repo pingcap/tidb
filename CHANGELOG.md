@@ -105,9 +105,6 @@ All notable changes to this project will be documented in this file. See also [R
 * Abandon the predicate pushdown operation when the filtering condition contains a user variable to improve the compatibility with MySQL’s behavior of using user variables to simulate Window Functions 
 
 
-
-
-
 ## [3.0.0-rc.3] 2019-06-21
 ## SQL Optimizer
 * Remove the feature of collecting virtual generated column statistics[#10629](https://github.com/pingcap/tidb/pull/10629)
