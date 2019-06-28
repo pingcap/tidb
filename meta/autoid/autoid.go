@@ -31,8 +31,8 @@ import (
 )
 
 const (
-	minStep            = 5000
-	maxStep            = 1500000
+	minStep            = 1000
+	maxStep            = 2000000
 	defaultComsumeTime = 10 * time.Second
 )
 
@@ -225,7 +225,6 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 		startTime := time.Now()
 		consumeDur := startTime.Sub(alloc.lastAllocTime)
 		alloc.step = NextStep(alloc.step, consumeDur)
-		alloc.lastAllocTime = startTime
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
@@ -241,6 +240,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		alloc.lastAllocTime = time.Now()
 		if uint64(newBase) == math.MaxUint64 {
 			return 0, ErrAutoincReadFailed
 		}
@@ -261,7 +261,6 @@ func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 		startTime := time.Now()
 		consumeDur := startTime.Sub(alloc.lastAllocTime)
 		alloc.step = NextStep(alloc.step, consumeDur)
-		alloc.lastAllocTime = startTime
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
@@ -277,6 +276,7 @@ func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		alloc.lastAllocTime = time.Now()
 		if newBase == math.MaxInt64 {
 			return 0, ErrAutoincReadFailed
 		}
