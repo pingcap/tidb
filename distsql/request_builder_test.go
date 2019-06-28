@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -52,7 +51,7 @@ type testSuite struct {
 func (s *testSuite) SetUpSuite(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = &stmtctx.StatementContext{
-		MemTracker: memory.NewTracker(stringutil.StringerStr("testSuite"), variable.DefTiDBMemQuotaDistSQL),
+		MemTracker: memory.NewTracker("testSuite", variable.DefTiDBMemQuotaDistSQL),
 	}
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{

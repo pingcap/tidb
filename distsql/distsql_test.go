@@ -41,7 +41,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C) (*selectResul
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(s.sctx, stringutil.StringerStr("testSuite.createSelectNormal")).
+		SetMemTracker(s.sctx, "testSuite.createSelectNormal").
 		Build()
 	c.Assert(err, IsNil)
 
@@ -99,7 +99,7 @@ func (s *testSuite) TestSelectNormal(c *C) {
 }
 
 func (s *testSuite) TestSelectMemTracker(c *C) {
-	response, colTypes := s.createSelectNormal(2, 6, c, nil)
+	response, colTypes := s.createSelectNormal(2, 6, c)
 	response.Fetch(context.TODO())
 
 	// Test Next.
