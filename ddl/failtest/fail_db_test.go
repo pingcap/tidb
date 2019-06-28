@@ -395,7 +395,7 @@ func (s *testFailDBSuite) TestRunDDLJobPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob", `1*return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`), IsNil)
 	_, err := tk.Exec("create table t(c1 int, c2 int)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
