@@ -303,6 +303,7 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	return alloc.alloc4Signed(tableID)
 }
 
+// NextStep return new auto id step according to previous step and consuming time.
 func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	x, y := consumeDur.Nanoseconds()/1000000, defaultComsumeTime.Nanoseconds()/1000000
 	if x == 0 {
