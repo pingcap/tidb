@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockoracle"
@@ -168,6 +169,40 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	ok, _, err = s.gcWorker.prepare()
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
+
+	// Check gc life time small than min.
+	s.oracle.AddOffset(time.Minute * 40)
+	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	lifeTime, err := s.gcWorker.loadDuration(gcLifeTimeKey)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, gcMinLifeTime)
+
+	// Check gc life time small than config.max-txn-use-time
+	s.oracle.AddOffset(time.Minute * 40)
+	config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse = 20*60 - 10 // 20min - 10s
+	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	lifeTime, err = s.gcWorker.loadDuration(gcLifeTimeKey)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, 20*time.Minute)
+
+	// check the tikv_gc_life_time more than config.max-txn-use-time situation.
+	s.oracle.AddOffset(time.Minute * 40)
+	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute*30)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	lifeTime, err = s.gcWorker.loadDuration(gcLifeTimeKey)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, 30*time.Minute)
 
 	// Change auto concurrency
 	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanFalse)
