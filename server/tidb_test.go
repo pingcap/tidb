@@ -178,7 +178,6 @@ func (ts *TidbTestSuite) TestSocketForwarding(c *C) {
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
 		config.DBName = "test"
-		config.Strict = true
 	}, "SocketRegression")
 }
 
@@ -201,7 +200,6 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
 		config.DBName = "test"
-		config.Strict = true
 	}, "SocketRegression")
 
 }

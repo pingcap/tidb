@@ -259,12 +259,10 @@ func prometheusPushClient(addr string, interval time.Duration) {
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
 	job := "tidb"
 	for {
-		err := push.AddFromGatherer(
-			job,
-			map[string]string{"instance": instanceName()},
-			addr,
-			prometheus.DefaultGatherer,
-		)
+		err := push.New(addr, job).
+			Gatherer(prometheus.DefaultGatherer).
+			Grouping("instance", instanceName()).
+			Add()
 		if err != nil {
 			log.Error("could not push metrics to prometheus pushgateway", zap.String("err", err.Error()))
 		}

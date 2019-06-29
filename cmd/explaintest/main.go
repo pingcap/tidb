@@ -26,7 +26,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
@@ -239,7 +238,7 @@ func (t *tester) parserErrorHandle(query query, err error) error {
 
 func (t *tester) executeDefault(qText string) (err error) {
 	if t.tx != nil {
-		return filterWarning(t.executeStmt(qText))
+		return t.executeStmt(qText)
 	}
 
 	// if begin or following commit fails, we don't think
@@ -252,7 +251,7 @@ func (t *tester) executeDefault(qText string) (err error) {
 		return err
 	}
 
-	if err = filterWarning(t.executeStmt(qText)); err != nil {
+	if err = t.executeStmt(qText); err != nil {
 		err2 := t.rollback()
 		if err2 != nil {
 			log.Error("transaction is failed rollback", zap.Error(err))
@@ -367,14 +366,6 @@ func (t *tester) execute(query query) error {
 		}
 	}
 	return errors.Trace(err)
-}
-
-func filterWarning(err error) error {
-	causeErr := errors.Cause(err)
-	if _, ok := causeErr.(mysql.MySQLWarnings); ok {
-		return nil
-	}
-	return err
 }
 
 func (t *tester) create(tableName string, qText string) error {
