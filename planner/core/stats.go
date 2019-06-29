@@ -167,17 +167,15 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 func (ds *DataSource) generateIndexMergeOrPaths() {
 	usedIndexCount := len(ds.possibleAccessPaths)
 	for i, cond := range ds.pushedDownConds {
-		var partialPaths = make([]*accessPath, 0, usedIndexCount)
-
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			continue
 		}
+		var partialPaths = make([]*accessPath, 0, usedIndexCount)
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
-			var itemPaths []*accessPath
 			cnfItems := expression.SplitCNFItems(item)
-			itemPaths = ds.accessPathsForConds(cnfItems, usedIndexCount)
+			itemPaths := ds.accessPathsForConds(cnfItems, usedIndexCount)
 			if len(itemPaths) == 0 {
 				partialPaths = nil
 				break
@@ -203,33 +201,42 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 	var results = make([]*accessPath, 0, usedIndexCount)
 	for i := 0; i < usedIndexCount; i++ {
 		path := &accessPath{}
+		noIntervalRanges := false
 		var err error
 		if ds.possibleAccessPaths[i].isTablePath {
 			path.isTablePath = true
-			_, err = ds.deriveTablePathStats(path, conditions)
+			noIntervalRanges, err = ds.deriveTablePathStats(path, conditions)
 		} else {
-			// if accessConds is empty or tableFilter is not empty, we ignore the access path.
 			// now these conditions are too strict.
-			// for example, a sql `select * from t where a > 1 or (b < 2 and c >3)` and table `t` with indexes on a and b separately.
-			// we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c >3)`.
+			// for example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes on a and b separately.
+			// we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
 			// TODO: solve the above case
 			path.index = ds.possibleAccessPaths[i].index
-			_, err = ds.deriveIndexPathStats(path, conditions)
+			noIntervalRanges, err = ds.deriveIndexPathStats(path, conditions)
 		}
 		if err != nil {
-			return results
+			logutil.BgLogger().Info("can not derive statistics of a path")
 		}
+		// if accessConds is empty or tableFilter is not empty, we ignore the access path.
 		if len(path.tableFilters) > 0 || len(path.accessConds) == 0 {
 			continue
 		}
+		// If we have point or empty range, just ignore other possible paths.
+		if noIntervalRanges || len(path.ranges) == 0 {
+			results = append(results, path)
+			return results
+		}
 		results = append(results, path)
-
 	}
 	return results
 }
 
 // buildIndexMergePartialPath chooses the best index path from all possible paths.
 // Now we just choose the index with most columns.
+// We should improve this strategy, because it is not always better to choose index
+// with most columns, e.g, filter is c > 1 and the input indexes are c and c_d_e,
+// the former one is enough, and it is less expensive in execution compared with the latter one.
+// TODO: improve strategy of the partial path selection
 func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*accessPath) *accessPath {
 	if len(indexAccessPaths) == 1 {
 		return indexAccessPaths[0]
@@ -248,8 +255,8 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*accessPath)
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath
-func (ds *DataSource) buildIndexMergeOrPath(idxMergePartialIdxPaths []*accessPath, current int) *accessPath {
-	indexMergePath := &accessPath{partialIndexPaths: idxMergePartialIdxPaths}
+func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*accessPath, current int) *accessPath {
+	indexMergePath := &accessPath{partialIndexPaths: partialPaths}
 	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[:current]...)
 	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[current+1:]...)
 	return indexMergePath
