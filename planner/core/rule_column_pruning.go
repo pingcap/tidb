@@ -119,15 +119,19 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
 	}
-	if len(la.GroupByItems) == 0 && len(la.AggFuncs) == 0 {
-		// If all the aggregate functions are pruned and there is no group-by item, we should add
-		// an aggregate function to keep the correctness.
-		one, err := aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncCount, []expression.Expression{expression.One}, false)
+	if len(la.AggFuncs) == 0 {
+		// If all the aggregate functions are pruned, we should add an aggregate function to keep the correctness.
+		one, err := aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.One}, false)
 		if err != nil {
 			return err
 		}
 		la.AggFuncs = []*aggregation.AggFuncDesc{one}
-		la.schema.Columns = []*expression.Column{{TblName: model.NewCIStr("dummy_cnt"), RetType: types.NewFieldType(mysql.TypeLonglong)}}
+		col := &expression.Column{
+			ColName:  model.NewCIStr("dummy_agg"),
+			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+		}
+		la.schema.Columns = []*expression.Column{col}
 	}
 
 	if len(la.GroupByItems) > 0 {
