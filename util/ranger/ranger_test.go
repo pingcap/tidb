@@ -59,7 +59,7 @@ func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
 	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
