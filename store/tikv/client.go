@@ -109,6 +109,7 @@ func (c *batchCommandsClient) isStopped() bool {
 	return atomic.LoadInt32(&c.closed) != 0
 }
 
+// `failPendingRequests` must be called in locked contexts in order to avoid double closing channels.
 func (c *batchCommandsClient) failPendingRequests(err error) {
 	c.batched.Range(func(key, value interface{}) bool {
 		id, _ := key.(uint64)
@@ -118,6 +119,32 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 		c.batched.Delete(id)
 		return true
 	})
+}
+
+func (c *batchCommandsClient) reCreateStreamingClient(err error) bool {
+	// Hold the lock to forbid batchSendLoop using the old client.
+	c.clientLock.Lock()
+	defer c.clientLock.Unlock()
+
+	c.failPendingRequests(err) // fail all pending requests.
+
+	// Re-establish a application layer stream. TCP layer is handled by gRPC.
+	tikvClient := tikvpb.NewTikvClient(c.conn)
+	streamClient, err := tikvClient.BatchCommands(context.TODO())
+	if err == nil {
+		logutil.BgLogger().Info(
+			"batchRecvLoop re-create streaming success",
+			zap.String("target", c.target),
+		)
+		c.client = streamClient
+		return true
+	}
+	logutil.BgLogger().Error(
+		"batchRecvLoop re-create streaming fail",
+		zap.String("target", c.target),
+		zap.Error(err),
+	)
+	return false
 }
 
 func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
@@ -147,28 +174,10 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 					zap.Error(err),
 				)
 
-				// Hold the lock to forbid batchSendLoop using the old client.
-				c.clientLock.Lock()
-				c.failPendingRequests(err) // fail all pending requests.
-
-				// Re-establish a application layer stream. TCP layer is handled by gRPC.
-				tikvClient := tikvpb.NewTikvClient(c.conn)
-				streamClient, err := tikvClient.BatchCommands(context.TODO())
-				c.clientLock.Unlock()
-
-				if err == nil {
-					logutil.BgLogger().Info(
-						"batchRecvLoop re-create streaming success",
-						zap.String("target", c.target),
-					)
-					c.client = streamClient
+				if c.reCreateStreamingClient(err) {
 					break
 				}
-				logutil.BgLogger().Error(
-					"batchRecvLoop re-create streaming fail",
-					zap.String("target", c.target),
-					zap.Error(err),
-				)
+
 				// TODO: Use a more smart backoff strategy.
 				time.Sleep(time.Second)
 			}
@@ -455,7 +464,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		requests = requests[:0]
 		requestIDs = requestIDs[:0]
 
-		metrics.TiKVPendingBatchRequests.Set(float64(len(a.batchCommandsCh)))
+		metrics.TiKVPendingBatchRequests.WithLabelValues(a.target).Set(float64(len(a.batchCommandsCh)))
 		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests)
 
 		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
@@ -508,7 +517,9 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 				zap.String("target", a.target),
 				zap.Error(err),
 			)
+			batchCommandsClient.clientLock.Lock()
 			batchCommandsClient.failPendingRequests(err)
+			batchCommandsClient.clientLock.Unlock()
 		}
 	}
 }
