@@ -201,30 +201,40 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 	var results = make([]*accessPath, 0, usedIndexCount)
 	for i := 0; i < usedIndexCount; i++ {
 		path := &accessPath{}
-		var noIntervalRanges bool
-		var err error
 		if ds.possibleAccessPaths[i].isTablePath {
 			path.isTablePath = true
-			noIntervalRanges, err = ds.deriveTablePathStats(path, conditions)
+			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions)
+			if err != nil {
+				logutil.BgLogger().Info("can not derive statistics of a path")
+				continue
+			}
+			// If we have point or empty range, just remove other possible paths.
+			if noIntervalRanges || len(path.ranges) == 0 {
+				results[0] = path
+				results = results[:1]
+				break
+			}
 		} else {
-			// now these conditions are too strict.
-			// for example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes on a and b separately.
-			// we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
-			// TODO: solve the above case
 			path.index = ds.possibleAccessPaths[i].index
-			noIntervalRanges, err = ds.deriveIndexPathStats(path, conditions)
-		}
-		if err != nil {
-			logutil.BgLogger().Info("can not derive statistics of a path")
+			noIntervalRanges, err := ds.deriveIndexPathStats(path, conditions)
+			if err != nil {
+				logutil.BgLogger().Info("can not derive statistics of a path")
+				continue
+			}
+			// If we have empty range, or point range on unique index, just remove other possible paths.
+			if (noIntervalRanges && path.index.Unique) || len(path.ranges) == 0 {
+				results[0] = path
+				results = results[:1]
+				break
+			}
 		}
 		// if accessConds is empty or tableFilter is not empty, we ignore the access path.
+		// now these conditions are too strict.
+		// for example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
+		// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
+		// TODO: solve the above case
 		if len(path.tableFilters) > 0 || len(path.accessConds) == 0 {
 			continue
-		}
-		// If we have point or empty range, just ignore other possible paths.
-		if noIntervalRanges || len(path.ranges) == 0 {
-			results = append(results, path)
-			return results
 		}
 		results = append(results, path)
 	}
