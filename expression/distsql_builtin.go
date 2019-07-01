@@ -337,7 +337,7 @@ func getSignatureByPB(ctx sessionctx.Context, expr *tipb.Expr, args []Expression
 		f = &builtinRealIsNullSig{base}
 	case tipb.ScalarFuncSig_TimeIsNull:
 		isNotNull := false
-		if len(expr.Children) > 0 && mysql.HasNotNullFlag(uint(expr.Children[0].FieldType.Flag)) {
+		if len(expr.Children) > 0 && expr.Children[0].Tp == tipb.ExprType_ColumnRef && mysql.HasNotNullFlag(uint(expr.Children[0].FieldType.Flag)) {
 			isNotNull = true
 		}
 
