@@ -44,6 +44,7 @@ const (
 	tableSchemata                           = "SCHEMATA"
 	tableTables                             = "TABLES"
 	tableColumns                            = "COLUMNS"
+	tableColumnStatistics                   = "COLUMN_STATISTICS"
 	tableStatistics                         = "STATISTICS"
 	tableCharacterSets                      = "CHARACTER_SETS"
 	tableCollations                         = "COLLATIONS"
@@ -187,6 +188,13 @@ var columnsCols = []columnInfo{
 	{"PRIVILEGES", mysql.TypeVarchar, 80, 0, nil, nil},
 	{"COLUMN_COMMENT", mysql.TypeVarchar, 1024, 0, nil, nil},
 	{"GENERATION_EXPRESSION", mysql.TypeBlob, 589779, mysql.NotNullFlag, nil, nil},
+}
+
+var columnStatisticsCols = []columnInfo{
+	{"SCHEMA_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"COLUMN_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"HISTOGRAM", mysql.TypeJSON, 51, 0, nil, nil},
 }
 
 var statisticsCols = []columnInfo{
@@ -538,11 +546,12 @@ var tableProcesslistCols = []columnInfo{
 	{"ID", mysql.TypeLonglong, 21, mysql.NotNullFlag, 0, nil},
 	{"USER", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
 	{"HOST", mysql.TypeVarchar, 64, mysql.NotNullFlag, "", nil},
-	{"DB", mysql.TypeVarchar, 64, mysql.NotNullFlag, "", nil},
+	{"DB", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"COMMAND", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
 	{"TIME", mysql.TypeLong, 7, mysql.NotNullFlag, 0, nil},
 	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
 	{"INFO", mysql.TypeString, 512, 0, nil, nil},
+	{"MEM", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -861,7 +870,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 			continue
 		}
 
-		rows := pi.ToRow(true)
+		rows := pi.ToRow()
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
@@ -1714,6 +1723,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
+	tableColumnStatistics:                   columnStatisticsCols,
 	tableStatistics:                         statisticsCols,
 	tableCharacterSets:                      charsetCols,
 	tableCollations:                         collationsCols,

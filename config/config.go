@@ -15,7 +15,6 @@ package config
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -35,7 +34,9 @@ import (
 
 // Config number limitations
 const (
-	MaxLogFileSize = 4096 // MB
+	MaxLogFileSize    = 4096 // MB
+	MinPessimisticTTL = time.Second * 15
+	MaxPessimisticTTL = time.Second * 60
 )
 
 // Valid config maps
@@ -469,7 +470,7 @@ func ReloadGlobalConfig() error {
 
 	confReloader(nc, c)
 	globalConf.Store(nc)
-	logutil.Logger(context.Background()).Info("reload config changes" + formattedDiff.String())
+	logutil.BgLogger().Info("reload config changes" + formattedDiff.String())
 	return nil
 }
 
@@ -568,10 +569,9 @@ func (c *Config) Valid() error {
 		if err != nil {
 			return err
 		}
-		minDur := time.Second * 15
-		maxDur := time.Second * 60
-		if dur < minDur || dur > maxDur {
-			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]", dur, minDur, maxDur)
+		if dur < MinPessimisticTTL || dur > MaxPessimisticTTL {
+			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]",
+				dur, MinPessimisticTTL, MaxPessimisticTTL)
 		}
 	}
 	return nil
@@ -582,7 +582,7 @@ func hasRootPrivilege() bool {
 }
 
 // TableLockEnabled uses to check whether enabled the table lock feature.
-func TableLockEnabled() bool {
+var TableLockEnabled = func() bool {
 	return GetGlobalConfig().EnableTableLock
 }
 

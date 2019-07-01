@@ -44,6 +44,8 @@ var (
 	tikvRegionCacheCounterWithGetRegionByIDError          = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region_by_id", "err")
 	tikvRegionCacheCounterWithGetRegionOK                 = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", "ok")
 	tikvRegionCacheCounterWithGetRegionError              = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", "err")
+	tikvRegionCacheCounterWithScanRegionsOK               = metrics.TiKVRegionCacheCounter.WithLabelValues("scan_regions", "ok")
+	tikvRegionCacheCounterWithScanRegionsError            = metrics.TiKVRegionCacheCounter.WithLabelValues("scan_regions", "err")
 	tikvRegionCacheCounterWithGetStoreOK                  = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "ok")
 	tikvRegionCacheCounterWithGetStoreError               = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "err")
 )
@@ -200,7 +202,7 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.Logger(context.Background()).Error("panic in the checkAndResolve goroutine",
+			logutil.BgLogger().Error("panic in the checkAndResolve goroutine",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 		}
@@ -458,6 +460,28 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 	return regionIDs, nil
 }
 
+// BatchLoadRegionsFromKey loads at most given numbers of regions to the RegionCache, from the given startKey. Returns
+// the endKey of the last loaded region. If some of the regions has no leader, their entries in RegionCache will not be
+// updated.
+func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, count int) ([]byte, error) {
+	regions, err := c.scanRegions(bo, startKey, count)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(regions) == 0 {
+		return nil, errors.New("PD returned no region")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, region := range regions {
+		c.insertRegionToCache(region)
+	}
+
+	return regions[len(regions)-1].EndKey(), nil
+}
+
 // InvalidateCachedRegion removes a cached Region.
 func (c *RegionCache) InvalidateCachedRegion(id RegionVerID) {
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -471,7 +495,7 @@ func (c *RegionCache) InvalidateCachedRegion(id RegionVerID) {
 func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, currentPeerIdx int) {
 	r := c.getCachedRegionWithRLock(regionID)
 	if r == nil {
-		logutil.Logger(context.Background()).Debug("regionCache: cannot find region when updating leader",
+		logutil.BgLogger().Debug("regionCache: cannot find region when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		return
@@ -479,20 +503,20 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 
 	if leaderStoreID == 0 {
 		c.switchNextPeer(r, currentPeerIdx)
-		logutil.Logger(context.Background()).Info("switch region peer to next due to NotLeader with NULL leader",
+		logutil.BgLogger().Info("switch region peer to next due to NotLeader with NULL leader",
 			zap.Int("currIdx", currentPeerIdx),
 			zap.Uint64("regionID", regionID.GetID()))
 		return
 	}
 
 	if !c.switchToPeer(r, leaderStoreID) {
-		logutil.Logger(context.Background()).Info("invalidate region cache due to cannot find peer when updating leader",
+		logutil.BgLogger().Info("invalidate region cache due to cannot find peer when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Int("currIdx", currentPeerIdx),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		r.invalidate()
 	} else {
-		logutil.Logger(context.Background()).Info("switch region leader to specific leader due to kv return NotLeader",
+		logutil.BgLogger().Info("switch region leader to specific leader due to kv return NotLeader",
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Int("currIdx", currentPeerIdx),
 			zap.Uint64("leaderStoreID", leaderStoreID))
@@ -511,7 +535,8 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 // searchCachedRegion finds a region from cache by key. Like `getCachedRegion`,
 // it should be called with c.mu.RLock(), and the returned Region should not be
 // used after c.mu is RUnlock().
-// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful when processing in reverse order.
+// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful
+// when processing in reverse order.
 func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 	ts := time.Now().Unix()
 	var r *Region
@@ -548,7 +573,8 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 }
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
-// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful when processing in reverse order.
+// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful
+// when processing in reverse order.
 func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Region, error) {
 	var backoffErr error
 	searchPrev := false
@@ -632,6 +658,62 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 	}
 }
 
+// scanRegions scans at most `limit` regions from PD, starts from the region containing `startKey` and in key order.
+// Regions with no leader will not be returned.
+func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]*Region, error) {
+	if limit == 0 {
+		return nil, nil
+	}
+
+	var backoffErr error
+	for {
+		if backoffErr != nil {
+			err := bo.Backoff(BoPDRPC, backoffErr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		metas, leaders, err := c.pdClient.ScanRegions(bo.ctx, startKey, limit)
+		if err != nil {
+			tikvRegionCacheCounterWithScanRegionsError.Inc()
+			backoffErr = errors.Errorf(
+				"scanRegion from PD failed, startKey: %q, limit: %q, err: %v",
+				startKey,
+				limit,
+				err)
+			continue
+		}
+
+		tikvRegionCacheCounterWithScanRegionsOK.Inc()
+
+		if len(metas) == 0 {
+			return nil, errors.New("PD returned no region")
+		}
+		if len(metas) != len(leaders) {
+			return nil, errors.New("PD returned mismatching region metas and leaders")
+		}
+		regions := make([]*Region, 0, len(metas))
+		for i, meta := range metas {
+			region := &Region{meta: meta}
+			region.init(c)
+			leader := leaders[i]
+			// Leader id = 0 indicates no leader.
+			if leader.GetId() != 0 {
+				c.switchToPeer(region, leader.GetStoreId())
+				regions = append(regions, region)
+			}
+		}
+		if len(regions) == 0 {
+			return nil, errors.New("receive Regions with no peer")
+		}
+		if len(regions) < len(metas) {
+			logutil.Logger(context.Background()).Debug(
+				"regionCache: scanRegion finished but some regions has no leader.")
+		}
+		return regions, nil
+	}
+}
+
 func (c *RegionCache) getCachedRegionWithRLock(regionID RegionVerID) (r *Region) {
 	c.mu.RLock()
 	r = c.mu.regions[regionID]
@@ -701,7 +783,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 			(meta.GetRegionEpoch().GetConfVer() < ctx.Region.confVer ||
 				meta.GetRegionEpoch().GetVersion() < ctx.Region.ver) {
 			err := errors.Errorf("region epoch is ahead of tikv. rpc ctx: %+v, currentRegions: %+v", ctx, currentRegions)
-			logutil.Logger(context.Background()).Info("region epoch is ahead of tikv", zap.Error(err))
+			logutil.BgLogger().Info("region epoch is ahead of tikv", zap.Error(err))
 			return bo.Backoff(BoRegionMiss, err)
 		}
 	}
@@ -941,7 +1023,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		tikvRegionCacheCounterWithGetStoreOK.Inc()
 	}
 	if err != nil {
-		logutil.Logger(context.Background()).Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
+		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
 		return
 	}

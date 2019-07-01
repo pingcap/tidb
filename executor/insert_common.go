@@ -219,7 +219,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if types.ErrTruncated.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			logutil.Logger(context.Background()).Warn("truncate error", zap.Error(err1))
+			logutil.BgLogger().Warn("truncate error", zap.Error(err1))
 		}
 		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
@@ -295,8 +295,8 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx context.Context, rows [][]types.Datum) error) error {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
-	fields := selectExec.retTypes()
-	chk := selectExec.newFirstChunk()
+	fields := retTypes(selectExec)
+	chk := newFirstChunk(selectExec)
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
@@ -309,7 +309,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 	batchSize := sessVars.DMLBatchSize
 
 	for {
-		err := selectExec.Next(ctx, chunk.NewRecordBatch(chk))
+		err := selectExec.Next(ctx, chk)
 		if err != nil {
 			return err
 		}

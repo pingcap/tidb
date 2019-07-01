@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -47,7 +48,7 @@ type testSerialSuite struct {
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
 	session.SetSchemaLease(200 * time.Millisecond)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -409,4 +410,22 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	assertErrorCode(c, tk, "alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
 	sub := time.Since(startTime)
 	c.Assert(sub, Less, ddl.WaitTimeWhenErrorOccured)
+}
+
+func (s *testSerialSuite) TestTableLocksEnable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int)")
+	// recover table lock config.
+	originValue := atomic.LoadUint32(&tableLockEnabled)
+	defer func() {
+		atomic.StoreUint32(&tableLockEnabled, originValue)
+	}()
+
+	// Test for enable table lock config.
+	atomic.StoreUint32(&tableLockEnabled, 0)
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 }
