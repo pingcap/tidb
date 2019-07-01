@@ -708,6 +708,10 @@ func checkGoroutineExists(keyword string) bool {
 }
 
 func (s *seqTestSuite) TestAdminShowNextID(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
 	step := int64(10)
 	autoIDStep := autoid.GetStep()
 	autoid.SetStep(step)
