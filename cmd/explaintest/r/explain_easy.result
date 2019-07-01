@@ -191,6 +191,35 @@ HashAgg_18	24000.00	root	group by:c1, funcs:firstrow(join_agg_0)
     └─IndexReader_62	8000.00	root	index:StreamAgg_53
       └─StreamAgg_53	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
         └─IndexScan_60	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+explain select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
+id	count	task	operator info
+StreamAgg_13	1.00	root	funcs:count(1)
+└─StreamAgg_28	1.00	root	funcs:firstrow(col_0)
+  └─TableReader_29	1.00	root	data:StreamAgg_17
+    └─StreamAgg_17	1.00	cop	funcs:firstrow(1)
+      └─Selection_27	10.00	cop	eq(test.t1.c3, 100)
+        └─TableScan_26	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select 1 from (select count(c2), count(c3) from t1) k;
+id	count	task	operator info
+Projection_5	1.00	root	1
+└─StreamAgg_17	1.00	root	funcs:firstrow(col_0)
+  └─TableReader_18	1.00	root	data:StreamAgg_9
+    └─StreamAgg_9	1.00	cop	funcs:firstrow(1)
+      └─TableScan_16	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select count(1) from (select max(c2), count(c3) as m from t1) k;
+id	count	task	operator info
+StreamAgg_11	1.00	root	funcs:count(1)
+└─StreamAgg_23	1.00	root	funcs:firstrow(col_0)
+  └─TableReader_24	1.00	root	data:StreamAgg_15
+    └─StreamAgg_15	1.00	cop	funcs:firstrow(1)
+      └─TableScan_22	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select count(1) from (select count(c2) from t1 group by c3) k;
+id	count	task	operator info
+StreamAgg_11	1.00	root	funcs:count(1)
+└─HashAgg_23	8000.00	root	group by:col_1, funcs:firstrow(col_0)
+  └─TableReader_24	8000.00	root	data:HashAgg_20
+    └─HashAgg_20	8000.00	cop	group by:test.t1.c3, funcs:firstrow(1)
+      └─TableScan_15	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
