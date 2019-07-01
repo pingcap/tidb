@@ -73,7 +73,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 		session.SetSchemaLease(0)
-		session.SetStatsLease(0)
+		session.DisableStats4Test()
 	}
 	bindinfo.Lease = 0
 	d, err := session.BootstrapSession(s.store)
@@ -168,7 +168,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 
 	rs, err := tk.Exec("show global bindings")
 	c.Assert(err, IsNil)
-	chk := rs.NewRecordBatch()
+	chk := rs.NewChunk()
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 1)
@@ -213,7 +213,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 
 	rs, err = tk.Exec("show global bindings")
 	c.Assert(err, IsNil)
-	chk = rs.NewRecordBatch()
+	chk = rs.NewChunk()
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
@@ -256,14 +256,14 @@ func (s *testSuite) TestSessionBinding(c *C) {
 
 	rs, err := tk.Exec("show global bindings")
 	c.Assert(err, IsNil)
-	chk := rs.NewRecordBatch()
+	chk := rs.NewChunk()
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
 
 	rs, err = tk.Exec("show session bindings")
 	c.Assert(err, IsNil)
-	chk = rs.NewRecordBatch()
+	chk = rs.NewChunk()
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 1)
@@ -424,7 +424,7 @@ func (s *testSuite) TestErrorBind(c *C) {
 
 	rs, err := tk.Exec("show global bindings")
 	c.Assert(err, IsNil)
-	chk := rs.NewRecordBatch()
+	chk := rs.NewChunk()
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)

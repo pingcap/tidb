@@ -16,6 +16,7 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -46,6 +47,22 @@ const defaultStatusPort = 10080
 
 func (s *Server) startStatusHTTP() {
 	go s.startHTTPServer()
+}
+
+func serveError(w http.ResponseWriter, status int, txt string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Go-Pprof", "1")
+	w.Header().Del("Content-Disposition")
+	w.WriteHeader(status)
+	_, err := fmt.Fprintln(w, txt)
+	terror.Log(err)
+}
+
+func sleepWithCtx(ctx context.Context, d time.Duration) {
+	select {
+	case <-time.After(d):
+	case <-ctx.Done():
+	}
 }
 
 func (s *Server) startHTTPServer() {
@@ -122,26 +139,6 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
-	serveError := func(w http.ResponseWriter, status int, txt string) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("X-Go-Pprof", "1")
-		w.Header().Del("Content-Disposition")
-		w.WriteHeader(status)
-		_, err := fmt.Fprintln(w, txt)
-		terror.Log(err)
-	}
-
-	sleep := func(w http.ResponseWriter, d time.Duration) {
-		var clientGone <-chan bool
-		if cn, ok := w.(http.CloseNotifier); ok {
-			clientGone = cn.CloseNotify()
-		}
-		select {
-		case <-time.After(d):
-		case <-clientGone:
-		}
-	}
-
 	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))
 
@@ -190,7 +187,7 @@ func (s *Server) startHTTPServer() {
 		if sec <= 0 || err != nil {
 			sec = 10
 		}
-		sleep(w, time.Duration(sec)*time.Second)
+		sleepWithCtx(r.Context(), time.Duration(sec)*time.Second)
 		rpprof.StopCPUProfile()
 
 		// dump config
@@ -219,11 +216,13 @@ func (s *Server) startHTTPServer() {
 		err = zw.Close()
 		terror.Log(err)
 	})
+	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
+	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
 
 	var (
-		err            error
 		httpRouterPage bytes.Buffer
 		pathTemplate   string
+		err            error
 	)
 	httpRouterPage.WriteString("<html><head><title>TiDB Status and Metrics Report</title></head><body><h1>TiDB Status and Metrics Report</h1><table>")
 	err = router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {

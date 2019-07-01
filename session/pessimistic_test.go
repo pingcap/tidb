@@ -57,7 +57,7 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
@@ -243,4 +243,111 @@ func (s *testPessimisticSuite) TestFirstStatementFail(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("insert first values (2)")
 	tk.MustExec("commit")
+}
+
+func (s *testPessimisticSuite) TestKeyExistsCheck(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists chk")
+	tk.MustExec("create table chk (k int primary key)")
+	tk.MustExec("insert chk values (1)")
+	tk.MustExec("delete from chk where k = 1")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert chk values (1)")
+	tk.MustExec("commit")
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("begin optimistic")
+	tk1.MustExec("insert chk values (1), (2), (3)")
+	_, err := tk1.Exec("commit")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert chk values (2)")
+	tk.MustExec("commit")
+}
+
+func (s *testPessimisticSuite) TestInsertOnDup(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists dup")
+	tk.MustExec("create table dup (id int primary key, c int)")
+	tk.MustExec("begin pessimistic")
+
+	tk2.MustExec("insert dup values (1, 1)")
+	tk.MustExec("insert dup values (1, 1) on duplicate key update c = c + 1")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from dup").Check(testkit.Rows("1 2"))
+}
+
+func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists point")
+	tk.MustExec("create table point (id int primary key, u int unique, c int)")
+	syncCh := make(chan struct{})
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update point set c = c + 1 where id = 1")
+	tk.MustExec("delete from point where u = 2")
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		_, err1 := tk2.Exec("insert point values (1, 1, 1)")
+		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		_, err1 = tk2.Exec("insert point values (2, 2, 2)")
+		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		tk2.MustExec("rollback")
+		<-syncCh
+	}()
+	time.Sleep(time.Millisecond * 10)
+	tk.MustExec("insert point values (1, 1, 1)")
+	tk.MustExec("insert point values (2, 2, 2)")
+	tk.MustExec("commit")
+	syncCh <- struct{}{}
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from point where id = 3 for update")
+	tk.MustExec("select * from point where u = 4 for update")
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		_, err1 := tk2.Exec("insert point values (3, 3, 3)")
+		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		_, err1 = tk2.Exec("insert point values (4, 4, 4)")
+		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		tk2.MustExec("rollback")
+		<-syncCh
+	}()
+	time.Sleep(time.Millisecond * 10)
+	tk.MustExec("insert point values (3, 3, 3)")
+	tk.MustExec("insert point values (4, 4, 4)")
+	tk.MustExec("commit")
+	syncCh <- struct{}{}
+}
+
+func (s *testPessimisticSuite) TestBankTransfer(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists accounts")
+	tk.MustExec("create table accounts (id int primary key, c int)")
+	tk.MustExec("insert accounts values (1, 100), (2, 100), (3, 100)")
+	syncCh := make(chan struct{})
+
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from accounts where id = 1 for update").Check(testkit.Rows("1 100"))
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("select * from accounts where id = 2 for update")
+		<-syncCh
+		tk2.MustExec("select * from accounts where id = 3 for update")
+		tk2.MustExec("update accounts set c = 50 where id = 2")
+		tk2.MustExec("update accounts set c = 150 where id = 3")
+		tk2.MustExec("commit")
+		<-syncCh
+	}()
+	syncCh <- struct{}{}
+	tk.MustQuery("select * from accounts where id = 2 for update").Check(testkit.Rows("2 50"))
+	tk.MustExec("update accounts set c = 50 where id = 1")
+	tk.MustExec("update accounts set c = 100 where id = 2")
+	tk.MustExec("commit")
+	syncCh <- struct{}{}
+	tk.MustQuery("select sum(c) from accounts").Check(testkit.Rows("300"))
 }
