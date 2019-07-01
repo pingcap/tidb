@@ -514,7 +514,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	}
 
 	cop.cst = rowCount * scanFactor
-	task = cop
 	if candidate.isMatchProp {
 		if prop.Items[0].Desc {
 			is.Desc = true
@@ -530,7 +529,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	// prop.IsEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
 	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
-	is.addPushedDownSelection(cop, ds, path, finalStats)
+
+	task = ds.pushDownSelAndResolveVirtualCols(cop, path, finalStats)
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -571,8 +571,9 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *accessPath, finalStats *property.StatsInfo) {
+func (ds *DataSource) addPushedDownIndexScan(copTask *copTask, path *accessPath) {
 	// Add filter condition to table plan now.
+	is := copTask.indexPlan.(*PhysicalIndexScan)
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
 		copTask.cst += copTask.count() * cpuFactor
@@ -588,10 +589,8 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 	if tableConds != nil {
 		copTask.finishIndexPlan()
-		copTask.cst += copTask.count() * cpuFactor
-		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats)
-		tableSel.SetChildren(copTask.tablePlan)
-		copTask.tablePlan = tableSel
+		ts := copTask.tablePlan.(*PhysicalTableScan)
+		ts.filterCondition = append(ts.filterCondition, tableConds...)
 	}
 }
 
@@ -803,7 +802,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		tablePlan:         ts,
 		indexPlanFinished: true,
 	}
-	task = copTask
 	// Adjust number of rows we actually need to scan if prop.ExpectedCnt is smaller than the count we calculated.
 	if prop.ExpectedCnt < ds.stats.RowCount {
 		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, candidate.isMatchProp && prop.Items[0].Desc)
@@ -837,7 +835,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		ts.KeepOrder = true
 		copTask.keepOrder = true
 	}
-	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+
+	task = ds.pushDownSelAndResolveVirtualCols(copTask, path, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -846,7 +845,105 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	return task, nil
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
+// pushDownSelAndResolveVirtualCols push some filters down to coprocessor and resolve virtual columns.
+//	1. push down filters and check if there is virtual column.
+//	2. substitute virtual columns in TableScan's Schema to corresponding physical columns.
+//	3. substitute virtual columns in TableScan's filters and push them down.
+//	4. add a Projection upon this DataSource.
+func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *accessPath, stats *property.StatsInfo) (t task) {
+	// step 1
+	t = copTask
+	if copTask.indexPlan != nil {
+		ds.addPushedDownIndexScan(copTask, path)
+	}
+	if copTask.tablePlan == nil { // don't need to handle virtual columns in IndexScan
+		return
+	}
+	ts := copTask.tablePlan.(*PhysicalTableScan)
+	if !ds.hasVirtualCol {
+		ds.addPushedDownTableScan(copTask, ts, stats)
+		return
+	}
+
+	// step 2
+	ds.substituteVirtualColumns(ts)
+
+	// step 3
+	for i, expr := range ts.filterCondition {
+		ts.filterCondition[i] = expression.ColumnSubstitute(expr, ds.virtualColSchema, ds.virtualColExprs)
+	}
+	var cantBePushed []expression.Expression
+	_, ts.filterCondition, cantBePushed = expression.ExpressionsToPB(ds.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ds.ctx.GetClient())
+	ds.addPushedDownTableScan(copTask, ts, stats)
+	if len(cantBePushed) > 0 { // for filters cannot be pushed down, we add a root Selection to handle them
+		sel := PhysicalSelection{Conditions: cantBePushed}.Init(ds.ctx, stats)
+		t = sel.attach2Task(copTask)
+	}
+
+	// step 4
+	projExprs := make([]expression.Expression, 0, len(ds.Schema().Columns))
+	for _, c := range ds.Schema().Columns {
+		projExprs = append(projExprs, expression.ColumnSubstitute(c, ds.virtualColSchema, ds.virtualColExprs))
+	}
+	proj := PhysicalProjection{Exprs: projExprs}.Init(ds.ctx, stats)
+	proj.SetSchema(ds.Schema())
+	t = proj.attach2Task(t)
+	return
+}
+
+// substituteVirtualColumns substitute virtual columns in TableScan's Schema to physical columns.
+func (ds *DataSource) substituteVirtualColumns(ts *PhysicalTableScan) {
+	// clone a new Schema to modify for safety
+	schema := ts.Schema().Clone()
+	colInfos := make([]*model.ColumnInfo, 0, len(ts.Columns))
+	colInfos = append(colInfos, ts.Columns...)
+
+	// derive physical columns from virtual columns
+	phyCols := make(map[int64]*expression.Column)        // physical columns this ts already has
+	virCols := make(map[int64]*expression.Column)        // virtual columns this ts has
+	phyColsFromVir := make(map[int64]*expression.Column) // physical columns derived from virtual columns
+	for i := 0; i < len(schema.Columns); i++ {
+		if i < len(colInfos) {
+			if colInfos[i].IsGenerated() && !colInfos[i].GeneratedStored {
+				virCols[schema.Columns[i].UniqueID] = schema.Columns[i]
+				expr := expression.ColumnSubstitute(schema.Columns[i], ds.virtualColSchema, ds.virtualColExprs)
+				for _, phyColFromVir := range expression.ExtractColumns(expr) {
+					phyColsFromVir[phyColFromVir.UniqueID] = phyColFromVir
+				}
+			} else {
+				phyCols[schema.Columns[i].UniqueID] = schema.Columns[i]
+			}
+		}
+	}
+
+	// remove virtual columns and add new derived physical columns
+	for i := 0; i < len(schema.Columns); i++ {
+		if _, ok := virCols[schema.Columns[i].UniqueID]; ok {
+			schema.Columns = append(schema.Columns[:i], schema.Columns[i+1:]...)
+			colInfos = append(colInfos[:i], colInfos[i+1:]...)
+		}
+	}
+	for id, col := range phyColsFromVir {
+		if _, ok := phyCols[id]; !ok {
+			schema.Columns = append(schema.Columns, col)
+			var colInfo *model.ColumnInfo
+			for _, ci := range ds.tableInfo.Cols() {
+				if ci.Name.O == col.ColName.O {
+					colInfo = ci
+					break
+				}
+			}
+			colInfos = append(colInfos, colInfo)
+			phyCols[id] = col
+		}
+	}
+
+	// update TableScan's Schema
+	ts.Columns = colInfos
+	ts.SetSchema(schema)
+}
+
+func (ds *DataSource) addPushedDownTableScan(copTask *copTask, ts *PhysicalTableScan, stats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * cpuFactor

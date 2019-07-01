@@ -346,6 +346,15 @@ type DataSource struct {
 	isPartition     bool
 	physicalTableID int64
 	partitionNames  []model.CIStr
+
+	// handleCol represents the handle column for the datasource, either the
+	// int primary key column or extra handle column.
+	handleCol *expression.Column
+
+	// fields for virtual generated columns
+	hasVirtualCol    bool
+	virtualColSchema *expression.Schema
+	virtualColExprs  []expression.Expression
 }
 
 // accessPath tells how we access one index or just access table.

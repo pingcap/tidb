@@ -531,8 +531,8 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 		indexPlanFinished: true,
 	}
 	selStats := ts.stats.Scale(selectionFactor)
-	ts.addPushedDownSelection(copTask, selStats)
-	t := finishCopTask(ds.ctx, copTask)
+	t := ds.pushDownSelAndResolveVirtualCols(copTask, nil, selStats)
+	t = finishCopTask(ds.ctx, copTask)
 	reader := t.plan()
 	return p.constructInnerUnionScan(us, reader)
 }
@@ -604,8 +604,8 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	}
 	selectivity := ds.stats.RowCount / ds.tableStats.RowCount
 	finalStats := ds.stats.ScaleByExpectCnt(selectivity * rowCount)
-	is.addPushedDownSelection(cop, ds, path, finalStats)
-	t := finishCopTask(ds.ctx, cop)
+	t := ds.pushDownSelAndResolveVirtualCols(cop, path, finalStats)
+	t = finishCopTask(ds.ctx, t)
 	reader := t.plan()
 	return p.constructInnerUnionScan(us, reader)
 }

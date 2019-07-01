@@ -958,32 +958,92 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 
 	// Expected output is like:
 	//
-	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
-	// | id                             | count    | task | operator info                                                                    | execution info                   |
-	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
-	// | Projection_9                   | 10.00    | root | test.t1.id, test.t2.a                                                            | time:203.355µs, loops:1, rows:0  |
-	// | └─IndexJoin_13                 | 10.00    | root | inner join, inner:IndexLookUp_12, outer key:test.t1.a, inner key:test.t2.d       | time:199.633µs, loops:1, rows:0  |
-	// |   ├─Projection_16              | 8.00     | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                       | time:164.587µs, loops:1, rows:0  |
-	// |   │ └─Selection_17             | 8.00     | root | eq(cast(mod(test.t1.a, 30)), 4)                                                  | time:157.768µs, loops:1, rows:0  |
-	// |   │   └─TableReader_20         | 10.00    | root | data:Selection_19                                                                | time:154.61µs, loops:1, rows:0   |
-	// |   │     └─Selection_19         | 10.00    | cop  | eq(test.t1.b, "t2")                                                              | time:28.824µs, loops:1, rows:0   |
-	// |   │       └─TableScan_18       | 10000.00 | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                      | time:27.654µs, loops:1, rows:0   |
-	// |   └─IndexLookUp_12             | 10.00    | root |                                                                                  | time:0ns, loops:0, rows:0        |
-	// |     ├─IndexScan_10             | 10.00    | cop  | table:t2, index:d, range: decided by [test.t1.a], keep order:false, stats:pseudo | time:0ns, loops:0, rows:0        |
-	// |     └─TableScan_11             | 10.00    | cop  | table:t2, keep order:false, stats:pseudo                                         | time:0ns, loops:0, rows:0        |
-	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
-	// 10 rows in set (0.00 sec)
+	//+----------------------------+-------+------+-------------------------------------------------------------------------------------------------+----------------------------------+
+	//| id                         | count | task | operator info                                                                                   | execution info                   |
+	//+----------------------------+-------+------+-------------------------------------------------------------------------------------------------+----------------------------------+
+	//| Projection_7               | 0.12  | root | test.t1.id, test.t2.a                                                                           | time:3.844593ms, loops:1, rows:0 |
+	//| └─IndexJoin_11             | 0.12  | root | inner join, inner:IndexLookUp_10, outer key:test.t1.a, inner key:test.t2.d                      | time:3.830714ms, loops:1, rows:0 |
+	//|   ├─Projection_21          | 0.10  | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                                      | time:3.735174ms, loops:1, rows:0 |
+	//|   │ └─IndexLookUp_22       | 0.10  | root |                                                                                                 | time:3.569946ms, loops:1, rows:0 |
+	//|   │   ├─IndexScan_19       | 0.10  | cop  | table:t1, index:d, b, c, range:[4 "t2",4 "t2"], keep order:false, stats:pseudo                  | time:50.542µs, loops:1, rows:0   |
+	//|   │   └─TableScan_20       | 0.10  | cop  | table:t1, keep order:false, stats:pseudo                                                        | time:0s, loops:0, rows:0         |
+	//|   └─IndexLookUp_10         | 10.00 | root |                                                                                                 | time:0ns, loops:0, rows:0        |
+	//|     ├─IndexScan_8          | 10.00 | cop  | table:t2, index:d, range: decided by [eq(test.t2.d, test.t1.a)], keep order:false, stats:pseudo | time:0ns, loops:0, rows:0        |
+	//|     └─TableScan_9          | 10.00 | cop  | table:t2, keep order:false, stats:pseudo                                                        | time:0ns, loops:0, rows:0        |
+	//+----------------------------+-------+------+-------------------------------------------------------------------------------------------------+----------------------------------+
+	//9 rows in set (0.01 sec)
 	//
-	c.Assert(rs.Rows(), HasLen, 10)
-	hasIndexLookUp12 := false
+	c.Assert(rs.Rows(), HasLen, 9)
+	hasIndexLookUp10 := false
+	hasIndexLookUp22 := false
 	for _, row := range rs.Rows() {
 		c.Assert(row, HasLen, 5)
-		if strings.HasSuffix(row[0].(string), "IndexLookUp_12") {
-			hasIndexLookUp12 = true
+		if strings.Contains(row[0].(string), "IndexLookUp_10") {
+			hasIndexLookUp10 = true
 			c.Assert(row[4], Equals, "time:0ns, loops:0, rows:0")
 		}
+		if strings.Contains(row[0].(string), "IndexLookUp_22") {
+			hasIndexLookUp22 = true
+		}
 	}
-	c.Assert(hasIndexLookUp12, IsTrue)
+	c.Assert(hasIndexLookUp10, IsTrue)
+	c.Assert(hasIndexLookUp22, IsTrue)
+}
+
+func (s *testAnalyzeSuite) TestVirtualGeneratedColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int as (a+1) virtual, c int as (b+1) virtual, d int as (c+1) virtual, key(b), index idx(c, d))")
+	tk.MustExec("insert into t1 (a) values (0)")
+
+	tk.MustQuery("explain select b from t1 where b=1").Check(testkit.Rows(
+		"IndexReader_6 10.00 root index:IndexScan_5",
+		"└─IndexScan_5 10.00 cop table:t1, index:b, range:[1,1], keep order:false, stats:pseudo"))
+	tk.MustQuery("select b from t1 where b=1").Check(testkit.Rows("1"))
+
+	tk.MustQuery("explain select b, c, d from t1 where b=1").Check(testkit.Rows(
+		"Projection_11 10.00 root cast(plus(test.t1.a, 1)), cast(plus(cast(plus(test.t1.a, 1)), 1)), cast(plus(cast(plus(cast(plus(test.t1.a, 1)), 1)), 1))",
+		"└─IndexLookUp_12 10.00 root ",
+		"  ├─IndexScan_9 10.00 cop table:t1, index:b, range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableScan_10 10.00 cop table:t1, keep order:false, stats:pseudo"))
+	tk.MustQuery("select b, c, d from t1 where b=1").Check(testkit.Rows("1 2 3"))
+
+	tk.MustQuery("explain select * from t1 where b=1").Check(testkit.Rows(
+		"Projection_11 10.00 root test.t1.a, cast(plus(test.t1.a, 1)), cast(plus(cast(plus(test.t1.a, 1)), 1)), cast(plus(cast(plus(cast(plus(test.t1.a, 1)), 1)), 1))",
+		"└─IndexLookUp_12 10.00 root ",
+		"  ├─IndexScan_9 10.00 cop table:t1, index:b, range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableScan_10 10.00 cop table:t1, keep order:false, stats:pseudo"))
+	tk.MustQuery("select * from t1 where b=1").Check(testkit.Rows("0 1 2 3"))
+
+	tk.MustQuery("explain select c from t1 where c=2 and d=3").Check(testkit.Rows(
+		"Projection_4 0.10 root test.t1.c",
+		"└─IndexReader_6 0.10 root index:IndexScan_5",
+		"  └─IndexScan_5 0.10 cop table:t1, index:c, d, range:[2 3,2 3], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("select c from t1 where c=2 and d=3").Check(testkit.Rows("2"))
+
+	tk.MustExec(`CREATE TABLE person (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    address_info JSON,
+    city_no INT AS (JSON_EXTRACT(address_info, '$.city_no')) VIRTUAL,
+    KEY(city_no))`)
+	tk.MustExec(`INSERT INTO person (name, address_info) VALUES ("John", CAST('{"city_no": 1}' AS JSON))`)
+	tk.MustQuery(`EXPLAIN SELECT name FROM person where city_no=1`).Check(testkit.Rows(
+		"Projection_4 10.00 root test.person.name",
+		`└─Projection_11 10.00 root test.person.name, cast(json_extract(test.person.address_info, "$.city_no"))`,
+		`  └─IndexLookUp_12 10.00 root `,
+		`    ├─IndexScan_9 10.00 cop table:person, index:city_no, range:[1,1], keep order:false, stats:pseudo`,
+		`    └─TableScan_10 10.00 cop table:person, keep order:false, stats:pseudo`))
+	tk.MustQuery(`SELECT name FROM person where city_no=1`).Check(testkit.Rows("John"))
 }
 
 func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
