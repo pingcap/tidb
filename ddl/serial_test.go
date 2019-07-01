@@ -241,6 +241,10 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 }
 
 func (s *testSerialSuite) TestRecoverTableByTableName(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
