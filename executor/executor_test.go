@@ -96,6 +96,7 @@ var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testRecoverTable{})
+var _ = Suite(&testFlushSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
