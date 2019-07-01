@@ -581,6 +581,8 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ShowSlow{ShowSlow: as.ShowSlow}
 		p.SetSchema(buildShowSlowSchema())
 		ret = p
+	case ast.AdminReloadExprPushdownBlacklist:
+		return &ReloadExprPushdownBlacklist{}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
