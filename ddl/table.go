@@ -773,7 +773,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 
 func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
 	// d.infoHandle maybe nil in some test.
-	if d.infoHandle == nil || d.infoHandle.IsValid() {
+	if d.infoHandle == nil || !d.infoHandle.IsValid() {
 		return checkTableNotExistsFromStore(t, schemaID, tableName)
 	}
 	// Try to use memory schema info to check first.

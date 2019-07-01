@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -400,7 +401,14 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
-			schemaVer, runJobErr = w.runDDLJob(d, t, job)
+			tidbutil.WithRecovery(func() {
+				schemaVer, runJobErr = w.runDDLJob(d, t, job)
+			}, func(r interface{}) {
+				if r != nil {
+					// If run ddl job panic, just cancel the ddl jobs.
+					job.State = model.JobStateCancelling
+				}
+			})
 			if job.IsCancelled() {
 				txn.Reset()
 				err = w.finishDDLJob(t, job)
@@ -472,16 +480,7 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	defer func() {
-		r := recover()
-		if r != nil {
-			logutil.BgLogger().Error("run ddl job panic",
-				zap.Reflect("r", r),
-				zap.Stack("stack trace"))
-			job.State = model.JobStateCancelling
-		}
-	}()
-
+	// Mock for run ddl job panic.
 	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {})
 
 	logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
