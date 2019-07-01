@@ -19,6 +19,7 @@ import (
 	"math"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -131,12 +132,25 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 	}
+
 	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
-	select {
-	case <-time.After(dur):
-		// TODO: Handle Ctrl-C is pressed in `mysql` client.
-		// return 1 when SLEEP() is KILLed
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	start := time.Now()
+	finish := false
+	for !finish {
+		select {
+		case now := <-ticker.C:
+			if now.Sub(start) > dur {
+				finish = true
+			}
+		default:
+			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+				return 1, false, nil
+			}
+		}
 	}
+
 	return 0, false, nil
 }
 
