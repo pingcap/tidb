@@ -33,12 +33,25 @@ type CreateIdxOpt struct {
 	SkipCheck       bool // If true, skip all the unique indices constraint check.
 }
 
+// CreateIdxOption is defined for the Create() method of Index interface.
+type CreateIdxOption func(*CreateIdxOpt)
+
+// SkipHandleCheck is a defined value of CreateIdxOption.
+var SkipHandleCheck CreateIdxOption = func(opt *CreateIdxOpt) {
+	opt.SkipHandleCheck = true
+}
+
+// SkipCheck is a defined value of CreateIdxOption.
+var SkipCheck CreateIdxOption = func(opt *CreateIdxOpt) {
+	opt.SkipCheck = true
+}
+
 // Index is the interface for index data on KV store.
 type Index interface {
 	// Meta returns IndexInfo.
 	Meta() *model.IndexInfo
 	// Create supports insert into statement.
-	Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...*CreateIdxOpt) (int64, error)
+	Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...CreateIdxOpt) (int64, error)
 	// Delete supports delete from statement.
 	Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64, ss kv.Transaction) error
 	// Drop supports drop table, drop index statements.

@@ -96,6 +96,26 @@ type AddRecordOpt struct {
 	IsUpdate bool
 }
 
+// AddRecordOption is defined for the AddRecord() method of the Table interface.
+type AddRecordOption interface {
+	ApplyOn(*AddRecordOpt)
+}
+
+// ApplyOn implements the AddRecordOption interface, so any CreateIdxOption
+// can be passed as the optional argument to the table.AddRecord method.
+func (f CreateIdxOption) ApplyOn(opt *AddRecordOpt) {
+	f(&opt.CreateIdxOpt)
+}
+
+// IsUpdate is a defined value for AddRecordOption.
+var IsUpdate AddRecordOption = isUpdate{}
+
+type isUpdate struct{}
+
+func (i isUpdate) ApplyOn(opt *AddRecordOpt) {
+	opt.IsUpdate = true
+}
+
 // Table is used to retrieve and modify rows in table.
 type Table interface {
 	// IterRecords iterates records in the table and calls fn.
@@ -136,7 +156,7 @@ type Table interface {
 	RecordKey(h int64) kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*AddRecordOpt) (recordID int64, err error)
+	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID int64, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
 	UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error
