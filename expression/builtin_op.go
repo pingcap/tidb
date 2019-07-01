@@ -800,7 +800,8 @@ func (c *isNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig.setPbCode(tipb.ScalarFuncSig_RealIsNull)
 	case types.ETDatetime:
 		isNotNull := false
-		if mysql.HasNotNullFlag(args[0].GetType().Flag) {
+		_, isCol := args[0].(*Column)
+		if isCol && mysql.HasNotNullFlag(args[0].GetType().Flag) {
 			isNotNull = true
 		}
 		sig = &builtinTimeIsNullSig{bf, isNotNull}
