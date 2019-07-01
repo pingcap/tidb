@@ -217,7 +217,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"`c2` smallint unsigned default null," +
 		"`c3` mediumint unsigned default null," +
 		"`c4` int unsigned default null," +
-		"`c5` bigint unsigned default null);`"
+		"`c5` bigint unsigned default null);"
 
 	tk.MustExec(testSQL)
 	testSQL = "show create table t1"
