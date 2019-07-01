@@ -82,8 +82,12 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
+	snapshotTS := e.startTS
+	if e.lock {
+		snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	}
 	var err error
-	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
+	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
 	if err != nil {
 		return err
 	}
