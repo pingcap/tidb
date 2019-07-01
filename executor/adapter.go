@@ -401,7 +401,12 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	for {
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if err != nil {
-			return err
+			// It is possible the DML has point get plan that locks the key.
+			e, err = a.handlePessimisticLockError(ctx, err)
+			if err != nil {
+				return err
+			}
+			continue
 		}
 		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 		if err1 != nil {
@@ -412,21 +417,18 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
 		err = txn.LockKeys(ctx, forUpdateTS, keys...)
+		if err == nil {
+			return nil
+		}
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
 			return err
-		}
-		if e == nil {
-			return nil
 		}
 	}
 }
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
 func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (Executor, error) {
-	if err == nil {
-		return nil, nil
-	}
 	txnCtx := a.Ctx.GetSessionVars().TxnCtx
 	var newForUpdateTS uint64
 	if deadlock, ok := errors.Cause(err).(*tikv.ErrDeadlock); ok {
