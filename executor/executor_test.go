@@ -1324,7 +1324,7 @@ func (s *testSuite) TestIndexScan(c *C) {
 	// fix issue9636
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (a int, KEY (a))")
-	result = tk.MustQuery(`SELECT * FROM (SELECT * FROM (SELECT a as d FROM t WHERE a IN ('100')) AS x WHERE x.d < "123" ) tmp_count"`)
+	result = tk.MustQuery(`SELECT * FROM (SELECT * FROM (SELECT a as d FROM t WHERE a IN ('100')) AS x WHERE x.d < "123" ) tmp_count`)
 	result.Check(testkit.Rows())
 }
 
