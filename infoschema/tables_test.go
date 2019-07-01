@@ -329,7 +329,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
 	tk.Se.SetSessionManager(sm)
-	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
+	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
 			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "<nil>"),
 			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
@@ -344,11 +344,11 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
 			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
 		))
-	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Sort().Check(
+	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
 			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
 		))
-	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Sort().Check(
+	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
 			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "<nil>"),
 		))
