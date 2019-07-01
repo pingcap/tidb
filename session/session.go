@@ -1411,6 +1411,7 @@ var builtinGlobalVariable = []string{
 	variable.MaxAllowedPacket,
 	variable.TimeZone,
 	variable.BlockEncryptionMode,
+	variable.MaxExecutionTime,
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,
