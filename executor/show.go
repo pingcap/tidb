@@ -61,8 +61,8 @@ type ShowExec struct {
 	DBName      model.CIStr
 	Table       *ast.TableName  // Used for showing columns.
 	Column      *ast.ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr
-	Flag        int // Some flag parsed from sql, such as FULL.
+	IndexName   model.CIStr     // Used for show table regions.
+	Flag        int             // Some flag parsed from sql, such as FULL.
 	Full        bool
 	User        *auth.UserIdentity   // Used for show grants.
 	Roles       []*auth.RoleIdentity // Used for show grants.
@@ -1207,64 +1207,46 @@ func getTableRegions(tb table.Table, tikvStore tikv.Storage, splitStore splitabl
 	if info := tb.Meta().GetPartitionInfo(); info != nil {
 		return getPartitionTableRegions(info, tb.(table.PartitionedTable), tikvStore, splitStore)
 	}
-	return getPhysicalTableRegions(tb.Meta().ID, tb.Meta(), tikvStore, splitStore)
+	return getPhysicalTableRegions(tb.Meta().ID, tb.Meta(), tikvStore, splitStore, nil)
 }
 
 func getTableIndexRegions(tb table.Table, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore splitableStore) ([]regionMeta, error) {
 	if info := tb.Meta().GetPartitionInfo(); info != nil {
 		return getPartitionIndexRegions(info, tb.(table.PartitionedTable), indexInfo, tikvStore, splitStore)
 	}
-	return getPhysicalIndexRegions(tb.Meta().ID, indexInfo, tikvStore, splitStore)
+	return getPhysicalIndexRegions(tb.Meta().ID, indexInfo, tikvStore, splitStore, nil)
 }
 
 func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, tikvStore tikv.Storage, splitStore splitableStore) ([]regionMeta, error) {
-	var regions []regionMeta
-	uniqueRegionID := make(map[uint64]struct{})
+	regions := make([]regionMeta, 0, len(info.Definitions))
+	uniqueRegionMap := make(map[uint64]struct{})
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.GetPartition(pid)
 		partition.GetPhysicalID()
-		partitionRegions, err := getPhysicalTableRegions(partition.GetPhysicalID(), tbl.Meta(), tikvStore, splitStore)
+		partitionRegions, err := getPhysicalTableRegions(partition.GetPhysicalID(), tbl.Meta(), tikvStore, splitStore, uniqueRegionMap)
 		if err != nil {
 			return nil, err
 		}
-		for i := range partitionRegions {
-			if exist := checkUniqueRegion(uniqueRegionID, partitionRegions[i].region.Id); exist {
-				continue
-			}
-			regions = append(regions, partitionRegions[i])
-		}
+		regions = append(regions, partitionRegions...)
 	}
 	return regions, nil
 }
 
 func getPartitionIndexRegions(info *model.PartitionInfo, tbl table.PartitionedTable, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore splitableStore) ([]regionMeta, error) {
 	var regions []regionMeta
-	uniqueRegionID := make(map[uint64]struct{})
+	uniqueRegionMap := make(map[uint64]struct{})
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.GetPartition(pid)
 		partition.GetPhysicalID()
-		partitionRegions, err := getPhysicalIndexRegions(partition.GetPhysicalID(), indexInfo, tikvStore, splitStore)
+		partitionRegions, err := getPhysicalIndexRegions(partition.GetPhysicalID(), indexInfo, tikvStore, splitStore, uniqueRegionMap)
 		if err != nil {
 			return nil, err
 		}
-		for i := range partitionRegions {
-			if exist := checkUniqueRegion(uniqueRegionID, partitionRegions[i].region.Id); exist {
-				continue
-			}
-			regions = append(regions, partitionRegions[i])
-		}
+		regions = append(regions, partitionRegions...)
 	}
 	return regions, nil
-}
-
-func checkUniqueRegion(uniqueRegionID map[uint64]struct{}, id uint64) (exist bool) {
-	if _, ok := uniqueRegionID[id]; ok {
-		return true
-	}
-	uniqueRegionID[id] = struct{}{}
-	return false
 }
 
 func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
