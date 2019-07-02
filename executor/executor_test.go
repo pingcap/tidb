@@ -4078,6 +4078,35 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+
+	// Test show table regions for partition table when disable split region when create table.
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+	tk.MustExec("drop table if exists partition_t;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
+	re = tk.MustQuery("show table partition_t regions")
+	rows = re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 1)
+	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
+	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
+	c.Assert(rows[0][1], Matches, "t_.*")
+
+	// Test show table regions for partition table when enable split region when create table.
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("drop table if exists partition_t;")
+	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
+	re = tk.MustQuery("show table partition_t regions")
+	rows = re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 3)
+	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
+	partitionDef = tbl.Meta().GetPartitionInfo().Definitions
+	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
+	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
