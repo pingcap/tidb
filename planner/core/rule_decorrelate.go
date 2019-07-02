@@ -16,7 +16,6 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -138,7 +137,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				np, err := s.optimize(p)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				proj.SetChildren(np)
 				return proj, nil
@@ -155,7 +154,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 
 				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())
 				for i, col := range outerPlan.Schema().Columns {
-					first := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+					first, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+					if err != nil {
+						return nil, err
+					}
 					newAggFuncs = append(newAggFuncs, first)
 
 					outerCol, _ := outerPlan.Schema().Columns[i].Clone().(*expression.Column)
@@ -167,7 +169,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
 				np, err := s.optimize(p)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				agg.SetChildren(np)
 				// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
@@ -202,7 +204,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 							clonedCol := eqCond.GetArgs()[1]
 							// If the join key is not in the aggregation's schema, add first row function.
 							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
-								newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
+								newFunc, err := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
+								if err != nil {
+									return nil, err
+								}
 								agg.AggFuncs = append(agg.AggFuncs, newFunc)
 								agg.schema.Append(clonedCol.(*expression.Column))
 								agg.schema.Columns[agg.schema.Len()-1].RetType = newFunc.RetTp
@@ -243,7 +248,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	for _, child := range p.Children() {
 		np, err := s.optimize(child)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		newChildren = append(newChildren, np)
 	}

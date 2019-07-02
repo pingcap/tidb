@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/table"
 )
 
@@ -40,7 +41,7 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 					return errors.Trace(err)
 				}
 			} else {
-				err := errBadField.GenWithStackByArgs(depCol, "generated column function")
+				err := ErrBadField.GenWithStackByArgs(depCol, "generated column function")
 				return errors.Trace(err)
 			}
 		}
@@ -48,13 +49,16 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 	return nil
 }
 
-// columnNamesCover checks whether dependColNames is covered by normalColNames or not.
-// it's only for alter table add column because before alter, we can make sure that all
-// columns in table are verified already.
-func columnNamesCover(normalColNames map[string]struct{}, dependColNames map[string]struct{}) error {
-	for name := range dependColNames {
-		if _, ok := normalColNames[name]; !ok {
-			return errBadField.GenWithStackByArgs(name, "generated column function")
+// checkDependedColExist ensure all depended columns exist.
+//
+// NOTE: this will MODIFY parameter `dependCols`.
+func checkDependedColExist(dependCols map[string]struct{}, cols []*table.Column) error {
+	for _, col := range cols {
+		delete(dependCols, col.Name.L)
+	}
+	if len(dependCols) != 0 {
+		for arbitraryCol := range dependCols {
+			return ErrBadField.GenWithStackByArgs(arbitraryCol, "generated column function")
 		}
 	}
 	return nil
@@ -104,6 +108,7 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 // old and new is valid or not by such rules:
 //  1. the modification can't change stored status;
 //  2. if the new is generated, check its refer rules.
+//  3. check if the modified expr contains non-deterministic functions
 func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *table.Column) error {
 	// rule 1.
 	var stored = [2]bool{false, false}
@@ -151,6 +156,44 @@ func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *tabl
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	// rule 3
+	if newCol.IsGenerated() {
+		if err := checkIllegalFn4GeneratedColumn(newCol.Name.L, newCol.GeneratedExpr); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+type illegalFunctionChecker struct {
+	found bool
+}
+
+func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+	switch node := inNode.(type) {
+	case *ast.FuncCallExpr:
+		if _, found := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]; found {
+			c.found = true
+			return inNode, true
+		}
+	}
+	return inNode, false
+}
+
+func (c *illegalFunctionChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+	return inNode, true
+}
+
+func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
+	if expr == nil {
+		return nil
+	}
+	var c illegalFunctionChecker
+	expr.Accept(&c)
+	if c.found {
+		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(colName)
 	}
 	return nil
 }

@@ -16,17 +16,18 @@ package executor
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"sort"
-	"time"
 
-	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 )
+
+var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
 
 // SortExec represents sorting executor.
 type SortExec struct {
@@ -55,7 +56,7 @@ type SortExec struct {
 func (e *SortExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
-	return errors.Trace(e.children[0].Close())
+	return e.children[0].Close()
 }
 
 // Open implements the Executor Open interface.
@@ -68,24 +69,16 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}
-	return errors.Trace(e.children[0].Open(ctx))
+	return e.children[0].Open(ctx)
 }
 
 // Next implements the Executor Next interface.
-func (e *SortExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("sort.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
+func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		e.initPointers()
 		e.initCompareFuncs()
@@ -102,15 +95,15 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 }
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
-	fields := e.retTypes()
+	fields := retTypes(e)
 	e.rowChunks = chunk.NewList(fields, e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
+	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	for {
-		chk := e.children[0].newFirstChunk()
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		chk := newFirstChunk(e.children[0])
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		rowCount := chk.NumRows()
 		if rowCount == 0 {
@@ -232,30 +225,22 @@ func (h *topNChunkHeap) Swap(i, j int) {
 func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaTopn)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	return errors.Trace(e.SortExec.Open(ctx))
+	return e.SortExec.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
-func (e *TopNExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("topN.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
+func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
 		e.totalLimit = e.limit.Offset + e.limit.Count
 		e.Idx = int(e.limit.Offset)
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = e.executeTopN(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		e.fetched = true
 	}
@@ -272,16 +257,16 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
+	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
+	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
-		srcChk := e.children[0].newFirstChunk()
+		srcChk := newFirstChunk(e.children[0])
 		// adjust required rows by total limit
 		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(srcChk))
+		err := Next(ctx, e.children[0], srcChk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if srcChk.NumRows() == 0 {
 			break
@@ -302,23 +287,23 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}
-	childRowChk := e.children[0].newFirstChunk()
+	childRowChk := newFirstChunk(e.children[0])
 	for {
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(childRowChk))
+		err := Next(ctx, e.children[0], childRowChk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if childRowChk.NumRows() == 0 {
 			break
 		}
 		err = e.processChildChk(childRowChk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if e.rowChunks.Len() > len(e.rowPtrs)*topNCompactionFactor {
 			err = e.doCompaction()
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
@@ -346,13 +331,13 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
+	newRowChunks := chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
-	newRowChunks.GetMemTracker().SetLabel("rowChunks")
+	newRowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
 

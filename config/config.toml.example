@@ -48,6 +48,15 @@ lower-case-table-names = 2
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false
 
+# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
+check-mb4-value-in-utf8 = true
+
+# treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
+treat-old-version-utf8-as-utf8mb4 = true
+
+# enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
+enable-table-lock = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -110,6 +119,10 @@ cluster-ssl-key = ""
 # If enable status report HTTP service.
 report-status = true
 
+# TiDB status host.
+status-host = "0.0.0.0"
+
+# Prometheus pushgateway address, leaves it empty will disable prometheus push.
 # TiDB status port.
 status-port = 10080
 
@@ -157,6 +170,9 @@ pseudo-estimate-ratio = 0.8
 # Force the priority of all statements in a specified priority.
 # The value could be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY" or "DELAYED".
 force-priority = "NO_PRIORITY"
+
+# Bind info lease duration, which influences the duration of loading bind info and handling invalid bind.
+bind-info-lease = "3s"
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -258,21 +274,32 @@ enabled = true
 capacity = 2048000
 
 [binlog]
-# Enable to write binlog. This config will be disabled if auto-mode is true.
+# enable to write binlog.
 enable = false
-
-# If auto-mode is true, will enable binlog according to the system variables 'tidb_log_bin'.
-auto-mode = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
 write-timeout = "15s"
 
-# If IgnoreError is true, when writting binlog meets error, TiDB would stop writting binlog,
+# If IgnoreError is true, when writing binlog meets error, TiDB would stop writing binlog,
 # but still provide service.
 ignore-error = false
 
 # use socket file to write binlog, for compatible with kafka version tidb-binlog.
 binlog-socket = ""
 
-# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
-check-mb4-value-in-utf8 = true
+# the strategy for sending binlog to pump, value can be "range" or "hash" now.
+strategy = "range"
+
+[pessimistic-txn]
+# enable pessimistic transaction.
+enable = false
+
+# start pessimistic transaction by default.
+default = false
+
+# max retry count for a statement in a pessimistic transaction.
+max-retry-count = 256
+
+# default TTL in milliseconds for pessimistic lock.
+# The value must between "15s" and "60s".
+ttl = "30s"

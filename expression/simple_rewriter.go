@@ -106,8 +106,8 @@ func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, sche
 }
 
 func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
-	col := sr.schema.FindColumnByName(nodeColName.Name.Name.L)
-	if col != nil {
+	col, err := sr.schema.FindColumn(nodeColName.Name)
+	if col != nil && err == nil {
 		return col, nil
 	}
 	return nil, errBadField.GenWithStackByArgs(nodeColName.Name.Name.O, "expression")
@@ -210,7 +210,7 @@ func (sr *simpleRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	if sr.err != nil {
 		return
 	}
-	if sr.rewriteFuncCall(v) {
+	if sr.rewriteFuncCall(v, args) {
 		return
 	}
 	var function Expression
@@ -218,15 +218,15 @@ func (sr *simpleRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	sr.push(function)
 }
 
-func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
+func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr, args []Expression) bool {
 	switch v.FnName.L {
 	case ast.Nullif:
-		if len(v.Args) != 2 {
+		if len(args) != 2 {
 			sr.err = ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
 			return true
 		}
-		param2 := sr.pop()
-		param1 := sr.pop()
+		param2 := args[1]
+		param1 := args[0]
 		// param1 = param2
 		funcCompare, err := sr.constructBinaryOpFunction(param1, param2, ast.EQ)
 		if err != nil {

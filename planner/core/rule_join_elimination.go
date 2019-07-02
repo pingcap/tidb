@@ -66,7 +66,7 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 
 // extract join keys as a schema for inner child of a outer join
 func (o *outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChildIdx int) *expression.Schema {
-	var joinKeys []*expression.Column
+	joinKeys := make([]*expression.Column, 0, len(join.EqualConditions))
 	for _, eqCond := range join.EqualConditions {
 		joinKeys = append(joinKeys, eqCond.GetArgs()[innerChildIdx].(*expression.Column))
 	}

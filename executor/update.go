@@ -55,7 +55,7 @@ type UpdateExec struct {
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 	assignFlag, err := e.getUpdateColumns(e.ctx, schema.Len())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if e.cursor >= len(e.rows) {
 		return nil, nil
@@ -114,7 +114,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 				sc.AppendWarning(err1)
 				continue
 			}
-			return nil, errors.Trace(err1)
+			return nil, err1
 		}
 	}
 	e.cursor++
@@ -132,7 +132,7 @@ func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
 }
 
 // Next implements the Executor Next interface.
-func (e *UpdateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("update.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -142,7 +142,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if !e.fetched {
 		err := e.fetchChunkRows(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		e.fetched = true
 		e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(e.rows)))
@@ -150,7 +150,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		for {
 			row, err := e.exec(e.children[0].Schema())
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 
 			// once "row == nil" there is no more data waiting to be updated,
@@ -165,7 +165,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 }
 
 func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
-	fields := e.children[0].retTypes()
+	fields := retTypes(e.children[0])
 	schema := e.children[0].Schema()
 	colsInfo := make([]*table.Column, len(fields))
 	for id, cols := range schema.TblID2Handle {
@@ -178,12 +178,12 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 		}
 	}
 	globalRowIdx := 0
-	chk := e.children[0].newFirstChunk()
+	chk := newFirstChunk(e.children[0])
 	e.evalBuffer = chunk.MutRowFromTypes(fields)
 	for {
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		if chk.NumRows() == 0 {
@@ -195,7 +195,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 			datumRow := chunkRow.GetDatumRow(fields)
 			newRow, err1 := e.composeNewRow(globalRowIdx, datumRow, colsInfo)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return err1
 			}
 			e.rows = append(e.rows, datumRow)
 			e.newRowsData = append(e.newRowsData, newRow)
@@ -219,11 +219,11 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
 	}
 
-	return errors.Trace(err)
+	return err
 }
 
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
-	newRowData := types.CopyRow(oldRow)
+	newRowData := types.CloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
 	for _, assign := range e.OrderedList {
 		handleIdx, handleFound := e.columns2Handle.findHandle(int32(assign.Col.Index))
@@ -240,7 +240,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo)
 			if err = e.handleErr(assign.Col.ColName, rowIdx, err); err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		}
 

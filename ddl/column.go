@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -30,8 +31,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // adjustColumnInfoInAddColumn is used to set the correct position of column info when adding column.
@@ -162,10 +164,11 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, nil
 	}
 
-	// gofail: var errorBeforeDecodeArgs bool
-	// if errorBeforeDecodeArgs {
-	// 	return ver, errors.New("occur an error before decode args")
-	// }
+	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("occur an error before decode args"))
+		}
+	})
 
 	tblInfo, columnInfo, col, pos, offset, err := checkAddColumn(t, job)
 	if err != nil {
@@ -177,7 +180,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		log.Infof("[ddl] add column, run DDL job %s, column info %#v, offset %d", job, columnInfo, offset)
+		logutil.BgLogger().Info("[ddl] run add column job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offset))
 		// Set offset arg to job.
 		if offset != 0 {
 			job.Args = []interface{}{columnInfo, pos, offset}
@@ -194,7 +197,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		// none -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		columnInfo.State = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != columnInfo.State)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		job.SchemaState = model.StateWriteOnly
@@ -254,7 +257,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 				return ver, errors.Trace(err)
 			}
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
@@ -373,12 +376,13 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		}
 	}
 
-	// gofail: var uninitializedOffsetAndState bool
-	// if uninitializedOffsetAndState {
-	// if newCol.State != model.StatePublic {
-	//      return ver, errors.New("the column state is wrong")
-	// }
-	// }
+	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
+		if val.(bool) {
+			if newCol.State != model.StatePublic {
+				failpoint.Return(ver, errors.New("the column state is wrong"))
+			}
+		}
+	})
 
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) && !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
 		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
@@ -448,7 +452,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		}
 	}
 
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
 	if err != nil {
 		// Modified the type definition of 'null' to 'not null' before this, so rollBack the job when an error occurs.
 		job.State = model.JobStateRollingback
@@ -515,8 +519,8 @@ func allocateColumnID(tblInfo *model.TableInfo) int64 {
 	return tblInfo.MaxColumnID
 }
 
-func checkAddColumnTooManyColumns(oldCols int) error {
-	if uint32(oldCols) > atomic.LoadUint32(&TableColumnCountLimit) {
+func checkAddColumnTooManyColumns(colNum int) error {
+	if uint32(colNum) > atomic.LoadUint32(&TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil
@@ -557,7 +561,7 @@ func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo,
 
 	// Prevent this field from inserting null values.
 	tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
 	return ver, errors.Trace(err)
 }
 
@@ -575,10 +579,6 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	if odValue == strings.ToUpper(ast.CurrentTimestamp) {
 		if col.Tp == mysql.TypeTimestamp {
 			odValue = time.Now().UTC().Format(types.TimeFormat)
-			// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
-			//              This will fix bug in version 0.
-			// TODO: remove this version field after there is no old version 0.
-			col.Version = model.ColumnInfoVersion1
 		} else if col.Tp == mysql.TypeDatetime {
 			odValue = time.Now().Format(types.TimeFormat)
 		}
@@ -593,4 +593,13 @@ func findColumnInIndexCols(c *expression.Column, cols []*ast.IndexColName) bool 
 		}
 	}
 	return false
+}
+
+func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
+	for _, colInfo := range tbInfo.Cols() {
+		if colInfo.Name.L == column {
+			return colInfo
+		}
+	}
+	return nil
 }

@@ -377,4 +377,37 @@ timezone.*
     curl http://{TiDBIP}:10080/ddl/history?limit={number}
     ```
 
-    **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
+    **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.` 
+
+1. Download TiDB debug info
+
+    ```shell
+    curl http://{TiDBIP}:10080/debug/zip?seconds=60 --output debug.zip
+    ```
+    
+    zip file will include:
+    
+    - Go heap pprof(after GC)
+    - Go cpu pprof(10s)
+    - Go mutex pprof
+    - Full goroutine
+    - TiDB config and version
+
+    Param:
+    
+    - seconds: profile time(s), default is 10s. 
+
+1. Get statistics data of specified table.
+
+    ```shell
+    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}
+    ```
+
+1. Get statistics data of specific table and timestamp.
+
+    ```shell
+    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyyMMddHHmmss}
+    ```
+    ```shell
+    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss}
+    ```

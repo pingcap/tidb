@@ -41,6 +41,15 @@ func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
 }
 
+// implicitArgs returns the implicit arguments of this function.
+// implicit arguments means some functions contain extra inner fields which will not
+// contain in `tipb.Expr.children` but must be pushed down to coprocessor
+func (b *baseBuiltinFunc) implicitArgs() []types.Datum {
+	// We will not use a field to store them because of only
+	// a few functions contain implicit parameters
+	return nil
+}
+
 func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 	b.pbCode = c
 }
@@ -244,6 +253,17 @@ type baseBuiltinCastFunc struct {
 	inUnion bool
 }
 
+// implicitArgs returns the implicit arguments of cast functions
+func (b *baseBuiltinCastFunc) implicitArgs() []types.Datum {
+	args := b.baseBuiltinFunc.implicitArgs()
+	if b.inUnion {
+		args = append(args, types.NewIntDatum(1))
+	} else {
+		args = append(args, types.NewIntDatum(0))
+	}
+	return args
+}
+
 func (b *baseBuiltinCastFunc) cloneFrom(from *baseBuiltinCastFunc) {
 	b.baseBuiltinFunc.cloneFrom(&from.baseBuiltinFunc)
 	b.inUnion = from.inUnion
@@ -284,6 +304,10 @@ type builtinFunc interface {
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
 	PbCode() tipb.ScalarFuncSig
+	// implicitArgs returns the implicit parameters of a function.
+	// implicit arguments means some functions contain extra inner fields which will not
+	// contain in `tipb.Expr.children` but must be pushed down to coprocessor
+	implicitArgs() []types.Datum
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
 }
@@ -470,6 +494,7 @@ var funcs = map[string]functionClass{
 	// information functions
 	ast.ConnectionID: &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},
 	ast.CurrentUser:  &currentUserFunctionClass{baseFunctionClass{ast.CurrentUser, 0, 0}},
+	ast.CurrentRole:  &currentRoleFunctionClass{baseFunctionClass{ast.CurrentRole, 0, 0}},
 	ast.Database:     &databaseFunctionClass{baseFunctionClass{ast.Database, 0, 0}},
 	// This function is a synonym for DATABASE().
 	// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_schema

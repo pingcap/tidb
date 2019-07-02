@@ -17,7 +17,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/types"
@@ -52,10 +52,10 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 			stateCnt++
 		} else if job.SchemaState == model.StateWriteReorganization {
 			if first {
-				gofail.Enable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs", `return(true)`)
+				c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs", `return(true)`), IsNil)
 				first = false
 			} else {
-				gofail.Disable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs")
+				c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs"), IsNil)
 			}
 		}
 	}

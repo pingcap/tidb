@@ -47,7 +47,7 @@ type column struct {
 	length     int
 	nullCount  int
 	nullBitmap []byte
-	offsets    []int32
+	offsets    []int64
 	data       []byte
 	elemBuf    []byte
 }
@@ -158,7 +158,7 @@ func (c *column) appendFloat64(f float64) {
 
 func (c *column) finishAppendVar() {
 	c.appendNullBitmap(true)
-	c.offsets = append(c.offsets, int32(len(c.data)))
+	c.offsets = append(c.offsets, int64(len(c.data)))
 	c.length++
 }
 

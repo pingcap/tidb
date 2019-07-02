@@ -220,6 +220,40 @@ func (s *testSuite) TestCancelJobs(c *C) {
 		c.Assert(err, IsNil)
 	}
 
+	errs, err = CancelJobs(txn, []int64{})
+	c.Assert(err, IsNil)
+	c.Assert(errs, IsNil)
+	errs, err = CancelJobs(txn, []int64{-1})
+	c.Assert(err, IsNil)
+	c.Assert(errs[0], NotNil)
+	c.Assert(errs[0].Error(), Equals, "[admin:4]DDL Job:-1 not found")
+
+	// test cancel finish job.
+	job := &model.Job{
+		ID:       100,
+		SchemaID: 1,
+		Type:     model.ActionCreateTable,
+		State:    model.JobStateDone,
+	}
+	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
+	errs, err = CancelJobs(txn, []int64{100})
+	c.Assert(err, IsNil)
+	c.Assert(errs[0], NotNil)
+	c.Assert(errs[0].Error(), Equals, "[admin:5]This job:100 is finished, so can't be cancelled")
+
+	// test can't cancelable job.
+	job.Type = model.ActionDropIndex
+	job.SchemaState = model.StateDeleteOnly
+	job.State = model.JobStateRunning
+	job.ID = 101
+	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
+	errs, err = CancelJobs(txn, []int64{101})
+	c.Assert(err, IsNil)
+	c.Assert(errs[0], NotNil)
+	c.Assert(errs[0].Error(), Equals, "[admin:6]This job:101 is almost finished, can't be cancelled now")
+
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 }
@@ -537,4 +571,24 @@ func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestIsJobRollbackable(c *C) {
+	cases := []struct {
+		tp     model.ActionType
+		state  model.SchemaState
+		result bool
+	}{
+		{model.ActionDropIndex, model.StateNone, true},
+		{model.ActionDropIndex, model.StateDeleteOnly, false},
+		{model.ActionDropSchema, model.StateDeleteOnly, false},
+		{model.ActionDropColumn, model.StateDeleteOnly, false},
+	}
+	job := &model.Job{}
+	for _, ca := range cases {
+		job.Type = ca.tp
+		job.SchemaState = ca.state
+		re := IsJobRollbackable(job)
+		c.Assert(re == ca.result, IsTrue)
+	}
 }

@@ -63,8 +63,10 @@ const (
 	codeWindowDuplicateName             = mysql.ErrWindowDuplicateName
 	codeErrTooBigPrecision              = mysql.ErrTooBigPrecision
 	codePartitionClauseOnNonpartitioned = mysql.ErrPartitionClauseOnNonpartitioned
+	codeDBaccessDenied                  = mysql.ErrDBaccessDenied
 	codeTableaccessDenied               = mysql.ErrTableaccessDenied
 	codeSpecificAccessDenied            = mysql.ErrSpecificAccessDenied
+	codeViewNoExplain                   = mysql.ErrViewNoExplain
 	codeWindowFrameStartIllegal         = mysql.ErrWindowFrameStartIllegal
 	codeWindowFrameEndIllegal           = mysql.ErrWindowFrameEndIllegal
 	codeWindowFrameIllegal              = mysql.ErrWindowFrameIllegal
@@ -74,6 +76,7 @@ const (
 	codeWindowRangeBoundNotConstant     = mysql.ErrWindowRangeBoundNotConstant
 	codeWindowRowsIntervalUse           = mysql.ErrWindowRowsIntervalUse
 	codeWindowFunctionIgnoresFrame      = mysql.ErrWindowFunctionIgnoresFrame
+	codeUnsupportedOnGeneratedColumn    = mysql.ErrUnsupportedOnGeneratedColumn
 )
 
 // error definitions.
@@ -123,8 +126,10 @@ var (
 	ErrWindowDuplicateName             = terror.ClassOptimizer.New(codeWindowDuplicateName, mysql.MySQLErrName[mysql.ErrWindowDuplicateName])
 	ErrPartitionClauseOnNonpartitioned = terror.ClassOptimizer.New(codePartitionClauseOnNonpartitioned, mysql.MySQLErrName[mysql.ErrPartitionClauseOnNonpartitioned])
 	errTooBigPrecision                 = terror.ClassExpression.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
+	ErrDBaccessDenied                  = terror.ClassOptimizer.New(mysql.ErrDBaccessDenied, mysql.MySQLErrName[mysql.ErrDBaccessDenied])
 	ErrTableaccessDenied               = terror.ClassOptimizer.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
 	ErrSpecificAccessDenied            = terror.ClassOptimizer.New(mysql.ErrSpecificAccessDenied, mysql.MySQLErrName[mysql.ErrSpecificAccessDenied])
+	ErrViewNoExplain                   = terror.ClassOptimizer.New(mysql.ErrViewNoExplain, mysql.MySQLErrName[mysql.ErrViewNoExplain])
 	ErrWindowFrameStartIllegal         = terror.ClassOptimizer.New(codeWindowFrameStartIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameStartIllegal])
 	ErrWindowFrameEndIllegal           = terror.ClassOptimizer.New(codeWindowFrameEndIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameEndIllegal])
 	ErrWindowFrameIllegal              = terror.ClassOptimizer.New(codeWindowFrameIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameIllegal])
@@ -134,6 +139,10 @@ var (
 	ErrWindowRangeBoundNotConstant     = terror.ClassOptimizer.New(codeWindowRangeBoundNotConstant, mysql.MySQLErrName[mysql.ErrWindowRangeBoundNotConstant])
 	ErrWindowRowsIntervalUse           = terror.ClassOptimizer.New(codeWindowRowsIntervalUse, mysql.MySQLErrName[mysql.ErrWindowRowsIntervalUse])
 	ErrWindowFunctionIgnoresFrame      = terror.ClassOptimizer.New(codeWindowFunctionIgnoresFrame, mysql.MySQLErrName[mysql.ErrWindowFunctionIgnoresFrame])
+	ErrUnsupportedOnGeneratedColumn    = terror.ClassOptimizer.New(codeUnsupportedOnGeneratedColumn, mysql.MySQLErrName[mysql.ErrUnsupportedOnGeneratedColumn])
+	ErrNoSuchThread                    = terror.ClassOptimizer.New(mysql.ErrNoSuchThread, mysql.MySQLErrName[mysql.ErrNoSuchThread])
+	// Since we cannot know if user loggined with a password, use message of ErrAccessDeniedNoPassword instead
+	ErrAccessDenied = terror.ClassOptimizer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
 )
 
 func init() {
@@ -173,8 +182,10 @@ func init() {
 		codeWindowDuplicateName:             mysql.ErrWindowDuplicateName,
 		codePartitionClauseOnNonpartitioned: mysql.ErrPartitionClauseOnNonpartitioned,
 		codeErrTooBigPrecision:              mysql.ErrTooBigPrecision,
+		codeDBaccessDenied:                  mysql.ErrDBaccessDenied,
 		codeTableaccessDenied:               mysql.ErrTableaccessDenied,
 		codeSpecificAccessDenied:            mysql.ErrSpecificAccessDenied,
+		codeViewNoExplain:                   mysql.ErrViewNoExplain,
 		codeWindowFrameStartIllegal:         mysql.ErrWindowFrameStartIllegal,
 		codeWindowFrameEndIllegal:           mysql.ErrWindowFrameEndIllegal,
 		codeWindowFrameIllegal:              mysql.ErrWindowFrameIllegal,
@@ -184,6 +195,10 @@ func init() {
 		codeWindowRangeBoundNotConstant:     mysql.ErrWindowRangeBoundNotConstant,
 		codeWindowRowsIntervalUse:           mysql.ErrWindowRowsIntervalUse,
 		codeWindowFunctionIgnoresFrame:      mysql.ErrWindowFunctionIgnoresFrame,
+		codeUnsupportedOnGeneratedColumn:    mysql.ErrUnsupportedOnGeneratedColumn,
+
+		mysql.ErrNoSuchThread: mysql.ErrNoSuchThread,
+		mysql.ErrAccessDenied: mysql.ErrAccessDenied,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }

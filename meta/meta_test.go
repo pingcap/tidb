@@ -16,6 +16,7 @@ package meta_test
 import (
 	"context"
 	"math"
+	"strconv"
 	"testing"
 	"time"
 
@@ -44,7 +45,6 @@ func (s *testSuite) TestMeta(c *C) {
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
-
 	defer txn.Rollback()
 
 	t := meta.NewMeta(txn)
@@ -179,6 +179,20 @@ func (s *testSuite) TestMeta(c *C) {
 	currentDBID = nonExistentID
 	_, err = t.GenAutoTableID(currentDBID, tid, 10)
 	c.Assert(err, NotNil)
+	// Test case for CreateTableAndSetAutoID.
+	tbInfo3 := &model.TableInfo{
+		ID:   3,
+		Name: model.NewCIStr("tbl3"),
+	}
+	err = t.CreateTableAndSetAutoID(1, tbInfo3, 123)
+	c.Assert(err, IsNil)
+	id, err := t.GetAutoTableID(1, tbInfo3.ID)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(123))
+	// Test case for GenAutoTableIDKeyValue.
+	key, val := t.GenAutoTableIDKeyValue(1, tbInfo3.ID, 1234)
+	c.Assert(val, DeepEquals, []byte(strconv.FormatInt(1234, 10)))
+	c.Assert(key, DeepEquals, []byte{0x6d, 0x44, 0x42, 0x3a, 0x31, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x33, 0x0, 0x0, 0x0, 0xfc})
 
 	err = t.DropDatabase(1)
 	c.Assert(err, IsNil)
@@ -223,6 +237,10 @@ func (s *testSuite) TestMeta(c *C) {
 
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
+
+	// Test for DDLJobHistoryKey.
+	key = meta.DDLJobHistoryKey(t, 888)
+	c.Assert(key, DeepEquals, []byte{0x6d, 0x44, 0x44, 0x4c, 0x4a, 0x6f, 0x62, 0x48, 0x69, 0xff, 0x73, 0x74, 0x6f, 0x72, 0x79, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x78, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf7})
 }
 
 func (s *testSuite) TestSnapshot(c *C) {
@@ -313,6 +331,10 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(j, Equals, int64(math.MaxInt64))
 	c.Assert(k, Equals, int64(0))
 
+	// Test GetDDLReorgHandle failed.
+	_, _, _, err = t.GetDDLReorgHandle(job)
+	c.Assert(err, IsNil)
+
 	v, err = t.DeQueueDDLJob()
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
@@ -323,6 +345,13 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
+	// Add multiple history jobs.
+	historyJob1 := &model.Job{ID: 1234}
+	err = t.AddHistoryDDLJob(historyJob1)
+	c.Assert(err, IsNil)
+	historyJob2 := &model.Job{ID: 123}
+	err = t.AddHistoryDDLJob(historyJob2)
+	c.Assert(err, IsNil)
 	all, err := t.GetAllHistoryDDLJobs()
 	c.Assert(err, IsNil)
 	var lastID int64
@@ -330,6 +359,13 @@ func (s *testSuite) TestDDL(c *C) {
 		c.Assert(job.ID, Greater, lastID)
 		lastID = job.ID
 	}
+
+	// Test for get last N history ddl jobs.
+	historyJobs, err := t.GetLastNHistoryDDLJobs(2)
+	c.Assert(err, IsNil)
+	c.Assert(len(historyJobs), Equals, 2)
+	c.Assert(historyJobs[0].ID == 123, IsTrue)
+	c.Assert(historyJobs[1].ID == 1234, IsTrue)
 
 	// Test GetAllDDLJobsInQueue.
 	err = t.EnQueueDDLJob(job)
@@ -343,5 +379,30 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(jobs, DeepEquals, expectJobs)
 
 	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	// Test for add index job.
+	txn1, err := store.Begin()
+	c.Assert(err, IsNil)
+	defer txn1.Rollback()
+
+	m := meta.NewMeta(txn1, meta.AddIndexJobListKey)
+	err = m.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
+	job.ID = 123
+	err = m.UpdateDDLJob(0, job, true, meta.AddIndexJobListKey)
+	c.Assert(err, IsNil)
+	v, err = m.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, job)
+	l, err := m.DDLJobQueueLen(meta.AddIndexJobListKey)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(1))
+	jobs, err = m.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
+	c.Assert(err, IsNil)
+	expectJobs = []*model.Job{job}
+	c.Assert(jobs, DeepEquals, expectJobs)
+
+	err = txn1.Commit(context.Background())
 	c.Assert(err, IsNil)
 }

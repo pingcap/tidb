@@ -20,7 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
@@ -52,14 +52,16 @@ func (s *testSQLSuite) TearDownSuite(c *C) {
 }
 
 func (s *testSQLSuite) TestInsertSleepOverMaxTxnTime(c *C) {
-	defer gofail.Disable("github.com/pingcap/tidb/store/tmpMaxTxnTime")
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tmpMaxTxnTime"), IsNil)
+	}()
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "drop table if exists test.t")
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "create table test.t(a int)")
 	c.Assert(err, IsNil)
-	gofail.Enable("github.com/pingcap/tidb/store/tmpMaxTxnTime", `return(2)->return(0)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tmpMaxTxnTime", `return(2)->return(0)`), IsNil)
 	start := time.Now()
 	_, err = se.Execute(context.Background(), "insert into test.t (a) select sleep(3)")
 	c.Assert(err, IsNil)
@@ -73,11 +75,11 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`), IsNil)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy")
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy"), IsNil)
 	}()
 
 	go func() {
@@ -87,7 +89,7 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 			defer terror.Call(rs[0].Close)
 		}
 		c.Assert(err, IsNil)
-		req := rs[0].NewRecordBatch()
+		req := rs[0].NewChunk()
 		err = rs[0].Next(context.Background(), req)
 		c.Assert(err, IsNil)
 		c.Assert(req.NumRows() == 0, IsFalse)
@@ -122,7 +124,7 @@ func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
 	res, err := tk.Se.Execute(ctx, "select * from t")
 	c.Assert(err, IsNil)
 
-	req := res[0].NewRecordBatch()
+	req := res[0].NewChunk()
 	for {
 		err := res[0].Next(ctx, req)
 		c.Assert(err, IsNil)

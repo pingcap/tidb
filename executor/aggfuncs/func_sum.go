@@ -14,10 +14,10 @@
 package aggfuncs
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -38,7 +38,7 @@ type partialResult4SumDistinctFloat64 struct {
 
 type partialResult4SumDistinctDecimal struct {
 	partialResult4SumDecimal
-	valSet set.DecimalSet
+	valSet set.StringSet
 }
 
 type baseSumAggFunc struct {
@@ -76,7 +76,7 @@ func (e *sum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -131,7 +131,7 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -145,7 +145,7 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.val, input, newSum)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		p.val = *newSum
 	}
@@ -160,7 +160,7 @@ func (e *sum4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	newSum := new(types.MyDecimal)
 	err := types.DecimalAdd(&p1.val, &p2.val, newSum)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	p2.val = *newSum
 	p2.isNull = false
@@ -189,7 +189,7 @@ func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull || p.valSet.Exist(input) {
 			continue
@@ -222,14 +222,14 @@ type sum4DistinctDecimal struct {
 func (e *sum4DistinctDecimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
-	p.valSet = set.NewDecimalSet()
+	p.valSet = set.NewStringSet()
 	return PartialResult(p)
 }
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	p.isNull = true
-	p.valSet = set.NewDecimalSet()
+	p.valSet = set.NewStringSet()
 }
 
 func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
@@ -237,12 +237,20 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		if isNull || p.valSet.Exist(input) {
+		if isNull {
 			continue
 		}
-		p.valSet.Insert(input)
+		hash, err := input.ToHashKey()
+		if err != nil {
+			return err
+		}
+		decStr := string(hack.String(hash))
+		if p.valSet.Exist(decStr) {
+			continue
+		}
+		p.valSet.Insert(decStr)
 		if p.isNull {
 			p.val = *input
 			p.isNull = false
@@ -250,7 +258,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		newSum := new(types.MyDecimal)
 		if err = types.DecimalAdd(&p.val, input, newSum); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		p.val = *newSum
 	}

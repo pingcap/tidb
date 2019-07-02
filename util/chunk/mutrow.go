@@ -178,7 +178,7 @@ func newMutRowVarLenColumn(valSize int) *column {
 	buf := make([]byte, valSize+1)
 	col := &column{
 		length:     1,
-		offsets:    []int32{0, int32(valSize)},
+		offsets:    []int64{0, int64(valSize)},
 		data:       buf[:valSize],
 		nullBitmap: buf[valSize:],
 	}
@@ -314,7 +314,7 @@ func setMutRowBytes(col *column, bin []byte) {
 		col.nullBitmap = buf[len(bin):]
 	}
 	copy(col.data, bin)
-	col.offsets[1] = int32(len(bin))
+	col.offsets[1] = int64(len(bin))
 }
 
 func setMutRowNameValue(col *column, name string, val uint64) {
@@ -328,7 +328,7 @@ func setMutRowNameValue(col *column, name string, val uint64) {
 	}
 	binary.LittleEndian.PutUint64(col.data, val)
 	copy(col.data[8:], name)
-	col.offsets[1] = int32(dataLen)
+	col.offsets[1] = int64(dataLen)
 }
 
 func setMutRowJSON(col *column, j json.BinaryJSON) {
@@ -344,7 +344,7 @@ func setMutRowJSON(col *column, j json.BinaryJSON) {
 	}
 	col.data[0] = j.TypeCode
 	copy(col.data[1:], j.Value)
-	col.offsets[1] = int32(dataLen)
+	col.offsets[1] = int64(dataLen)
 }
 
 // ShallowCopyPartialRow shallow copies the data of `row` to MutRow.
@@ -365,7 +365,7 @@ func (mr MutRow) ShallowCopyPartialRow(colIdx int, row Row) {
 		} else {
 			start, end := srcCol.offsets[row.idx], srcCol.offsets[row.idx+1]
 			dstCol.data = srcCol.data[start:end]
-			dstCol.offsets[1] = int32(len(dstCol.data))
+			dstCol.offsets[1] = int64(len(dstCol.data))
 		}
 	}
 }

@@ -46,7 +46,7 @@ func (e *ExplainExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ExplainExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.rows == nil {
 		var err error
 		e.rows, err = e.generateExplainInfo(ctx)
@@ -72,9 +72,9 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, error) {
 	if e.analyzeExec != nil {
-		chk := e.analyzeExec.newFirstChunk()
+		chk := newFirstChunk(e.analyzeExec)
 		for {
-			err := e.analyzeExec.Next(ctx, chunk.NewRecordBatch(chk))
+			err := e.analyzeExec.Next(ctx, chk)
 			if err != nil {
 				return nil, err
 			}

@@ -16,7 +16,6 @@ package decoder
 import (
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -78,7 +77,7 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int64, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	row, err := tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if !rd.haveGenColumn {
 		return row, nil
@@ -102,7 +101,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 		} else {
 			val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		}
 		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
@@ -114,11 +113,11 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 		// Eval the column value
 		val, err := col.GenExpr.Eval(rd.mutRow.ToRow())
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		val, err = table.CastValue(ctx, val, col.Col.ColumnInfo)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 
 		if val.Kind() == types.KindMysqlTime && sysLoc != time.UTC {
@@ -126,7 +125,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 			if t.Type == mysql.TypeTimestamp {
 				err := t.ConvertTimeZone(sysLoc, time.UTC)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				val.SetMysqlTime(t)
 			}

@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
-func ExampleLoadRunShutdownPlugin() {
+func LoadRunShutdownPluginExample() {
 	ctx := context.Background()
 	var pluginVarNames []string
 	cfg := plugin.Config{
@@ -30,17 +30,24 @@ func ExampleLoadRunShutdownPlugin() {
 		PluginVarNames: &pluginVarNames,
 	}
 
-	err := plugin.Init(ctx, cfg)
+	err := plugin.Load(ctx, cfg)
 	if err != nil {
 		panic(err)
 	}
 
-	ps := plugin.GetByKind(plugin.Audit)
-	for _, auditPlugin := range ps {
-		if auditPlugin.State != plugin.Ready {
-			continue
-		}
-		plugin.DeclareAuditManifest(auditPlugin.Manifest).NotifyEvent(context.Background(), nil)
+	// load and start TiDB domain.
+
+	err = plugin.Init(ctx, cfg)
+	if err != nil {
+		panic(err)
+	}
+
+	err = plugin.ForeachPlugin(plugin.Audit, func(auditPlugin *plugin.Plugin) error {
+		plugin.DeclareAuditManifest(auditPlugin.Manifest).OnGeneralEvent(context.Background(), nil, plugin.Log, "QUERY")
+		return nil
+	})
+	if err != nil {
+		panic(err)
 	}
 
 	plugin.Shutdown(context.Background())

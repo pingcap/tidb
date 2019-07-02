@@ -19,8 +19,8 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/util/schemautil"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
@@ -67,7 +67,7 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
+	indexInfo := tblInfo.FindIndexByName(indexName.L)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, errCancelledDDLJob
@@ -150,7 +150,7 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// add index workers are started. need to ask them to exit.
-		log.Infof("[ddl-%s] run the cancelling DDL job %s", w, job)
+		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
 		w.reorgCtx.notifyReorgCancel()
 		ver, err = w.onCreateIndex(d, t, job)
 	} else {
@@ -192,7 +192,7 @@ func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err
 }
 
 func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
-	dbInfo, err := checkDropSchema(t, job)
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -212,7 +212,7 @@ func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, errors.Trace(err)
 	}
 	// Here rename index is done in a transaction, if the job is not completed, it can be canceled.
-	idx := schemautil.FindIndexByName(from.L, tblInfo.Indices)
+	idx := tblInfo.FindIndexByName(from.L)
 	if idx.State == model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, errCancelledDDLJob
@@ -266,7 +266,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionModifyColumn, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
-		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition:
+		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
+		model.ActionModifySchemaCharsetAndCollate:
 		ver, err = cancelOnlyNotHandledJob(job)
 	default:
 		job.State = model.JobStateCancelled
@@ -275,9 +276,9 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 	if err != nil {
 		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
-			log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
+			logutil.Logger(w.logCtx).Error("[ddl] run DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		} else {
-			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, err)
+			logutil.Logger(w.logCtx).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
 		}
 
 		job.Error = toTError(err)

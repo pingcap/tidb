@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -34,12 +35,15 @@ type LoadDataExec struct {
 	baseExecutor
 
 	IsLocal      bool
+	OnDuplicate  ast.OnDuplicateKeyHandlingType
 	loadDataInfo *LoadDataInfo
 }
 
+var insertValuesLabel fmt.Stringer = stringutil.StringerStr("InsertValues")
+
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, insertValuesLabel), Table: tbl}
 	return &LoadDataInfo{
 		row:          row,
 		InsertValues: insertVal,
@@ -49,11 +53,15 @@ func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table,
 }
 
 // Next implements the Executor Next interface.
-func (e *LoadDataExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return errors.New("Load Data: don't support load data without local field")
+	}
+	// TODO: support load data with replace field.
+	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
+		return errors.New("Load Data: don't support load data with replace field")
 	}
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
@@ -242,13 +250,13 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		}
 		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, false, err
 		}
 		rows = append(rows, e.colsToRow(cols))
 		e.rowCount++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
-			logutil.Logger(context.Background()).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
+			logutil.BgLogger().Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
 				zap.Uint64("totalRows", e.rowCount))
 			break
 		}
@@ -256,7 +264,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(rows)))
 	err := e.batchCheckAndInsert(rows, e.addRecordLD)
 	if err != nil {
-		return nil, reachLimit, errors.Trace(err)
+		return nil, reachLimit, err
 	}
 	return curData, reachLimit, nil
 }
@@ -289,8 +297,7 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 	}
 	row, err := e.getRow(e.row)
 	if err != nil {
-		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+		e.handleWarning(err)
 		return nil
 	}
 	return row
@@ -302,8 +309,7 @@ func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
 	}
 	h, err := e.addRecord(row)
 	if err != nil {
-		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+		e.handleWarning(err)
 	}
 	return h, nil
 }

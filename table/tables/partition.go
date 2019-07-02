@@ -28,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // Both partition and partitionedTable implement the table.Table interface.
@@ -154,7 +155,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		locateExprs = append(locateExprs, exprs[0])
@@ -172,14 +173,14 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 				}
 			}
 			if column == nil {
-				log.Warnf("partition pruning won't work on this expr:%s", partStr)
+				logutil.BgLogger().Warn("partition pruning not applicable", zap.String("expression", partStr))
 			}
 		}
 
 		exprs, err = expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
@@ -207,7 +208,7 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
@@ -216,7 +217,7 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 	exprs, err := expression.ParseSimpleExprsWithSchema(ctx, pi.Expr, schema)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
-		log.Error("wrong table partition expression:", errors.ErrorStack(err), pi.Expr)
+		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	if col, ok := exprs[0].(*expression.Column); ok {
@@ -311,7 +312,13 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 
 // GetPartition returns a Table, which is actually a partition.
 func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
-	return t.partitions[pid]
+	// Attention, can't simply use `return t.partitions[pid]` here.
+	// Because A nil of type *partition is a kind of `table.PhysicalTable`
+	p, ok := t.partitions[pid]
+	if !ok {
+		return nil
+	}
+	return p
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.
@@ -376,7 +383,7 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 		// unlikely to happen in step2.
 		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
 		if err != nil {
-			log.Error("partition update record error, it may write dirty data to txn:", errors.ErrorStack(err))
+			logutil.BgLogger().Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
 			return errors.Trace(err)
 		}
 		return nil

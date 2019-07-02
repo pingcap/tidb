@@ -38,11 +38,14 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	// For pprof
-	_ "net/http/pprof"
+	"os"
+	"os/user"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	// For pprof
+	_ "net/http/pprof"
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
@@ -55,21 +58,39 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/sys/linux"
 	"go.uber.org/zap"
 )
 
 var (
 	baseConnID uint32
+	serverPID  int
+	osUser     string
+	osVersion  string
 )
 
+func init() {
+	serverPID = os.Getpid()
+	currentUser, err := user.Current()
+	if err != nil {
+		osUser = ""
+	} else {
+		osUser = currentUser.Name
+	}
+	osVersion, err = linux.OSVersion()
+	if err != nil {
+		osVersion = ""
+	}
+}
+
 var (
-	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
-	errInvalidPayloadLen = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
-	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
-	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
-	errNotAllowedCommand = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
-	errAccessDenied      = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	errUnknownFieldType    = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
+	errInvalidPayloadLen   = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
+	errInvalidSequence     = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
+	errInvalidType         = terror.ClassServer.New(codeInvalidType, "invalid type")
+	errNotAllowedCommand   = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
+	errAccessDenied        = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	errMaxExecTimeExceeded = terror.ClassServer.New(codeMaxExecTimeExceeded, mysql.MySQLErrName[mysql.ErrMaxExecTimeExceeded])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -87,7 +108,7 @@ type Server struct {
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
-	rwlock            *sync.RWMutex
+	rwlock            sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
@@ -127,7 +148,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	if s.cfg.Performance.TCPKeepAlive {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			if err := tcpConn.SetKeepAlive(true); err != nil {
-				log.Error("failed to set tcp keep alive option:", err)
+				logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
 			}
 		}
 	}
@@ -147,11 +168,11 @@ func (s *Server) forwardUnixSocketToTCP() {
 			return // server shutdown has started
 		}
 		if uconn, err := s.socket.Accept(); err == nil {
-			log.Infof("server socket forwarding from [%s] to [%s]", s.cfg.Socket, addr)
+			logutil.BgLogger().Info("server socket forwarding", zap.String("from", s.cfg.Socket), zap.String("to", addr))
 			go s.handleForwardedConnection(uconn, addr)
 		} else {
 			if s.listener != nil {
-				log.Errorf("server failed to forward from [%s] to [%s], err: %s", s.cfg.Socket, addr, err)
+				logutil.BgLogger().Error("server failed to forward", zap.String("from", s.cfg.Socket), zap.String("to", addr), zap.Error(err))
 			}
 		}
 	}
@@ -162,14 +183,14 @@ func (s *Server) handleForwardedConnection(uconn net.Conn, addr string) {
 	if tconn, err := net.Dial("tcp", addr); err == nil {
 		go func() {
 			if _, err := io.Copy(uconn, tconn); err != nil {
-				log.Warningf("copy server to socket failed: %s", err)
+				logutil.BgLogger().Warn("copy server to socket failed", zap.Error(err))
 			}
 		}()
 		if _, err := io.Copy(tconn, uconn); err != nil {
-			log.Warningf("socket forward copy failed: %s", err)
+			logutil.BgLogger().Warn("socket forward copy failed", zap.Error(err))
 		}
 	} else {
-		log.Warningf("socket forward failed: could not connect to [%s], err: %s", addr, err)
+		logutil.BgLogger().Warn("socket forward failed: could not connect", zap.String("addr", addr), zap.Error(err))
 	}
 }
 
@@ -179,7 +200,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
-		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
@@ -195,17 +215,17 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.cfg.Host != "" && s.cfg.Port != 0 {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		if s.listener, err = net.Listen("tcp", addr); err == nil {
-			log.Infof("Server is running MySQL Protocol at [%s]", addr)
+			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
 			if cfg.Socket != "" {
 				if s.socket, err = net.Listen("unix", s.cfg.Socket); err == nil {
-					log.Infof("Server redirecting [%s] to [%s]", s.cfg.Socket, addr)
+					logutil.BgLogger().Info("server redirecting", zap.String("from", s.cfg.Socket), zap.String("to", addr))
 					go s.forwardUnixSocketToTCP()
 				}
 			}
 		}
 	} else if cfg.Socket != "" {
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
-			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
+			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("socket", cfg.Socket))
 		}
 	} else {
 		err = errors.New("Server not configured to listen on either -socket or -host and -port")
@@ -215,10 +235,10 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		pplistener, errProxy := proxyprotocol.NewListener(s.listener, cfg.ProxyProtocol.Networks,
 			int(cfg.ProxyProtocol.HeaderTimeout))
 		if errProxy != nil {
-			log.Error("ProxyProtocol Networks parameter invalid")
+			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
 			return nil, errors.Trace(errProxy)
 		}
-		log.Infof("Server is running MySQL Protocol (through PROXY Protocol) at [%s]", s.cfg.Host)
+		logutil.BgLogger().Info("server is running MySQL protocol (through PROXY protocol)", zap.String("host", s.cfg.Host))
 		s.listener = pplistener
 	}
 
@@ -234,13 +254,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 func (s *Server) loadTLSCertificates() {
 	defer func() {
 		if s.tlsConfig != nil {
-			log.Infof("Secure connection is enabled (client verification enabled = %v)", len(variable.SysVars["ssl_ca"].Value) > 0)
+			logutil.BgLogger().Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
 			variable.SysVars["have_openssl"].Value = "YES"
 			variable.SysVars["have_ssl"].Value = "YES"
 			variable.SysVars["ssl_cert"].Value = s.cfg.Security.SSLCert
 			variable.SysVars["ssl_key"].Value = s.cfg.Security.SSLKey
 		} else {
-			log.Warn("Secure connection is NOT ENABLED")
+			logutil.BgLogger().Warn("secure connection is not enabled")
 		}
 	}()
 
@@ -251,7 +271,7 @@ func (s *Server) loadTLSCertificates() {
 
 	tlsCert, err := tls.LoadX509KeyPair(s.cfg.Security.SSLCert, s.cfg.Security.SSLKey)
 	if err != nil {
-		log.Warn(errors.ErrorStack(err))
+		logutil.BgLogger().Warn("load x509 failed", zap.Error(err))
 		s.tlsConfig = nil
 		return
 	}
@@ -262,7 +282,7 @@ func (s *Server) loadTLSCertificates() {
 	if len(s.cfg.Security.SSLCA) > 0 {
 		caCert, err := ioutil.ReadFile(s.cfg.Security.SSLCA)
 		if err != nil {
-			log.Warn(errors.ErrorStack(err))
+			logutil.BgLogger().Warn("read file failed", zap.Error(err))
 		} else {
 			certPool = x509.NewCertPool()
 			if certPool.AppendCertsFromPEM(caCert) {
@@ -298,11 +318,11 @@ func (s *Server) Run() error {
 
 			// If we got PROXY protocol error, we should continue accept.
 			if proxyprotocol.IsProxyProtocolError(err) {
-				log.Errorf("PROXY protocol error: %s", err.Error())
+				logutil.BgLogger().Error("PROXY protocol failed", zap.Error(err))
 				continue
 			}
 
-			log.Errorf("accept error %s", err.Error())
+			logutil.BgLogger().Error("accept failed", zap.Error(err))
 			return errors.Trace(err)
 		}
 		if s.shouldStopListener() {
@@ -311,44 +331,40 @@ func (s *Server) Run() error {
 			break
 		}
 
-		for _, p := range plugin.GetByKind(plugin.Audit) {
+		clientConn := s.newConn(conn)
+
+		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if authPlugin.OnConnectionEvent != nil {
-				host, err := getPeerHost(conn)
+				host, err := clientConn.PeerHost("")
 				if err != nil {
-					log.Error(err)
-					terror.Log(conn.Close())
-					continue
+					logutil.BgLogger().Error("get peer host failed", zap.Error(err))
+					terror.Log(clientConn.Close())
+					return errors.Trace(err)
 				}
-
-				err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host})
+				err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host}, plugin.PreAuth, nil)
 				if err != nil {
-					log.Info(err)
-					terror.Log(conn.Close())
-					continue
+					logutil.BgLogger().Info("do connection event failed", zap.Error(err))
+					terror.Log(clientConn.Close())
+					return errors.Trace(err)
 				}
 			}
+			return nil
+		})
+		if err != nil {
+			continue
 		}
 
-		go s.onConn(conn)
+		go s.onConn(clientConn)
 	}
 	err := s.listener.Close()
 	terror.Log(errors.Trace(err))
 	s.listener = nil
 	for {
 		metrics.ServerEventCounter.WithLabelValues(metrics.EventHang).Inc()
-		log.Errorf("listener stopped, waiting for manual kill.")
+		logutil.BgLogger().Error("listener stopped, waiting for manual kill.")
 		time.Sleep(time.Minute)
 	}
-}
-
-func getPeerHost(conn net.Conn) (string, error) {
-	addr := conn.RemoteAddr().String()
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return host, nil
 }
 
 func (s *Server) shouldStopListener() bool {
@@ -384,20 +400,21 @@ func (s *Server) Close() {
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
-func (s *Server) onConn(c net.Conn) {
-	conn := s.newConn(c)
+func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
-		err = c.Close()
+		err = conn.Close()
 		terror.Log(errors.Trace(err))
 		return
 	}
-	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", c.RemoteAddr().String()))
+
+	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+
 	defer func() {
-		logutil.Logger(ctx).Info("close connection")
+		logutil.Logger(ctx).Info("connection closed")
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
@@ -405,29 +422,101 @@ func (s *Server) onConn(c net.Conn) {
 	s.rwlock.Unlock()
 	metrics.ConnGauge.Set(float64(connections))
 
+	if plugin.IsEnable(plugin.Audit) {
+		conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+	}
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent != nil {
+			sessionVars := conn.ctx.GetSessionVars()
+			return authPlugin.OnConnectionEvent(context.Background(), sessionVars.User, plugin.Connected, sessionVars.ConnectionInfo)
+		}
+		return nil
+	})
+	if err != nil {
+		return
+	}
+
+	connectedTime := time.Now()
 	conn.Run(ctx)
+
+	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent != nil {
+			sessionVars := conn.ctx.GetSessionVars()
+			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
+			err := authPlugin.OnConnectionEvent(context.Background(), sessionVars.User, plugin.Disconnect, sessionVars.ConnectionInfo)
+			if err != nil {
+				logutil.BgLogger().Warn("do connection event failed", zap.String("plugin", authPlugin.Name), zap.Error(err))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return
+	}
+}
+
+func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
+	connType := "Socket"
+	if cc.server.isUnixSocket() {
+		connType = "UnixSocket"
+	} else if cc.tlsConn != nil {
+		connType = "SSL/TLS"
+	}
+	connInfo := &variable.ConnectionInfo{
+		ConnectionID:      cc.connectionID,
+		ConnectionType:    connType,
+		Host:              cc.peerHost,
+		ClientIP:          cc.peerHost,
+		ClientPort:        cc.peerPort,
+		ServerID:          1,
+		ServerPort:        int(cc.server.cfg.Port),
+		Duration:          0,
+		User:              cc.user,
+		ServerOSLoginUser: osUser,
+		OSVersion:         osVersion,
+		ClientVersion:     "",
+		ServerVersion:     mysql.TiDBReleaseVersion,
+		SSLVersion:        "v1.2.0", // for current go version
+		PID:               serverPID,
+		DB:                cc.dbname,
+	}
+	return connInfo
 }
 
 // ShowProcessList implements the SessionManager interface.
-func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
+func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
-	rs := make(map[uint64]util.ProcessInfo, len(s.clients))
+	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
 		}
-		pi := client.ctx.ShowProcess()
-		rs[pi.ID] = pi
+		if pi := client.ctx.ShowProcess(); pi != nil {
+			rs[pi.ID] = pi
+		}
 	}
 	s.rwlock.RUnlock()
 	return rs
+}
+
+// GetProcessInfo implements the SessionManager interface.
+func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	s.rwlock.RLock()
+	conn, ok := s.clients[uint32(id)]
+	s.rwlock.RUnlock()
+	if !ok || atomic.LoadInt32(&conn.status) == connStatusWaitShutdown {
+		return &util.ProcessInfo{}, false
+	}
+	return conn.ctx.ShowProcess(), ok
 }
 
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
-	log.Infof("[server] Kill connectionID %d, query %t]", connectionID, query)
+	logutil.BgLogger().Info("kill", zap.Uint64("connID", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
 	conn, ok := s.clients[uint32(connectionID)]
@@ -435,39 +524,29 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
-	killConn(conn, query)
-}
-
-func killConn(conn *clientConn, query bool) {
 	if !query {
 		// Mark the client connection status as WaitShutdown, when the goroutine detect
 		// this, it will end the dispatch loop and exit.
 		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}
+	killConn(conn)
+}
 
-	conn.mu.RLock()
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
-	if cancelFunc != nil {
-		cancelFunc()
-	}
+func killConn(conn *clientConn) {
+	sessVars := conn.ctx.GetSessionVars()
+	atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.
 func (s *Server) KillAllConnections() {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
-	log.Info("[server] kill all connections.")
+	logutil.BgLogger().Info("[server] kill all connections.")
 
 	for _, conn := range s.clients {
 		atomic.StoreInt32(&conn.status, connStatusShutdown)
 		terror.Log(errors.Trace(conn.closeWithoutLock()))
-		conn.mu.RLock()
-		cancelFunc := conn.mu.cancelFunc
-		conn.mu.RUnlock()
-		if cancelFunc != nil {
-			cancelFunc()
-		}
+		killConn(conn)
 	}
 }
 
@@ -491,7 +570,7 @@ func (s *Server) TryGracefulDown() {
 
 // GracefulDown waits all clients to close.
 func (s *Server) GracefulDown(ctx context.Context, done chan struct{}) {
-	log.Info("[server] graceful shutdown.")
+	logutil.Logger(ctx).Info("[server] graceful shutdown.")
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventGracefulDown).Inc()
 
 	count := s.ConnectionCount()
@@ -504,7 +583,7 @@ func (s *Server) GracefulDown(ctx context.Context, done chan struct{}) {
 		}
 		// Print information for every 30s.
 		if i%30 == 0 {
-			log.Infof("graceful shutdown...connection count %d\n", count)
+			logutil.Logger(ctx).Info("graceful shutdown...", zap.Int("conn count", count))
 		}
 		ticker := time.After(time.Second)
 		select {
@@ -530,7 +609,7 @@ func (s *Server) kickIdleConnection() {
 	for _, cc := range conns {
 		err := cc.Close()
 		if err != nil {
-			log.Errorf("close connection error: %s", err)
+			logutil.BgLogger().Error("close connection", zap.Error(err))
 		}
 	}
 }
@@ -542,14 +621,16 @@ const (
 	codeInvalidSequence   = 3
 	codeInvalidType       = 4
 
-	codeNotAllowedCommand = 1148
-	codeAccessDenied      = mysql.ErrAccessDenied
+	codeNotAllowedCommand   = 1148
+	codeAccessDenied        = mysql.ErrAccessDenied
+	codeMaxExecTimeExceeded = mysql.ErrMaxExecTimeExceeded
 )
 
 func init() {
 	serverMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeNotAllowedCommand: mysql.ErrNotAllowedCommand,
-		codeAccessDenied:      mysql.ErrAccessDenied,
+		codeNotAllowedCommand:   mysql.ErrNotAllowedCommand,
+		codeAccessDenied:        mysql.ErrAccessDenied,
+		codeMaxExecTimeExceeded: mysql.ErrMaxExecTimeExceeded,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }

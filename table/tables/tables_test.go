@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	binlog "github.com/pingcap/tipb/go-binlog"
+	"google.golang.org/grpc"
 )
 
 func TestT(t *testing.T) {
@@ -57,12 +59,25 @@ func (ts *testSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.se, err = session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
+	ctx := ts.se
+	ctx.GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(mockPumpClient{})
+	ctx.GetSessionVars().InRestrictedSQL = false
 }
 
 func (ts *testSuite) TearDownSuite(c *C) {
 	ts.dom.Close()
 	c.Assert(ts.store.Close(), IsNil)
 	testleak.AfterTest(c)()
+}
+
+type mockPumpClient struct{}
+
+func (m mockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
+	return &binlog.WriteBinlogResp{}, nil
+}
+
+func (m mockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
+	return nil, nil
 }
 
 func (ts *testSuite) TestBasic(c *C) {
@@ -80,13 +95,15 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoid, err := tb.AllocAutoID(nil)
+	autoid, err := tb.AllocAutoIncrementValue(nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
+	handle, err := tb.AllocHandle(nil)
+	c.Assert(err, IsNil)
+	c.Assert(handle, Greater, int64(0))
+
 	ctx := ts.se
-	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpsClient()
-	ctx.GetSessionVars().InRestrictedSQL = false
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(rid, Greater, int64(0))
@@ -169,7 +186,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	req := rs[0].NewRecordBatch()
+	req := rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -183,7 +200,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	req = rs[0].NewRecordBatch()
+	req = rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -199,7 +216,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select c1 + 1 from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	req = rs[0].NewRecordBatch()
+	req = rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -226,10 +243,15 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoid, err := tb.AllocAutoID(nil)
-	sctx := ts.se
+	handle, err := tb.AllocHandle(nil)
+	c.Assert(err, IsNil)
+	c.Assert(handle, Greater, int64(0))
+
+	autoid, err := tb.AllocAutoIncrementValue(nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
+
+	sctx := ts.se
 	c.Assert(sctx.NewTxn(ctx), IsNil)
 	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil))
 	c.Assert(err, IsNil)
@@ -325,12 +347,18 @@ func (ts *testSuite) TestIterRecords(c *C) {
 }
 
 func (ts *testSuite) TestTableFromMeta(c *C) {
-	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.meta (a int primary key auto_increment, b varchar(255) unique)")
-	c.Assert(err, IsNil)
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE meta (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
 	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
+
+	// For test coverage
+	tbInfo.Columns[0].GeneratedExprString = "a"
+	tables.TableFromMeta(nil, tbInfo)
+
 	tbInfo.Columns[0].GeneratedExprString = "test"
 	tables.TableFromMeta(nil, tbInfo)
 	tbInfo.Columns[0].State = model.StateNone
@@ -341,234 +369,26 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	tb, err = tables.TableFromMeta(nil, tbInfo)
 	c.Assert(tb, IsNil)
 	c.Assert(err, NotNil)
-}
 
-func (ts *testSuite) TestPartitionAddRecord(c *C) {
-	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
-PARTITION BY RANGE ( id ) (
-		PARTITION p0 VALUES LESS THAN (6),
-		PARTITION p1 VALUES LESS THAN (11),
-		PARTITION p2 VALUES LESS THAN (16),
-		PARTITION p3 VALUES LESS THAN (21)
-)`
-	ctx := context.Background()
-	_, err := ts.se.Execute(ctx, "use test")
+	tk.MustExec(`create table t_mock (id int) partition by range (id) (partition p0 values less than maxvalue)`)
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_mock"))
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(ctx, "drop table if exists t1, t2;")
+	t := table.MockTableFromMeta(tb.Meta())
+	_, ok := t.(table.PartitionedTable)
+	c.Assert(ok, IsTrue)
+	tk.MustExec("drop table t_mock")
+	c.Assert(t.Type(), Equals, table.NormalTable)
+
+	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
+	tb, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(ctx, createTable1)
-	c.Assert(err, IsNil)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	tbInfo := tb.Meta()
-	p0 := tbInfo.Partition.Definitions[0]
-	c.Assert(p0.Name, Equals, model.NewCIStr("p0"))
-	c.Assert(ts.se.NewTxn(ctx), IsNil)
-	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1))
+	_, err = tb.AllocHandle(tk.Se)
 	c.Assert(err, IsNil)
 
-	// Check that add record writes to the partition, rather than the table.
-	txn, err := ts.se.Txn(true)
-	c.Assert(err, IsNil)
-	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
-	c.Assert(err, IsNil)
-	c.Assert(len(val), Greater, 0)
-	_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
-	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
-
-	// Cover more code.
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(7))
-	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(12))
-	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(16))
+	maxID := 1<<(64-15-1) - 1
+	err = tb.RebaseAutoID(tk.Se, int64(maxID), false)
 	c.Assert(err, IsNil)
 
-	// Make the changes visible.
-	_, err = ts.se.Execute(context.Background(), "commit")
-	c.Assert(err, IsNil)
-
-	// Check index count equals to data count.
-	tk := testkit.NewTestKitWithInit(c, ts.store)
-	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("4"))
-	tk.MustQuery("select count(*) from t1 use index(id)").Check(testkit.Rows("4"))
-	tk.MustQuery("select count(*) from t1 use index(id) where id > 6").Check(testkit.Rows("3"))
-
-	// Value must locates in one partition.
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
-	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
-	ts.se.Execute(context.Background(), "rollback")
-
-	createTable2 := `CREATE TABLE test.t2 (id int(11))
-PARTITION BY RANGE ( id ) (
-		PARTITION p0 VALUES LESS THAN (6),
-		PARTITION p3 VALUES LESS THAN MAXVALUE
-)`
-	_, err = ts.se.Execute(context.Background(), createTable2)
-	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(ctx), IsNil)
-	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
-	c.Assert(err, IsNil) // Insert into maxvalue partition.
-
-	createTable3 := `create table test.t3 (id int) partition by range (id) 
-	(
-       partition p0 values less than (10)
-	)`
-	_, err = ts.se.Execute(context.Background(), createTable3)
-	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(ctx), IsNil)
-	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
-	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(11))
-	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(10))
-	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(0))
-	c.Assert(err, IsNil)
-
-	createTable4 := `create table test.t4 (a int,b int) partition by range (a+b)
-	(
-	partition p0 values less than (10)
-	);`
-	_, err = ts.se.Execute(context.Background(), createTable4)
-	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(ctx), IsNil)
-	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
-	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(1, 11))
-	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
-}
-
-func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
-	_, err := ts.se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition = '1';")
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
-	c.Assert(err, IsNil)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	tbInfo := tb.Meta()
-	p0 := tbInfo.Partition.Definitions[0]
-	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
-	rid, err := tb.AddRecord(ts.se, types.MakeDatums(8))
-	c.Assert(err, IsNil)
-
-	// Check that add record writes to the partition, rather than the table.
-	txn, err := ts.se.Txn(true)
-	c.Assert(err, IsNil)
-	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
-	c.Assert(err, IsNil)
-	c.Assert(len(val), Greater, 0)
-	_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
-	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
-
-	// Cover more code.
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(-1))
-	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(3))
-	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(6))
-	c.Assert(err, IsNil)
-
-	// Make the changes visible.
-	_, err = ts.se.Execute(context.Background(), "commit")
-	c.Assert(err, IsNil)
-
-	// Check index count equals to data count.
-	tk := testkit.NewTestKitWithInit(c, ts.store)
-	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("4"))
-	tk.MustQuery("select count(*) from t1 use index(id)").Check(testkit.Rows("4"))
-	tk.MustQuery("select count(*) from t1 use index(id) where id > 2").Check(testkit.Rows("3"))
-
-	// Test for partition expression is negative number.
-	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t2 (id int(11), index(id)) PARTITION BY HASH (id) partitions 11;`)
-	c.Assert(err, IsNil)
-	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	tbInfo = tb.Meta()
-	for i := 0; i < 11; i++ {
-		c.Assert(ts.se.NewTxn(context.Background()), IsNil)
-		rid, err = tb.AddRecord(ts.se, types.MakeDatums(-i))
-		c.Assert(err, IsNil)
-		txn, err = ts.se.Txn(true)
-		c.Assert(err, IsNil)
-		val, err = txn.Get(tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid))
-		c.Assert(err, IsNil)
-		c.Assert(len(val), Greater, 0)
-		_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
-		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
-	}
-	_, err = ts.se.Execute(context.Background(), "drop table if exists t1, t2;")
-	c.Assert(err, IsNil)
-}
-
-// TestPartitionGetPhysicalID tests partition.GetPhysicalID().
-func (ts *testSuite) TestPartitionGetPhysicalID(c *C) {
-	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
-PARTITION BY RANGE ( id ) (
-		PARTITION p0 VALUES LESS THAN (6),
-		PARTITION p1 VALUES LESS THAN (11),
-		PARTITION p2 VALUES LESS THAN (16),
-		PARTITION p3 VALUES LESS THAN (21)
-)`
-
-	_, err := ts.se.Execute(context.Background(), "Drop table if exists test.t1;")
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), createTable1)
-	c.Assert(err, IsNil)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	tbInfo := tb.Meta()
-	ps := tbInfo.GetPartitionInfo()
-	c.Assert(ps, NotNil)
-	for _, pd := range ps.Definitions {
-		p := tb.(table.PartitionedTable).GetPartition(pd.ID)
-		c.Assert(p, NotNil)
-		c.Assert(pd.ID, Equals, p.GetPhysicalID())
-	}
-}
-
-func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
-	_, err := ts.se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), `create table t1 (id int)
-							partition by range (id) (
-							partition p0 values less than (4),
-							partition p1 values less than (7),
-							partition p3 values less than maxvalue)`)
-	c.Assert(err, IsNil)
-
-	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	type partitionExpr interface {
-		PartitionExpr() *tables.PartitionExpr
-	}
-	pe := tbl.(partitionExpr).PartitionExpr()
-	c.Assert(pe.Column.TblName.L, Equals, "t1")
-	c.Assert(pe.Column.ColName.L, Equals, "id")
-
-	ranges := []string{
-		"or(lt(t1.id, 4), isnull(t1.id))",
-		"and(lt(t1.id, 7), ge(t1.id, 4))",
-		"and(1, ge(t1.id, 7))",
-	}
-	upperBounds := []string{
-		"lt(t1.id, 4)",
-		"lt(t1.id, 7)",
-		"1",
-	}
-	for i, expr := range pe.Ranges {
-		c.Assert(expr.String(), Equals, ranges[i])
-	}
-	for i, expr := range pe.UpperBounds {
-		c.Assert(expr.String(), Equals, upperBounds[i])
-	}
+	_, err = tb.AllocHandle(tk.Se)
+	c.Assert(err, NotNil)
 }

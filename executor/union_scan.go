@@ -16,9 +16,7 @@ package executor
 import (
 	"context"
 	"sort"
-	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -115,29 +113,20 @@ type UnionScanExec struct {
 // Open implements the Executor Open interface.
 func (us *UnionScanExec) Open(ctx context.Context) error {
 	if err := us.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	us.snapshotChunkBuffer = us.newFirstChunk()
+	us.snapshotChunkBuffer = newFirstChunk(us)
 	return nil
 }
 
 // Next implements the Executor Next interface.
-func (us *UnionScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("unionScan.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
-	if us.runtimeStats != nil {
-		start := time.Now()
-		defer func() { us.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
+func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(us.maxChunkSize)
-	mutableRow := chunk.MutRowFromTypes(us.retTypes())
+	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		// no more data.
 		if row == nil {
@@ -154,7 +143,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	for {
 		snapshotRow, err := us.getSnapshotRow(ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		addedRow := us.getAddedRow()
 		var row []types.Datum
@@ -167,7 +156,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 		} else {
 			isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			if isSnapshotRow {
 				row = snapshotRow
@@ -199,9 +188,9 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		err = us.children[0].Next(ctx, chunk.NewRecordBatch(us.snapshotChunkBuffer))
+		err = Next(ctx, us.children[0], us.snapshotChunkBuffer)
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -214,7 +203,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				// commit, but for simplicity, we don't handle it here.
 				continue
 			}
-			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(us.children[0].retTypes()))
+			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
 		}
 	}
 	return us.snapshotRows[0], nil
@@ -234,7 +223,7 @@ func (us *UnionScanExec) shouldPickFirstRow(a, b []types.Datum) (bool, error) {
 	var isFirstRow bool
 	addedCmpSrc, err := us.compare(a, b)
 	if err != nil {
-		return isFirstRow, errors.Trace(err)
+		return isFirstRow, err
 	}
 	// Compare result will never be 0.
 	if us.desc {
@@ -256,7 +245,7 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 		bColumn := b[colOff]
 		cmp, err := aColumn.CompareDatum(sc, &bColumn)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		if cmp != 0 {
 			return cmp, nil
@@ -280,22 +269,22 @@ func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.
 	key := t.RecordKey(h)
 	txn, err := us.ctx.Txn(true)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	value, err := txn.GetMemBuffer().Get(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	v, _, err := tables.DecodeRawRowData(us.ctx, t.Meta(), h, cols, value)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return v, nil
 }
 
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
-	mutableRow := chunk.MutRowFromTypes(us.retTypes())
+	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	cols := t.WritableCols()
 	for h := range us.dirty.addedRows {
 		newData := make([]types.Datum, 0, us.schema.Len())
@@ -313,7 +302,7 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 		mutableRow.SetDatums(newData...)
 		matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !matched {
 			continue

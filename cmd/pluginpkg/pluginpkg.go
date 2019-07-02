@@ -62,9 +62,18 @@ func PluginManifest() *plugin.Manifest {
 				},
 				{{end}}
 			},
-			Validate:   {{.validate}},
-			OnInit:     {{.onInit}},
-			OnShutdown: {{.onShutdown}},
+			{{if .validate }}
+				Validate:   {{.validate}},
+			{{end}}
+			{{if .onInit }}
+				OnInit:     {{.onInit}},
+			{{end}}
+			{{if .onShutdown }}
+				OnShutdown: {{.onShutdown}},
+			{{end}}
+			{{if .onFlush }}
+				OnFlush:    {{.onFlush}},
+			{{end}}
 		},
 		{{range .export}}
 		{{.extPoint}}: {{.impl}},
@@ -80,7 +89,7 @@ func init() {
 }
 
 func usage() {
-	log.Printf("Usage: %s --pkg-dir [plugin source pkg folder] --outDir-dir [outDir-dir]\n", path.Base(os.Args[0]))
+	log.Printf("Usage: %s --pkg-dir [plugin source pkg folder] --out-dir [plugin packaged folder path]\n", path.Base(os.Args[0]))
 	flag.PrintDefaults()
 	os.Exit(1)
 }
@@ -90,8 +99,19 @@ func main() {
 	if pkgDir == "" || outDir == "" {
 		flag.Usage()
 	}
+	pkgDir, err := filepath.Abs(pkgDir)
+	if err != nil {
+		log.Printf("unable to resolve absolute representation of package path , %+v\n", err)
+		flag.Usage()
+	}
+	outDir, err := filepath.Abs(outDir)
+	if err != nil {
+		log.Printf("unable to resolve absolute representation of output path , %+v\n", err)
+		flag.Usage()
+	}
+
 	var manifest map[string]interface{}
-	_, err := toml.DecodeFile(filepath.Join(pkgDir, "manifest.toml"), &manifest)
+	_, err = toml.DecodeFile(filepath.Join(pkgDir, "manifest.toml"), &manifest)
 	if err != nil {
 		log.Printf("read pkg %s's manifest failure, %+v\n", pkgDir, err)
 		os.Exit(1)
@@ -141,6 +161,7 @@ func main() {
 		"-ldflags", pluginPath,
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
+	buildCmd.Dir = pkgDir
 	buildCmd.Stderr = os.Stderr
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Env = append(os.Environ(), "GO111MODULE=on")
