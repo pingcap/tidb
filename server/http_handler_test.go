@@ -800,3 +800,12 @@ func (ts *HTTPHandlerTestSuite) TestHotRegionInfo(c *C) {
 	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 }
+
+func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/debug/zip")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+}
