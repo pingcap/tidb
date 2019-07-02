@@ -101,13 +101,13 @@ type AddRecordOption interface {
 	ApplyOn(*AddRecordOpt)
 }
 
-// ApplyOn implements the AddRecordOption interface, so any CreateIdxOption
+// ApplyOn implements the AddRecordOption interface, so any CreateIdxOptFunc
 // can be passed as the optional argument to the table.AddRecord method.
-func (f CreateIdxOption) ApplyOn(opt *AddRecordOpt) {
+func (f CreateIdxOptFunc) ApplyOn(opt *AddRecordOpt) {
 	f(&opt.CreateIdxOpt)
 }
 
-// IsUpdate is a defined value for AddRecordOption.
+// IsUpdate is a defined value for AddRecordOptFunc.
 var IsUpdate AddRecordOption = isUpdate{}
 
 type isUpdate struct{}

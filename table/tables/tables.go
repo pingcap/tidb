@@ -456,11 +456,11 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	sessVars := ctx.GetSessionVars()
 
 	rm, err := t.getRollbackableMemStore(ctx)
-	var createIdxOpts []table.CreateIdxOption
+	var createIdxOpts []table.CreateIdxOptFunc
 	if len(opts) > 0 {
-		createIdxOpts = make([]table.CreateIdxOption, 0, len(opts))
+		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))
 		for _, fn := range opts {
-			if raw, ok := fn.(table.CreateIdxOption); ok {
+			if raw, ok := fn.(table.CreateIdxOptFunc); ok {
 				createIdxOpts = append(createIdxOpts, raw)
 			}
 		}
@@ -564,7 +564,7 @@ func (t *tableCommon) genIndexKeyStr(colVals []types.Datum) (string, error) {
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
 func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []types.Datum, rm kv.RetrieverMutator,
-	opts []table.CreateIdxOption) (int64, error) {
+	opts []table.CreateIdxOptFunc) (int64, error) {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return 0, err

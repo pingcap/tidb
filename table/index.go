@@ -33,16 +33,18 @@ type CreateIdxOpt struct {
 	SkipCheck       bool // If true, skip all the unique indices constraint check.
 }
 
-// CreateIdxOption is defined for the Create() method of Index interface.
-type CreateIdxOption func(*CreateIdxOpt)
+// CreateIdxOptFunc is defined for the Create() method of Index interface.
+// Here is a blog post about how to use this pattern:
+// https://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis
+type CreateIdxOptFunc func(*CreateIdxOpt)
 
-// SkipHandleCheck is a defined value of CreateIdxOption.
-var SkipHandleCheck CreateIdxOption = func(opt *CreateIdxOpt) {
+// SkipHandleCheck is a defined value of CreateIdxFunc.
+var SkipHandleCheck CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.SkipHandleCheck = true
 }
 
-// SkipCheck is a defined value of CreateIdxOption.
-var SkipCheck CreateIdxOption = func(opt *CreateIdxOpt) {
+// SkipCheck is a defined value of CreateIdxFunc.
+var SkipCheck CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.SkipCheck = true
 }
 
