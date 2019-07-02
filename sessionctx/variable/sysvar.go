@@ -175,7 +175,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "range_alloc_block_size", "4096"},
 	{ScopeGlobal, ConnectTimeout, "10"},
 	{ScopeGlobal | ScopeSession, MaxExecutionTime, "0"},
-	{ScopeGlobal | ScopeSession, CollationServer, mysql.DefaultCollationName},
+	{ScopeGlobal | ScopeSession, "collation_server", mysql.DefaultCollationName},
 	{ScopeNone, "have_rtree_keys", "YES"},
 	{ScopeGlobal, "innodb_old_blocks_pct", "37"},
 	{ScopeGlobal, "innodb_file_format", "Antelope"},
