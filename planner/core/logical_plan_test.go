@@ -629,43 +629,43 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h < 31",
+			sql:  "select * from t where t.ptn < 31",
 			best: "UnionAll{Partition(41)->Partition(42)}->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h < 61",
+			sql:  "select * from t where t.ptn < 61",
 			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h > 17 and t.h < 61",
+			sql:  "select * from t where t.ptn > 17 and t.ptn < 61",
 			best: "UnionAll{Partition(42)->Partition(43)}->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h < 8",
+			sql:  "select * from t where t.ptn < 8",
 			best: "Partition(41)->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h > 128",
+			sql:  "select * from t where t.ptn > 128",
 			best: "Partition(45)->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h > 128",
+			sql:  "select * from t where t.ptn > 128",
 			best: "Dual->Projection",
 			is:   is1,
 		},
 		{
 			// NULL will be located in the first partition.
-			sql:  "select * from t where t.h is null",
+			sql:  "select * from t where t.ptn is null",
 			best: "Partition(41)->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h is null or t.h > 70",
+			sql:  "select * from t where t.ptn is null or t.ptn > 70",
 			best: "UnionAll{Partition(41)->Partition(44)}->Projection",
 			is:   is1,
 		},
@@ -1032,109 +1032,138 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		{
 			sql: "select count(*) from t group by a",
 			ans: map[int][]string{
-				1: {"a"},
+				1: {"test.t.a"},
 			},
 		},
 		{
 			sql: "select count(*) from t",
 			ans: map[int][]string{
-				1: {},
+				1: {"test.t.a"},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b where a.a < 1",
 			ans: map[int][]string{
-				1: {"a"},
-				2: {},
+				1: {"test.a.a"},
+				2: {"test.b.a"},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b on a.a = b.d",
 			ans: map[int][]string{
-				1: {"a"},
-				2: {"d"},
+				1: {"test.a.a"},
+				2: {"test.b.d"},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b on a.a = b.d order by sum(a.d)",
 			ans: map[int][]string{
-				1: {"a", "d"},
-				2: {"d"},
+				1: {"test.a.a", "test.a.d"},
+				2: {"test.b.d"},
 			},
 		},
 		{
 			sql: "select count(b.a) from t a join t b on a.a = b.d group by b.b order by sum(a.d)",
 			ans: map[int][]string{
-				1: {"a", "d"},
-				2: {"a", "b", "d"},
+				1: {"test.a.a", "test.a.d"},
+				2: {"test.b.a", "test.b.b", "test.b.d"},
 			},
 		},
 		{
 			sql: "select * from (select count(b.a) from t a join t b on a.a = b.d group by b.b having sum(a.d) < 0) tt",
 			ans: map[int][]string{
-				1: {"a", "d"},
-				2: {"a", "b", "d"},
+				1: {"test.a.a", "test.a.d"},
+				2: {"test.b.a", "test.b.b", "test.b.d"},
 			},
 		},
 		{
 			sql: "select (select count(a) from t where b = k.a) from t k",
 			ans: map[int][]string{
-				1: {"a"},
-				3: {"a", "b"},
+				1: {"test.k.a"},
+				3: {"test.t.a", "test.t.b"},
 			},
 		},
 		{
 			sql: "select exists (select count(*) from t where b = k.a) from t k",
 			ans: map[int][]string{
-				1: {},
+				1: {"test.k.a"},
 			},
 		},
 		{
 			sql: "select b = (select count(*) from t where b = k.a) from t k",
 			ans: map[int][]string{
-				1: {"a", "b"},
-				3: {"b"},
+				1: {"test.k.a", "test.k.b"},
+				3: {"test.t.b"},
 			},
 		},
 		{
 			sql: "select exists (select count(a) from t where b = k.a group by b) from t k",
 			ans: map[int][]string{
-				1: {"a"},
-				3: {"b"},
+				1: {"test.k.a"},
+				3: {"test.t.b"},
 			},
 		},
 		{
 			sql: "select a as c1, b as c2 from t order by 1, c1 + c2 + c",
 			ans: map[int][]string{
-				1: {"a", "b", "c"},
+				1: {"test.t.a", "test.t.b", "test.t.c"},
 			},
 		},
 		{
 			sql: "select a from t where b < any (select c from t)",
 			ans: map[int][]string{
-				1: {"a", "b"},
-				3: {"c"},
+				1: {"test.t.a", "test.t.b"},
+				3: {"test.t.c"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) != all (select c,d from t)",
 			ans: map[int][]string{
-				1: {"a", "b"},
-				3: {"c", "d"},
+				1: {"test.t.a", "test.t.b"},
+				3: {"test.t.c", "test.t.d"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) in (select c,d from t)",
 			ans: map[int][]string{
-				1: {"a", "b"},
-				3: {"c", "d"},
+				1: {"test.t.a", "test.t.b"},
+				3: {"test.t.c", "test.t.d"},
 			},
 		},
 		{
 			sql: "select a from t where a in (select a from t s group by t.b)",
 			ans: map[int][]string{
-				1: {"a"},
-				3: {"a"},
+				1: {"test.t.a"},
+				3: {"test.s.a"},
+			},
+		},
+		{
+			sql: "select t01.a from (select a from t t21 union all select a from t t22) t2 join t t01 on 1 left outer join t t3 on 1 join t t4 on 1",
+			ans: map[int][]string{
+				1:  {"test.t22.a"},
+				3:  {"test.t21.a"},
+				5:  {"t2.a"},
+				8:  {"test.t01.a"},
+				10: {"test.t3.a"},
+				12: {"test.t4.a"},
+			},
+		},
+		{
+			sql: "select 1 from (select count(b) as cnt from t) t1;",
+			ans: map[int][]string{
+				1: {"test.t.a"},
+			},
+		},
+		{
+			sql: "select count(1) from (select count(b) as cnt from t) t1;",
+			ans: map[int][]string{
+				1: {"test.t.a"},
+			},
+		},
+		{
+			sql: "select count(1) from (select count(b) as cnt from t group by c) t1;",
+			ans: map[int][]string{
+				1: {"test.t.c"},
 			},
 		},
 	}
@@ -1162,9 +1191,17 @@ func checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]string, comment Comm
 	switch p.(type) {
 	case *DataSource:
 		colList, ok := ans[p.ID()]
-		c.Assert(ok, IsTrue, comment)
+		c.Assert(ok, IsTrue, Commentf("For %v DataSource ID %d Not found", comment, p.ID()))
+		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
 		for i, colName := range colList {
-			c.Assert(colName, Equals, p.Schema().Columns[i].ColName.L, comment)
+			c.Assert(p.Schema().Columns[i].String(), Equals, colName, comment)
+		}
+	case *LogicalUnionAll:
+		colList, ok := ans[p.ID()]
+		c.Assert(ok, IsTrue, Commentf("For %v UnionAll ID %d Not found", comment, p.ID()))
+		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
+		for i, colName := range colList {
+			c.Assert(p.Schema().Columns[i].String(), Equals, colName, comment)
 		}
 	}
 	for _, child := range p.Children() {
@@ -2177,8 +2214,8 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:3591]Window 'w1' is defined twice.",
 		},
 		{
-			sql:    "select sum(a) over(w1), avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(partition by test.t.a))->Window(avg(cast(test.t.a)) over())->Projection",
+			sql:    "select avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
+			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)) over(partition by test.t.a))->Projection",
 		},
 		{
 			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
@@ -2237,8 +2274,8 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
 		},
 		{
-			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max, min(avg(b)) over(rows between 1 preceding and 1 following) min from t group by c",
-			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_4) over(rows between 1 preceding and 1 following))->Window(min(sel_agg_5) over(rows between 1 preceding and 1 following))->Projection",
+			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max from t group by c",
+			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_3) over(rows between 1 preceding and 1 following))->Projection",
 		},
 		{
 			sql:    "select nth_value(a, 1.0) over() from t",
@@ -2263,6 +2300,14 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "select nth_value(i_date, 1) over() from t",
 			result: "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1) over())->Projection",
+		},
+		{
+			sql:    "select sum(b) over w, sum(c) over w from t window w as (order by a)",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.b)), sum(cast(test.t.c)) over(order by test.t.a asc range between unbounded preceding and current row))->Projection",
+		},
+		{
+			sql:    "delete from t order by (sum(a) over())",
+			result: "[planner:3593]You cannot use the window function 'sum' in this context.'",
 		},
 	}
 

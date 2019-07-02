@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -542,20 +541,6 @@ func (s *exprStack) len() int {
 	return len(s.stack)
 }
 
-// ColumnSliceIsIntersect checks whether two column slice is intersected.
-func ColumnSliceIsIntersect(s1, s2 []*Column) bool {
-	intSet := map[int64]struct{}{}
-	for _, col := range s1 {
-		intSet[col.UniqueID] = struct{}{}
-	}
-	for _, col := range s2 {
-		if _, ok := intSet[col.UniqueID]; ok {
-			return true
-		}
-	}
-	return false
-}
-
 // DatumToConstant generates a Constant expression from a Datum.
 func DatumToConstant(d types.Datum, tp byte) *Constant {
 	return &Constant{Value: d, RetType: types.NewFieldType(tp)}
@@ -691,7 +676,7 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 	con, ok := expr.(*Constant)
 	if !ok {
-		logutil.Logger(context.Background()).Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
+		logutil.BgLogger().Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
 		return 0, false, false
 	}
 	dt := con.Value
@@ -699,7 +684,7 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 		var err error
 		dt, err = con.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("eval deferred expr failed", zap.Error(err))
+			logutil.BgLogger().Warn("eval deferred expr failed", zap.Error(err))
 			return 0, false, false
 		}
 	}

@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -162,6 +161,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 // ConvertTo converts the histogram bucket values into `Tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
+	hist.Correlation = hg.Correlation
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		d := row.GetDatum(0, hg.Tp)
@@ -220,10 +220,7 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 		return "", errors.Trace(err)
 	}
 	str, err := types.DatumsToString(decodedVals, true)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return str, nil
+	return str, err
 }
 
 // BucketToString change the given bucket to string format.
@@ -272,10 +269,7 @@ func (hg *Histogram) equalRowCount(value types.Datum) float64 {
 // greaterRowCount estimates the row count where the column greater than value.
 func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 	gtCount := hg.notNullCount() - hg.lessRowCount(value) - hg.equalRowCount(value)
-	if gtCount < 0 {
-		gtCount = 0
-	}
-	return gtCount
+	return math.Max(0, gtCount)
 }
 
 // LessRowCountWithBktIdx estimates the row count where the column less than value.
@@ -395,10 +389,48 @@ func validRange(sc *stmtctx.StatementContext, ran *ranger.Range, encoded bool) b
 	return bytes.Compare(low, high) < 0
 }
 
+func checkKind(vals []types.Datum, kind byte) bool {
+	if kind == types.KindString {
+		kind = types.KindBytes
+	}
+	for _, val := range vals {
+		valKind := val.Kind()
+		if valKind == types.KindNull || valKind == types.KindMinNotNull || valKind == types.KindMaxValue {
+			continue
+		}
+		if valKind == types.KindString {
+			valKind = types.KindBytes
+		}
+		if valKind != kind {
+			return false
+		}
+		// Only check the first non-null value.
+		break
+	}
+	return true
+}
+
+func (hg *Histogram) typeMatch(ranges []*ranger.Range) bool {
+	kind := hg.GetLower(0).Kind()
+	for _, ran := range ranges {
+		if !checkKind(ran.LowVal, kind) || !checkKind(ran.HighVal, kind) {
+			return false
+		}
+	}
+	return true
+}
+
 // SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
 // as inf, so all the split Ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
 // (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
-func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, ranges []*ranger.Range, encoded bool) []*ranger.Range {
+func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, oldRanges []*ranger.Range, encoded bool) ([]*ranger.Range, bool) {
+	if !hg.typeMatch(oldRanges) {
+		return oldRanges, false
+	}
+	ranges := make([]*ranger.Range, 0, len(oldRanges))
+	for _, ran := range oldRanges {
+		ranges = append(ranges, ran.Clone())
+	}
 	split := make([]*ranger.Range, 0, len(ranges))
 	for len(ranges) > 0 {
 		// Find the last bound that greater or equal to the LowVal.
@@ -447,7 +479,7 @@ func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, ranges []*ranger.R
 			}
 		}
 	}
-	return split
+	return split, true
 }
 
 func (hg *Histogram) bucketCount(idx int) int64 {
@@ -556,9 +588,7 @@ func (hg *Histogram) AvgCountPerNotNullValue(totalCount int64) float64 {
 	factor := hg.GetIncreaseFactor(totalCount)
 	totalNotNull := hg.notNullCount() * factor
 	curNDV := float64(hg.NDV) * factor
-	if curNDV == 0 {
-		curNDV = 1
-	}
+	curNDV = math.Max(curNDV, 1)
 	return totalNotNull / curNDV
 }
 
@@ -935,7 +965,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			}
 			newIdxHist, err := idxHist.newIndexBySelectivity(sc, node)
 			if err != nil {
-				logutil.Logger(context.Background()).Warn("[Histogram-in-plan]: error happened when calculating row count, failed to build histogram for index %v of table %v",
+				logutil.BgLogger().Warn("[Histogram-in-plan]: error happened when calculating row count, failed to build histogram for index %v of table %v",
 					zap.String("index", idxHist.Info.Name.O), zap.String("table", idxHist.Info.Table.O), zap.Error(err))
 				continue
 			}
@@ -954,7 +984,11 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 		}
 		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
 		var err error
-		splitRanges := oldCol.Histogram.SplitRange(sc, node.Ranges, false)
+		splitRanges, ok := oldCol.Histogram.SplitRange(sc, node.Ranges, false)
+		if !ok {
+			logutil.BgLogger().Warn("[Histogram-in-plan]: the type of histogram and ranges mismatch")
+			continue
+		}
 		// Deal with some corner case.
 		if len(splitRanges) > 0 {
 			// Deal with NULL values.
@@ -973,7 +1007,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByColumnRanges)
 		}
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("[Histogram-in-plan]: error happened when calculating row count", zap.Error(err))
+			logutil.BgLogger().Warn("[Histogram-in-plan]: error happened when calculating row count", zap.Error(err))
 			continue
 		}
 		newColl.Columns[node.ID] = newCol

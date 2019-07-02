@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 
 	"github.com/cznic/mathutil"
@@ -116,37 +117,43 @@ func NewCMSketchWithTopN(d, w int32, sample [][]byte, numTop uint32, rowCount ui
 	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
 	rowCount = mathutil.MaxUint64(rowCount, uint64(len(sample)))
 	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
-	c := buildCMSWithTopN(helper, d, w, scaleRatio)
-	c.calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
+	defaultVal := calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
+	c := buildCMSWithTopN(helper, d, w, scaleRatio, defaultVal)
 	return c, estimateNDV, scaleRatio
 }
 
-func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64) (c *CMSketch) {
+func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultVal uint64) (c *CMSketch) {
 	c = NewCMSketch(d, w)
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	if enableTopN {
 		c.topN = make(map[uint64][]*TopNMeta)
 	}
+	c.defaultValue = defaultVal
 	for counterKey, cnt := range helper.counter {
-		data, scaledCount := hack.Slice(string(counterKey)), cnt*scaleRatio
+		data := hack.Slice(string(counterKey))
+		// If the value only occurred once in the sample, we assumes that there is no difference with
+		// value that does not occurred in the sample.
+		rowCount := defaultVal
+		if cnt > 1 {
+			rowCount = cnt * scaleRatio
+		}
 		if enableTopN && cnt >= helper.lastVal {
 			h1, h2 := murmur3.Sum128(data)
-			c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, scaledCount})
+			c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, rowCount})
 		} else {
-			c.insertBytesByCount(data, scaledCount)
+			c.insertBytesByCount(data, rowCount)
 		}
 	}
 	return
 }
 
-func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount uint64) {
+func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount uint64) uint64 {
 	sampleNDV := uint64(len(helper.sorted))
 	if rowCount <= (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio {
-		c.defaultValue = 1
-	} else {
-		estimateRemainingCount := rowCount - (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio
-		c.defaultValue = estimateRemainingCount / (estimateNDV - uint64(sampleNDV) + helper.onlyOnceItems)
+		return 1
 	}
+	estimateRemainingCount := rowCount - (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio
+	return estimateRemainingCount / mathutil.MaxUint64(1, estimateNDV-uint64(sampleNDV)+helper.onlyOnceItems)
 }
 
 func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
@@ -280,14 +287,46 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	return uint64(res)
 }
 
+func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*TopNMeta, numTop uint32) {
+	counter := make(map[hack.MutableString]uint64)
+	for _, metas := range lTopN {
+		for _, meta := range metas {
+			counter[hack.String(meta.Data)] += meta.Count
+		}
+	}
+	for _, metas := range rTopN {
+		for _, meta := range metas {
+			counter[hack.String(meta.Data)] += meta.Count
+		}
+	}
+	sorted := make([]uint64, len(counter))
+	for _, cnt := range counter {
+		sorted = append(sorted, cnt)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] > sorted[j]
+	})
+	numTop = mathutil.MinUint32(uint32(len(counter)), numTop)
+	lastTopCnt := sorted[numTop-1]
+	c.topN = make(map[uint64][]*TopNMeta)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		if cnt >= lastTopCnt {
+			h1, h2 := murmur3.Sum128(data)
+			c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, cnt})
+		} else {
+			c.insertBytesByCount(data, cnt)
+		}
+	}
+}
+
 // MergeCMSketch merges two CM Sketch.
-// Call with CMSketch with Top-N initialized may downgrade the result
-func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
+func (c *CMSketch) MergeCMSketch(rc *CMSketch, numTopN uint32) error {
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
 	if c.topN != nil || rc.topN != nil {
-		return errors.New("CMSketch with Top-N does not support merge")
+		c.mergeTopN(c.topN, rc.topN, numTopN)
 	}
 	c.count += rc.count
 	for i := range c.table {
@@ -418,34 +457,7 @@ func (c *CMSketch) TotalCount() uint64 {
 
 // Equal tests if two CM Sketch equal, it is only used for test.
 func (c *CMSketch) Equal(rc *CMSketch) bool {
-	if c == nil || rc == nil {
-		return c == nil && rc == nil
-	}
-	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count || c.defaultValue != rc.defaultValue {
-		return false
-	}
-	for i := range c.table {
-		for j := range c.table[i] {
-			if c.table[i][j] != rc.table[i][j] {
-				return false
-			}
-		}
-	}
-	if len(c.topN) != len(rc.topN) {
-		return false
-	}
-	for h1, topNData := range c.topN {
-		if len(topNData) != len(rc.topN[h1]) {
-			return false
-		}
-		for _, val := range topNData {
-			meta := rc.findTopNMeta(h1, val.h2, val.Data)
-			if meta == nil || meta.Count != val.Count {
-				return false
-			}
-		}
-	}
-	return true
+	return reflect.DeepEqual(c, rc)
 }
 
 // Copy makes a copy for current CMSketch.

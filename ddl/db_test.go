@@ -27,10 +27,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
@@ -46,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -63,9 +66,6 @@ var _ = Suite(&testDBSuite2{&testDBSuite{}})
 var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
-var _ = Suite(&testDBSuite6{&testDBSuite{}})
-var _ = Suite(&testDBSuite7{&testDBSuite{}})
-var _ = Suite(&testDBSuite8{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 
@@ -81,15 +81,25 @@ type testDBSuite struct {
 	autoIDStep int64
 }
 
+var tableLockEnabled uint32 = 0
+
+func init() {
+	config.TableLockEnabled = func() bool {
+		return atomic.LoadUint32(&tableLockEnabled) > 0
+	}
+}
+
 func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
 	s.lease = 100 * time.Millisecond
 	session.SetSchemaLease(s.lease)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	s.schemaName = "test_db"
 	s.autoIDStep = autoid.GetStep()
 	ddl.WaitTimeWhenErrorOccured = 0
+	// Test for table lock.
+	atomic.StoreUint32(&tableLockEnabled, 1)
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -131,9 +141,6 @@ type testDBSuite2 struct{ *testDBSuite }
 type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
-type testDBSuite6 struct{ *testDBSuite }
-type testDBSuite7 struct{ *testDBSuite }
-type testDBSuite8 struct{ *testDBSuite }
 
 func assertErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {
 	_, err := tk.Exec(sql)
@@ -144,7 +151,7 @@ func assertErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {
 	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
 }
 
-func (s *testDBSuite6) TestAddIndexWithPK(c *C) {
+func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -295,6 +302,10 @@ func (s *testDBSuite3) TestCancelAddIndex(c *C) {
 
 	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
+	originBatchSize := s.tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
+	s.tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
+	defer s.tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
 	// let hook.OnJobUpdatedExported has chance to cancel the job.
 	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
 	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
@@ -494,7 +505,7 @@ func (s *testDBSuite5) TestCancelDropIndex(c *C) {
 }
 
 // TestCancelTruncateTable tests cancel ddl job which type is truncate table.
-func (s *testDBSuite7) TestCancelTruncateTable(c *C) {
+func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "create database if not exists test_truncate_table")
@@ -1276,7 +1287,7 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	s.tk.MustExec(sql)
 }
 
-func (s *testDBSuite8) TestColumn(c *C) {
+func (s *testDBSuite1) TestColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
@@ -1526,6 +1537,13 @@ func (s *testDBSuite2) TestDropColumn(c *C) {
 		}
 	}
 
+	// Test for drop partition table column.
+	s.tk.MustExec("drop table if exists t1")
+	s.tk.MustExec("create table t1 (a int,b int) partition by hash(a) partitions 4;")
+	_, err := s.tk.Exec("alter table t1 drop column a")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+
 	s.tk.MustExec("drop database drop_col_db")
 }
 
@@ -1677,6 +1695,13 @@ func (s *testDBSuite5) TestCreateTableWithLike(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tbl1.Meta().ForeignKeys, IsNil)
 
+	// for table partition
+	s.tk.MustExec("use ctwl_db")
+	s.tk.MustExec("create table pt1 (id int) partition by range columns (id) (partition p0 values less than (10))")
+	s.tk.MustExec("insert into pt1 values (1),(2),(3),(4);")
+	s.tk.MustExec("create table ctwl_db1.pt1 like ctwl_db.pt1;")
+	s.tk.MustQuery("select * from ctwl_db1.pt1").Check(testkit.Rows())
+
 	// for failure cases
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
@@ -1694,7 +1719,7 @@ func (s *testDBSuite5) TestCreateTableWithLike(c *C) {
 }
 
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
-func (s *testDBSuite6) TestCreateTableWithLike2(c *C) {
+func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 	s.tk.MustExec("drop table if exists t1,t2;")
@@ -2018,58 +2043,84 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 
-	// Check create table with virtual generated column.
-	s.tk.MustExec(`CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual)`)
+	// Check create table with virtual and stored generated columns.
+	s.tk.MustExec(`CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored)`)
 
-	// Check desc table with virtual generated column.
+	// Check desc table with virtual and stored generated columns.
 	result := s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`))
-
-	// Check show create table with virtual generated column.
-	result = s.tk.MustQuery(`show create table test_gv_ddl`)
-	result.Check(testkit.Rows(
-		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (`a` + 8) VIRTUAL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-
-	// Check alter table add a stored generated column.
-	s.tk.MustExec(`alter table test_gv_ddl add column c int as (b+2) stored`)
-	result = s.tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
+	// Check show create table with virtual and stored generated columns.
+	result = s.tk.MustQuery(`show create table test_gv_ddl`)
+	result.Check(testkit.Rows(
+		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (`a` + 8) VIRTUAL,\n  `c` int(11) GENERATED ALWAYS AS (`b` + 2) STORED\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
 	// Check generated expression with blanks.
-	s.tk.MustExec("create table table_with_gen_col_blanks (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char)))")
+	s.tk.MustExec("create table table_with_gen_col_blanks (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char)), c int as (a+100))")
 	result = s.tk.MustQuery(`show create table table_with_gen_col_blanks`)
 	result.Check(testkit.Rows("table_with_gen_col_blanks CREATE TABLE `table_with_gen_col_blanks` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` char(20) GENERATED ALWAYS AS (CAST(`a` AS CHAR)) VIRTUAL\n" +
+		"  `b` char(20) GENERATED ALWAYS AS (cast(`a` as char)) VIRTUAL,\n" +
+		"  `c` int(11) GENERATED ALWAYS AS (`a` + 100) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Check generated expression with charset latin1 ("latin1" != mysql.DefaultCharset).
+	s.tk.MustExec("create table table_with_gen_col_latin1 (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char charset latin1)), c int as (a+100))")
+	result = s.tk.MustQuery(`show create table table_with_gen_col_latin1`)
+	result.Check(testkit.Rows("table_with_gen_col_latin1 CREATE TABLE `table_with_gen_col_latin1` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` char(20) GENERATED ALWAYS AS (cast(`a` as char charset latin1)) VIRTUAL,\n" +
+		"  `c` int(11) GENERATED ALWAYS AS (`a` + 100) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Check generated expression with string (issue 9457).
+	s.tk.MustExec("create table table_with_gen_col_string (first_name varchar(10), last_name varchar(10), full_name varchar(255) AS (CONCAT(first_name,' ',last_name)))")
+	result = s.tk.MustQuery(`show create table table_with_gen_col_string`)
+	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
+		"  `first_name` varchar(10) DEFAULT NULL,\n" +
+		"  `last_name` varchar(10) DEFAULT NULL,\n" +
+		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`first_name`, ' ', `last_name`)) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	s.tk.MustExec("alter table table_with_gen_col_string modify column full_name varchar(255) GENERATED ALWAYS AS (CONCAT(last_name,' ' ,first_name) ) VIRTUAL")
+	result = s.tk.MustQuery(`show create table table_with_gen_col_string`)
+	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
+		"  `first_name` varchar(10) DEFAULT NULL,\n" +
+		"  `last_name` varchar(10) DEFAULT NULL,\n" +
+		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`last_name`, ' ', `first_name`)) VIRTUAL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	genExprTests := []struct {
 		stmt string
 		err  int
 	}{
-		// drop/rename columns dependent by other column.
+		// Drop/rename columns dependent by other column.
 		{`alter table test_gv_ddl drop column a`, mysql.ErrDependentByGeneratedColumn},
 		{`alter table test_gv_ddl change column a anew int`, mysql.ErrBadField},
 
-		// modify/change stored status of generated columns.
+		// Modify/change stored status of generated columns.
 		{`alter table test_gv_ddl modify column b bigint`, mysql.ErrUnsupportedOnGeneratedColumn},
 		{`alter table test_gv_ddl change column c cnew bigint as (a+100)`, mysql.ErrUnsupportedOnGeneratedColumn},
 
-		// modify/change generated columns breaking prior.
+		// Modify/change generated columns breaking prior.
 		{`alter table test_gv_ddl modify column b int as (c+100)`, mysql.ErrGeneratedColumnNonPrior},
 		{`alter table test_gv_ddl change column b bnew int as (c+100)`, mysql.ErrGeneratedColumnNonPrior},
 
-		// refer not exist columns in generation expression.
+		// Refer not exist columns in generation expression.
 		{`create table test_gv_ddl_bad (a int, b int as (c+8))`, mysql.ErrBadField},
 
-		// refer generated columns non prior.
+		// Refer generated columns non prior.
 		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, mysql.ErrGeneratedColumnNonPrior},
 
-		// virtual generated columns cannot be primary key.
+		// Virtual generated columns cannot be primary key.
 		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b) primary key)`, mysql.ErrUnsupportedOnGeneratedColumn},
 		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(c))`, mysql.ErrUnsupportedOnGeneratedColumn},
 		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(a, c))`, mysql.ErrUnsupportedOnGeneratedColumn},
+
+		// Add stored generated column through alter table.
+		{`alter table test_gv_ddl add column d int as (b+2) stored`, mysql.ErrUnsupportedOnGeneratedColumn},
+		{`alter table test_gv_ddl modify column b int as (a + 8) stored`, mysql.ErrUnsupportedOnGeneratedColumn},
 	}
 	for _, tt := range genExprTests {
 		assertErrorCode(c, s.tk, tt.stmt, tt.err)
@@ -2119,7 +2170,11 @@ func (s *testDBSuite4) TestComment(c *C) {
 	s.tk.MustExec("drop table if exists ct, ct1")
 }
 
-func (s *testDBSuite5) TestRebaseAutoID(c *C) {
+func (s *testDBSuite4) TestRebaseAutoID(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -2147,7 +2202,7 @@ func (s *testDBSuite5) TestRebaseAutoID(c *C) {
 	assertErrorCode(c, s.tk, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
 }
 
-func (s *testDBSuite7) TestCheckColumnDefaultValue(c *C) {
+func (s *testDBSuite5) TestCheckColumnDefaultValue(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
 	s.tk.MustExec("drop table if exists text_default_text;")
@@ -2324,7 +2379,7 @@ func (s *testDBSuite5) TestCheckConvertToCharacter(c *C) {
 	c.Assert(t.Cols()[0].Charset, Equals, "binary")
 }
 
-func (s *testDBSuite7) TestModifyColumnRollBack(c *C) {
+func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "drop table if exists t1")
@@ -2599,8 +2654,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	c.Assert(len(oldRow), Equals, 3)
 	err = writeOnlyTable.RemoveRecord(s.tk.Se, 1, oldRow)
 	c.Assert(err, IsNil)
-	_, err = writeOnlyTable.AddRecord(s.tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()),
-		&table.AddRecordOpt{IsUpdate: true})
+	_, err = writeOnlyTable.AddRecord(s.tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	c.Assert(err, IsNil)
 	err = s.tk.Se.StmtCommit()
 	c.Assert(err, IsNil)
@@ -2631,6 +2685,96 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	c.Assert(err, IsNil)
 	re.Check(testkit.Rows("1 2"))
 	s.tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
+}
+
+func (s *testDBSuite4) TestIfNotExists(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (a int key);")
+
+	// ADD COLUMN
+	sql := "alter table t1 add column b int"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrDupFieldName)
+	s.mustExec(c, "alter table t1 add column if not exists b int")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1060|Duplicate column name 'b'"))
+
+	// ADD INDEX
+	sql = "alter table t1 add index idx_b (b)"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrDupKeyName)
+	s.mustExec(c, "alter table t1 add index if not exists idx_b (b)")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b"))
+
+	// CREATE INDEX
+	sql = "create index idx_b on t1 (b)"
+	assertErrorCode(c, s.tk, sql, tmysql.ErrDupKeyName)
+	s.mustExec(c, "create index if not exists idx_b on t1 (b)")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b"))
+
+	// ADD PARTITION
+	s.mustExec(c, "drop table if exists t2")
+	s.mustExec(c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	sql = "alter table t2 add partition (partition p2 values less than (30))"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrSameNamePartition)
+	s.mustExec(c, "alter table t2 add partition if not exists (partition p2 values less than (30))")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1517|Duplicate partition name p2"))
+}
+
+func (s *testDBSuite4) TestIfExists(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (a int key, b int);")
+
+	// DROP COLUMN
+	sql := "alter table t1 drop column b"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrCantDropFieldOrKey)
+	s.mustExec(c, "alter table t1 drop column if exists b") // only `a` exists now
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|column b doesn't exist"))
+
+	// CHANGE COLUMN
+	sql = "alter table t1 change column b c int"
+	assertErrorCode(c, s.tk, sql, tmysql.ErrBadField)
+	s.mustExec(c, "alter table t1 change column if exists b c int")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1054|Unknown column 'b' in 't1'"))
+	s.mustExec(c, "alter table t1 change column if exists a c int") // only `c` exists now
+
+	// MODIFY COLUMN
+	sql = "alter table t1 modify column a bigint"
+	assertErrorCode(c, s.tk, sql, tmysql.ErrBadField)
+	s.mustExec(c, "alter table t1 modify column if exists a bigint")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1054|Unknown column 'a' in 't1'"))
+	s.mustExec(c, "alter table t1 modify column if exists c bigint") // only `c` exists now
+
+	// DROP INDEX
+	s.mustExec(c, "alter table t1 add index idx_c (c)")
+	sql = "alter table t1 drop index idx_c"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrCantDropFieldOrKey)
+	s.mustExec(c, "alter table t1 drop index if exists idx_c")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|index idx_c doesn't exist"))
+
+	// DROP PARTITION
+	s.mustExec(c, "drop table if exists t2")
+	s.mustExec(c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	sql = "alter table t2 drop partition p1"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrDropPartitionNonExistent)
+	s.mustExec(c, "alter table t2 drop partition if exists p1")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to p1"))
 }
 
 func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
@@ -2671,7 +2815,7 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk.MustExec("admin check table gcai_table")
 }
 
-func (s *testDBSuite6) TestIssue9100(c *C) {
+func (s *testDBSuite4) TestIssue9100(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("create table employ (a int, b int) partition by range (b) (partition p0 values less than (1));")
@@ -2714,7 +2858,12 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 
 }
 
-func (s *testDBSuite2) TestAlterShardRowIDBits(c *C) {
+func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+
 	s.tk = testkit.NewTestKit(c, s.store)
 	tk := s.tk
 
@@ -2729,7 +2878,7 @@ func (s *testDBSuite2) TestAlterShardRowIDBits(c *C) {
 	// Test increase shard_row_id_bits failed by overflow global auto ID.
 	_, err := tk.Exec("alter table t1 SHARD_ROW_ID_BITS = 10;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID overflow")
+	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID 72057594037932936 overflow")
 
 	// Test reduce shard_row_id_bits will be ok.
 	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 3;")
@@ -2749,4 +2898,357 @@ func (s *testDBSuite2) TestAlterShardRowIDBits(c *C) {
 	_, err = tk.Exec("insert into t1 set a=1;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")
+}
+
+func (s *testDBSuite2) TestLockTables(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	defer tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+
+	// Test lock 1 table.
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	tk.MustExec("lock tables t1 read")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockRead)
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+
+	// Test lock multi tables.
+	tk.MustExec("lock tables t1 write, t2 read")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockRead)
+	tk.MustExec("lock tables t1 read, t2 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockRead)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockWrite)
+	tk.MustExec("lock tables t2 write")
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockWrite)
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	// Test read lock.
+	tk.MustExec("lock tables t1 read")
+	tk.MustQuery("select * from t1")
+	tk2.MustQuery("select * from t1")
+	_, err := tk.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+	_, err = tk.Exec("update t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+	_, err = tk.Exec("delete from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("update t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("delete from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk2.MustExec("lock tables t1 read")
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+
+	// Test write lock.
+	_, err = tk.Exec("lock tables t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk2.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write")
+	tk.MustQuery("select * from t1")
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a=1")
+
+	_, err = tk2.Exec("select * from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("lock tables t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	// Test write local lock.
+	tk.MustExec("lock tables t1 write local")
+	tk.MustQuery("select * from t1")
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a=1")
+
+	tk2.MustQuery("select * from t1")
+	_, err = tk2.Exec("delete from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("lock tables t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("lock tables t1 read")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	// Test none unique table.
+	_, err = tk.Exec("lock tables t1 read, t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrNonuniqTable), IsTrue)
+
+	// Test lock table by other session in transaction and commit without retry.
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=1")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=1")
+	tk2.MustExec("lock tables t1 write")
+	_, err = tk.Exec("commit")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[domain:2]Information schema is changed. [try again later]")
+
+	// Test lock table by other session in transaction and commit with retry.
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=1")
+	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0")
+	tk2.MustExec("lock tables t1 write")
+	_, err = tk.Exec("commit")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue, Commentf("err: %v\n", err))
+
+	// Test for lock the same table multiple times.
+	tk2.MustExec("lock tables t1 write")
+	tk2.MustExec("lock tables t1 write, t2 read")
+
+	// Test lock tables and drop tables
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write, t2 write")
+	tk.MustExec("drop table t1")
+	tk2.MustExec("create table t1 (a int)")
+	tk.MustExec("lock tables t1 write, t2 read")
+
+	// Test lock tables and drop database.
+	tk.MustExec("unlock tables")
+	tk.MustExec("create database test_lock")
+	tk.MustExec("create table test_lock.t3 (a int)")
+	tk.MustExec("lock tables t1 write, test_lock.t3 write")
+	tk2.MustExec("create table t3 (a int)")
+	tk.MustExec("lock tables t1 write, t3 write")
+	tk.MustExec("drop table t3")
+
+	// Test lock tables and truncate tables.
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write, t2 read")
+	tk.MustExec("truncate table t1")
+	tk.MustExec("insert into t1 set a=1")
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	// Test for lock unsupported schema tables.
+	_, err = tk2.Exec("lock tables performance_schema.global_status write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
+	_, err = tk2.Exec("lock tables information_schema.tables write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
+	_, err = tk2.Exec("lock tables mysql.db write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
+
+	// Test create table/view when session is holding the table locks.
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write, t2 read")
+	_, err = tk.Exec("create table t3 (a int)")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLocked), IsTrue)
+	_, err = tk.Exec("create view v1 as select * from t1;")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLocked), IsTrue)
+
+	// Test for lock view was not supported.
+	tk.MustExec("unlock tables")
+	tk.MustExec("create view v1 as select * from t1;")
+	_, err = tk.Exec("lock tables v1 read")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+
+	// Test for create/drop/alter database when session is holding the table locks.
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock table t1 write")
+	_, err = tk.Exec("drop database test")
+	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
+	_, err = tk.Exec("create database test_lock")
+	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
+	_, err = tk.Exec("alter database test charset='utf8mb4'")
+	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
+	// Test alter/drop database when other session is holding the table locks of the database.
+	tk2.MustExec("create database test_lock2")
+	_, err = tk2.Exec("drop database test")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("alter database test charset='utf8mb4'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+}
+
+// TestConcurrentLockTables test concurrent lock/unlock tables.
+func (s *testDBSuite4) TestConcurrentLockTables(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int)")
+	tk2.MustExec("use test")
+
+	// Test concurrent lock tables read.
+	sql1 := "lock tables t1 read"
+	sql2 := "lock tables t1 read"
+	s.testParallelExecSQL(c, sql1, sql2, tk.Se, tk2.Se, func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+	})
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+
+	// Test concurrent lock tables write.
+	sql1 = "lock tables t1 write"
+	sql2 = "lock tables t1 write"
+	s.testParallelExecSQL(c, sql1, sql2, tk.Se, tk2.Se, func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(terror.ErrorEqual(err2, infoschema.ErrTableLocked), IsTrue)
+	})
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+
+	// Test concurrent lock tables write local.
+	sql1 = "lock tables t1 write local"
+	sql2 = "lock tables t1 write local"
+	s.testParallelExecSQL(c, sql1, sql2, tk.Se, tk2.Se, func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(terror.ErrorEqual(err2, infoschema.ErrTableLocked), IsTrue)
+	})
+
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+}
+
+func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
+	callback := &ddl.TestDDLCallback{}
+	times := 0
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
+		if times != 0 {
+			return
+		}
+		var qLen int
+		for {
+			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				jobs, err1 := admin.GetDDLJobs(txn)
+				if err1 != nil {
+					return err1
+				}
+				qLen = len(jobs)
+				return nil
+			})
+			c.Assert(err, IsNil)
+			if qLen == 2 {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		times++
+	}
+	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
+	d.(ddl.DDLForTest).SetHook(callback)
+
+	wg := sync.WaitGroup{}
+	var err1 error
+	var err2 error
+	wg.Add(2)
+	ch := make(chan struct{})
+	// Make sure the sql1 is put into the DDLJobQueue.
+	go func() {
+		var qLen int
+		for {
+			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				jobs, err3 := admin.GetDDLJobs(txn)
+				if err3 != nil {
+					return err3
+				}
+				qLen = len(jobs)
+				return nil
+			})
+			c.Assert(err, IsNil)
+			if qLen == 1 {
+				// Make sure sql2 is executed after the sql1.
+				close(ch)
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		_, err1 = se1.Execute(context.Background(), sql1)
+	}()
+	go func() {
+		defer wg.Done()
+		<-ch
+		_, err2 = se2.Execute(context.Background(), sql2)
+	}()
+
+	wg.Wait()
+	f(c, err1, err2)
+}
+
+func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {
+	tb := testGetTableByName(c, se, dbName, tableName)
+	dom := domain.GetDomain(se)
+	if lockTp != model.TableLockNone {
+		c.Assert(tb.Meta().Lock, NotNil)
+		c.Assert(tb.Meta().Lock.Tp, Equals, lockTp)
+		c.Assert(tb.Meta().Lock.State, Equals, model.TableLockStatePublic)
+		c.Assert(len(tb.Meta().Lock.Sessions) == 1, IsTrue)
+		c.Assert(tb.Meta().Lock.Sessions[0].ServerID, Equals, dom.DDL().GetID())
+		c.Assert(tb.Meta().Lock.Sessions[0].SessionID, Equals, se.GetSessionVars().ConnectionID)
+	} else {
+		c.Assert(tb.Meta().Lock, IsNil)
+	}
+}
+
+func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	// Test create with invalid expression.
+	_, err := s.tk.Exec(`CREATE TABLE t (
+		c0 int(11) ,
+  		c1 int(11),
+    	c2 decimal(16,4) GENERATED ALWAYS AS ((case when (c0 = 0) then 0when (c0 > 0) then (c1 / c0) end))
+	);`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 4 column 88 near \"then (c1 / c0) end))\n\t);\" ")
+
+	tk.MustExec("create table t (a bigint, b int, c int generated always as (b+1)) partition by hash(a) partitions 4;")
+	// Test drop partition column.
+	_, err = tk.Exec("alter table t drop column a;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+	// Test modify column with invalid expression.
+	_, err = tk.Exec("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near \"then (b / a) end));\" ")
+	// Test add column with invalid expression.
+	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
+}
+
+func init() {
+	// Make sure it will only be executed once.
+	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
 }

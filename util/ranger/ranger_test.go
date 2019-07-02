@@ -59,7 +59,7 @@ func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
 	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -660,6 +660,39 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 			filterConds: "[]",
 			resultStr:   `[(NULL,1) (2,9223372036854775810) (9223372036854775810,+inf]]`,
 		},
+		{
+			indexPos:    0,
+			exprStr:     `a >= -2147483648`,
+			accessConds: "[ge(test.t.a, -2147483648)]",
+			filterConds: "[]",
+			resultStr:   `[[0,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a > -2147483648`,
+			accessConds: "[gt(test.t.a, -2147483648)]",
+			filterConds: "[]",
+			resultStr:   `[[0,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a != -2147483648`,
+			accessConds: "[ne(test.t.a, -2147483648)]",
+			filterConds: "[]",
+			resultStr:   `[[0,+inf]]`,
+		},
+		{
+			exprStr:     "a < -1 or a < 1",
+			accessConds: "[or(lt(test.t.a, -1), lt(test.t.a, 1))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,1)]",
+		},
+		{
+			exprStr:     "a < -1 and a < 1",
+			accessConds: "[lt(test.t.a, -1) lt(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
 	}
 
 	for _, tt := range tests {
@@ -932,6 +965,13 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[gt(test.t.e, 18446744073709500000)]",
 			filterConds: "[]",
 			resultStr:   "[(18446744073709500000,+inf]]",
+		},
+		{
+			colPos:      4,
+			exprStr:     `e > -2147483648`,
+			accessConds: "[gt(test.t.e, -2147483648)]",
+			filterConds: "[]",
+			resultStr:   "[[0,+inf]]",
 		},
 	}
 

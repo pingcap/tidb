@@ -18,12 +18,16 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync/atomic"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -144,7 +148,11 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtID, args...)
+	params := make([]types.Datum, len(args))
+	for i := 0; i < len(params); i++ {
+		params[i] = types.NewDatum(args[i])
+	}
+	rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -173,6 +181,28 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	if res != nil {
 		tk.c.Assert(res.Close(), check.IsNil)
 	}
+}
+
+// MustIndexLookup checks whether the plan for the sql is Point_Get.
+func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	hasIndexLookup := false
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], "IndexLookUp") {
+			hasIndexLookup = true
+			break
+		}
+	}
+	tk.c.Assert(hasIndexLookup, check.IsTrue)
+	return tk.MustQuery(sql, args...)
+}
+
+// MustPointGet checks whether the plan for the sql is Point_Get.
+func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	tk.c.Assert(len(rs.rows), check.Equals, 1)
+	tk.c.Assert(strings.Contains(rs.rows[0][0], "Point_Get"), check.IsTrue)
+	return tk.MustQuery(sql, args...)
 }
 
 // MustQuery query the statements and returns result rows.
@@ -211,12 +241,16 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.Comment
 	return tk.ResultSetToResultWithCtx(context.Background(), rs, comment)
 }
 
-// ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
-func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
-	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+// ResultSetToStringSlice changes the RecordSet to [][]string.
+func ResultSetToStringSlice(ctx context.Context, s session.Session, rs sqlexec.RecordSet) ([][]string, error) {
+	rows, err := session.GetRows4Test(ctx, s, rs)
+	if err != nil {
+		return nil, err
+	}
 	err = rs.Close()
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	if err != nil {
+		return nil, err
+	}
 	sRows := make([][]string, len(rows))
 	for i := range rows {
 		row := rows[i]
@@ -227,15 +261,33 @@ func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.Reco
 			} else {
 				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
 				iRow[j], err = d.ToString()
-				tk.c.Assert(err, check.IsNil)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 		sRows[i] = iRow
 	}
+	return sRows, nil
+}
+
+// ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
+func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
+	sRows, err := ResultSetToStringSlice(ctx, tk.Se, rs)
+	tk.c.Check(err, check.IsNil, comment)
 	return &Result{rows: sRows, c: tk.c, comment: comment}
 }
 
 // Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
 	return testutil.RowsWithSep(" ", args...)
+}
+
+// GetTableID gets table ID by name.
+func (tk *TestKit) GetTableID(tableName string) int64 {
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
+	tk.c.Assert(err, check.IsNil)
+	return tbl.Meta().ID
 }

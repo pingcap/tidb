@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -76,7 +77,7 @@ const (
 )
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return err
@@ -164,25 +165,28 @@ type analyzeTask struct {
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- analyzeResult, isCloseChanThread bool) {
+	var task *analyzeTask
 	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultCh <- analyzeResult{
+				Err: errAnalyzeWorkerPanic,
+				job: task.job,
+			}
+		}
 		e.wg.Done()
 		if isCloseChanThread {
 			e.wg.Wait()
 			close(resultCh)
 		}
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(context.Background()).Error("analyze worker panicked", zap.String("stack", string(buf)))
-			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
-			resultCh <- analyzeResult{
-				Err: errAnalyzeWorkerPanic,
-			}
-		}
 	}()
 	for {
-		task, ok := <-taskCh
+		var ok bool
+		task, ok = <-taskCh
 		if !ok {
 			break
 		}
@@ -295,6 +299,11 @@ func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error
 }
 
 func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, error) {
+	failpoint.Inject("buildStatsFromResult", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, nil, errors.New("mock buildStatsFromResult error"))
+		}
+	})
 	hist := &statistics.Histogram{}
 	var cms *statistics.CMSketch
 	if needCMS {
@@ -322,7 +331,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		if needCMS {
 			if resp.Cms == nil {
 				logutil.Logger(context.TODO()).Warn("nil CMS in response", zap.String("table", e.idxInfo.Table.O), zap.String("index", e.idxInfo.Name.O))
-			} else if err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms)); err != nil {
+			} else if err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms), 0); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -335,7 +344,10 @@ func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool)
 		return nil, nil, err
 	}
 	defer func() {
-		err = closeAll(e.result, e.countNullRes)
+		err1 := closeAll(e.result, e.countNullRes)
+		if err == nil {
+			err = err1
+		}
 	}()
 	hist, cms, err = e.buildStatsFromResult(e.result, true)
 	if err != nil {
@@ -587,12 +599,12 @@ type AnalyzeFastExec struct {
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
 	defer func() {
-		e.wg.Done()
 		if *needRebuild == true {
 			for ok := true; ok; _, ok = <-e.sampLocs {
 				// Do nothing, just clear the channel.
 			}
 		}
+		e.wg.Done()
 	}()
 	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
 	for {
@@ -641,12 +653,55 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 	}
 }
 
-// buildSampTask returns tow variables, the first bool is whether the task meets region error
+// getNextSampleKey gets the next sample key after last failed request. It only retries the needed region.
+// Different from other requests, each request range must be the whole region because the region row count
+// is only for a whole region. So we need to first find the longest successive prefix ranges of previous request,
+// then the next sample key should be the last range that could align with the region bound.
+func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) (kv.Key, error) {
+	if len(e.sampTasks) == 0 {
+		e.scanTasks = e.scanTasks[:0]
+		return startKey, nil
+	}
+	sort.Slice(e.sampTasks, func(i, j int) bool {
+		return bytes.Compare(e.sampTasks[i].Location.StartKey, e.sampTasks[j].Location.StartKey) < 0
+	})
+	// The sample task should be consecutive with scan task.
+	if len(e.scanTasks) > 0 && bytes.Equal(e.scanTasks[0].StartKey, startKey) && !bytes.Equal(e.scanTasks[0].EndKey, e.sampTasks[0].Location.StartKey) {
+		e.scanTasks = e.scanTasks[:0]
+		e.sampTasks = e.sampTasks[:0]
+		return startKey, nil
+	}
+	prefixLen := 0
+	for ; prefixLen < len(e.sampTasks)-1; prefixLen++ {
+		if !bytes.Equal(e.sampTasks[prefixLen].Location.EndKey, e.sampTasks[prefixLen+1].Location.StartKey) {
+			break
+		}
+	}
+	// Find the last one that could align with region bound.
+	for ; prefixLen >= 0; prefixLen-- {
+		loc, err := e.cache.LocateKey(bo, e.sampTasks[prefixLen].Location.EndKey)
+		if err != nil {
+			return nil, err
+		}
+		if bytes.Compare(loc.StartKey, e.sampTasks[prefixLen].Location.EndKey) == 0 {
+			startKey = loc.StartKey
+			break
+		}
+	}
+	e.sampTasks = e.sampTasks[:prefixLen+1]
+	for i := len(e.scanTasks) - 1; i >= 0; i-- {
+		if bytes.Compare(startKey, e.scanTasks[i].EndKey) < 0 {
+			e.scanTasks = e.scanTasks[:i]
+		}
+	}
+	return startKey, nil
+}
+
+// buildSampTask returns two variables, the first bool is whether the task meets region error
 // and need to rebuild.
 func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	// Do get regions row count.
 	bo := tikv.NewBackoffer(context.Background(), 500)
-	e.rowCount = 0
 	needRebuildForRoutine := make([]bool, e.concurrency)
 	errs := make([]error, e.concurrency)
 	sampTasksForRoutine := make([][]*AnalyzeFastTask, e.concurrency)
@@ -674,10 +729,17 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.physicalTableID)
-	// extract all regions contain the table
-	e.scanTasks = e.scanTasks[:0]
-	e.sampTasks = e.sampTasks[:0]
-	targetKey := startKey
+	targetKey, err := e.getNextSampleKey(bo, startKey)
+	if err != nil {
+		return false, err
+	}
+	e.rowCount = 0
+	for _, task := range e.sampTasks {
+		cnt := task.EndOffset - task.BeginOffset
+		task.BeginOffset = e.rowCount
+		task.EndOffset = e.rowCount + cnt
+		e.rowCount += cnt
+	}
 	for {
 		// Search for the region which contains the targetKey.
 		loc, err := e.cache.LocateKey(bo, targetKey)
@@ -691,7 +753,7 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 		targetKey = loc.EndKey
 
 		// If the KV pairs in the region all belonging to the table, add it to the sample task.
-		if bytes.Compare(startKey, loc.StartKey) <= 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
+		if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
 			e.sampLocs <- loc
 			continue
 		}
@@ -893,7 +955,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			keys = append(keys, tablecodec.EncodeRowKeyWithHandle(tableID, randKey))
 		}
 
-		var kvMap map[string][]byte
+		kvMap := make(map[string][]byte, len(keys))
 		for _, key := range keys {
 			var iter kv.Iterator
 			iter, *err = snapshot.Iter(key, endKey)
@@ -910,11 +972,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 	}
 }
 
-func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollector, tp *types.FieldType) (*statistics.Histogram, error) {
-	// build collector properties.
-	collector.Samples = collector.Samples[:e.sampCursor]
-	sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].RowID < collector.Samples[j].RowID })
-	collector.CalcTotalSize()
+func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.SampleCollector, tp *types.FieldType, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, error) {
 	data := make([][]byte, 0, len(collector.Samples))
 	for i, sample := range collector.Samples {
 		sample.Ordinal = i
@@ -924,24 +982,49 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 		}
 		bytes, err := tablecodec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, sample.Value)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		data = append(data, bytes)
 	}
-	stats := domain.GetDomain(e.ctx).StatsHandle()
-	rowCount := int64(e.rowCount)
-	if stats.Lease > 0 {
-		rowCount = mathutil.MinInt64(stats.GetTableStats(e.tblInfo).Count, rowCount)
-	}
-	// build CMSketch
-	var ndv, scaleRatio uint64
-	collector.CMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, 20, uint64(rowCount))
-	// build Histogram
+	// Build CMSketch.
+	cmSketch, ndv, scaleRatio := statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, 20, uint64(rowCount))
+	// Build Histogram.
 	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.maxNumBuckets), ID, collector, tp, rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
-	if err != nil {
-		return nil, err
+	return hist, cmSketch, err
+}
+
+func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *statistics.SampleCollector, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, error) {
+	data := make([][][]byte, len(idxInfo.Columns), len(idxInfo.Columns))
+	for _, sample := range collector.Samples {
+		var preLen int
+		remained := sample.Value.GetBytes()
+		// We need to insert each prefix values into CM Sketch.
+		for i := 0; i < len(idxInfo.Columns); i++ {
+			var err error
+			var value []byte
+			value, remained, err = codec.CutOne(remained)
+			if err != nil {
+				return nil, nil, err
+			}
+			preLen += len(value)
+			data[i] = append(data[i], sample.Value.GetBytes()[:preLen])
+		}
 	}
-	return hist, nil
+	numTop := uint32(20)
+	cmSketch, ndv, scaleRatio := statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[0], numTop, uint64(rowCount))
+	// Build CM Sketch for each prefix and merge them into one.
+	for i := 1; i < len(idxInfo.Columns); i++ {
+		var curCMSketch *statistics.CMSketch
+		// `ndv` should be the ndv of full index, so just rewrite it here.
+		curCMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[i], numTop, uint64(rowCount))
+		err := cmSketch.MergeCMSketch(curCMSketch, numTop)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	// Build Histogram.
+	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.maxNumBuckets), idxInfo.ID, collector, types.NewFieldType(mysql.TypeBlob), rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
+	return hist, cmSketch, err
 }
 
 func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMSketch, error) {
@@ -977,19 +1060,32 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		return nil, nil, err
 	}
 
+	stats := domain.GetDomain(e.ctx).StatsHandle()
+	rowCount := int64(e.rowCount)
+	if stats.Lease() > 0 {
+		rowCount = mathutil.MinInt64(stats.GetTableStats(e.tblInfo).Count, rowCount)
+	}
 	hists, cms := make([]*statistics.Histogram, length), make([]*statistics.CMSketch, length)
 	for i := 0; i < length; i++ {
+		// Build collector properties.
+		collector := e.collectors[i]
+		collector.Samples = collector.Samples[:e.sampCursor]
+		sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].RowID < collector.Samples[j].RowID })
+		collector.CalcTotalSize()
+		// Adjust the row count in case the count of `tblStats` is not accurate and too small.
+		rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
+		// Scale the total column size.
+		collector.TotalSize *= rowCount / int64(len(collector.Samples))
 		if i < hasPKInfo {
-			hists[i], err = e.buildHist(e.pkInfo.ID, e.collectors[i], &e.pkInfo.FieldType)
+			hists[i], cms[i], err = e.buildColumnStats(e.pkInfo.ID, e.collectors[i], &e.pkInfo.FieldType, rowCount)
 		} else if i < hasPKInfo+len(e.colsInfo) {
-			hists[i], err = e.buildHist(e.colsInfo[i-hasPKInfo].ID, e.collectors[i], &e.colsInfo[i-hasPKInfo].FieldType)
+			hists[i], cms[i], err = e.buildColumnStats(e.colsInfo[i-hasPKInfo].ID, e.collectors[i], &e.colsInfo[i-hasPKInfo].FieldType, rowCount)
 		} else {
-			hists[i], err = e.buildHist(e.idxsInfo[i-hasPKInfo-len(e.colsInfo)].ID, e.collectors[i], types.NewFieldType(mysql.TypeBlob))
+			hists[i], cms[i], err = e.buildIndexStats(e.idxsInfo[i-hasPKInfo-len(e.colsInfo)], e.collectors[i], rowCount)
 		}
 		if err != nil {
 			return nil, nil, err
 		}
-		cms[i] = e.collectors[i].CMSketch
 	}
 	return hists, cms, nil
 }

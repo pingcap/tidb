@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
@@ -326,6 +327,7 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
 
 	// test skip isolation level check: reset
+	tk.MustExec("SET GLOBAL transaction_isolation='REPEATABLE-READ'") // should reset tx_isolation back to rr before reset tidb_skip_isolation_level_check
 	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
 
@@ -340,12 +342,21 @@ func (s *testSuite2) TestSetVar(c *C) {
 	_, err = tk.Exec("set global read_only = abc")
 	c.Assert(err, NotNil)
 
-	// test for tidb_wait_table_split_finish
-	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("0"))
-	tk.MustExec("set tidb_wait_table_split_finish = 1")
-	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("1"))
-	tk.MustExec("set tidb_wait_table_split_finish = 0")
-	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("0"))
+	// test for tidb_wait_split_region_finish
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_wait_split_region_finish = 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_wait_split_region_finish = 0")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
+
+	// test for tidb_wait_split_region_timeout
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitSplitRegionTimeout)))
+	tk.MustExec("set tidb_wait_split_region_timeout = 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
+	_, err = tk.Exec("set tidb_wait_split_region_timeout = 0")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_wait_split_region_timeout(0) cannot be smaller than 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
 
 	tk.MustExec("set session tidb_back_off_weight = 3")
 	tk.MustQuery("select @@session.tidb_back_off_weight;").Check(testkit.Rows("3"))
@@ -357,6 +368,9 @@ func (s *testSuite2) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("set global tidb_back_off_weight = 10")
 	tk.MustQuery("select @@global.tidb_back_off_weight;").Check(testkit.Rows("10"))
+
+	tk.MustExec("set @@tidb_expensive_query_time_threshold=70")
+	tk.MustQuery("select @@tidb_expensive_query_time_threshold;").Check(testkit.Rows("70"))
 }
 
 func (s *testSuite2) TestSetCharset(c *C) {
@@ -583,6 +597,52 @@ func (s *testSuite2) TestValidateSetVar(c *C) {
 	tk.MustExec("set @@sql_select_limit=default")
 	result = tk.MustQuery("select @@sql_select_limit;")
 	result.Check(testkit.Rows("18446744073709551615"))
+
+	tk.MustExec("set @@sql_auto_is_null=00")
+	result = tk.MustQuery("select @@sql_auto_is_null;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@sql_warnings=001")
+	result = tk.MustQuery("select @@sql_warnings;")
+	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@sql_warnings=000")
+	result = tk.MustQuery("select @@sql_warnings;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.super_read_only=-0")
+	result = tk.MustQuery("select @@global.super_read_only;")
+	result.Check(testkit.Rows("0"))
+
+	_, err = tk.Exec("set @@global.super_read_only=-1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set @@global.innodb_status_output_locks=-1")
+	result = tk.MustQuery("select @@global.innodb_status_output_locks;")
+	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.innodb_ft_enable_stopword=0000000")
+	result = tk.MustQuery("select @@global.innodb_ft_enable_stopword;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.innodb_stats_on_metadata=1")
+	result = tk.MustQuery("select @@global.innodb_stats_on_metadata;")
+	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.innodb_file_per_table=-50")
+	result = tk.MustQuery("select @@global.innodb_file_per_table;")
+	result.Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("set @@global.innodb_ft_enable_stopword=2")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set @@query_cache_type=0")
+	result = tk.MustQuery("select @@query_cache_type;")
+	result.Check(testkit.Rows("OFF"))
+
+	tk.MustExec("set @@query_cache_type=2")
+	result = tk.MustQuery("select @@query_cache_type;")
+	result.Check(testkit.Rows("DEMAND"))
 
 	tk.MustExec("set @@global.sync_binlog=-1")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '-1'"))

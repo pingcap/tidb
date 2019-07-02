@@ -45,6 +45,10 @@ const (
 	SyncLog
 	// KeyOnly retrieve only keys, it can be used in scan now.
 	KeyOnly
+	// Pessimistic is defined for pessimistic lock
+	Pessimistic
+	// SnapshotTS is defined to set snapshot ts.
+	SnapshotTS
 )
 
 // Priority value for transaction priority.
@@ -133,7 +137,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
-	LockKeys(keys ...Key) error
+	LockKeys(ctx context.Context, forUpdateTS uint64, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -152,6 +156,7 @@ type Transaction interface {
 	SetVars(vars *Variables)
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	BatchGet(keys []Key) (map[string][]byte, error)
+	IsPessimistic() bool
 }
 
 // AssertionProto is an interface defined for the assertion protocol.

@@ -91,7 +91,7 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 	c.TotalSize += rc.TotalSize
 	c.FMSketch.mergeFMSketch(rc.FMSketch)
 	if rc.CMSketch != nil {
-		err := c.CMSketch.MergeCMSketch(rc.CMSketch)
+		err := c.CMSketch.MergeCMSketch(rc.CMSketch, 0)
 		terror.Log(errors.Trace(err))
 	}
 	for _, item := range rc.Samples {
@@ -157,17 +157,17 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 		c.TotalSize += int64(len(d.GetBytes()) - 1)
 	}
 	c.seenValues++
-	// The following code use types.CopyDatum(d) because d may have a deep reference
+	// The following code use types.CloneDatum(d) because d may have a deep reference
 	// to the underlying slice, GC can't free them which lead to memory leak eventually.
 	// TODO: Refactor the proto to avoid copying here.
 	if len(c.Samples) < int(c.MaxSampleSize) {
-		newItem := &SampleItem{Value: types.CopyDatum(d)}
+		newItem := &SampleItem{Value: types.CloneDatum(d)}
 		c.Samples = append(c.Samples, newItem)
 	} else {
 		shouldAdd := rand.Int63n(c.seenValues) < c.MaxSampleSize
 		if shouldAdd {
 			idx := rand.Intn(int(c.MaxSampleSize))
-			newItem := &SampleItem{Value: types.CopyDatum(d)}
+			newItem := &SampleItem{Value: types.CloneDatum(d)}
 			// To keep the order of the elements, we use delete and append, not direct replacement.
 			c.Samples = append(c.Samples[:idx], c.Samples[idx+1:]...)
 			c.Samples = append(c.Samples, newItem)
@@ -217,8 +217,8 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		}
 	}
 	ctx := context.TODO()
-	req := s.RecordSet.NewRecordBatch()
-	it := chunk.NewIterator4Chunk(req.Chunk)
+	req := s.RecordSet.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
 	for {
 		err := s.RecordSet.Next(ctx, req)
 		if err != nil {

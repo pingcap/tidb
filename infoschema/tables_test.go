@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -47,7 +48,7 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
@@ -108,12 +109,13 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-	sm := &mockSessionManager{make(map[uint64]util.ProcessInfo, 1)}
-	sm.processInfoMap[1] = util.ProcessInfo{
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
@@ -138,23 +140,23 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
-	h.DumpStatsDeltaToKV(handle.DumpAll)
-	h.Update(is)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 17 51 3"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
-	h.DumpStatsDeltaToKV(handle.DumpAll)
-	h.Update(is)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("4 17 68 4"))
 	tk.MustExec("delete from t where c >= 3")
-	h.DumpStatsDeltaToKV(handle.DumpAll)
-	h.Update(is)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 17 34 2"))
 	tk.MustExec("delete from t where c=3")
-	h.DumpStatsDeltaToKV(handle.DumpAll)
-	h.Update(is)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 17 34 2"))
 }
@@ -241,12 +243,12 @@ func (s *testTableSuite) TestCharacterSetCollations(c *C) {
 }
 
 type mockSessionManager struct {
-	processInfoMap map[uint64]util.ProcessInfo
+	processInfoMap map[uint64]*util.ProcessInfo
 }
 
-func (sm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo { return sm.processInfoMap }
+func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo { return sm.processInfoMap }
 
-func (sm *mockSessionManager) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
+func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	rs, ok := sm.processInfoMap[id]
 	return rs, ok
 }
@@ -267,27 +269,89 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
 	tk.MustQuery("select * from information_schema.USER_PRIVILEGES where PRIVILEGE_TYPE='Select';").Check(testkit.Rows("'root'@'%' def Select YES"))
 
-	sm := &mockSessionManager{make(map[uint64]util.ProcessInfo, 2)}
-	sm.processInfoMap[1] = util.ProcessInfo{
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
 		Host:    "localhost",
 		DB:      "information_schema",
 		Command: byte(1),
 		State:   1,
-		Info:    "do something"}
-	sm.processInfoMap[2] = util.ProcessInfo{
+		Info:    "do something",
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
+	sm.processInfoMap[2] = &util.ProcessInfo{
 		ID:      2,
 		User:    "user-2",
 		Host:    "localhost",
 		DB:      "test",
 		Command: byte(2),
 		State:   2,
-		Info:    "do something"}
+		Info:    strings.Repeat("x", 101),
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
+	tk.Se.SetSessionManager(sm)
+	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s", strings.Repeat("x", 100)),
+		))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+		))
+
+	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
+		ID:      1,
+		User:    "user-1",
+		Host:    "localhost",
+		DB:      "information_schema",
+		Command: byte(1),
+		State:   1,
+		Info:    nil,
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
+	sm.processInfoMap[2] = &util.ProcessInfo{
+		ID:      2,
+		User:    "user-2",
+		Host:    "localhost",
+		DB:      nil,
+		Command: byte(2),
+		State:   2,
+		Info:    strings.Repeat("x", 101),
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
-		testkit.Rows("1 user-1 localhost information_schema Quit 9223372036 1 do something",
-			"2 user-2 localhost test Init DB 9223372036 2 do something"))
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 100)),
+		))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
+		testkit.Rows(
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "<nil>"),
+		))
 }
 
 func (s *testTableSuite) TestSchemataCharacterSet(c *C) {
@@ -352,10 +416,10 @@ select * from t_slim;`))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
+		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
 }
 
 func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
@@ -386,4 +450,9 @@ func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][4], Equals, "2")
 	c.Assert(result.Rows()[1][5], NotNil)
 	c.Assert(result.Rows()[1][6], Equals, "finished")
+}
+
+func (s *testTableSuite) TestColumnStatistics(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from information_schema.column_statistics").Check(testkit.Rows())
 }

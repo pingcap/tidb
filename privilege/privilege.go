@@ -48,7 +48,7 @@ type Manager interface {
 	ConnectionVerification(user, host string, auth, salt []byte) (string, string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
-	DBIsVisible(db string) bool
+	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
 	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
 	UserPrivilegesTable() [][]types.Datum

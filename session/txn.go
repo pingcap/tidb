@@ -14,6 +14,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -165,14 +167,14 @@ func mockAutoIDRetry() bool {
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
 	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
-		logutil.Logger(context.Background()).Error("the code should never run here",
+		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Stack("something must be wrong"))
 		return errors.New("invalid transaction")
 	}
 	if st.doNotCommit != nil {
 		if err1 := st.Transaction.Rollback(); err1 != nil {
-			logutil.Logger(context.Background()).Error("rollback error", zap.Error(err1))
+			logutil.BgLogger().Error("rollback error", zap.Error(err1))
 		}
 		return errors.Trace(st.doNotCommit)
 	}
@@ -180,7 +182,7 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	// mockCommitError8942 is used for PR #8942.
 	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(kv.ErrRetryable)
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
 
@@ -188,7 +190,7 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	failpoint.Inject("mockCommitRetryForAutoID", func(val failpoint.Value) {
 		if val.(bool) && !mockAutoIDRetry() {
 			enableMockAutoIDRetry()
-			failpoint.Return(kv.ErrRetryable)
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
 
@@ -305,6 +307,39 @@ func (st *TxnState) cleanup() {
 	}
 }
 
+// KeysNeedToLock returns the keys need to be locked.
+func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
+	keys := make([]kv.Key, 0, st.buf.Len())
+	if err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+		if !keyNeedToLock(k, v) {
+			return nil
+		}
+		// If the key is already locked, it will be deduplicated in LockKeys method later.
+		// The statement MemBuffer will be reused, so we must copy the key here.
+		keys = append(keys, append([]byte{}, k...))
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func keyNeedToLock(k, v []byte) bool {
+	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
+	if !isTableKey {
+		// meta key always need to lock.
+		return true
+	}
+	isDelete := len(v) == 0
+	if isDelete {
+		// only need to delete row key.
+		return k[10] == 'r'
+	}
+	isNonUniqueIndex := len(v) == 1 && v[0] == '0'
+	// Put row key and unique index need to lock.
+	return !isNonUniqueIndex
+}
+
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
 	bin := binloginfo.GetPrewriteValue(ctx, true)
 	for i := range bin.Mutations {
@@ -367,7 +402,12 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	}
 
 	oracleStore := s.store.GetOracle()
-	tsFuture := oracleStore.GetTimestampAsync(ctx)
+	var tsFuture oracle.Future
+	if s.sessionVars.LowResolutionTSO {
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
+	} else {
+		tsFuture = oracleStore.GetTimestampAsync(ctx)
+	}
 	ret := &txnFuture{future: tsFuture, store: s.store}
 	if x := ctx.Value("mockGetTSFail"); x != nil {
 		ret.mockFail = true

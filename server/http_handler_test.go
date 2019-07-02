@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
@@ -237,6 +238,13 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	for _, meta := range metas {
 		c.Assert(meta.ID != 0, IsTrue)
 	}
+
+	// test no panic
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/errGetRegionByIDEmpty", `return(true)`), IsNil)
+	resp1, err := http.Get("http://127.0.0.1:10090/regions/meta")
+	c.Assert(err, IsNil)
+	defer resp1.Body.Close()
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/errGetRegionByIDEmpty"), IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {
@@ -782,4 +790,13 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	c.Assert(serverInfo.Version, Equals, mysql.ServerVersion)
 	c.Assert(serverInfo.GitHash, Equals, printer.TiDBGitHash)
 	c.Assert(serverInfo.ID, Equals, ddl.GetID())
+}
+
+func (ts *HTTPHandlerTestSuite) TestHotRegionInfo(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/regions/hot")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 }

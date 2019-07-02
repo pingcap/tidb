@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -129,7 +129,7 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
-	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
+	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
 	return err
 }
 
@@ -138,9 +138,9 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	if is.etcdCli == nil {
 		return
 	}
-	err := ddl.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	err := util.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		logutil.Logger(context.Background()).Error("remove server info failed", zap.Error(err))
+		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
 	}
 }
 
@@ -189,7 +189,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 		resp, err = etcdCli.Get(childCtx, key, opts...)
 		cancel()
 		if err != nil {
-			logutil.Logger(context.Background()).Info("get key failed", zap.String("key", key), zap.Error(err))
+			logutil.BgLogger().Info("get key failed", zap.String("key", key), zap.Error(err))
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
@@ -197,7 +197,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			info := &ServerInfo{}
 			err = json.Unmarshal(kv.Value, info)
 			if err != nil {
-				logutil.Logger(context.Background()).Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
+				logutil.BgLogger().Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
 					zap.Error(err))
 				return nil, errors.Trace(err)
 			}

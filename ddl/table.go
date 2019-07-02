@@ -17,11 +17,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
+	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -69,7 +71,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(schemaID, tbInfo)
+		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -80,6 +82,15 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	default:
 		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
 	}
+}
+
+func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
+	err := checkTableInfoValid(tbInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return t.CreateTableOrView(schemaID, tbInfo)
 }
 
 func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -122,7 +133,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 				return ver, errors.Trace(err)
 			}
 		}
-		err = t.CreateTableOrView(schemaID, tbInfo)
+		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -267,8 +278,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 
 		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
-			if val.(bool) && mockRecoverTableCommitErrOnce {
-				mockRecoverTableCommitErrOnce = false
+			if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
 				kv.MockCommitErrorEnable()
 			}
 		})
@@ -286,8 +296,9 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, nil
 }
 
-// mockRecoverTableCommitErrOnce uses to make sure `mockRecoverTableCommitErr` only mock error once.
-var mockRecoverTableCommitErrOnce = true
+// mockRecoverTableCommitErrOnce uses to make sure
+// `mockRecoverTableCommitErr` only mock error once.
+var mockRecoverTableCommitErrOnce uint32 = 0
 
 func enableGC(w *worker) error {
 	ctx, err := w.sessPool.get()
@@ -350,11 +361,11 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	if err := s.SplitRegion(tableStartKey); err != nil {
 		// It will be automatically split by TiKV later.
-		logutil.Logger(ddlLogCtx).Warn("[ddl] split table region failed", zap.Error(err))
+		logutil.BgLogger().Warn("[ddl] split table region failed", zap.Error(err))
 	}
 }
 
-func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSplitFinish bool) {
+func preSplitTableShardRowIDBitsRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSplitFinish bool) {
 	s, ok := store.(splitableStore)
 	if !ok {
 		return
@@ -395,7 +406,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSp
 		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
 		regionID, err := s.SplitRegionAndScatter(key)
 		if err != nil {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table region failed", zap.Int64("recordID", recordID), zap.Error(err))
+			logutil.BgLogger().Warn("[ddl] pre split table region failed", zap.Int64("recordID", recordID), zap.Error(err))
 		} else {
 			regionIDs = append(regionIDs, regionID)
 		}
@@ -406,7 +417,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSp
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
 		regionID, err := s.SplitRegionAndScatter(indexPrefix)
 		if err != nil {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table index region failed", zap.String("index", idx.Name.L), zap.Error(err))
+			logutil.BgLogger().Warn("[ddl] pre split table index region failed", zap.String("index", idx.Name.L), zap.Error(err))
 		} else {
 			regionIDs = append(regionIDs, regionID)
 		}
@@ -417,7 +428,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSp
 	for _, regionID := range regionIDs {
 		err := s.WaitScatterRegionFinish(regionID)
 		if err != nil {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
+			logutil.BgLogger().Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 		}
 	}
 }
@@ -443,12 +454,21 @@ func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64)
 }
 
 func checkTableExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
-	tableID := job.TableID
+	tblInfo, err := getTableInfo(t, job.TableID, schemaID)
+	if err == nil {
+		return tblInfo, nil
+	}
+	if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+		job.State = model.JobStateCancelled
+	}
+	return nil, err
+}
+
+func getTableInfo(t *meta.Meta, tableID, schemaID int64) (*model.TableInfo, error) {
 	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobStateCancelled
 			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
 			))
@@ -458,7 +478,6 @@ func checkTableExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, schemaID 
 
 	// Check the table.
 	if tblInfo == nil {
-		job.State = model.JobStateCancelled
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
@@ -609,7 +628,7 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 		return errors.Trace(err)
 	}
 	if tables.OverflowShardBits(autoIncID, shardRowIDBits) {
-		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID overflow", shardRowIDBits)
+		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID %v overflow", shardRowIDBits, autoIncID)
 	}
 	return nil
 }
@@ -735,7 +754,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	tblInfo.Collate = toCollate
 	// update column charset.
 	for _, col := range tblInfo.Columns {
-		if typesNeedCharset(col.Tp) {
+		if field_types.HasCharset(&col.FieldType) {
 			col.Charset = toCharset
 			col.Collate = toCollate
 		} else {
@@ -754,7 +773,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 
 func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
 	// d.infoHandle maybe nil in some test.
-	if d.infoHandle == nil {
+	if d.infoHandle == nil || !d.infoHandle.IsValid() {
 		return checkTableNotExistsFromStore(t, schemaID, tableName)
 	}
 	// Try to use memory schema info to check first.
@@ -800,6 +819,18 @@ func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string
 	}
 
 	return nil
+}
+
+// updateVersionAndTableInfoWithCheck checks table info validate and updates the schema version and the table information
+func updateVersionAndTableInfoWithCheck(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
+	ver int64, err error) {
+	err = checkTableInfoValid(tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	return updateVersionAndTableInfo(t, job, tblInfo, shouldUpdateVer)
+
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.

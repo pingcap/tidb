@@ -167,7 +167,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 			break
 		}
 		if failedCnt%logIntervalCnt == 0 {
-			logutil.Logger(context.Background()).Warn("failed to new session to etcd", zap.String("ownerInfo", logPrefix), zap.Error(err))
+			logutil.BgLogger().Warn("failed to new session to etcd", zap.String("ownerInfo", logPrefix), zap.Error(err))
 		}
 
 		time.Sleep(newSessionRetryInterval)
@@ -221,7 +221,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		cancel()
 		if r := recover(); r != nil {
 			buf := util.GetStack()
-			logutil.Logger(context.Background()).Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.String("buffer", string(buf)))
+			logutil.BgLogger().Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.String("buffer", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
 		}
 	}()
@@ -245,6 +245,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 				return
 			}
 		case <-ctx.Done():
+			logutil.Logger(logCtx).Info("break campaign loop, context is done")
 			m.revokeSession(logPrefix, etcdSession.Lease())
 			return
 		default:
@@ -288,7 +289,7 @@ func (m *ownerManager) revokeSession(logPrefix string, leaseID clientv3.LeaseID)
 		time.Duration(ManagerSessionTTL)*time.Second)
 	_, err := m.etcdCli.Revoke(cancelCtx, leaseID)
 	cancel()
-	logutil.Logger(m.logCtx).Info("break campaign loop, revoke err", zap.Error(err))
+	logutil.Logger(m.logCtx).Info("revoke session", zap.Error(err))
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.
@@ -324,7 +325,7 @@ func GetOwnerInfo(ctx, logCtx context.Context, elec *concurrency.Election, id st
 func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.Session, key string) {
 	logPrefix := fmt.Sprintf("[%s] ownerManager %s watch owner key %v", m.prompt, m.id, key)
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
-	logutil.Logger(context.Background()).Debug(logPrefix)
+	logutil.BgLogger().Debug(logPrefix)
 	watchCh := m.etcdCli.Watch(ctx, key)
 	for {
 		select {
@@ -360,7 +361,7 @@ func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.
 func init() {
 	err := setManagerSessionTTL()
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("set manager session TTL failed", zap.Error(err))
+		logutil.BgLogger().Warn("set manager session TTL failed", zap.Error(err))
 	}
 }
 
