@@ -322,3 +322,32 @@ func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
 	tk.MustExec("commit")
 	syncCh <- struct{}{}
 }
+
+func (s *testPessimisticSuite) TestBankTransfer(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists accounts")
+	tk.MustExec("create table accounts (id int primary key, c int)")
+	tk.MustExec("insert accounts values (1, 100), (2, 100), (3, 100)")
+	syncCh := make(chan struct{})
+
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from accounts where id = 1 for update").Check(testkit.Rows("1 100"))
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("select * from accounts where id = 2 for update")
+		<-syncCh
+		tk2.MustExec("select * from accounts where id = 3 for update")
+		tk2.MustExec("update accounts set c = 50 where id = 2")
+		tk2.MustExec("update accounts set c = 150 where id = 3")
+		tk2.MustExec("commit")
+		<-syncCh
+	}()
+	syncCh <- struct{}{}
+	tk.MustQuery("select * from accounts where id = 2 for update").Check(testkit.Rows("2 50"))
+	tk.MustExec("update accounts set c = 50 where id = 1")
+	tk.MustExec("update accounts set c = 100 where id = 2")
+	tk.MustExec("commit")
+	syncCh <- struct{}{}
+	tk.MustQuery("select sum(c) from accounts").Check(testkit.Rows("300"))
+}
