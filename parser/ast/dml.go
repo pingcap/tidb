@@ -1827,6 +1827,7 @@ const (
 	ShowDrainerStatus
 	ShowOpenTables
 	ShowAnalyzeStatus
+	ShowRegions
 )
 
 const (
@@ -1852,7 +1853,8 @@ type ShowStmt struct {
 	DBName      string
 	Table       *TableName  // Used for showing columns.
 	Column      *ColumnName // Used for `desc table column`.
-	Flag        int         // Some flag parsed from sql, such as FULL.
+	IndexName   model.CIStr
+	Flag        int // Some flag parsed from sql, such as FULL.
 	Full        bool
 	User        *auth.UserIdentity   // Used for show grants/create user.
 	Roles       []*auth.RoleIdentity // Used for show grants .. using
@@ -2088,6 +2090,17 @@ func (n *ShowStmt) Restore(ctx *RestoreCtx) error {
 			ctx.WriteKeyWord("DRAINER STATUS")
 		case ShowAnalyzeStatus:
 			ctx.WriteKeyWord("ANALYZE STATUS")
+		case ShowRegions:
+			ctx.WriteKeyWord("TABLE ")
+			if err := n.Table.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SplitIndexRegionStmt.Table")
+			}
+			if len(n.IndexName.L) > 0 {
+				ctx.WriteKeyWord(" INDEX ")
+				ctx.WriteName(n.IndexName.String())
+			}
+			ctx.WriteKeyWord(" REGIONS")
+			return nil
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}
