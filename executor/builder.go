@@ -1797,7 +1797,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 						compareFuncs:  outerCompareFuncs,
 					},
 					innerMergeCtx: innerMergeCtx{
-						readerBuilder: &dataReaderBuilder{innerPlan, b},
+						readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
 						rowTypes:      innerTypes,
 						joinKeys:      v.InnerJoinKeys,
 						keyCols:       innerKeyCols,
@@ -1806,6 +1806,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 					workerWg:      new(sync.WaitGroup),
 					indexRanges:   v.Ranges,
 					keyOff2IdxOff: v.KeyOff2IdxOff,
+					lastColHelper: v.CompareFilters,
 				}
 				for i := 0; i < b.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
 					e.joiner = append(e.joiner, newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes))
@@ -1833,12 +1834,12 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 		lastColHelper: v.CompareFilters,
 	}
-	outerKeyCols := make([]int, len(v.OuterJoinKeys))
+	outerKeyCols = make([]int, len(v.OuterJoinKeys))
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
 	e.outerCtx.keyCols = outerKeyCols
-	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	innerKeyCols = make([]int, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 	}
