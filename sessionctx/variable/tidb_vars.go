@@ -348,9 +348,10 @@ var (
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold         uint32 = DefTiDBDDLSlowOprThreshold
-	ForcePriority                      = int32(DefTiDBForcePriority)
-	ServerHostname, _                  = os.Hostname()
-	MaxOfMaxAllowedPacket       uint64 = 1073741824
-	ExpensiveQueryTimeThreshold uint64 = DefTiDBExpensiveQueryTimeThreshold
+	DDLSlowOprThreshold            uint32 = DefTiDBDDLSlowOprThreshold
+	ForcePriority                         = int32(DefTiDBForcePriority)
+	ServerHostname, _                     = os.Hostname()
+	MaxOfMaxAllowedPacket          uint64 = 1073741824
+	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
+	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 )

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 
 // Handle is the handler for expensive query.
 type Handle struct {
+	mu     sync.RWMutex
 	exitCh chan struct{}
 	sm     util.SessionManager
 }
@@ -50,34 +52,36 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-	curInterval := time.Second * time.Duration(threshold)
-	ticker := time.NewTicker(curInterval / 2)
+	// use 100ms as tickInterval temply, may use given interval or use defined variable later
+	tickInterval := time.Millisecond * time.Duration(100)
+	ticker := time.NewTicker(tickInterval)
 	for {
 		select {
 		case <-ticker.C:
-			if log.GetLevel() > zapcore.WarnLevel {
-				continue
-			}
 			processInfo := eqh.sm.ShowProcessList()
 			for _, info := range processInfo {
 				if len(info.Info) == 0 || info.ExceedExpensiveTimeThresh {
 					continue
 				}
-				if costTime := time.Since(info.Time); costTime >= curInterval {
+				costTime := time.Since(info.Time)
+				if costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
 					logExpensiveQuery(costTime, info)
 					info.ExceedExpensiveTimeThresh = true
+
+				} else if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
+					eqh.sm.Kill(info.ID, true)
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-			if newInterval := time.Second * time.Duration(threshold); curInterval != newInterval {
-				curInterval = newInterval
-				ticker.Stop()
-				ticker = time.NewTicker(curInterval / 2)
-			}
 		case <-eqh.exitCh:
 			return
 		}
 	}
+}
+
+// Close closes the handle and release the background goroutine.
+func (eqh *Handle) Close() {
+	close(eqh.exitCh)
 }
 
 // LogOnQueryExceedMemQuota prints a log when memory usage of connID is out of memory quota.
