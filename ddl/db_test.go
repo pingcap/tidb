@@ -2524,7 +2524,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 		}
 		c2 := getModifyColumn()
 		if mysql.HasPreventNullInsertFlag(c2.Flag) {
-			_, err := s.tk.Exec("insert into t1 values ();")
+			_, err := tk2.Exec("insert into t1 values ();")
 			c.Assert(err.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
 		}
 	}
