@@ -25,7 +25,6 @@ import (
 	"net/url"
 	"runtime"
 	rpprof "runtime/pprof"
-	"strconv"
 	"strings"
 	"time"
 
@@ -179,7 +178,6 @@ func (s *Server) startHTTPServer() {
 			return
 		}
 
-		strconv.Atoi("")
 		//if err := rpprof.StartCPUProfile(fw); err != nil {
 		//	serveError(w, http.StatusInternalServerError,
 		//		fmt.Sprintf("Could not enable CPU profiling: %s", err))
