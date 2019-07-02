@@ -178,17 +178,19 @@ func (s *Server) startHTTPServer() {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "profile", err))
 			return
 		}
-		if err := rpprof.StartCPUProfile(fw); err != nil {
-			serveError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Could not enable CPU profiling: %s", err))
-			return
-		}
-		sec, err := strconv.ParseInt(r.FormValue("seconds"), 10, 64)
-		if sec <= 0 || err != nil {
-			sec = 10
-		}
-		sleepWithCtx(r.Context(), time.Duration(sec)*time.Second)
-		rpprof.StopCPUProfile()
+
+		strconv.Atoi("")
+		//if err := rpprof.StartCPUProfile(fw); err != nil {
+		//	serveError(w, http.StatusInternalServerError,
+		//		fmt.Sprintf("Could not enable CPU profiling: %s", err))
+		//	return
+		//}
+		//sec, err := strconv.ParseInt(r.FormValue("seconds"), 10, 64)
+		//if sec <= 0 || err != nil {
+		//	sec = 10
+		//}
+		//sleepWithCtx(r.Context(), time.Duration(sec)*time.Second)
+		//rpprof.StopCPUProfile()
 
 		// dump config
 		fw, err = zw.Create("config")
