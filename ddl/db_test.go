@@ -2658,8 +2658,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	c.Assert(len(oldRow), Equals, 3)
 	err = writeOnlyTable.RemoveRecord(s.tk.Se, 1, oldRow)
 	c.Assert(err, IsNil)
-	_, err = writeOnlyTable.AddRecord(s.tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()),
-		&table.AddRecordOpt{IsUpdate: true})
+	_, err = writeOnlyTable.AddRecord(s.tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	c.Assert(err, IsNil)
 	err = s.tk.Se.StmtCommit()
 	c.Assert(err, IsNil)

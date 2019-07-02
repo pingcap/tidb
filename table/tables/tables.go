@@ -418,10 +418,10 @@ func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.Retrie
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
-	opt := &table.AddRecordOpt{}
-	if len(opts) != 0 {
-		opt = opts[0]
+func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
+	var opt table.AddRecordOpt
+	for _, fn := range opts {
+		fn.ApplyOn(&opt)
 	}
 	var hasRecordID bool
 	cols := t.Cols()
@@ -456,8 +456,17 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	sessVars := ctx.GetSessionVars()
 
 	rm, err := t.getRollbackableMemStore(ctx)
+	var createIdxOpts []table.CreateIdxOptFunc
+	if len(opts) > 0 {
+		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))
+		for _, fn := range opts {
+			if raw, ok := fn.(table.CreateIdxOptFunc); ok {
+				createIdxOpts = append(createIdxOpts, raw)
+			}
+		}
+	}
 	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, recordID, r, rm, &opt.CreateIdxOpt)
+	h, err := t.addIndices(ctx, recordID, r, rm, createIdxOpts)
 	if err != nil {
 		return h, err
 	}
@@ -555,13 +564,17 @@ func (t *tableCommon) genIndexKeyStr(colVals []types.Datum) (string, error) {
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
 func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []types.Datum, rm kv.RetrieverMutator,
-	opt *table.CreateIdxOpt) (int64, error) {
+	opts []table.CreateIdxOptFunc) (int64, error) {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return 0, err
 	}
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
+	var opt table.CreateIdxOpt
+	for _, fn := range opts {
+		fn(&opt)
+	}
 	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !opt.SkipHandleCheck {
 		if err := CheckHandleExists(ctx, t, recordID, nil); err != nil {
