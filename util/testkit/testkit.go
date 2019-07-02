@@ -187,16 +187,24 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 
 // MustIndexLookup checks whether the plan for the sql is Point_Get.
 func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+	return tk.MustPlan("IndexLookUp", sql, args...)
+}
+
+func (tk *TestKit) MustPlan(plan, sql string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
 	hasIndexLookup := false
 	for i := range rs.rows {
-		if strings.Contains(rs.rows[i][0], "IndexLookUp") {
+		if strings.Contains(rs.rows[i][0], plan) {
 			hasIndexLookup = true
 			break
 		}
 	}
 	tk.c.Assert(hasIndexLookup, check.IsTrue)
 	return tk.MustQuery(sql, args...)
+}
+
+func (tk *TestKit) MustIndexRead(sql string, args ...interface{}) *Result {
+	return tk.MustPlan("IndexReader", sql, args...)
 }
 
 // MustPointGet checks whether the plan for the sql is Point_Get.

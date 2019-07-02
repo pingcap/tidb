@@ -1005,31 +1005,10 @@ func (s *testAnalyzeSuite) TestVirtualGeneratedColumn(c *C) {
 	tk.MustExec("create table t1(a int, b int as (a+1) virtual, c int as (b+1) virtual, d int as (c+1) virtual, key(b), index idx(c, d))")
 	tk.MustExec("insert into t1 (a) values (0)")
 
-	tk.MustQuery("explain select b from t1 where b=1").Check(testkit.Rows(
-		"IndexReader_6 10.00 root index:IndexScan_5",
-		"└─IndexScan_5 10.00 cop table:t1, index:b, range:[1,1], keep order:false, stats:pseudo"))
-	tk.MustQuery("select b from t1 where b=1").Check(testkit.Rows("1"))
-
-	tk.MustQuery("explain select b, c, d from t1 where b=1").Check(testkit.Rows(
-		"Projection_11 10.00 root cast(plus(test.t1.a, 1)), cast(plus(cast(plus(test.t1.a, 1)), 1)), cast(plus(cast(plus(cast(plus(test.t1.a, 1)), 1)), 1))",
-		"└─IndexLookUp_12 10.00 root ",
-		"  ├─IndexScan_9 10.00 cop table:t1, index:b, range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableScan_10 10.00 cop table:t1, keep order:false, stats:pseudo"))
-	tk.MustQuery("select b, c, d from t1 where b=1").Check(testkit.Rows("1 2 3"))
-
-	tk.MustQuery("explain select * from t1 where b=1").Check(testkit.Rows(
-		"Projection_11 10.00 root test.t1.a, cast(plus(test.t1.a, 1)), cast(plus(cast(plus(test.t1.a, 1)), 1)), cast(plus(cast(plus(cast(plus(test.t1.a, 1)), 1)), 1))",
-		"└─IndexLookUp_12 10.00 root ",
-		"  ├─IndexScan_9 10.00 cop table:t1, index:b, range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableScan_10 10.00 cop table:t1, keep order:false, stats:pseudo"))
-	tk.MustQuery("select * from t1 where b=1").Check(testkit.Rows("0 1 2 3"))
-
-	tk.MustQuery("explain select c from t1 where c=2 and d=3").Check(testkit.Rows(
-		"Projection_4 0.10 root test.t1.c",
-		"└─IndexReader_6 0.10 root index:IndexScan_5",
-		"  └─IndexScan_5 0.10 cop table:t1, index:c, d, range:[2 3,2 3], keep order:false, stats:pseudo",
-	))
-	tk.MustQuery("select c from t1 where c=2 and d=3").Check(testkit.Rows("2"))
+	tk.MustIndexRead("select b from t1 where b=1").Check(testkit.Rows("1"))
+	tk.MustIndexLookup("select b, c, d from t1 where b=1").Check(testkit.Rows("1 2 3"))
+	tk.MustIndexLookup("select * from t1 where b=1").Check(testkit.Rows("0 1 2 3"))
+	tk.MustIndexRead("select c from t1 where c=2 and d=3").Check(testkit.Rows("2"))
 
 	tk.MustExec(`CREATE TABLE person (
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -1038,13 +1017,7 @@ func (s *testAnalyzeSuite) TestVirtualGeneratedColumn(c *C) {
     city_no INT AS (JSON_EXTRACT(address_info, '$.city_no')) VIRTUAL,
     KEY(city_no))`)
 	tk.MustExec(`INSERT INTO person (name, address_info) VALUES ("John", CAST('{"city_no": 1}' AS JSON))`)
-	tk.MustQuery(`EXPLAIN SELECT name FROM person where city_no=1`).Check(testkit.Rows(
-		"Projection_4 10.00 root test.person.name",
-		`└─Projection_11 10.00 root test.person.name, cast(json_extract(test.person.address_info, "$.city_no"))`,
-		`  └─IndexLookUp_12 10.00 root `,
-		`    ├─IndexScan_9 10.00 cop table:person, index:city_no, range:[1,1], keep order:false, stats:pseudo`,
-		`    └─TableScan_10 10.00 cop table:person, keep order:false, stats:pseudo`))
-	tk.MustQuery(`SELECT name FROM person where city_no=1`).Check(testkit.Rows("John"))
+	tk.MustIndexLookup(`SELECT name FROM person where city_no=1`).Check(testkit.Rows("John"))
 }
 
 func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
