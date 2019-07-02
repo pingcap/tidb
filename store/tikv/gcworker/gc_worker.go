@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -795,7 +794,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 		zap.Int("concurrency", concurrency))
 	startTime := time.Now()
 
-	handler := func(ctx context.Context, r kv.KeyRange) (int, error) {
+	handler := func(ctx context.Context, r kv.KeyRange) (tikv.RangeTaskStat, error) {
 		return w.resolveLocksForRange(ctx, safePoint, r.StartKey, r.EndKey)
 	}
 
@@ -813,12 +812,12 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 	logutil.Logger(ctx).Info("[gc worker] finish resolve locks",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
-		zap.Int32("regions", runner.CompletedRegions()))
+		zap.Int("regions", runner.CompletedRegions()))
 	metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
 	return nil
 }
 
-func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, startKey []byte, endKey []byte) (int, error) {
+func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, startKey []byte, endKey []byte) (tikv.RangeTaskStat, error) {
 	// for scan lock request, we must return all locks even if they are generated
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
@@ -830,12 +829,12 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		},
 	}
 
-	regions := 0
+	var stat tikv.RangeTaskStat
 	key := startKey
 	for {
 		select {
 		case <-ctx.Done():
-			return regions, errors.New("[gc worker] gc job canceled")
+			return stat, errors.New("[gc worker] gc job canceled")
 		default:
 		}
 
@@ -844,29 +843,29 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		req.ScanLock.StartKey = key
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
-			return regions, errors.Trace(err)
+			return stat, errors.Trace(err)
 		}
 		resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
 		if err != nil {
-			return regions, errors.Trace(err)
+			return stat, errors.Trace(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return regions, errors.Trace(err)
+			return stat, errors.Trace(err)
 		}
 		if regionErr != nil {
 			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return regions, errors.Trace(err)
+				return stat, errors.Trace(err)
 			}
 			continue
 		}
 		locksResp := resp.ScanLock
 		if locksResp == nil {
-			return regions, errors.Trace(tikv.ErrBodyMissing)
+			return stat, errors.Trace(tikv.ErrBodyMissing)
 		}
 		if locksResp.GetError() != nil {
-			return regions, errors.Errorf("unexpected scanlock error: %s", locksResp)
+			return stat, errors.Errorf("unexpected scanlock error: %s", locksResp)
 		}
 		locksInfo := locksResp.GetLocks()
 		locks := make([]*tikv.Lock, len(locksInfo))
@@ -876,18 +875,18 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 
 		ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
 		if err1 != nil {
-			return regions, errors.Trace(err1)
+			return stat, errors.Trace(err1)
 		}
 		if !ok {
 			err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
 			if err != nil {
-				return regions, errors.Trace(err)
+				return stat, errors.Trace(err)
 			}
 			continue
 		}
 
 		if len(locks) < gcScanLockLimit {
-			regions++
+			stat.CompletedRegions++
 			key = loc.EndKey
 		} else {
 			logutil.Logger(ctx).Info("[gc worker] region has more than limit locks",
@@ -902,7 +901,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 			break
 		}
 	}
-	return regions, nil
+	return stat, nil
 }
 
 func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) error {
@@ -938,19 +937,18 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 	return nil
 }
 
-func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []byte, safePoint uint64) (int, error) {
-	var successRegions int32
-	var failedRegions int32
+func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []byte, safePoint uint64) (tikv.RangeTaskStat, error) {
+	var stat tikv.RangeTaskStat
 	defer func() {
-		metrics.GCActionRegionResultCounter.WithLabelValues("success").Add(float64(successRegions))
-		metrics.GCActionRegionResultCounter.WithLabelValues("fail").Add(float64(failedRegions))
+		metrics.GCActionRegionResultCounter.WithLabelValues("success").Add(float64(stat.CompletedRegions))
+		metrics.GCActionRegionResultCounter.WithLabelValues("fail").Add(float64(stat.FailedRegions))
 	}()
 	key := startKey
 	for {
 		bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
-			return int(successRegions), errors.Trace(err)
+			return stat, errors.Trace(err)
 		}
 
 		var regionErr *errorpb.Error
@@ -971,9 +969,9 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 				zap.String("gc for range", fmt.Sprintf("[%d, %d)", startKey, endKey)),
 				zap.Uint64("safePoint", safePoint),
 				zap.Error(err))
-			failedRegions++
+			stat.FailedRegions++
 		} else {
-			successRegions++
+			stat.CompletedRegions++
 		}
 
 		key = loc.EndKey
@@ -982,7 +980,7 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 		}
 	}
 
-	return int(successRegions), nil
+	return stat, nil
 }
 
 // doGCForRegion used for gc for region.
@@ -1025,14 +1023,12 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 		zap.Int("concurrency", concurrency),
 		zap.Uint64("safePoint", safePoint))
 	startTime := time.Now()
-	var successRegions int32
-	var failedRegions int32
 
 	runner := tikv.NewRangeTaskRunner(
 		"gc-runner",
 		w.store,
 		concurrency,
-		func(ctx context.Context, r kv.KeyRange) (int, error) {
+		func(ctx context.Context, r kv.KeyRange) (tikv.RangeTaskStat, error) {
 			return w.doGCForRange(ctx, r.StartKey, r.EndKey, safePoint)
 		})
 
@@ -1045,11 +1041,14 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 		return errors.Trace(err)
 	}
 
+	successRegions := runner.CompletedRegions()
+	failedRegions := runner.FailedRegions()
+
 	logutil.Logger(ctx).Info("[gc worker] finished doing gc for all keys",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
-		zap.Int32("successful regions", atomic.LoadInt32(&successRegions)),
-		zap.Int32("failed regions", atomic.LoadInt32(&failedRegions)),
+		zap.Int("successful regions", successRegions),
+		zap.Int("failed regions", failedRegions),
 		zap.Duration("total cost time", time.Since(startTime)))
 	metrics.GCHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
 
