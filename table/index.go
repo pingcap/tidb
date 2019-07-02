@@ -49,6 +49,7 @@ var SkipCheck CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.SkipCheck = true
 }
 
+// WithAssertion returns a CreateIdxFunc.
 func WithAssertion(x kv.AssertionProto) CreateIdxOptFunc {
 	return func(opt *CreateIdxOpt) {
 		opt.AssertionProto = x

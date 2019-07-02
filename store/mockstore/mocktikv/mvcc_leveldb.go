@@ -16,7 +16,6 @@ package mocktikv
 import (
 	"bytes"
 	"math"
-	"runtime/debug"
 	"sync"
 
 	"github.com/dgryski/go-farm"
@@ -668,17 +667,14 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 					return &ErrKeyAlreadyExist{
 						Key: m.Key,
 					}
-				} else {
-					logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
-					debug.PrintStack()
 				}
+				logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
 				break
 			}
 		}
 	}
 	if m.Assertion == kvrpcpb.Assertion_Exist && !ok {
 		logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
-		debug.PrintStack()
 	}
 	return nil
 }
