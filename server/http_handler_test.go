@@ -807,5 +807,5 @@ func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
 	resp, err := http.Get("http://127.0.0.1:10090/debug/zip")
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
-	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 }
