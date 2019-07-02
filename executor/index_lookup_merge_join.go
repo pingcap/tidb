@@ -628,6 +628,10 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 		innerColType := imw.rowTypes[imw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {
+			// If the converted outerValue overflows, we don't need to lookup it.
+			if terror.ErrorEqual(err, types.ErrOverflow) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		cmp, err := outerValue.CompareDatum(sc, &innerValue)
