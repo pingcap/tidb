@@ -444,6 +444,9 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 }
 
 func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) error {
+	if task.innerResult.Len() == 0 {
+		return nil
+	}
 	task.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
 	task.innerIter.Begin()
 
