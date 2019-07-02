@@ -29,8 +29,9 @@ type IndexIterator interface {
 
 // CreateIdxOpt contains the options will be used when creating an index.
 type CreateIdxOpt struct {
-	SkipHandleCheck bool // If true, skip the handle constraint check.
-	SkipCheck       bool // If true, skip all the unique indices constraint check.
+	SkipHandleCheck   bool // If true, skip the handle constraint check.
+	SkipCheck         bool // If true, skip all the unique indices constraint check.
+	kv.AssertionProto      // If not nil, check assertion.
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -48,12 +49,18 @@ var SkipCheck CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.SkipCheck = true
 }
 
+func WithAssertion(x kv.AssertionProto) CreateIdxOptFunc {
+	return func(opt *CreateIdxOpt) {
+		opt.AssertionProto = x
+	}
+}
+
 // Index is the interface for index data on KV store.
 type Index interface {
 	// Meta returns IndexInfo.
 	Meta() *model.IndexInfo
 	// Create supports insert into statement.
-	Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...CreateIdxOpt) (int64, error)
+	Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...CreateIdxOptFunc) (int64, error)
 	// Delete supports delete from statement.
 	Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64, ss kv.Transaction) error
 	// Drop supports drop table, drop index statements.

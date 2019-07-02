@@ -599,7 +599,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, txn, opt); err != nil {
+		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupKeyErr
 			}
@@ -815,7 +815,7 @@ func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	if _, err := idx.Create(ctx, rm, vals, h, txn); err != nil {
+	if _, err := idx.Create(ctx, rm, vals, h, table.WithAssertion(txn)); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)
