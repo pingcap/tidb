@@ -183,6 +183,7 @@ func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
 	return tk.MustPlan("IndexLookUp", sql, args...)
 }
 
+// MustPlan checks whether the plan for the sql is the specific plan.
 func (tk *TestKit) MustPlan(plan, sql string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
 	hasIndexLookup := false
@@ -196,6 +197,7 @@ func (tk *TestKit) MustPlan(plan, sql string, args ...interface{}) *Result {
 	return tk.MustQuery(sql, args...)
 }
 
+// MustIndexRead checks whether the plan for this sql is IndexReader.
 func (tk *TestKit) MustIndexRead(sql string, args ...interface{}) *Result {
 	return tk.MustPlan("IndexReader", sql, args...)
 }
