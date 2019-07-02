@@ -185,7 +185,7 @@ func NewBitLiteral(s string) (BitLiteral, error) {
 
 // ToString implement ast.BinaryLiteral interface
 func (b BitLiteral) ToString() string {
-	return string(b)
+	return BinaryLiteral(b).ToString()
 }
 
 // ParseHexStr parses hexadecimal string literal.
@@ -233,5 +233,5 @@ func NewHexLiteral(s string) (HexLiteral, error) {
 
 // ToString implement ast.BinaryLiteral interface
 func (b HexLiteral) ToString() string {
-	return string(b)
+	return BinaryLiteral(b).ToString()
 }
