@@ -482,7 +482,7 @@ func (ds *DataSource) getHandleCol() *expression.Column {
 // deriveIndexPathStats will fulfill the information that the accessPath need.
 // And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.
-// considerConditions is the conditions used to generate the DetachRangeResult for path.
+// conds is the conditions used to generate the DetachRangeResult for path.
 func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.Expression) (bool, error) {
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()

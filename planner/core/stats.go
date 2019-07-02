@@ -205,7 +205,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			path.isTablePath = true
 			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions)
 			if err != nil {
-				logutil.BgLogger().Info("can not derive statistics of a path")
+				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
@@ -218,7 +218,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			path.index = ds.possibleAccessPaths[i].index
 			noIntervalRanges, err := ds.deriveIndexPathStats(path, conditions)
 			if err != nil {
-				logutil.BgLogger().Info("can not derive statistics of a path")
+				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
@@ -264,7 +264,7 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*accessPath)
 	return indexAccessPaths[maxColsIndex]
 }
 
-// buildIndexMergeOrPath generates one possible IndexMergePath
+// buildIndexMergeOrPath generates one possible IndexMergePath.
 func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*accessPath, current int) *accessPath {
 	indexMergePath := &accessPath{partialIndexPaths: partialPaths}
 	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[:current]...)
