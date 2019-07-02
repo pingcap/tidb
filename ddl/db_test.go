@@ -2508,7 +2508,6 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
 	// Check insert error when column has prevent null flag.
-	var insertErr error
 	s.tk.MustExec("delete from t1")
 	hook.OnJobUpdatedExported = nil
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -2520,22 +2519,19 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 		}
 		c2 := getModifyColumn()
 		if mysql.HasPreventNullInsertFlag(c2.Flag) {
-			_, insertErr = s.tk.Exec("insert into t1 values ();")
+			_, err := s.tk.Exec("insert into t1 values ();")
+			c.Assert(err.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
 		}
 	}
 
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	done := make(chan error, 1)
-	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
-	err = <-done
-	c.Assert(err, IsNil)
+	s.tk.MustExec("alter table t1 change c2 c2 bigint not null;")
 
 	c2 := getModifyColumn()
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
 	c.Assert(mysql.HasPreventNullInsertFlag(c2.Flag), IsFalse)
-	c.Assert(insertErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
-	_, insertErr = s.tk.Exec("insert into t1 values ();")
-	c.Assert(insertErr.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
+	_, err = s.tk.Exec("insert into t1 values ();")
+	c.Assert(err.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
 }
 
 func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
