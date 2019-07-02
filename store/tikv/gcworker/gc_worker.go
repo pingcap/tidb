@@ -100,7 +100,6 @@ const (
 	booleanFalse = "false"
 
 	gcWorkerTickInterval = time.Minute
-	gcJobLogTickInterval = time.Minute * 10
 	gcWorkerLease        = time.Minute * 2
 	gcLeaderUUIDKey      = "tikv_gc_leader_uuid"
 	gcLeaderDescKey      = "tikv_gc_leader_desc"
@@ -939,62 +938,19 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 	return nil
 }
 
-type gcTask struct {
-	startKey  []byte
-	endKey    []byte
-	safePoint uint64
-}
-
-type gcTaskWorker struct {
-	identifier string
-	store      tikv.Storage
-	taskCh     chan *gcTask
-	wg         *sync.WaitGroup
-	// successRegions and failedRegions use atomic to read and set.
-	successRegions *int32
-	failedRegions  *int32
-}
-
-func newGCTaskWorker(store tikv.Storage, taskCh chan *gcTask, wg *sync.WaitGroup, identifer string, successRegions *int32, failedRegions *int32) *gcTaskWorker {
-	return &gcTaskWorker{
-		identifer,
-		store,
-		taskCh,
-		wg,
-		successRegions,
-		failedRegions,
-	}
-}
-
-func (w *gcTaskWorker) run() {
-	defer w.wg.Done()
-	for task := range w.taskCh {
-		err := w.doGCForRange(task.startKey, task.endKey, task.safePoint)
-		if err != nil {
-			logutil.BgLogger().Error("[gc worker] gc interrupted because get region error",
-				zap.String("uuid", w.identifier),
-				zap.Binary("startKey", task.startKey),
-				zap.Binary("endKey", task.endKey),
-				zap.Error(err))
-		}
-	}
-}
-
-func (w *gcTaskWorker) doGCForRange(startKey []byte, endKey []byte, safePoint uint64) error {
+func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []byte, safePoint uint64) (int, error) {
 	var successRegions int32
 	var failedRegions int32
 	defer func() {
-		atomic.AddInt32(w.successRegions, successRegions)
-		atomic.AddInt32(w.failedRegions, failedRegions)
 		metrics.GCActionRegionResultCounter.WithLabelValues("success").Add(float64(successRegions))
 		metrics.GCActionRegionResultCounter.WithLabelValues("fail").Add(float64(failedRegions))
 	}()
 	key := startKey
 	for {
-		bo := tikv.NewBackoffer(context.Background(), tikv.GcOneRegionMaxBackoff)
+		bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
-			return errors.Trace(err)
+			return int(successRegions), errors.Trace(err)
 		}
 
 		var regionErr *errorpb.Error
@@ -1011,7 +967,7 @@ func (w *gcTaskWorker) doGCForRange(startKey []byte, endKey []byte, safePoint ui
 
 		if err != nil {
 			logutil.BgLogger().Warn("[gc worker]",
-				zap.String("uuid", w.identifier),
+				zap.String("uuid", w.uuid),
 				zap.String("gc for range", fmt.Sprintf("[%d, %d)", startKey, endKey)),
 				zap.Uint64("safePoint", safePoint),
 				zap.Error(err))
@@ -1026,12 +982,12 @@ func (w *gcTaskWorker) doGCForRange(startKey []byte, endKey []byte, safePoint ui
 		}
 	}
 
-	return nil
+	return int(successRegions), nil
 }
 
 // doGCForRegion used for gc for region.
 // these two errors should not return together, for more, see the func 'doGC'
-func (w *gcTaskWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
+func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
 		GC: &kvrpcpb.GCRequest{
@@ -1062,23 +1018,9 @@ func (w *gcTaskWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, regio
 	return nil, nil
 }
 
-func (w *GCWorker) genNextGCTask(bo *tikv.Backoffer, safePoint uint64, key kv.Key) (*gcTask, error) {
-	loc, err := w.store.GetRegionCache().LocateKey(bo, key)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	task := &gcTask{
-		startKey:  key,
-		endKey:    loc.EndKey,
-		safePoint: safePoint,
-	}
-	return task, nil
-}
-
 func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("do_gc").Inc()
-	logutil.Logger(ctx).Info("[gc worker]",
+	logutil.Logger(ctx).Info("[gc worker] start doing gc for all keys",
 		zap.String("uuid", w.uuid),
 		zap.Int("concurrency", concurrency),
 		zap.Uint64("safePoint", safePoint))
@@ -1086,59 +1028,32 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 	var successRegions int32
 	var failedRegions int32
 
-	ticker := time.NewTicker(gcJobLogTickInterval)
-	defer ticker.Stop()
+	runner := tikv.NewRangeTaskRunner(
+		"gc-runner",
+		w.store,
+		concurrency,
+		func(ctx context.Context, r kv.KeyRange) (int, error) {
+			return w.doGCForRange(ctx, r.StartKey, r.EndKey, safePoint)
+		})
 
-	// Create task queue and start task workers.
-	gcTaskCh := make(chan *gcTask, concurrency)
-	var wg sync.WaitGroup
-	for i := 0; i < concurrency; i++ {
-		w := newGCTaskWorker(w.store, gcTaskCh, &wg, w.uuid, &successRegions, &failedRegions)
-		wg.Add(1)
-		go w.run()
-	}
-
-	var key []byte
-	defer func() {
-		close(gcTaskCh)
-		wg.Wait()
-		logutil.Logger(ctx).Info("[gc worker]",
+	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
+	if err != nil {
+		logutil.Logger(ctx).Warn("[gc worker] failed to do gc for all keys",
 			zap.String("uuid", w.uuid),
-			zap.Uint64("safePoint", safePoint),
-			zap.Int32("successful regions", atomic.LoadInt32(&successRegions)),
-			zap.Int32("failed regions", atomic.LoadInt32(&failedRegions)),
-			zap.Duration("total cost time", time.Since(startTime)))
-		metrics.GCHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return errors.New("[gc worker] gc job canceled")
-		case <-ticker.C:
-			logutil.Logger(ctx).Info("[gc worker]",
-				zap.String("gc in process", w.uuid),
-				zap.Uint64("safePoint", safePoint),
-				zap.Int32("successful regions", atomic.LoadInt32(&successRegions)),
-				zap.Int32("failed regions", atomic.LoadInt32(&failedRegions)),
-				zap.Duration("total cost time", time.Since(startTime)))
-		default:
-		}
-
-		bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
-		task, err := w.genNextGCTask(bo, safePoint, key)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if task != nil {
-			gcTaskCh <- task
-			key = task.endKey
-		}
-
-		if len(key) == 0 {
-			return nil
-		}
+			zap.Int("concurrency", concurrency),
+			zap.Error(err))
+		return errors.Trace(err)
 	}
+
+	logutil.Logger(ctx).Info("[gc worker] finished doing gc for all keys",
+		zap.String("uuid", w.uuid),
+		zap.Uint64("safePoint", safePoint),
+		zap.Int32("successful regions", atomic.LoadInt32(&successRegions)),
+		zap.Int32("failed regions", atomic.LoadInt32(&failedRegions)),
+		zap.Duration("total cost time", time.Since(startTime)))
+	metrics.GCHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
+
+	return nil
 }
 
 func (w *GCWorker) checkLeader() (bool, error) {
