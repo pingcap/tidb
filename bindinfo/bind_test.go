@@ -75,6 +75,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 		session.SetSchemaLease(0)
 		session.DisableStats4Test()
 	}
+	bindinfo.Lease = 0
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
