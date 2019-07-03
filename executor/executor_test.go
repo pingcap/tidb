@@ -202,7 +202,8 @@ func (s *testSuiteP1) TestLoadStats(c *C) {
 
 func (s *testSuiteP1) TestShow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	tk.MustExec("create database test_show;")
+	tk.MustExec("use test_show")
 
 	tk.MustQuery("show engines")
 	tk.MustExec("drop table if exists t")
@@ -217,7 +218,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"latin1 Latin1 latin1_bin 1",
 		"binary binary binary 1"))
 	c.Assert(len(tk.MustQuery("show master status").Rows()), Equals, 1)
-	tk.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	tk.MustQuery("show create database test_show").Check(testkit.Rows("test CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
 		"Alter Tables To alter the table",
 		"Alter routine Functions,Procedures To alter or drop stored functions/procedures",
@@ -1918,6 +1919,7 @@ func (s *testSuiteP1) TestSQLMode(c *C) {
 	s.domain.GetGlobalVarsCache().Disable()
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
+	tk2.MustExec("drop table if exists t2")
 	tk2.MustExec("create table t2 (a varchar(3))")
 	tk2.MustExec("insert t2 values ('abcd')")
 	tk2.MustQuery("select * from t2").Check(testkit.Rows("abc"))
