@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"unsafe"
 )
 
 // DeleteRangeTask is used to delete all keys in a range. After
@@ -104,14 +105,11 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (in
 			endKey = rangeEndKey
 		}
 
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdDeleteRange,
-			DeleteRange: &kvrpcpb.DeleteRangeRequest{
-				StartKey:   startKey,
-				EndKey:     endKey,
-				NotifyOnly: t.notifyOnly,
-			},
-		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdDeleteRange, unsafe.Pointer(&kvrpcpb.DeleteRangeRequest{
+			StartKey:   startKey,
+			EndKey:     endKey,
+			NotifyOnly: t.notifyOnly,
+		}))
 
 		resp, err := t.store.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {

@@ -23,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -660,13 +661,10 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 		return errors.Trace(err)
 	}
 
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdUnsafeDestroyRange,
-		UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeRequest{
-			StartKey: startKey,
-			EndKey:   endKey,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdUnsafeDestroyRange, unsafe.Pointer(&kvrpcpb.UnsafeDestroyRangeRequest{
+		StartKey: startKey,
+		EndKey:   endKey,
+	}))
 
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(stores))
@@ -823,13 +821,10 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 	// for scan lock request, we must return all locks even if they are generated
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdScanLock,
-		ScanLock: &kvrpcpb.ScanLockRequest{
-			MaxVersion: safePoint,
-			Limit:      gcScanLockLimit,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdScanLock, unsafe.Pointer(&kvrpcpb.ScanLockRequest{
+		MaxVersion: safePoint,
+		Limit:      gcScanLockLimit,
+	}))
 
 	regions := 0
 	key := startKey
@@ -842,7 +837,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 
 		bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
 
-		req.ScanLock.StartKey = key
+		req.ScanLock().StartKey = key
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return regions, errors.Trace(err)
@@ -1032,12 +1027,9 @@ func (w *gcTaskWorker) doGCForRange(startKey []byte, endKey []byte, safePoint ui
 // doGCForRegion used for gc for region.
 // these two errors should not return together, for more, see the func 'doGC'
 func (w *gcTaskWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGC,
-		GC: &kvrpcpb.GCRequest{
-			SafePoint: safePoint,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdGC, unsafe.Pointer(&kvrpcpb.GCRequest{
+		SafePoint: safePoint,
+	}))
 
 	resp, err := w.store.SendReq(bo, req, region, tikv.GCTimeout)
 	if err != nil {

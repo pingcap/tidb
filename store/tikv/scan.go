@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -185,25 +186,22 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			}
 		}
 
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdScan,
-			Scan: &pb.ScanRequest{
-				StartKey: s.nextStartKey,
-				EndKey:   reqEndKey,
-				Limit:    uint32(s.batchSize),
-				Version:  s.startTS(),
-				KeyOnly:  s.snapshot.keyOnly,
-			},
-			Context: pb.Context{
-				Priority:     s.snapshot.priority,
-				NotFillCache: s.snapshot.notFillCache,
-			},
+		sreq := &pb.ScanRequest{
+			StartKey: s.nextStartKey,
+			EndKey:   reqEndKey,
+			Limit:    uint32(s.batchSize),
+			Version:  s.startTS(),
+			KeyOnly:  s.snapshot.keyOnly,
 		}
 		if s.reverse {
-			req.Scan.StartKey = s.nextEndKey
-			req.Scan.EndKey = reqStartKey
-			req.Scan.Reverse = true
+			sreq.StartKey = s.nextEndKey
+			sreq.EndKey = reqStartKey
+			sreq.Reverse = true
 		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdScan, unsafe.Pointer(sreq), pb.Context{
+			Priority:     s.snapshot.priority,
+			NotFillCache: s.snapshot.notFillCache,
+		})
 		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)

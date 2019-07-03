@@ -19,6 +19,7 @@ import (
 	"math"
 	"runtime"
 	"time"
+	"unsafe"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -213,13 +214,10 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGet,
-		Get: &kvrpcpb.GetRequest{
-			Key:     key,
-			Version: ver.Ver,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdGet, unsafe.Pointer(&kvrpcpb.GetRequest{
+		Key:     key,
+		Version: ver.Ver,
+	}))
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)

@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -39,13 +40,11 @@ func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
 		zap.Binary("at", splitKey))
 	bo := NewBackoffer(context.Background(), splitRegionBackoff)
 	sender := NewRegionRequestSender(s.regionCache, s.client)
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdSplitRegion,
-		SplitRegion: &kvrpcpb.SplitRegionRequest{
-			SplitKey: splitKey,
-		},
-	}
-	req.Context.Priority = kvrpcpb.CommandPri_Normal
+	req := tikvrpc.NewRequest(tikvrpc.CmdSplitRegion, unsafe.Pointer(&kvrpcpb.SplitRegionRequest{
+		SplitKey: splitKey,
+	}), kvrpcpb.Context{
+		Priority: kvrpcpb.CommandPri_Normal,
+	})
 	for {
 		loc, err := s.regionCache.LocateKey(bo, splitKey)
 		if err != nil {

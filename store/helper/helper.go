@@ -20,6 +20,7 @@ import (
 	"math"
 	"net/http"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -50,12 +51,7 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 		return nil, errors.Trace(err)
 	}
 
-	tikvReq := &tikvrpc.Request{
-		Type: tikvrpc.CmdMvccGetByKey,
-		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
-			Key: encodedKey,
-		},
-	}
+	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, unsafe.Pointer(&kvrpcpb.MvccGetByKeyRequest{Key: encodedKey}))
 	kvResp, err := h.Store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
 	if err != nil {
 		logutil.BgLogger().Info("get MVCC by encoded key failed",

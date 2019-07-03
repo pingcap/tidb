@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -132,86 +133,208 @@ func (t CmdType) String() string {
 
 // Request wraps all kv/coprocessor requests.
 type Request struct {
+	Type CmdType
+	req  unsafe.Pointer
 	kvrpcpb.Context
-	Type               CmdType
-	Get                *kvrpcpb.GetRequest
-	Scan               *kvrpcpb.ScanRequest
-	Prewrite           *kvrpcpb.PrewriteRequest
-	Commit             *kvrpcpb.CommitRequest
-	Cleanup            *kvrpcpb.CleanupRequest
-	BatchGet           *kvrpcpb.BatchGetRequest
-	BatchRollback      *kvrpcpb.BatchRollbackRequest
-	ScanLock           *kvrpcpb.ScanLockRequest
-	ResolveLock        *kvrpcpb.ResolveLockRequest
-	GC                 *kvrpcpb.GCRequest
-	DeleteRange        *kvrpcpb.DeleteRangeRequest
-	RawGet             *kvrpcpb.RawGetRequest
-	RawBatchGet        *kvrpcpb.RawBatchGetRequest
-	RawPut             *kvrpcpb.RawPutRequest
-	RawBatchPut        *kvrpcpb.RawBatchPutRequest
-	RawDelete          *kvrpcpb.RawDeleteRequest
-	RawBatchDelete     *kvrpcpb.RawBatchDeleteRequest
-	RawDeleteRange     *kvrpcpb.RawDeleteRangeRequest
-	RawScan            *kvrpcpb.RawScanRequest
-	UnsafeDestroyRange *kvrpcpb.UnsafeDestroyRangeRequest
-	Cop                *coprocessor.Request
-	MvccGetByKey       *kvrpcpb.MvccGetByKeyRequest
-	MvccGetByStartTs   *kvrpcpb.MvccGetByStartTsRequest
-	SplitRegion        *kvrpcpb.SplitRegionRequest
+}
 
-	PessimisticLock     *kvrpcpb.PessimisticLockRequest
-	PessimisticRollback *kvrpcpb.PessimisticRollbackRequest
+// NewRequest returns new kv rpc request.
+func NewRequest(typ CmdType, pointer unsafe.Pointer, ctxs ...kvrpcpb.Context) *Request {
+	if len(ctxs) > 0 {
+		return &Request{
+			Type:    typ,
+			req:     pointer,
+			Context: ctxs[0],
+		}
+	}
+	return &Request{
+		Type: typ,
+		req:  pointer,
+	}
+}
 
-	DebugGetRegionProperties *debugpb.GetRegionPropertiesRequest
+// Get returns GetRequest in request.
+func (req *Request) Get() *kvrpcpb.GetRequest {
+	return (*kvrpcpb.GetRequest)(req.req)
+}
+
+// Scan returns ScanRequest in request.
+func (req *Request) Scan() *kvrpcpb.ScanRequest {
+	return (*kvrpcpb.ScanRequest)(req.req)
+}
+
+// Prewrite returns PrewriteRequest in request.
+func (req *Request) Prewrite() *kvrpcpb.PrewriteRequest {
+	return (*kvrpcpb.PrewriteRequest)(req.req)
+}
+
+// Commit returns CommitRequest in request.
+func (req *Request) Commit() *kvrpcpb.CommitRequest {
+	return (*kvrpcpb.CommitRequest)(req.req)
+}
+
+// Cleanup returns CleanupRequest in request.
+func (req *Request) Cleanup() *kvrpcpb.CleanupRequest {
+	return (*kvrpcpb.CleanupRequest)(req.req)
+}
+
+// BatchGet returns BatchGetRequest in request.
+func (req *Request) BatchGet() *kvrpcpb.BatchGetRequest {
+	return (*kvrpcpb.BatchGetRequest)(req.req)
+}
+
+// BatchRollback returns BatchRollbackRequest in request.
+func (req *Request) BatchRollback() *kvrpcpb.BatchRollbackRequest {
+	return (*kvrpcpb.BatchRollbackRequest)(req.req)
+}
+
+// ScanLock returns ScanLockRequest in request.
+func (req *Request) ScanLock() *kvrpcpb.ScanLockRequest {
+	return (*kvrpcpb.ScanLockRequest)(req.req)
+}
+
+// ResolveLock returns ResolveLockRequest in request.
+func (req *Request) ResolveLock() *kvrpcpb.ResolveLockRequest {
+	return (*kvrpcpb.ResolveLockRequest)(req.req)
+}
+
+// GC returns GCRequest in request.
+func (req *Request) GC() *kvrpcpb.GCRequest {
+	return (*kvrpcpb.GCRequest)(req.req)
+}
+
+// DeleteRange returns DeleteRangeRequest in request.
+func (req *Request) DeleteRange() *kvrpcpb.DeleteRangeRequest {
+	return (*kvrpcpb.DeleteRangeRequest)(req.req)
+}
+
+// RawGet returns RawGetRequest in request.
+func (req *Request) RawGet() *kvrpcpb.RawGetRequest {
+	return (*kvrpcpb.RawGetRequest)(req.req)
+}
+
+// RawBatchGet returns RawBatchGetRequest in request.
+func (req *Request) RawBatchGet() *kvrpcpb.RawBatchGetRequest {
+	return (*kvrpcpb.RawBatchGetRequest)(req.req)
+}
+
+// RawPut returns RawPutRequest in request.
+func (req *Request) RawPut() *kvrpcpb.RawPutRequest {
+	return (*kvrpcpb.RawPutRequest)(req.req)
+}
+
+// RawBatchPut returns RawBatchPutRequest in request.
+func (req *Request) RawBatchPut() *kvrpcpb.RawBatchPutRequest {
+	return (*kvrpcpb.RawBatchPutRequest)(req.req)
+}
+
+// RawDelete returns PrewriteRequest in request.
+func (req *Request) RawDelete() *kvrpcpb.RawDeleteRequest {
+	return (*kvrpcpb.RawDeleteRequest)(req.req)
+}
+
+// RawBatchDelete returns RawBatchDeleteRequest in request.
+func (req *Request) RawBatchDelete() *kvrpcpb.RawBatchDeleteRequest {
+	return (*kvrpcpb.RawBatchDeleteRequest)(req.req)
+}
+
+// RawDeleteRange returns RawDeleteRangeRequest in request.
+func (req *Request) RawDeleteRange() *kvrpcpb.RawDeleteRangeRequest {
+	return (*kvrpcpb.RawDeleteRangeRequest)(req.req)
+}
+
+// RawScan returns RawScanRequest in request.
+func (req *Request) RawScan() *kvrpcpb.RawScanRequest {
+	return (*kvrpcpb.RawScanRequest)(req.req)
+}
+
+// UnsafeDestroyRange returns UnsafeDestroyRangeRequest in request.
+func (req *Request) UnsafeDestroyRange() *kvrpcpb.UnsafeDestroyRangeRequest {
+	return (*kvrpcpb.UnsafeDestroyRangeRequest)(req.req)
+}
+
+// Cop returns coprocessor request in request.
+func (req *Request) Cop() *coprocessor.Request {
+	return (*coprocessor.Request)(req.req)
+}
+
+// MvccGetByKey returns MvccGetByKeyRequest in request.
+func (req *Request) MvccGetByKey() *kvrpcpb.MvccGetByKeyRequest {
+	return (*kvrpcpb.MvccGetByKeyRequest)(req.req)
+}
+
+// MvccGetByStartTs returns MvccGetByStartTsRequest in request.
+func (req *Request) MvccGetByStartTs() *kvrpcpb.MvccGetByStartTsRequest {
+	return (*kvrpcpb.MvccGetByStartTsRequest)(req.req)
+}
+
+// SplitRegion returns SplitRegionRequest in request.
+func (req *Request) SplitRegion() *kvrpcpb.SplitRegionRequest {
+	return (*kvrpcpb.SplitRegionRequest)(req.req)
+}
+
+// PessimisticLock returns PessimisticLockRequest in request.
+func (req *Request) PessimisticLock() *kvrpcpb.PessimisticLockRequest {
+	return (*kvrpcpb.PessimisticLockRequest)(req.req)
+}
+
+// PessimisticRollback returns PessimisticRollbackRequest in request.
+func (req *Request) PessimisticRollback() *kvrpcpb.PessimisticRollbackRequest {
+	return (*kvrpcpb.PessimisticRollbackRequest)(req.req)
+}
+
+// DebugGetRegionProperties returns GetRegionPropertiesRequest in request.
+func (req *Request) DebugGetRegionProperties() *debugpb.GetRegionPropertiesRequest {
+	return (*debugpb.GetRegionPropertiesRequest)(req.req)
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
 func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Request {
 	switch req.Type {
 	case CmdGet:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Get{Get: req.Get}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Get{Get: req.Get()}}
 	case CmdScan:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Scan{Scan: req.Scan}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Scan{Scan: req.Scan()}}
 	case CmdPrewrite:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Prewrite{Prewrite: req.Prewrite}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Prewrite{Prewrite: req.Prewrite()}}
 	case CmdCommit:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Commit{Commit: req.Commit}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Commit{Commit: req.Commit()}}
 	case CmdCleanup:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Cleanup{Cleanup: req.Cleanup}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Cleanup{Cleanup: req.Cleanup()}}
 	case CmdBatchGet:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_BatchGet{BatchGet: req.BatchGet}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_BatchGet{BatchGet: req.BatchGet()}}
 	case CmdBatchRollback:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_BatchRollback{BatchRollback: req.BatchRollback}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_BatchRollback{BatchRollback: req.BatchRollback()}}
 	case CmdScanLock:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_ScanLock{ScanLock: req.ScanLock}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_ScanLock{ScanLock: req.ScanLock()}}
 	case CmdResolveLock:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_ResolveLock{ResolveLock: req.ResolveLock}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_ResolveLock{ResolveLock: req.ResolveLock()}}
 	case CmdGC:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_GC{GC: req.GC}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_GC{GC: req.GC()}}
 	case CmdDeleteRange:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_DeleteRange{DeleteRange: req.DeleteRange}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_DeleteRange{DeleteRange: req.DeleteRange()}}
 	case CmdRawGet:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawGet{RawGet: req.RawGet}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawGet{RawGet: req.RawGet()}}
 	case CmdRawBatchGet:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawBatchGet{RawBatchGet: req.RawBatchGet}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawBatchGet{RawBatchGet: req.RawBatchGet()}}
 	case CmdRawPut:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawPut{RawPut: req.RawPut}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawPut{RawPut: req.RawPut()}}
 	case CmdRawBatchPut:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawBatchPut{RawBatchPut: req.RawBatchPut}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawBatchPut{RawBatchPut: req.RawBatchPut()}}
 	case CmdRawDelete:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawDelete{RawDelete: req.RawDelete}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawDelete{RawDelete: req.RawDelete()}}
 	case CmdRawBatchDelete:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawBatchDelete{RawBatchDelete: req.RawBatchDelete}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawBatchDelete{RawBatchDelete: req.RawBatchDelete()}}
 	case CmdRawDeleteRange:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawDeleteRange{RawDeleteRange: req.RawDeleteRange}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawDeleteRange{RawDeleteRange: req.RawDeleteRange()}}
 	case CmdRawScan:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawScan{RawScan: req.RawScan}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawScan{RawScan: req.RawScan()}}
 	case CmdCop:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Coprocessor{Coprocessor: req.Cop}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Coprocessor{Coprocessor: req.Cop()}}
 	case CmdPessimisticLock:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticLock{PessimisticLock: req.PessimisticLock}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticLock{PessimisticLock: req.PessimisticLock()}}
 	case CmdPessimisticRollback:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticRollback{PessimisticRollback: req.PessimisticRollback}}
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticRollback{PessimisticRollback: req.PessimisticRollback()}}
 	}
 	return nil
 }
@@ -330,59 +453,59 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 
 	switch req.Type {
 	case CmdGet:
-		req.Get.Context = ctx
+		req.Get().Context = ctx
 	case CmdScan:
-		req.Scan.Context = ctx
+		req.Scan().Context = ctx
 	case CmdPrewrite:
-		req.Prewrite.Context = ctx
+		req.Prewrite().Context = ctx
 	case CmdPessimisticLock:
-		req.PessimisticLock.Context = ctx
+		req.PessimisticLock().Context = ctx
 	case CmdPessimisticRollback:
-		req.PessimisticRollback.Context = ctx
+		req.PessimisticRollback().Context = ctx
 	case CmdCommit:
-		req.Commit.Context = ctx
+		req.Commit().Context = ctx
 	case CmdCleanup:
-		req.Cleanup.Context = ctx
+		req.Cleanup().Context = ctx
 	case CmdBatchGet:
-		req.BatchGet.Context = ctx
+		req.BatchGet().Context = ctx
 	case CmdBatchRollback:
-		req.BatchRollback.Context = ctx
+		req.BatchRollback().Context = ctx
 	case CmdScanLock:
-		req.ScanLock.Context = ctx
+		req.ScanLock().Context = ctx
 	case CmdResolveLock:
-		req.ResolveLock.Context = ctx
+		req.ResolveLock().Context = ctx
 	case CmdGC:
-		req.GC.Context = ctx
+		req.GC().Context = ctx
 	case CmdDeleteRange:
-		req.DeleteRange.Context = ctx
+		req.DeleteRange().Context = ctx
 	case CmdRawGet:
-		req.RawGet.Context = ctx
+		req.RawGet().Context = ctx
 	case CmdRawBatchGet:
-		req.RawBatchGet.Context = ctx
+		req.RawBatchGet().Context = ctx
 	case CmdRawPut:
-		req.RawPut.Context = ctx
+		req.RawPut().Context = ctx
 	case CmdRawBatchPut:
-		req.RawBatchPut.Context = ctx
+		req.RawBatchPut().Context = ctx
 	case CmdRawDelete:
-		req.RawDelete.Context = ctx
+		req.RawDelete().Context = ctx
 	case CmdRawBatchDelete:
-		req.RawBatchDelete.Context = ctx
+		req.RawBatchDelete().Context = ctx
 	case CmdRawDeleteRange:
-		req.RawDeleteRange.Context = ctx
+		req.RawDeleteRange().Context = ctx
 	case CmdRawScan:
-		req.RawScan.Context = ctx
+		req.RawScan().Context = ctx
 	case CmdUnsafeDestroyRange:
-		req.UnsafeDestroyRange.Context = ctx
+		req.UnsafeDestroyRange().Context = ctx
 	case CmdCop:
-		req.Cop.Context = ctx
+		req.Cop().Context = ctx
 	case CmdCopStream:
-		req.Cop.Context = ctx
+		req.Cop().Context = ctx
 	case CmdMvccGetByKey:
-		req.MvccGetByKey.Context = ctx
+		req.MvccGetByKey().Context = ctx
 	case CmdMvccGetByStartTs:
-		req.MvccGetByStartTs.Context = ctx
+		req.MvccGetByStartTs().Context = ctx
 	case CmdSplitRegion:
-		req.SplitRegion.Context = ctx
+		req.SplitRegion().Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -584,63 +707,63 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 	var err error
 	switch req.Type {
 	case CmdGet:
-		resp.Get, err = client.KvGet(ctx, req.Get)
+		resp.Get, err = client.KvGet(ctx, req.Get())
 	case CmdScan:
-		resp.Scan, err = client.KvScan(ctx, req.Scan)
+		resp.Scan, err = client.KvScan(ctx, req.Scan())
 	case CmdPrewrite:
-		resp.Prewrite, err = client.KvPrewrite(ctx, req.Prewrite)
+		resp.Prewrite, err = client.KvPrewrite(ctx, req.Prewrite())
 	case CmdPessimisticLock:
-		resp.PessimisticLock, err = client.KvPessimisticLock(ctx, req.PessimisticLock)
+		resp.PessimisticLock, err = client.KvPessimisticLock(ctx, req.PessimisticLock())
 	case CmdPessimisticRollback:
-		resp.PessimisticRollback, err = client.KVPessimisticRollback(ctx, req.PessimisticRollback)
+		resp.PessimisticRollback, err = client.KVPessimisticRollback(ctx, req.PessimisticRollback())
 	case CmdCommit:
-		resp.Commit, err = client.KvCommit(ctx, req.Commit)
+		resp.Commit, err = client.KvCommit(ctx, req.Commit())
 	case CmdCleanup:
-		resp.Cleanup, err = client.KvCleanup(ctx, req.Cleanup)
+		resp.Cleanup, err = client.KvCleanup(ctx, req.Cleanup())
 	case CmdBatchGet:
-		resp.BatchGet, err = client.KvBatchGet(ctx, req.BatchGet)
+		resp.BatchGet, err = client.KvBatchGet(ctx, req.BatchGet())
 	case CmdBatchRollback:
-		resp.BatchRollback, err = client.KvBatchRollback(ctx, req.BatchRollback)
+		resp.BatchRollback, err = client.KvBatchRollback(ctx, req.BatchRollback())
 	case CmdScanLock:
-		resp.ScanLock, err = client.KvScanLock(ctx, req.ScanLock)
+		resp.ScanLock, err = client.KvScanLock(ctx, req.ScanLock())
 	case CmdResolveLock:
-		resp.ResolveLock, err = client.KvResolveLock(ctx, req.ResolveLock)
+		resp.ResolveLock, err = client.KvResolveLock(ctx, req.ResolveLock())
 	case CmdGC:
-		resp.GC, err = client.KvGC(ctx, req.GC)
+		resp.GC, err = client.KvGC(ctx, req.GC())
 	case CmdDeleteRange:
-		resp.DeleteRange, err = client.KvDeleteRange(ctx, req.DeleteRange)
+		resp.DeleteRange, err = client.KvDeleteRange(ctx, req.DeleteRange())
 	case CmdRawGet:
-		resp.RawGet, err = client.RawGet(ctx, req.RawGet)
+		resp.RawGet, err = client.RawGet(ctx, req.RawGet())
 	case CmdRawBatchGet:
-		resp.RawBatchGet, err = client.RawBatchGet(ctx, req.RawBatchGet)
+		resp.RawBatchGet, err = client.RawBatchGet(ctx, req.RawBatchGet())
 	case CmdRawPut:
-		resp.RawPut, err = client.RawPut(ctx, req.RawPut)
+		resp.RawPut, err = client.RawPut(ctx, req.RawPut())
 	case CmdRawBatchPut:
-		resp.RawBatchPut, err = client.RawBatchPut(ctx, req.RawBatchPut)
+		resp.RawBatchPut, err = client.RawBatchPut(ctx, req.RawBatchPut())
 	case CmdRawDelete:
-		resp.RawDelete, err = client.RawDelete(ctx, req.RawDelete)
+		resp.RawDelete, err = client.RawDelete(ctx, req.RawDelete())
 	case CmdRawBatchDelete:
-		resp.RawBatchDelete, err = client.RawBatchDelete(ctx, req.RawBatchDelete)
+		resp.RawBatchDelete, err = client.RawBatchDelete(ctx, req.RawBatchDelete())
 	case CmdRawDeleteRange:
-		resp.RawDeleteRange, err = client.RawDeleteRange(ctx, req.RawDeleteRange)
+		resp.RawDeleteRange, err = client.RawDeleteRange(ctx, req.RawDeleteRange())
 	case CmdRawScan:
-		resp.RawScan, err = client.RawScan(ctx, req.RawScan)
+		resp.RawScan, err = client.RawScan(ctx, req.RawScan())
 	case CmdUnsafeDestroyRange:
-		resp.UnsafeDestroyRange, err = client.UnsafeDestroyRange(ctx, req.UnsafeDestroyRange)
+		resp.UnsafeDestroyRange, err = client.UnsafeDestroyRange(ctx, req.UnsafeDestroyRange())
 	case CmdCop:
-		resp.Cop, err = client.Coprocessor(ctx, req.Cop)
+		resp.Cop, err = client.Coprocessor(ctx, req.Cop())
 	case CmdCopStream:
 		var streamClient tikvpb.Tikv_CoprocessorStreamClient
-		streamClient, err = client.CoprocessorStream(ctx, req.Cop)
+		streamClient, err = client.CoprocessorStream(ctx, req.Cop())
 		resp.CopStream = &CopStreamResponse{
 			Tikv_CoprocessorStreamClient: streamClient,
 		}
 	case CmdMvccGetByKey:
-		resp.MvccGetByKey, err = client.MvccGetByKey(ctx, req.MvccGetByKey)
+		resp.MvccGetByKey, err = client.MvccGetByKey(ctx, req.MvccGetByKey())
 	case CmdMvccGetByStartTs:
-		resp.MvccGetByStartTS, err = client.MvccGetByStartTs(ctx, req.MvccGetByStartTs)
+		resp.MvccGetByStartTS, err = client.MvccGetByStartTs(ctx, req.MvccGetByStartTs())
 	case CmdSplitRegion:
-		resp.SplitRegion, err = client.SplitRegion(ctx, req.SplitRegion)
+		resp.SplitRegion, err = client.SplitRegion(ctx, req.SplitRegion())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
@@ -657,7 +780,7 @@ func CallDebugRPC(ctx context.Context, client debugpb.DebugClient, req *Request)
 	var err error
 	switch req.Type {
 	case CmdDebugGetRegionProperties:
-		resp.DebugGetRegionProperties, err = client.GetRegionProperties(ctx, req.DebugGetRegionProperties)
+		resp.DebugGetRegionProperties, err = client.GetRegionProperties(ctx, req.DebugGetRegionProperties())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}

@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
@@ -152,12 +153,9 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 			return nil, errors.Trace(err)
 		}
 
-		tikvReq := &tikvrpc.Request{
-			Type: tikvrpc.CmdMvccGetByStartTs,
-			MvccGetByStartTs: &kvrpcpb.MvccGetByStartTsRequest{
-				StartTs: startTS,
-			},
-		}
+		tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByStartTs, unsafe.Pointer(&kvrpcpb.MvccGetByStartTsRequest{
+			StartTs: startTS,
+		}))
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := t.Store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
 		if err != nil {

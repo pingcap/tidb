@@ -24,6 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -612,12 +613,9 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		if !ok {
 			return
 		}
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdDebugGetRegionProperties,
-			DebugGetRegionProperties: &debugpb.GetRegionPropertiesRequest{
-				RegionId: loc.Region.GetID(),
-			},
-		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdDebugGetRegionProperties, unsafe.Pointer(&debugpb.GetRegionPropertiesRequest{
+			RegionId: loc.Region.GetID(),
+		}))
 		var resp *tikvrpc.Response
 		var rpcCtx *tikv.RPCContext
 		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region)
