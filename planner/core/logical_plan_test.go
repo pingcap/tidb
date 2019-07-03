@@ -2264,6 +2264,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
 		{
+			sql:    "SELECT NTH_VALUE(a, 1.0) OVER() FROM t",
+			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
 			sql:    "select nth_value(a, 0) over() from t",
 			result: "[planner:1210]Incorrect arguments to nth_value",
 		},

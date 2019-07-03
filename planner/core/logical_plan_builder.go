@@ -3130,7 +3130,7 @@ func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupedFuncs map[*ast.
 		for _, windowFunc := range funcs {
 			desc := aggregation.NewWindowFuncDesc(b.ctx, windowFunc.F, args[preArgs:preArgs+len(windowFunc.Args)])
 			if desc == nil {
-				return nil, nil, ErrWrongArguments.GenWithStackByArgs(windowFunc.F)
+				return nil, nil, ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFunc.F))
 			}
 			preArgs += len(windowFunc.Args)
 			desc.WrapCastForAggArgs(b.ctx)
