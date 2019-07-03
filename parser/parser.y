@@ -744,6 +744,7 @@ import (
 	FieldAsName			"Field alias name"
 	FieldAsNameOpt			"Field alias name opt"
 	FieldList			"field expression list"
+	FieldTerminator			"Field terminator"
 	FlushOption			"Flush option"
 	PluginNameList			"Plugin Name List"
 	TableRefsClause			"Table references clause"
@@ -8855,16 +8856,16 @@ FieldItemList:
 	}
 
 FieldItem:
-	"TERMINATED" "BY" stringLit
+	"TERMINATED" "BY" FieldTerminator
 	{
 		$$ = &ast.FieldItem{
 			Type:    ast.Terminated,
-			Value:   $3,
+			Value:   $3.(string),
 		}
 	}
-|	"OPTIONALLY" "ENCLOSED" "BY" stringLit
+|	"OPTIONALLY" "ENCLOSED" "BY" FieldTerminator
 	{
-		str := $4
+		str := $4.(string)
 		if str != "\\" && len(str) > 1 {
 			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
@@ -8874,9 +8875,9 @@ FieldItem:
 			Value:   str,
 		}
 	}
-|	"ENCLOSED" "BY" stringLit
+|	"ENCLOSED" "BY" FieldTerminator
 	{
-		str := $3
+		str := $3.(string)
 		if str != "\\" && len(str) > 1 {
 			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
@@ -8886,9 +8887,9 @@ FieldItem:
 			Value:   str,
 		}
 	}
-|	"ESCAPED" "BY" stringLit
+|	"ESCAPED" "BY" FieldTerminator
 	{
-		str := $3
+		str := $3.(string)
 		if str != "\\" && len(str) > 1 {
 			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
@@ -8897,6 +8898,20 @@ FieldItem:
 			Type:    ast.Escaped,
 			Value:   str,
 		}
+	}
+
+FieldTerminator:
+	stringLit
+	{
+		$$ = $1
+	}
+|	hexLit
+	{
+		$$ = $1.(ast.BinaryLiteral).ToString()
+	}
+|	bitLit
+	{
+		$$ = $1.(ast.BinaryLiteral).ToString()
 	}
 
 Lines:

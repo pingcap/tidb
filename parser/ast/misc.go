@@ -2030,6 +2030,10 @@ func (n *TableOptimizerHint) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type BinaryLiteral interface {
+	ToString() string
+}
+
 // NewDecimal creates a types.Decimal value, it's provided by parser driver.
 var NewDecimal func(string) (interface{}, error)
 
