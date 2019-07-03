@@ -572,6 +572,11 @@ func newRPCClient(security config.Security) *rpcClient {
 	}
 }
 
+// NewTestRPCClient is for some external tests.
+func NewTestRPCClient() Client {
+	return newRPCClient(config.Security{})
+}
+
 func (c *rpcClient) getConnArray(addr string) (*connArray, error) {
 	c.RLock()
 	if c.isClosed {
