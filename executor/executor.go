@@ -1259,6 +1259,15 @@ func (e *UnionExec) Close() error {
 	return e.baseExecutor.Close()
 }
 
+var testingOOMAction uint32
+
+func getOOMAction() string {
+	if atomic.LoadUint32(&testingOOMAction) == 1 {
+		return config.OOMActionCancel
+	}
+	return config.GetGlobalConfig().OOMAction
+}
+
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
@@ -1267,7 +1276,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		TimeZone:   vars.Location(),
 		MemTracker: memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
 	}
-	switch config.GetGlobalConfig().OOMAction {
+	switch getOOMAction() {
 	case config.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)

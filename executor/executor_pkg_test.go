@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -234,4 +235,8 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 	for i := 0; i < len(got); i++ {
 		c.Assert(string(got[i].str), Equals, expect[i])
 	}
+}
+
+func SetOOMActionForTest(v uint32) {
+	atomic.StoreUint32(&testingOOMAction, v)
 }
