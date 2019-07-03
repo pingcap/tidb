@@ -292,6 +292,11 @@ func (h *Handle) Get() InfoSchema {
 	return schema
 }
 
+// IsValid uses to check whether handle value is valid.
+func (h *Handle) IsValid() bool {
+	return h.value.Load() != nil
+}
+
 // EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
 func (h *Handle) EmptyClone() *Handle {
 	newHandle := &Handle{
