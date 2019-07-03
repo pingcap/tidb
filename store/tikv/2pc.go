@@ -538,19 +538,6 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			if !c.isPessimistic && c.lockTTL < lock.TTL && lock.TTL >= uint64(config.MinPessimisticTTL/time.Millisecond) {
-				// An optimistic prewrite meets a pessimistic or large transaction lock.
-				// If we wait for the lock, other written optimistic locks would block reads for long time.
-				// And it is very unlikely this transaction would succeed after wait for the long TTL lock.
-				// Return write conflict error to cleanup locks.
-				return newWriteConflictError(&pb.WriteConflict{
-					StartTs:          c.startTS,
-					ConflictTs:       lock.TxnID,
-					ConflictCommitTs: 0,
-					Key:              lock.Key,
-					Primary:          lock.Primary,
-				})
-			}
 			logutil.Logger(context.Background()).Debug("prewrite encounters lock",
 				zap.Uint64("conn", c.connID),
 				zap.Stringer("lock", lock))
