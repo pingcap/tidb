@@ -56,7 +56,7 @@ func (s *testMySQLConstSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 		session.SetSchemaLease(0)
-		session.SetStatsLease(0)
+		session.DisableStats4Test()
 	}
 	var err error
 	s.dom, err = session.BootstrapSession(s.store)
