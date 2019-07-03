@@ -1255,6 +1255,8 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 		e.result.AppendString(1, regions[i].start)
 		e.result.AppendString(2, regions[i].end)
 		e.result.AppendUint64(3, regions[i].leaderID)
+		e.result.AppendUint64(4, regions[i].storeID)
+
 		peers := ""
 		for i, peer := range regions[i].region.Peers {
 			if i > 0 {
@@ -1262,11 +1264,11 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 			}
 			peers += strconv.FormatUint(peer.Id, 10)
 		}
-		e.result.AppendString(4, peers)
+		e.result.AppendString(5, peers)
 		if regions[i].scattering {
-			e.result.AppendInt64(5, 1)
+			e.result.AppendInt64(6, 1)
 		} else {
-			e.result.AppendInt64(5, 0)
+			e.result.AppendInt64(6, 0)
 		}
 	}
 }

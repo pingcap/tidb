@@ -362,6 +362,7 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 type regionMeta struct {
 	region     *metapb.Region
 	leaderID   uint64
+	storeID    uint64 // storeID is the store ID of the leader region.
 	start      string
 	end        string
 	scattering bool
@@ -512,6 +513,7 @@ func getRegionMeta(regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct
 		regions = append(regions, regionMeta{
 			region:   r.GetMeta(),
 			leaderID: r.GetLeaderID(),
+			storeID:  r.GetLeaderStoreID(),
 		})
 	}
 	decodeRegionsKey(regions, tablePrefix, recordPrefix, indexPrefix, physicalTableID, indexID)

@@ -4011,7 +4011,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	rows := re.Rows()
 	// Table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 4)
-	c.Assert(len(rows[0]), Equals, 6)
+	c.Assert(len(rows[0]), Equals, 7)
 	tbl1 := testGetTableByName(c, tk.Se, "test", "t_regions1")
 	tbl := testGetTableByName(c, tk.Se, "test", "t_regions")
 	// Check the region start key.
@@ -4026,7 +4026,6 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 4)
-	c.Assert(len(rows[0]), Equals, 6)
 	// Check the region start key.
 	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_i_1_", tbl.Meta().ID))
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
@@ -4037,7 +4036,6 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 7)
-	c.Assert(len(rows[0]), Equals, 6)
 	// Check the region start key.
 	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
@@ -4058,7 +4056,6 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	rows = re.Rows()
 	// Table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 4)
-	c.Assert(len(rows[0]), Equals, 6)
 	tbl = testGetTableByName(c, tk.Se, "test", "t_regions")
 	// Check the region start key.
 	c.Assert(rows[0][1], Matches, "t_.*")
@@ -4072,7 +4069,6 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 4)
-	c.Assert(len(rows[0]), Equals, 6)
 	// Check the region start key.
 	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_i_1_", tbl.Meta().ID))
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
@@ -4106,7 +4102,6 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {

@@ -883,6 +883,15 @@ func (r *Region) GetLeaderID() uint64 {
 	return r.meta.Peers[int(r.getStore().workStoreIdx)].Id
 }
 
+// GetLeaderStoreID returns the store ID of the leader region.
+func (r *Region) GetLeaderStoreID() uint64 {
+	store := r.getStore()
+	if int(store.workStoreIdx) >= len(r.meta.Peers) {
+		return 0
+	}
+	return r.meta.Peers[int(r.getStore().workStoreIdx)].StoreId
+}
+
 // WorkStorePeer returns current work store with work peer.
 func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer, idx int) {
 	idx = int(rs.workStoreIdx)
