@@ -224,7 +224,7 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	c.Assert(err, IsNil)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	cmdGetResp := resp.Get
+	cmdGetResp := resp.Get()
 	c.Assert(cmdGetResp, NotNil)
 	keyErr := cmdGetResp.GetError()
 	c.Assert(keyErr, NotNil)

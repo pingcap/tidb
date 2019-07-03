@@ -220,8 +220,8 @@ type checkRequestClient struct {
 func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
-		if resp.Get != nil {
-			resp.Get.Error = &pb.KeyError{
+		if resp.Get() != nil {
+			resp.Get().Error = &pb.KeyError{
 				Abort: "request check error",
 			}
 		}

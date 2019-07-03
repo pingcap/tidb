@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"testing"
 	"time"
+	"unsafe"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -403,16 +404,16 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		sendReqCh <- SentReq{req, addr}
 		resp := &tikvrpc.Response{
-			Type:               tikvrpc.CmdUnsafeDestroyRange,
-			UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeResponse{},
+			Type: tikvrpc.CmdUnsafeDestroyRange,
+			Resp: unsafe.Pointer(&kvrpcpb.UnsafeDestroyRangeResponse{}),
 		}
 		if bytes.Equal(req.UnsafeDestroyRange.GetStartKey(), failKey) && addr == failStore.GetAddress() {
 			if failType == failRPCErr {
 				return nil, errors.New("error")
 			} else if failType == failNilResp {
-				resp.UnsafeDestroyRange = nil
+				resp.Resp = unsafe.Pointer(nil)
 			} else if failType == failErrResp {
-				resp.UnsafeDestroyRange.Error = "error"
+				resp.UnsafeDestroyRange().Error = "error"
 			} else {
 				panic("unreachable")
 			}

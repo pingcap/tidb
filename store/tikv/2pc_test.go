@@ -248,8 +248,8 @@ func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	c.Assert(err, IsNil)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Get, NotNil)
-	keyErr := resp.Get.GetError()
+	c.Assert(resp.Get(), NotNil)
+	keyErr := resp.Get().GetError()
 	return keyErr.GetLocked() != nil
 }
 

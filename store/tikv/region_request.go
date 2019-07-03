@@ -17,6 +17,7 @@ import (
 	"context"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -83,14 +84,14 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 			if req.Type == tikvrpc.CmdGC {
 				failpoint.Return(&tikvrpc.Response{
 					Type: tikvrpc.CmdGC,
-					GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+					Resp: unsafe.Pointer(&kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}}),
 				}, nil, nil)
 			}
 		case "GCServerIsBusy":
 			if req.Type == tikvrpc.CmdGC {
 				failpoint.Return(&tikvrpc.Response{
 					Type: tikvrpc.CmdGC,
-					GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
+					Resp: unsafe.Pointer(&kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}}),
 				}, nil, nil)
 			}
 		}

@@ -128,7 +128,7 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (in
 			}
 			continue
 		}
-		deleteRangeResp := resp.DeleteRange
+		deleteRangeResp := resp.DeleteRange()
 		if deleteRangeResp == nil {
 			return completedRegions, errors.Trace(ErrBodyMissing)
 		}

@@ -71,11 +71,12 @@ func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
 			}
 			continue
 		}
+		splitRegion := res.SplitRegion()
 		logutil.BgLogger().Info("split region complete",
 			zap.Binary("at", splitKey),
-			zap.Stringer("new region left", res.SplitRegion.GetLeft()),
-			zap.Stringer("new region right", res.SplitRegion.GetRight()))
-		return res.SplitRegion.GetLeft(), nil
+			zap.Stringer("new region left", splitRegion.GetLeft()),
+			zap.Stringer("new region right", splitRegion.GetRight()))
+		return splitRegion.GetLeft(), nil
 	}
 }
 

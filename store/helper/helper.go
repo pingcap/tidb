@@ -67,7 +67,7 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
-	return kvResp.MvccGetByKey, nil
+	return kvResp.MvccGetByKey(), nil
 }
 
 // StoreHotRegionInfos records all hog region stores.

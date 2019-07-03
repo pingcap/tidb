@@ -221,7 +221,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			}
 			continue
 		}
-		cmdScanResp := resp.Scan
+		cmdScanResp := resp.Scan()
 		if cmdScanResp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}

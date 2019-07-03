@@ -629,11 +629,11 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		if *err != nil {
 			return
 		}
-		if resp.DebugGetRegionProperties == nil || len(resp.DebugGetRegionProperties.Props) == 0 {
+		if resp.DebugGetRegionProperties() == nil || len(resp.DebugGetRegionProperties().Props) == 0 {
 			*needRebuild = true
 			return
 		}
-		for _, prop := range resp.DebugGetRegionProperties.Props {
+		for _, prop := range resp.DebugGetRegionProperties().Props {
 			if prop.Name == "mvcc.num_rows" {
 				var cnt uint64
 				cnt, *err = strconv.ParseUint(prop.Value, 10, 64)

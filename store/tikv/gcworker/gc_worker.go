@@ -680,10 +680,10 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 
 			resp, err1 := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.UnsafeDestroyRangeTimeout)
 			if err1 == nil {
-				if resp == nil || resp.UnsafeDestroyRange == nil {
+				if resp == nil || resp.UnsafeDestroyRange() == nil {
 					err1 = errors.Errorf("unsafe destroy range returns nil response from store %v", storeID)
 				} else {
-					errStr := resp.UnsafeDestroyRange.Error
+					errStr := resp.UnsafeDestroyRange().Error
 					if len(errStr) > 0 {
 						err1 = errors.Errorf("unsafe destroy range failed on store %v: %s", storeID, errStr)
 					}
@@ -862,7 +862,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 			}
 			continue
 		}
-		locksResp := resp.ScanLock
+		locksResp := resp.ScanLock()
 		if locksResp == nil {
 			return regions, errors.Trace(tikv.ErrBodyMissing)
 		}
@@ -1051,7 +1051,7 @@ func (w *gcTaskWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, regio
 		return regionErr, nil
 	}
 
-	gcResp := resp.GC
+	gcResp := resp.GC()
 	if gcResp == nil {
 		return nil, errors.Trace(tikv.ErrBodyMissing)
 	}
