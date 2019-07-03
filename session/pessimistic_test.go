@@ -45,9 +45,6 @@ type testPessimisticSuite struct {
 
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	newConf := config.NewConfig()
-	newConf.PessimisticTxn.Enable = true
-	config.GetGlobalConfig()
 	config.GetGlobalConfig().PessimisticTxn.Enable = true
 	// Set it to 300ms for testing lock resolve.
 	tikv.PessimisticLockTTL = 300
