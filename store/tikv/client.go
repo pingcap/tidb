@@ -112,9 +112,7 @@ func (c *batchCommandsClient) isStopped() bool {
 
 // `failPendingRequests` must be called in locked contexts in order to avoid double closing channels.
 func (c *batchCommandsClient) failPendingRequests(err error) {
-	failpoint.Inject("panicInFailPendingRequests", func(_ failpoint.Value) {
-		panic("panic in fail pending requests")
-	})
+	failpoint.Inject("panicInFailPendingRequests", nil)
 	c.batched.Range(func(key, value interface{}) bool {
 		id, _ := key.(uint64)
 		entry, _ := value.(*batchCommandsEntry)

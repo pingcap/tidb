@@ -26,8 +26,12 @@ import (
 )
 
 func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/client/panicInFailPendingRequests", `return("0")`), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/client/gotErrorInRecvLoop", `return("0")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests", `panic`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop", `return("0")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests", `return("0")`), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop", `return("0")`), IsNil)
+	}()
 
 	port := startMockTikvService()
 	c.Assert(port > 0, IsTrue)

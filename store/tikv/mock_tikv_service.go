@@ -1,13 +1,10 @@
 package tikv
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"time"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/util/logutil"
@@ -15,138 +12,8 @@ import (
 	"google.golang.org/grpc"
 )
 
-type server struct{}
-
-func (s *server) KvGet(context.Context, *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvScan(context.Context, *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvPrewrite(context.Context, *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvPessimisticLock(context.Context, *kvrpcpb.PessimisticLockRequest) (*kvrpcpb.PessimisticLockResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KVPessimisticRollback(context.Context, *kvrpcpb.PessimisticRollbackRequest) (*kvrpcpb.PessimisticRollbackResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvCommit(context.Context, *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvImport(context.Context, *kvrpcpb.ImportRequest) (*kvrpcpb.ImportResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvCleanup(context.Context, *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvBatchGet(context.Context, *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvBatchRollback(context.Context, *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvScanLock(context.Context, *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvResolveLock(context.Context, *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvGC(context.Context, *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) KvDeleteRange(context.Context, *kvrpcpb.DeleteRangeRequest) (*kvrpcpb.DeleteRangeResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) RawGet(context.Context, *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) RawBatchGet(context.Context, *kvrpcpb.RawBatchGetRequest) (*kvrpcpb.RawBatchGetResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) RawPut(context.Context, *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) RawBatchPut(context.Context, *kvrpcpb.RawBatchPutRequest) (*kvrpcpb.RawBatchPutResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) RawDelete(context.Context, *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) RawBatchDelete(context.Context, *kvrpcpb.RawBatchDeleteRequest) (*kvrpcpb.RawBatchDeleteResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) RawScan(context.Context, *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) RawDeleteRange(context.Context, *kvrpcpb.RawDeleteRangeRequest) (*kvrpcpb.RawDeleteRangeResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) RawBatchScan(context.Context, *kvrpcpb.RawBatchScanRequest) (*kvrpcpb.RawBatchScanResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) UnsafeDestroyRange(context.Context, *kvrpcpb.UnsafeDestroyRangeRequest) (*kvrpcpb.UnsafeDestroyRangeResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) Coprocessor(context.Context, *coprocessor.Request) (*coprocessor.Response, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv_CoprocessorStreamServer) error {
-	return errors.New("unimplemented in the mock service")
-}
-
-func (s *server) Raft(tikvpb.Tikv_RaftServer) error {
-	return errors.New("unimplemented in the mock service")
-}
-
-func (s *server) BatchRaft(tikvpb.Tikv_BatchRaftServer) error {
-	return errors.New("unimplemented in the mock service")
-}
-
-func (s *server) Snapshot(tikvpb.Tikv_SnapshotServer) error {
-	return errors.New("unimplemented in the mock service")
-}
-
-func (s *server) SplitRegion(context.Context, *kvrpcpb.SplitRegionRequest) (*kvrpcpb.SplitRegionResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) ReadIndex(context.Context, *kvrpcpb.ReadIndexRequest) (*kvrpcpb.ReadIndexResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) MvccGetByKey(context.Context, *kvrpcpb.MvccGetByKeyRequest) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
-}
-
-func (s *server) MvccGetByStartTs(context.Context, *kvrpcpb.MvccGetByStartTsRequest) (*kvrpcpb.MvccGetByStartTsResponse, error) {
-	return nil, errors.New("unimplemented in the mock service")
+type server struct {
+	tikvpb.TikvServer
 }
 
 func (s *server) BatchCommands(ss tikvpb.Tikv_BatchCommandsServer) error {
