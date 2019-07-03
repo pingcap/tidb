@@ -792,13 +792,22 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	var db interface{}
+	if len(s.sessionVars.CurrentDB) > 0 {
+		db = s.sessionVars.CurrentDB
+	}
+
+	var info interface{}
+	if len(sql) > 0 {
+		info = sql
+	}
 	pi := util.ProcessInfo{
 		ID:      s.sessionVars.ConnectionID,
-		DB:      s.sessionVars.CurrentDB,
+		DB:      db,
 		Command: command,
 		Time:    t,
 		State:   s.Status(),
-		Info:    sql,
+		Info:    info,
 		StmtCtx: s.sessionVars.StmtCtx,
 
 		MaxExecutionTime: maxExecutionTime,
@@ -1416,6 +1425,7 @@ var builtinGlobalVariable = []string{
 	variable.MaxAllowedPacket,
 	variable.TimeZone,
 	variable.BlockEncryptionMode,
+	variable.MaxExecutionTime,
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,
