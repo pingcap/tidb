@@ -26,12 +26,12 @@ type ProcessInfo struct {
 	ID                        uint64
 	User                      string
 	Host                      string
-	DB                        string
+	DB                        interface{}
 	Command                   byte
 	Plan                      interface{}
 	Time                      time.Time
 	State                     uint16
-	Info                      string
+	Info                      interface{}
 	CurTxnStartTS             uint64
 	StmtCtx                   *stmtctx.StatementContext
 	StatsInfo                 func(interface{}) map[string]uint64
@@ -40,11 +40,13 @@ type ProcessInfo struct {
 
 // ToRow returns []interface{} for the row data of "show processlist" and "select * from infoschema.processlist".
 func (pi *ProcessInfo) ToRow(full bool) []interface{} {
-	var info string
-	if full {
-		info = pi.Info
-	} else {
-		info = fmt.Sprintf("%.100v", pi.Info)
+	var info interface{}
+	if pi.Info != nil {
+		if full {
+			info = pi.Info.(string)
+		} else {
+			info = fmt.Sprintf("%.100v", pi.Info.(string))
+		}
 	}
 	t := uint64(time.Since(pi.Time) / time.Second)
 	return []interface{}{
