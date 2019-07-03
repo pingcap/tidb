@@ -37,12 +37,14 @@ func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 
 // appendBindMeta addes the BindMeta to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *SessionHandle) appendBindMeta(hash string, meta *BindMeta) bool {
+func (h *SessionHandle) appendBindMeta(hash string, meta *BindMeta) {
 	// Make sure there is only one goroutine writes the cache.
-	removed := h.ch.removeStaleBindMetas(hash, meta, metrics.ScopeSession)
+	h.ch.removeStaleBindMetas(hash, meta, metrics.ScopeSession)
 	h.ch[hash] = append(h.ch[hash], meta)
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession).Add(float64(meta.size()))
-	return !removed
+	if meta.Status == Using {
+		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession).Inc()
+	}
 }
 
 func (h *SessionHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
@@ -66,12 +68,8 @@ func (h *SessionHandle) AddBindRecord(record *BindRecord) error {
 
 	// update the BindMeta to the cache.
 	hash, meta, err := h.newBindMeta(record)
-	if err != nil {
-		return err
-	}
-
-	if h.appendBindMeta(hash, meta) && record.Status == Using {
-		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession).Inc()
+	if err == nil {
+		h.appendBindMeta(hash, meta)
 	}
 	return err
 }
@@ -81,10 +79,6 @@ func (h *SessionHandle) DropBindRecord(record *BindRecord) {
 	meta := &BindMeta{BindRecord: record}
 	meta.Status = deleted
 	hash := parser.DigestHash(record.OriginalSQL)
-	matchRecord := h.GetBindRecord(record.OriginalSQL, record.Db)
-	if matchRecord != nil && matchRecord.Status == Using {
-		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession).Dec()
-	}
 	h.ch.removeDeletedBindMeta(hash, meta, metrics.ScopeSession)
 	h.appendBindMeta(hash, meta)
 }

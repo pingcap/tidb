@@ -167,9 +167,7 @@ func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 			return
 		}
 
-		if h.appendBindMeta(hash, meta) {
-			metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal).Inc()
-		}
+		h.appendBindMeta(hash, meta)
 		h.bindInfo.Unlock()
 	}()
 
@@ -223,9 +221,7 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 		}
 
 		hash, meta := newBindMetaWithoutAst(record)
-		if h.removeBindMeta(hash, meta) {
-			metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal).Dec()
-		}
+		h.removeBindMeta(hash, meta)
 	}()
 
 	txn, err1 := h.sctx.Context.Txn(true)
@@ -324,17 +320,17 @@ func newBindMetaWithoutAst(record *BindRecord) (hash string, meta *BindMeta) {
 
 // appendBindMeta addes the BindMeta to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *BindHandle) appendBindMeta(hash string, meta *BindMeta) bool {
+func (h *BindHandle) appendBindMeta(hash string, meta *BindMeta) {
 	newCache := h.bindInfo.Value.Load().(cache).copy()
-	removed := newCache.removeStaleBindMetas(hash, meta, metrics.ScopeGlobal)
+	newCache.removeStaleBindMetas(hash, meta, metrics.ScopeGlobal)
 	newCache[hash] = append(newCache[hash], meta)
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal).Add(float64(meta.size()))
+	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal).Inc()
 	h.bindInfo.Value.Store(newCache)
-	return !removed
 }
 
 // removeBindMeta removes the BindMeta from the cache.
-func (h *BindHandle) removeBindMeta(hash string, meta *BindMeta) bool {
+func (h *BindHandle) removeBindMeta(hash string, meta *BindMeta) {
 	h.bindInfo.Lock()
 	newCache := h.bindInfo.Value.Load().(cache).copy()
 	defer func() {
@@ -342,52 +338,51 @@ func (h *BindHandle) removeBindMeta(hash string, meta *BindMeta) bool {
 		h.bindInfo.Unlock()
 	}()
 
-	return newCache.removeDeletedBindMeta(hash, meta, metrics.ScopeGlobal)
+	newCache.removeDeletedBindMeta(hash, meta, metrics.ScopeGlobal)
 }
 
 // removeDeletedBindMeta removes all the BindMeta which originSQL and db are the same with the parameter's meta.
-func (c cache) removeDeletedBindMeta(hash string, meta *BindMeta, scope string) bool {
+func (c cache) removeDeletedBindMeta(hash string, meta *BindMeta, scope string) {
 	metas, ok := c[hash]
 	if !ok {
-		return false
+		return
 	}
 
-	var removed bool
 	for i := len(metas) - 1; i >= 0; i-- {
 		if metas[i].isSame(meta) {
 			metrics.BindMemoryUsage.WithLabelValues(scope).Sub(metas[i].size())
-			removed = true
+			if metas[i].Status == Using {
+				metrics.BindTotalGauge.WithLabelValues(scope).Dec()
+			}
 			metas = append(metas[:i], metas[i+1:]...)
 			if len(metas) == 0 {
 				delete(c, hash)
-				return removed
+				return
 			}
 		}
 	}
-	return removed
 }
 
 // removeStaleBindMetas removes all the stale BindMeta in the cache.
-func (c cache) removeStaleBindMetas(hash string, meta *BindMeta, scope string) bool {
+func (c cache) removeStaleBindMetas(hash string, meta *BindMeta, scope string) {
 	metas, ok := c[hash]
 	if !ok {
-		return false
+		return
 	}
 
-	// remove stale bindMetas.
-	var removed bool
 	for i := len(metas) - 1; i >= 0; i-- {
 		if metas[i].isStale(meta) {
 			metrics.BindMemoryUsage.WithLabelValues(scope).Sub(metas[i].size())
-			removed = true
+			if metas[i].Status == Using {
+				metrics.BindTotalGauge.WithLabelValues(scope).Sub(1)
+			}
 			metas = append(metas[:i], metas[i+1:]...)
 			if len(metas) == 0 {
 				delete(c, hash)
-				return removed
+				return
 			}
 		}
 	}
-	return removed
 }
 
 func (c cache) copy() cache {
