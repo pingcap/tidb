@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -3288,9 +3289,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	// Check whether the table was already locked by other.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
-		// TODO: replace const string "performance_schema" with xxx.LowerName.
-		// Currently use perfschema.LowerName will have import cycle problem.
-		if tb.Schema.L == infoschema.LowerName || tb.Schema.L == "performance_schema" || tb.Schema.L == mysql.SystemDB {
+		if util.IsMemOrSysDB(tb.Schema.L) {
 			if ctx.GetSessionVars().User != nil {
 				return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
 			}
@@ -3371,9 +3370,7 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 	cleanupTables := make([]model.TableLockTpInfo, 0, len(tables))
 	// Check whether the table was already locked by other.
 	for _, tb := range tables {
-		// TODO: replace const string "performance_schema" with xxx.LowerName.
-		// Currently use perfschema.LowerName will have import cycle problem.
-		if tb.Schema.L == infoschema.LowerName || tb.Schema.L == "performance_schema" || tb.Schema.L == mysql.SystemDB {
+		if util.IsMemOrSysDB(tb.Schema.L) {
 			if ctx.GetSessionVars().User != nil {
 				return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
 			}

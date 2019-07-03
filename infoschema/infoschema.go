@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 )
 
 var (
@@ -96,8 +97,8 @@ type InfoSchema interface {
 
 // Information Schema Name.
 const (
-	Name      = "INFORMATION_SCHEMA"
-	LowerName = "information_schema"
+	Name      = util.InformationSchemaName
+	LowerName = util.InformationSchemaLowerName
 )
 
 type sortedTables []table.Table

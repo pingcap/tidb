@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -130,4 +131,19 @@ func SyntaxWarn(err error) error {
 		return nil
 	}
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
+}
+
+const (
+	InformationSchemaName      = "INFORMATION_SCHEMA"
+	InformationSchemaLowerName = "information_schema"
+	PerformanceSchemaName      = "PERFORMANCE_SCHEMA"
+	PerformanceSchemaLowerName = "performance_schema"
+)
+
+func IsMemOrSysDB(dbLowerName string) bool {
+	switch dbLowerName {
+	case InformationSchemaLowerName, PerformanceSchemaLowerName, mysql.SystemDB:
+		return true
+	}
+	return false
 }
