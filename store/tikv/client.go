@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -83,6 +84,8 @@ type connArray struct {
 	idleNotify *uint32
 	idle       bool
 	idleDetect *time.Timer
+
+	pendingRequests prometheus.Gauge
 }
 
 type batchCommandsClient struct {
@@ -229,6 +232,7 @@ func newConnArray(maxSize uint, addr string, security config.Security, idleNotif
 
 func (a *connArray) Init(addr string, security config.Security) error {
 	a.target = addr
+	a.pendingRequests = metrics.TiKVPendingBatchRequests.WithLabelValues(a.target)
 
 	opt := grpc.WithInsecure()
 	if len(security.ClusterSSLCA) != 0 {
@@ -459,7 +463,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		requests = requests[:0]
 		requestIDs = requestIDs[:0]
 
-		metrics.TiKVPendingBatchRequests.WithLabelValues(a.target).Set(float64(len(a.batchCommandsCh)))
+		a.pendingRequests.Set(float64(len(a.batchCommandsCh)))
 		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests)
 
 		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
