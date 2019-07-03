@@ -132,7 +132,7 @@ func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
 }
 
 // Next implements the Executor Next interface.
-func (e *UpdateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("update.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -165,7 +165,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 }
 
 func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
-	fields := e.children[0].retTypes()
+	fields := retTypes(e.children[0])
 	schema := e.children[0].Schema()
 	colsInfo := make([]*table.Column, len(fields))
 	for id, cols := range schema.TblID2Handle {
@@ -178,10 +178,10 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 		}
 	}
 	globalRowIdx := 0
-	chk := e.children[0].newFirstChunk()
+	chk := newFirstChunk(e.children[0])
 	e.evalBuffer = chunk.MutRowFromTypes(fields)
 	for {
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return err
 		}

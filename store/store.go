@@ -14,7 +14,6 @@
 package store
 
 import (
-	"context"
 	"net/url"
 	"strings"
 
@@ -66,15 +65,15 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 
 	var s kv.Storage
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
-		logutil.Logger(context.Background()).Info("new store", zap.String("path", path))
+		logutil.BgLogger().Info("new store", zap.String("path", path))
 		s, err = d.Open(path)
 		return kv.IsTxnRetryableError(err), err
 	})
 
 	if err == nil {
-		logutil.Logger(context.Background()).Info("new store with retry success")
+		logutil.BgLogger().Info("new store with retry success")
 	} else {
-		logutil.Logger(context.Background()).Warn("new store with retry failed", zap.Error(err))
+		logutil.BgLogger().Warn("new store with retry failed", zap.Error(err))
 	}
 	return s, errors.Trace(err)
 }

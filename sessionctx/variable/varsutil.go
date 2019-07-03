@@ -424,6 +424,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case MaxExecutionTime:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case TiDBEnableTablePartition:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
@@ -438,6 +440,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, uint64(MinDDLReorgBatchSize), uint64(MaxDDLReorgBatchSize), vars)
 	case TiDBDDLErrorCountLimit:
 		return checkUInt64SystemVar(name, value, uint64(0), math.MaxInt64, vars)
+	case TiDBExpensiveQueryTimeThreshold:
+		return checkUInt64SystemVar(name, value, MinExpensiveQueryTimeThreshold, math.MaxInt64, vars)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
 		TiDBIndexLookupSize,
 		TiDBHashJoinConcurrency,
@@ -446,7 +450,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBDistSQLScanConcurrency,
 		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
 		TiDBBackoffLockFast, TiDBBackOffWeight,
-		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel, TiDBExpensiveQueryTimeThreshold:
+		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel:
 		v, err := strconv.Atoi(value)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
@@ -549,6 +553,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		if v < 0 || v >= 64 {
 			return value, errors.Errorf("tidb_join_order_algo_threshold(%d) cannot be smaller than 0 or larger than 63", v)
+		}
+	case TiDBWaitSplitRegionTimeout:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v <= 0 {
+			return value, errors.Errorf("tidb_wait_split_region_timeout(%d) cannot be smaller than 1", v)
 		}
 	}
 	return value, nil

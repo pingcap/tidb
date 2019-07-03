@@ -19,10 +19,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -38,22 +36,25 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		b.err = err
 		return nil
 	}
-	return &PointGetExecutor{
-		ctx:     b.ctx,
-		schema:  p.Schema(),
-		tblInfo: p.TblInfo,
-		idxInfo: p.IndexInfo,
-		idxVals: p.IndexValues,
-		handle:  p.Handle,
-		startTS: startTS,
+	e := &PointGetExecutor{
+		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
+		tblInfo:      p.TblInfo,
+		idxInfo:      p.IndexInfo,
+		idxVals:      p.IndexValues,
+		handle:       p.Handle,
+		startTS:      startTS,
+		lock:         p.Lock,
 	}
+	b.isSelectForUpdate = p.IsForUpdate
+	e.base().initCap = 1
+	e.base().maxChunkSize = 1
+	return e
 }
 
 // PointGetExecutor executes point select query.
 type PointGetExecutor struct {
-	ctx      sessionctx.Context
-	schema   *expression.Schema
-	tps      []*types.FieldType
+	baseExecutor
+
 	tblInfo  *model.TableInfo
 	handle   int64
 	idxInfo  *model.IndexInfo
@@ -61,6 +62,7 @@ type PointGetExecutor struct {
 	startTS  uint64
 	snapshot kv.Snapshot
 	done     bool
+	lock     bool
 }
 
 // Open implements the Executor interface.
@@ -74,14 +76,18 @@ func (e *PointGetExecutor) Close() error {
 }
 
 // Next implements the Executor interface.
-func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
 	}
 	e.done = true
+	snapshotTS := e.startTS
+	if e.lock {
+		snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	}
 	var err error
-	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
+	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
 	if err != nil {
 		return err
 	}
@@ -96,7 +102,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 			return err1
 		}
 		if len(handleVal) == 0 {
-			return nil
+			return e.lockKeyIfNeeded(ctx, idxKey)
 		}
 		e.handle, err1 = tables.DecodeHandle(handleVal)
 		if err1 != nil {
@@ -123,6 +129,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
 	}
+	err = e.lockKeyIfNeeded(ctx, key)
+	if err != nil {
+		return err
+	}
 	if len(val) == 0 {
 		if e.idxInfo != nil {
 			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
@@ -130,7 +140,18 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 		}
 		return nil
 	}
-	return e.decodeRowValToChunk(val, req.Chunk)
+	return e.decodeRowValToChunk(val, req)
+}
+
+func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
+	if e.lock {
+		txn, err := e.ctx.Txn(true)
+		if err != nil {
+			return err
+		}
+		return txn.LockKeys(ctx, e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS(), kv.Key(key))
+	}
+	return nil
 }
 
 func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
@@ -240,23 +261,4 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 		}
 	}
 	return nil
-}
-
-// Schema implements the Executor interface.
-func (e *PointGetExecutor) Schema() *expression.Schema {
-	return e.schema
-}
-
-func (e *PointGetExecutor) retTypes() []*types.FieldType {
-	if e.tps == nil {
-		e.tps = make([]*types.FieldType, e.schema.Len())
-		for i := range e.schema.Columns {
-			e.tps[i] = e.schema.Columns[i].RetType
-		}
-	}
-	return e.tps
-}
-
-func (e *PointGetExecutor) newFirstChunk() *chunk.Chunk {
-	return chunk.New(e.retTypes(), 1, 1)
 }

@@ -71,9 +71,6 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = uint32(0)
-
-	// ddlLogCtx uses for log.
-	ddlLogCtx = context.Background()
 )
 
 var (
@@ -114,6 +111,7 @@ var (
 	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
 	errReorgPanic               = terror.ClassDDL.New(codeReorgWorkerPanic, "reorg worker panic.")
 
+	errOnlyOnRangeListPartition = terror.ClassDDL.New(codeOnlyOnRangeListPartition, mysql.MySQLErrName[mysql.ErrOnlyOnRangeListPartition])
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
 	// errUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
@@ -198,7 +196,7 @@ var (
 	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.
 	ErrPartitionMgmtOnNonpartitioned = terror.ClassDDL.New(codePartitionMgmtOnNonpartitioned, "Partition management on a not partitioned table is not possible")
 	// ErrDropPartitionNonExistent returns error in list of partition.
-	ErrDropPartitionNonExistent = terror.ClassDDL.New(codeDropPartitionNonExistent, " Error in list of partitions to %s")
+	ErrDropPartitionNonExistent = terror.ClassDDL.New(codeDropPartitionNonExistent, "Error in list of partitions to %s")
 	// ErrSameNamePartition returns duplicate partition name.
 	ErrSameNamePartition = terror.ClassDDL.New(codeSameNamePartition, "Duplicate partition name %s")
 	// ErrRangeNotIncreasing returns values less than value must be strictly increasing for each partition.
@@ -244,8 +242,8 @@ type DDL interface {
 	RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
-		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
-	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr) error
+		columnNames []*ast.IndexColName, indexOption *ast.IndexOption, ifNotExists bool) error
+	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr, ifExists bool) error
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
 	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident, isAlterTable bool) error
@@ -263,7 +261,7 @@ type DDL interface {
 	// RegisterEventCh registers event channel for ddl.
 	RegisterEventCh(chan<- *util.Event)
 	// SchemaSyncer gets the schema syncer.
-	SchemaSyncer() SchemaSyncer
+	SchemaSyncer() util.SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -292,7 +290,7 @@ type ddlCtx struct {
 	uuid         string
 	store        kv.Storage
 	ownerManager owner.Manager
-	schemaSyncer SchemaSyncer
+	schemaSyncer util.SchemaSyncer
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
@@ -309,7 +307,7 @@ type ddlCtx struct {
 
 func (dc *ddlCtx) isOwner() bool {
 	isOwner := dc.ownerManager.IsOwner()
-	logutil.Logger(ddlLogCtx).Debug("[ddl] check whether is the DDL owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
+	logutil.BgLogger().Debug("[ddl] check whether is the DDL owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
 	if isOwner {
 		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
 	}
@@ -338,7 +336,7 @@ func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
 			case d.ddlEventCh <- e:
 				return
 			default:
-				logutil.Logger(ddlLogCtx).Warn("[ddl] fail to notify DDL event", zap.String("event", e.String()))
+				logutil.BgLogger().Warn("[ddl] fail to notify DDL event", zap.String("event", e.String()))
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
@@ -359,7 +357,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := context.WithCancel(ctx)
 	var manager owner.Manager
-	var syncer SchemaSyncer
+	var syncer util.SchemaSyncer
 	if etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
@@ -367,7 +365,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		syncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
-		syncer = NewSchemaSyncer(etcdCli, id)
+		syncer = util.NewSchemaSyncer(etcdCli, id, manager)
 	}
 
 	ddlCtx := &ddlCtx{
@@ -399,7 +397,7 @@ func (d *ddl) Stop() error {
 	defer d.m.Unlock()
 
 	d.close()
-	logutil.Logger(ddlLogCtx).Info("[ddl] stop DDL", zap.String("ID", d.uuid))
+	logutil.BgLogger().Info("[ddl] stop DDL", zap.String("ID", d.uuid))
 	return nil
 }
 
@@ -407,7 +405,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	var delRangeMgr delRangeManager
 	if !mock {
 		delRangeMgr = newDelRangeManager(d.store, d.sessPool)
-		logutil.Logger(ddlLogCtx).Info("[ddl] start delRangeManager OK", zap.Bool("is a emulator", !d.store.SupportDeleteRange()))
+		logutil.BgLogger().Info("[ddl] start delRangeManager OK", zap.Bool("is a emulator", !d.store.SupportDeleteRange()))
 	} else {
 		delRangeMgr = newMockDelRangeManager()
 	}
@@ -419,7 +417,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 // start campaigns the owner and starts workers.
 // ctxPool is used for the worker's delRangeManager and creates sessions.
 func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
-	logutil.Logger(ddlLogCtx).Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
+	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.quitCh = make(chan struct{})
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
@@ -450,6 +448,17 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
 		}
+
+		go tidbutil.WithRecovery(
+			func() { d.schemaSyncer.StartCleanWork() },
+			func(r interface{}) {
+				if r != nil {
+					logutil.BgLogger().Error("[ddl] DDL syncer clean worker meet panic",
+						zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
+					metrics.PanicCounter.WithLabelValues(metrics.LabelDDLSyncer).Inc()
+				}
+			})
+		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s", metrics.StartCleanWork)).Inc()
 	}
 }
 
@@ -461,9 +470,10 @@ func (d *ddl) close() {
 	startTime := time.Now()
 	close(d.quitCh)
 	d.ownerManager.Cancel()
+	d.schemaSyncer.CloseCleanWork()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
-		logutil.Logger(ddlLogCtx).Error("[ddl] remove self version path failed", zap.Error(err))
+		logutil.BgLogger().Error("[ddl] remove self version path failed", zap.Error(err))
 	}
 
 	for _, worker := range d.workers {
@@ -478,7 +488,7 @@ func (d *ddl) close() {
 		d.sessPool.close()
 	}
 
-	logutil.Logger(ddlLogCtx).Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
+	logutil.BgLogger().Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
 }
 
 // GetLease implements DDL.GetLease interface.
@@ -525,7 +535,7 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
-func (d *ddl) SchemaSyncer() SchemaSyncer {
+func (d *ddl) SchemaSyncer() util.SchemaSyncer {
 	return d.schemaSyncer
 }
 
@@ -574,7 +584,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(job.Type)
-	logutil.Logger(ddlLogCtx).Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
+	logutil.BgLogger().Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
 	var historyJob *model.Job
 	jobID := job.ID
@@ -597,16 +607,16 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
 		if err != nil {
-			logutil.Logger(ddlLogCtx).Error("[ddl] get history DDL job failed, check again", zap.Error(err))
+			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue
 		} else if historyJob == nil {
-			logutil.Logger(ddlLogCtx).Debug("[ddl] DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
+			logutil.BgLogger().Debug("[ddl] DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue
 		}
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
-			logutil.Logger(ddlLogCtx).Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
+			logutil.BgLogger().Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
 			return nil
 		}
 
@@ -743,6 +753,7 @@ const (
 	codeSubpartition                           = terror.ErrCode(mysql.ErrSubpartition)
 	codeSystemVersioningWrongPartitions        = terror.ErrCode(mysql.ErrSystemVersioningWrongPartitions)
 	codeWrongPartitionTypeExpectedSystemTime   = terror.ErrCode(mysql.ErrWrongPartitionTypeExpectedSystemTime)
+	codeOnlyOnRangeListPartition               = terror.ErrCode(mysql.ErrOnlyOnRangeListPartition)
 )
 
 func init() {
@@ -813,6 +824,7 @@ func init() {
 		codeSubpartition:                           mysql.ErrSubpartition,
 		codeSystemVersioningWrongPartitions:        mysql.ErrSystemVersioningWrongPartitions,
 		codeWrongPartitionTypeExpectedSystemTime:   mysql.ErrWrongPartitionTypeExpectedSystemTime,
+		codeOnlyOnRangeListPartition:               mysql.ErrOnlyOnRangeListPartition,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
