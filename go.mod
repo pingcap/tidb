@@ -5,7 +5,6 @@ require (
 	github.com/apache/thrift v0.0.0-20161221203622-b2a4d4ae21c7 // indirect
 	github.com/beorn7/perks v0.0.0-20160229213445-3ac7bf7a47d1 // indirect
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
-	github.com/cockroachdb/cmux v0.0.0-20170110192607-30d10be49292 // indirect
 	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
 	github.com/coreos/bbolt v1.3.3 // indirect
 	github.com/coreos/etcd v3.3.13+incompatible
@@ -68,9 +67,9 @@ require (
 	github.com/twinj/uuid v0.0.0-20150629100731-70cac2bcd273
 	github.com/uber/jaeger-client-go v2.8.0+incompatible
 	github.com/uber/jaeger-lib v1.1.0 // indirect
-	github.com/ugorji/go v1.1.1 // indirect
 	github.com/unrolled/render v0.0.0-20171102162132-65450fb6b2d3 // indirect
 	github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 // indirect
+	go.etcd.io/bbolt v1.3.3 // indirect
 	go.uber.org/zap v1.9.1
 	golang.org/x/crypto v0.0.0-20180503215945-1f94bef427e3 // indirect
 	golang.org/x/net v0.0.0-20180906233101-161cd47e91fd
