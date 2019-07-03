@@ -76,7 +76,8 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 	}
 	for _, funcName := range funcNames {
 		args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
-		aggFunc := NewAggFuncDesc(s.ctx, funcName, args, true)
+		aggFunc, err := NewAggFuncDesc(s.ctx, funcName, args, true)
+		c.Assert(err, IsNil)
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
@@ -94,7 +95,8 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 	}
 	for i, funcName := range funcNames {
 		args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
-		aggFunc := NewAggFuncDesc(s.ctx, funcName, args, false)
+		aggFunc, err := NewAggFuncDesc(s.ctx, funcName, args, false)
+		c.Assert(err, IsNil)
 		aggFunc.RetTp = funcTypes[i]
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)

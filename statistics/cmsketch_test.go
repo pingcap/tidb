@@ -136,7 +136,7 @@ func (s *testStatisticsSuite) TestCMSketch(c *C) {
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
 
-		err = lSketch.MergeCMSketch(rSketch)
+		err = lSketch.MergeCMSketch(rSketch, 0)
 		c.Assert(err, IsNil)
 		for val, count := range rMap {
 			lMap[val] += count
@@ -172,21 +172,21 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 		// The first two tests produces almost same avg.
 		{
 			zipfFactor: 1.0000001,
-			avgError:   48,
+			avgError:   30,
 		},
 		{
 			zipfFactor: 1.1,
-			avgError:   48,
+			avgError:   30,
 		},
 		{
 			zipfFactor: 2,
-			avgError:   128,
+			avgError:   89,
 		},
 		// If the most data lies in a narrow range, our guess may have better result.
 		// The error mainly comes from huge numbers.
 		{
 			zipfFactor: 5,
-			avgError:   256,
+			avgError:   208,
 		},
 	}
 	d, w := int32(5), int32(2048)
@@ -240,7 +240,7 @@ func (s *testStatisticsSuite) TestMergeCMSketch4IncrementalAnalyze(c *C) {
 		for key, val := range rMap {
 			lMap[key] += val
 		}
-		lSketch.MergeCMSketch4IncrementalAnalyze(rSketch)
+		c.Assert(lSketch.MergeCMSketch4IncrementalAnalyze(rSketch), IsNil)
 		avg, err = averageAbsoluteError(lSketch, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)

@@ -1,6 +1,7 @@
 ---
 name: "\U0001F947 Performance Questions"
 about: Performance question about TiDB which is not caused by bug.
+labels: question, type/performance
 ---
 
 ## Performance Questions
