@@ -2446,7 +2446,7 @@ func (s *testSuite4) TestAutoIDInRetry(c *C) {
 func (s *testSuite4) TestIssue11059(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (pk int primary key, uk int unique, v int)")
-	tk.MustExec("insert into t values (2,11,215)")
+	tk.MustExec("insert into t values (2, 11, 215)")
 	tk.MustExec("insert into t values (3, 7, 2111)")
 	_, err := tk.Exec("update t set pk = 2 where uk = 7")
 	c.Assert(err, NotNil)
