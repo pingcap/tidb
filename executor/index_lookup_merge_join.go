@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -45,7 +46,10 @@ type IndexLookUpMergeJoin struct {
 	outerMergeCtx outerMergeCtx
 	innerMergeCtx innerMergeCtx
 
-	joiner []joiner
+	joiner      joiner
+	isOuterJoin bool
+
+	requiredRows int64
 
 	task *lookUpMergeJoinTask
 
@@ -100,6 +104,8 @@ type lookUpMergeJoinTask struct {
 
 type outerMergeWorker struct {
 	outerMergeCtx
+
+	lookup *IndexLookUpMergeJoin
 
 	ctx      sessionctx.Context
 	executor Executor
@@ -187,6 +193,7 @@ func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMerg
 	omw := &outerMergeWorker{
 		outerMergeCtx:         e.outerMergeCtx,
 		ctx:                   e.ctx,
+		lookup:                e,
 		executor:              e.children[0],
 		executorChk:           chunk.NewChunkWithCapacity(e.outerMergeCtx.rowTypes, e.maxChunkSize),
 		resultCh:              resultCh,
@@ -214,7 +221,7 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 		indexRanges:           copiedRanges,
 		nextColCompareFilters: e.lastColHelper,
 		keyOff2IdxOff:         e.keyOff2IdxOff,
-		joiner:                e.joiner[workID],
+		joiner:                e.joiner,
 		retFieldTypes:         e.retFieldTypes,
 		maxChunkSize:          e.maxChunkSize,
 	}
@@ -228,6 +235,9 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 		defer func() {
 			e.runtimeStats.Record(time.Since(start), req.NumRows())
 		}()
+	}
+	if e.isOuterJoin {
+		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
 	req.Reset()
 	task := e.getFinishedTask(ctx)
@@ -324,7 +334,6 @@ func (omw *outerMergeWorker) pushToChan(ctx context.Context, task *lookUpMergeJo
 // When err is not nil, task must not be nil to send the error to the main thread via task
 func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
 	newFirstChunk(omw.executor)
-
 	task := &lookUpMergeJoinTask{
 		results:     make(chan *chunk.Chunk, 1),
 		doneErr:     make(chan error, 1),
@@ -334,10 +343,16 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 	task.memTracker.AttachTo(omw.parentMemTracker)
 
 	omw.increaseBatchSize()
+	if omw.lookup.isOuterJoin { // if is outerJoin, push the requiredRows down
+		requiredRows := int(atomic.LoadInt64(&omw.lookup.requiredRows))
+		task.outerResult.SetRequiredRows(requiredRows, omw.maxBatchSize)
+	} else {
+		task.outerResult.SetRequiredRows(omw.batchSize, omw.maxBatchSize)
+	}
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
-	for task.outerResult.NumRows() < omw.batchSize {
-		err := omw.executor.Next(ctx, omw.executorChk)
+	for !task.outerResult.IsFull() {
+		err := Next(ctx, omw.executor, omw.executorChk)
 		if err != nil {
 			return task, err
 		}
@@ -444,14 +459,33 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 }
 
 func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) error {
-	if task.innerResult.Len() == 0 {
-		return nil
-	}
-	task.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
-	task.innerIter.Begin()
-
 	chk := chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
 	var err error
+	if task.innerResult.Len() == 0 {
+		for task.cursor < task.outerResult.NumRows() {
+			imw.joiner.onMissMatch(false, task.outerResult.GetRow(task.cursor), chk)
+			if chk.NumRows() >= imw.maxChunkSize {
+				select {
+				case task.results <- chk:
+				case <-ctx.Done():
+					return nil
+				}
+				chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
+			}
+			task.cursor++
+		}
+		if chk.NumRows() > 0 {
+			select {
+			case task.results <- chk:
+			case <-ctx.Done():
+				return nil
+			}
+		}
+		return nil
+	}
+
+	task.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
+	task.innerIter.Begin()
 	for task.cursor < task.outerResult.NumRows() {
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if task.sameKeyIter == nil || task.sameKeyIter.Current() == task.sameKeyIter.End() {
@@ -675,7 +709,7 @@ func (imw *innerMergeWorker) fetchInnerResults(ctx context.Context, task *lookUp
 	innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-		err := innerExec.Next(ctx, imw.executorChk)
+		err := Next(ctx, innerExec, imw.executorChk)
 		if err != nil {
 			return err
 		}

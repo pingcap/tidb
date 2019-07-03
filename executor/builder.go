@@ -1804,12 +1804,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 						compareFuncs:  compareFuncs,
 					},
 					workerWg:      new(sync.WaitGroup),
+					isOuterJoin:   v.JoinType.IsOuterJoin(),
+					joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
 					indexRanges:   v.Ranges,
 					keyOff2IdxOff: v.KeyOff2IdxOff,
 					lastColHelper: v.CompareFilters,
-				}
-				for i := 0; i < b.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
-					e.joiner = append(e.joiner, newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes))
 				}
 				return e
 			}
