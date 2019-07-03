@@ -80,6 +80,7 @@ type twoPhaseCommitter struct {
 	connID   uint64 // connID is used for log.
 	cleanWg  sync.WaitGroup
 	detail   *execdetails.CommitDetails
+
 	// The max time a Txn may use (in ms) from its startTS to commitTS.
 	// We use it to guarantee GC worker will not influence any active txn. The value
 	// should be less than GC life time.
@@ -681,7 +682,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	}
 
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
-		err = errors.Errorf("con:%d txn takes too much time, start: %d, commit: %d",
+		err = errors.Errorf("conn%d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
