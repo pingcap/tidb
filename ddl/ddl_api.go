@@ -3397,11 +3397,9 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	// Check whether the table was already locked by another.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
-		if util.IsMemOrSysDB(tb.Schema.L) {
-			if ctx.GetSessionVars().User != nil {
-				return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
-			}
-			return infoschema.ErrAccessDenied
+		err := checkLockInMemOrSysDB(ctx, tb.Schema.L)
+		if err != nil {
+			return err
 		}
 		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
 		if err != nil {
@@ -3473,16 +3471,24 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	return errors.Trace(err)
 }
 
+func checkLockInMemOrSysDB(ctx sessionctx.Context, dbLowerName string) error {
+	if util.IsMemOrSysDB(dbLowerName) {
+		if ctx.GetSessionVars().User != nil {
+			return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
+		}
+		return infoschema.ErrAccessDenied.GenWithStackByArgs()
+	}
+	return nil
+}
+
 func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
 	uniqueTableID := make(map[int64]struct{})
 	cleanupTables := make([]model.TableLockTpInfo, 0, len(tables))
 	// Check whether the table was already locked by another.
 	for _, tb := range tables {
-		if util.IsMemOrSysDB(tb.Schema.L) {
-			if ctx.GetSessionVars().User != nil {
-				return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
-			}
-			return infoschema.ErrAccessDenied
+		err := checkLockInMemOrSysDB(ctx, tb.Schema.L)
+		if err != nil {
+			return err
 		}
 		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
 		if err != nil {

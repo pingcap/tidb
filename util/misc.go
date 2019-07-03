@@ -133,12 +133,17 @@ func SyntaxWarn(err error) error {
 }
 
 const (
-	InformationSchemaName      = "INFORMATION_SCHEMA"
+	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
+	InformationSchemaName = "INFORMATION_SCHEMA"
+	// InformationSchemaLowerName is the `INFORMATION_SCHEMA` database lower name.
 	InformationSchemaLowerName = "information_schema"
-	PerformanceSchemaName      = "PERFORMANCE_SCHEMA"
+	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
+	PerformanceSchemaName = "PERFORMANCE_SCHEMA"
+	// PerformanceSchemaLowerName is the `PERFORMANCE_SCHEMA` database lower name.
 	PerformanceSchemaLowerName = "performance_schema"
 )
 
+// IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
 	switch dbLowerName {
 	case InformationSchemaLowerName, PerformanceSchemaLowerName, mysql.SystemDB:
