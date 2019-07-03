@@ -915,7 +915,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
+func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
 	var db interface{}
 	if len(s.sessionVars.CurrentDB) > 0 {
 		db = s.sessionVars.CurrentDB

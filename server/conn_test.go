@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -263,17 +264,20 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 500;")
 	c.Assert(err, IsNil)
 
-	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
-	c.Assert(err, NotNil)
+	now := time.Now()
+	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(3);")
+	c.Assert(time.Since(now) < 3*time.Second, IsTrue)
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
 	c.Assert(err, IsNil)
 
+	now = time.Now()
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
-	c.Assert(err, IsNil)
+	c.Assert(time.Since(now) > 500*time.Millisecond, IsTrue)
 
-	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
-	c.Assert(err, NotNil)
+	now = time.Now()
+	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(3);")
+	c.Assert(time.Since(now) < 3*time.Second, IsTrue)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
 }
