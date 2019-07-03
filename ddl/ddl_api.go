@@ -3286,7 +3286,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		SessionID: ctx.GetSessionVars().ConnectionID,
 	}
 	uniqueTableID := make(map[int64]struct{})
-	// Check whether the table was already locked by other.
+	// Check whether the table was already locked by another.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
 		if util.IsMemOrSysDB(tb.Schema.L) {
@@ -3368,7 +3368,7 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
 	uniqueTableID := make(map[int64]struct{})
 	cleanupTables := make([]model.TableLockTpInfo, 0, len(tables))
-	// Check whether the table was already locked by other.
+	// Check whether the table was already locked by another.
 	for _, tb := range tables {
 		if util.IsMemOrSysDB(tb.Schema.L) {
 			if ctx.GetSessionVars().User != nil {
