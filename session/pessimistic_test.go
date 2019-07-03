@@ -372,7 +372,7 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	syncCh <- struct{}{}
 	tk.MustQuery("select c from conflict where id = 1").Check(testkit.Rows("3"))
 
-	// Check utdated pessimistic lock is resolved.
+	// Check outdated pessimistic lock is resolved.
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update conflict set c = 4 where id = 1")
 	time.Sleep(300 * time.Millisecond)
