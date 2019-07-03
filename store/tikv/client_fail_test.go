@@ -28,27 +28,26 @@ import (
 func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests", `panic`), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop", `return("0")`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests", `return("0")`), IsNil)
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop", `return("0")`), IsNil)
-	}()
 
 	port := startMockTikvService()
 	c.Assert(port > 0, IsTrue)
 
+	config.GetGlobalConfig().TiKVClient.GrpcConnectionCount = 1
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
 	rpcClient := newRPCClient(config.Security{})
 
+	// Start batchRecvLoop, and it should panic in `failPendingRequests`.
 	_, err := rpcClient.getConnArray(addr)
 	c.Assert(err, IsNil)
 
-	time.Sleep(time.Hour)
+	time.Sleep(time.Second)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop"), IsNil)
 
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGet,
 		Get:  &kvrpcpb.GetRequest{},
 	}
-
 	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second)
-	fmt.Printf("error--------------------------------: %v", err)
+	c.Assert(err, IsNil)
 }

@@ -16,7 +16,6 @@ package tikv
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"math"
 	"strconv"
@@ -110,6 +109,24 @@ func (c *batchCommandsClient) isStopped() bool {
 	return atomic.LoadInt32(&c.closed) != 0
 }
 
+func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries []*batchCommandsEntry) {
+	// Use the lock to protect the stream client won't be replaced by RecvLoop,
+	// and new added request won't be removed by `failPendingRequests`.
+	c.clientLock.Lock()
+	defer c.clientLock.Unlock()
+	for i, requestID := range request.RequestIds {
+		c.batched.Store(requestID, entries[i])
+	}
+	if err := c.client.Send(request); err != nil {
+		logutil.BgLogger().Error(
+			"batch commands send error",
+			zap.String("target", c.target),
+			zap.Error(err),
+		)
+		c.failPendingRequests(err)
+	}
+}
+
 // `failPendingRequests` must be called in locked contexts in order to avoid double closing channels.
 func (c *batchCommandsClient) failPendingRequests(err error) {
 	failpoint.Inject("panicInFailPendingRequests", nil)
@@ -127,7 +144,6 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) bool {
 	// Hold the lock to forbid batchSendLoop using the old client.
 	c.clientLock.Lock()
 	defer c.clientLock.Unlock()
-
 	c.failPendingRequests(err) // fail all pending requests.
 
 	// Re-establish a application layer stream. TCP layer is handled by gRPC.
@@ -165,7 +181,6 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 		var err error = nil
 		var resp *tikvpb.BatchCommandsResponse = nil
 		failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) {
-			fmt.Printf("gotErrorInRecvLoop is injected")
 			err = errors.New("injected error in batchRecvLoop")
 		})
 		if err == nil {
@@ -509,29 +524,12 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			requestIDs = append(requestIDs, requestID)
 		}
 
-		request := &tikvpb.BatchCommandsRequest{
+		req := &tikvpb.BatchCommandsRequest{
 			Requests:   requests,
 			RequestIds: requestIDs,
 		}
 
-		// Use the lock to protect the stream client won't be replaced by RecvLoop,
-		// and new added request won't be removed by `failPendingRequests`.
-		batchCommandsClient.clientLock.Lock()
-		for i, requestID := range request.RequestIds {
-			batchCommandsClient.batched.Store(requestID, entries[i])
-		}
-		err := batchCommandsClient.client.Send(request)
-		batchCommandsClient.clientLock.Unlock()
-		if err != nil {
-			logutil.BgLogger().Error(
-				"batch commands send error",
-				zap.String("target", a.target),
-				zap.Error(err),
-			)
-			batchCommandsClient.clientLock.Lock()
-			batchCommandsClient.failPendingRequests(err)
-			batchCommandsClient.clientLock.Unlock()
-		}
+		batchCommandsClient.send(req, entries)
 	}
 }
 

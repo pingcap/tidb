@@ -44,7 +44,6 @@ func (s *server) BatchCommands(ss tikvpb.Tikv_BatchCommandsServer) error {
 			return err
 		}
 	}
-	return nil
 }
 
 // Try to start a gRPC server and retrun the binded port.
