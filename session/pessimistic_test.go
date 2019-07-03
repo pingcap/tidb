@@ -46,6 +46,8 @@ type testPessimisticSuite struct {
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	config.GetGlobalConfig().PessimisticTxn.Enable = true
+	// Set it to 300ms for testing lock resolve.
+	tikv.PessimisticLockTTL = 300
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.MustNewMVCCStore()
@@ -53,7 +55,6 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithMVCCStore(s.mvccStore),
 	)
-	tikv.PessimisticLockTTL = uint64(config.MinPessimisticTTL / time.Millisecond)
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
@@ -350,4 +351,34 @@ func (s *testPessimisticSuite) TestBankTransfer(c *C) {
 	tk.MustExec("commit")
 	syncCh <- struct{}{}
 	tk.MustQuery("select sum(c) from accounts").Check(testkit.Rows("300"))
+}
+
+func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists conflict")
+	tk.MustExec("create table conflict (id int primary key, c int)")
+	tk.MustExec("insert conflict values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from conflict where id = 1 for update")
+	syncCh := make(chan struct{})
+	go func() {
+		tk2.MustExec("update conflict set c = 3 where id = 1")
+		<-syncCh
+	}()
+	time.Sleep(time.Millisecond * 10)
+	tk.MustExec("update conflict set c = 2 where id = 1")
+	tk.MustExec("commit")
+	syncCh <- struct{}{}
+	tk.MustQuery("select c from conflict where id = 1").Check(testkit.Rows("3"))
+
+	// Check outdated pessimistic lock is resolved.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update conflict set c = 4 where id = 1")
+	time.Sleep(300 * time.Millisecond)
+	tk2.MustExec("begin optimistic")
+	tk2.MustExec("update conflict set c = 5 where id = 1")
+	tk2.MustExec("commit")
+	_, err := tk.Exec("commit")
+	c.Check(err, NotNil)
 }
