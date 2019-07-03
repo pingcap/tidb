@@ -218,7 +218,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"latin1 Latin1 latin1_bin 1",
 		"binary binary binary 1"))
 	c.Assert(len(tk.MustQuery("show master status").Rows()), Equals, 1)
-	tk.MustQuery("show create database test_show").Check(testkit.Rows("test CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	tk.MustQuery("show create database test_show").Check(testkit.Rows("test_show CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
 		"Alter Tables To alter the table",
 		"Alter routine Functions,Procedures To alter or drop stored functions/procedures",
