@@ -1183,6 +1183,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec(`insert into t1 select * from t1;`)
 	tk.MustExec(`insert into t2 values(1, 1);`)
 	tk.MustExec(`set @@tidb_init_chunk_size=2;`)
+	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustQuery(`select count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("128"))
 	tk.MustQuery(`select tmp.a, count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("1 128"))
 
