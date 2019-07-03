@@ -200,7 +200,7 @@ func (s *testSuiteP1) TestLoadStats(c *C) {
 	c.Assert(tk.ExecToErr("load stats ./xxx.json"), NotNil)
 }
 
-func (s *testSuite) TestShow(c *C) {
+func (s *testSuiteP1) TestShow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -478,7 +478,7 @@ func (s *testSuiteP1) TestSelectWithoutFrom(c *C) {
 }
 
 // TestSelectBackslashN Issue 3685.
-func (s *testSuite) TestSelectBackslashN(c *C) {
+func (s *testSuiteP1) TestSelectBackslashN(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	sql := `select \N;`
@@ -1236,7 +1236,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustQuery("select count(distinct a), sum(distinct a), avg(distinct a) from (select a from t union all select b from t) tmp;").Check(testkit.Rows("1 1.000 1.0000000"))
 }
 
-func (s *testSuite) TestNeighbouringProj(c *C) {
+func (s *testSuiteP1) TestNeighbouringProj(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -1254,7 +1254,7 @@ func (s *testSuite) TestNeighbouringProj(c *C) {
 	rs.Check(testkit.Rows("1 1 1", "1 2 2", "1 3 3"))
 }
 
-func (s *testSuite) TestIn(c *C) {
+func (s *testSuiteP1) TestIn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t`)
@@ -1270,7 +1270,7 @@ func (s *testSuite) TestIn(c *C) {
 	tk.MustQuery(queryStr).Check(testkit.Rows("7"))
 }
 
-func (s *testSuite) TestTablePKisHandleScan(c *C) {
+func (s *testSuiteP1) TestTablePKisHandleScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1332,7 +1332,7 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 	}
 }
 
-func (s *testSuite) TestIndexScan(c *C) {
+func (s *testSuiteP1) TestIndexScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1415,7 +1415,7 @@ func (s *testSuite) TestIndexScan(c *C) {
 	result.Check(testkit.Rows())
 }
 
-func (s *testSuite) TestIndexReverseOrder(c *C) {
+func (s *testSuiteP1) TestIndexReverseOrder(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1433,7 +1433,7 @@ func (s *testSuite) TestIndexReverseOrder(c *C) {
 	result.Check(testkit.Rows("0 2", "0 1", "0 0", "1 2", "1 1", "1 0", "2 2", "2 1", "2 0"))
 }
 
-func (s *testSuite) TestTableReverseOrder(c *C) {
+func (s *testSuiteP1) TestTableReverseOrder(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1445,7 +1445,7 @@ func (s *testSuite) TestTableReverseOrder(c *C) {
 	result.Check(testkit.Rows("7", "6", "2", "1"))
 }
 
-func (s *testSuite) TestDefaultNull(c *C) {
+func (s *testSuiteP1) TestDefaultNull(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1461,7 +1461,7 @@ func (s *testSuite) TestDefaultNull(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 <nil>"))
 }
 
-func (s *testSuite) TestUnsignedPKColumn(c *C) {
+func (s *testSuiteP1) TestUnsignedPKColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1474,7 +1474,7 @@ func (s *testSuite) TestUnsignedPKColumn(c *C) {
 	result.Check(testkit.Rows("1 1 2"))
 }
 
-func (s *testSuite) TestJSON(c *C) {
+func (s *testSuiteP1) TestJSON(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -1562,7 +1562,7 @@ func (s *testSuite) TestJSON(c *C) {
 		"1234567890123456789012345678901234567890123456789012345.12"))
 }
 
-func (s *testSuite) TestMultiUpdate(c *C) {
+func (s *testSuiteP1) TestMultiUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_mu (a int primary key, b int, c int)`)
@@ -1591,7 +1591,7 @@ func (s *testSuite) TestMultiUpdate(c *C) {
 	result.Check(testkit.Rows(`1 7 2`, `4 8 8`, `7 8 8`))
 }
 
-func (s *testSuite) TestGeneratedColumnWrite(c *C) {
+func (s *testSuiteP1) TestGeneratedColumnWrite(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	_, err := tk.Exec(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (a+8) virtual)`)
@@ -1645,7 +1645,7 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 
 // TestGeneratedColumnRead tests select generated columns from table.
 // They should be calculated from their generation expressions.
-func (s *testSuite) TestGeneratedColumnRead(c *C) {
+func (s *testSuiteP1) TestGeneratedColumnRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_gc_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored, e int as (c*2))`)
@@ -1807,7 +1807,7 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	}
 }
 
-func (s *testSuite) TestToPBExpr(c *C) {
+func (s *testSuiteP1) TestToPBExpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1855,7 +1855,7 @@ func (s *testSuite) TestToPBExpr(c *C) {
 	result.Check(testkit.Rows("1", "2"))
 }
 
-func (s *testSuite) TestDatumXAPI(c *C) {
+func (s *testSuiteP1) TestDatumXAPI(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1880,7 +1880,7 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	result.Check(testkit.Rows("11:11:12.000 11:11:12", "11:11:13.000 11:11:13"))
 }
 
-func (s *testSuite) TestSQLMode(c *C) {
+func (s *testSuiteP1) TestSQLMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1929,7 +1929,7 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set @@global.sql_mode = 'STRICT_TRANS_TABLES'")
 }
 
-func (s *testSuite) TestTableDual(c *C) {
+func (s *testSuiteP1) TestTableDual(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	result := tk.MustQuery("Select 1")
@@ -1942,7 +1942,7 @@ func (s *testSuite) TestTableDual(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestTableScan(c *C) {
+func (s *testSuiteP1) TestTableScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use information_schema")
 	result := tk.MustQuery("select * from schemata")
@@ -1961,7 +1961,7 @@ func (s *testSuite) TestTableScan(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestAdapterStatement(c *C) {
+func (s *testSuiteP1) TestAdapterStatement(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	se.GetSessionVars().TxnCtx.InfoSchema = domain.GetDomain(se).InfoSchema()
@@ -1979,7 +1979,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
 
-func (s *testSuite) TestIsPointGet(c *C) {
+func (s *testSuiteP1) TestIsPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(sessionctx.Context)
@@ -2004,7 +2004,7 @@ func (s *testSuite) TestIsPointGet(c *C) {
 	}
 }
 
-func (s *testSuite) TestPointGetRepeatableRead(c *C) {
+func (s *testSuiteP1) TestPointGetRepeatableRead(c *C) {
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 	tk1.MustExec(`create table point_get (a int, b int, c int,
@@ -2040,7 +2040,6 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
-/*
 func (s *testSuite4) TestSplitRegionTimeout(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
@@ -2060,9 +2059,8 @@ func (s *testSuite4) TestSplitRegionTimeout(c *C) {
 	c.Assert(err.Error(), Equals, "wait split region scatter timeout(1s)")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockScatterRegionTimeout"), IsNil)
 }
-*/
 
-func (s *testSuite) TestRow(c *C) {
+func (s *testSuiteP1) TestRow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2111,7 +2109,7 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestColumnName(c *C) {
+func (s *testSuiteP1) TestColumnName(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2192,7 +2190,7 @@ func (s *testSuite) TestColumnName(c *C) {
 	rs.Close()
 }
 
-func (s *testSuite) TestSelectVar(c *C) {
+func (s *testSuiteP1) TestSelectVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2207,7 +2205,7 @@ func (s *testSuite) TestSelectVar(c *C) {
 	tk.MustExec("select SQL_BUFFER_RESULT d from t group by d")
 }
 
-func (s *testSuite) TestHistoryRead(c *C) {
+func (s *testSuiteP1) TestHistoryRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists history_read")
@@ -2271,7 +2269,7 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
 
-func (s *testSuite) TestLowResolutionTSORead(c *C) {
+func (s *testSuiteP1) TestLowResolutionTSORead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@autocommit=1")
 	tk.MustExec("use test")
