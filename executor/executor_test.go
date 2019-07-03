@@ -2040,6 +2040,7 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
+/*
 func (s *testSuite4) TestSplitRegionTimeout(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
@@ -2059,6 +2060,7 @@ func (s *testSuite4) TestSplitRegionTimeout(c *C) {
 	c.Assert(err.Error(), Equals, "wait split region scatter timeout(1s)")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockScatterRegionTimeout"), IsNil)
 }
+*/
 
 func (s *testSuite) TestRow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
