@@ -3681,6 +3681,18 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
 }
 
+func (s *testSuite) TestOOMPanicAction(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b double);")
+	tk.MustExec("insert into t values (1,1)")
+	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
+	tk.MustExec("set @@tidb_mem_quota_query=1;")
+	err := tk.QueryToErr("select sum(b) from t group by a;")
+	c.Assert(err, NotNil)
+}
+
 type oomCapturer struct {
 	zapcore.Core
 	tracker string
