@@ -39,6 +39,8 @@ func (s *testSuite1) TestTraceExec(c *C) {
 	// |   └─recordSet.Next        | 22:08:38.249340 | 155.317µs  |
 	// +---------------------------+-----------------+------------+
 	rows = tk.MustQuery("trace format='row' select * from trace where id = 0;").Rows()
+	c.Assert(len(rows) > 1, IsTrue)
 
+	rows = tk.MustQuery("trace format='row' delete from trace where id = 0").Rows()
 	c.Assert(len(rows) > 1, IsTrue)
 }
