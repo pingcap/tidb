@@ -57,7 +57,7 @@ type splitableStore interface {
 }
 
 // Next implements the Executor Next interface.
-func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) error {
+func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	store := e.ctx.GetStore()
 	s, ok := store.(splitableStore)
 	if !ok {
@@ -234,7 +234,7 @@ type SplitTableRegionExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) error {
+func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	store := e.ctx.GetStore()
 	s, ok := store.(splitableStore)
 	if !ok {
