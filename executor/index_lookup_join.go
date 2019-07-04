@@ -20,7 +20,6 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -227,11 +226,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 }
 
 // Next implements the Executor interface.
-func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
+func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.isOuterJoin {
 		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
@@ -253,7 +248,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.RecordBatch) erro
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
-			matched, isNull, err := e.joiner.tryToMatch(outerRow, e.innerIter, req.Chunk)
+			matched, isNull, err := e.joiner.tryToMatch(outerRow, e.innerIter, req)
 			if err != nil {
 				return err
 			}
@@ -262,7 +257,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.RecordBatch) erro
 		}
 		if e.innerIter.Current() == e.innerIter.End() {
 			if !task.hasMatch {
-				e.joiner.onMissMatch(task.hasNull, outerRow, req.Chunk)
+				e.joiner.onMissMatch(task.hasNull, outerRow, req)
 			}
 			task.cursor++
 			task.hasMatch = false
@@ -386,7 +381,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
 	for !task.outerResult.IsFull() {
-		err := Next(ctx, ow.executor, chunk.NewRecordBatch(ow.executorChk))
+		err := Next(ctx, ow.executor, ow.executorChk)
 		if err != nil {
 			return task, err
 		}
@@ -586,7 +581,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-		err := Next(ctx, innerExec, chunk.NewRecordBatch(iw.executorChk))
+		err := Next(ctx, innerExec, iw.executorChk)
 		if err != nil {
 			return err
 		}

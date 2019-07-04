@@ -111,12 +111,12 @@ type Session interface {
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
-	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param ...interface{}) (sqlexec.RecordSet, error)
+	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
-	SetProcessInfo(string, time.Time, byte)
+	SetProcessInfo(string, time.Time, byte, uint64)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -829,6 +829,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, err
 		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		return se, nil
@@ -845,6 +849,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, err
 		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		return se, nil
@@ -853,17 +861,17 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 
 func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
 			return rows, err
 		}
-		iter := chunk.NewIterator4Chunk(req.Chunk)
+		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		req.Chunk = chunk.Renew(req.Chunk, se.sessionVars.MaxChunkSize)
+		req = chunk.Renew(req, se.sessionVars.MaxChunkSize)
 	}
 }
 
@@ -956,18 +964,28 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
+func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	var db interface{}
+	if len(s.sessionVars.CurrentDB) > 0 {
+		db = s.sessionVars.CurrentDB
+	}
+
+	var info interface{}
+	if len(sql) > 0 {
+		info = sql
+	}
 	pi := util.ProcessInfo{
-		ID:            s.sessionVars.ConnectionID,
-		DB:            s.sessionVars.CurrentDB,
-		Command:       command,
-		Plan:          s.currentPlan,
-		Time:          t,
-		State:         s.Status(),
-		Info:          sql,
-		CurTxnStartTS: s.sessionVars.TxnCtx.StartTS,
-		StmtCtx:       s.sessionVars.StmtCtx,
-		StatsInfo:     plannercore.GetStatsInfo,
+		ID:               s.sessionVars.ConnectionID,
+		DB:               db,
+		Command:          command,
+		Plan:             s.currentPlan,
+		Time:             t,
+		State:            s.Status(),
+		Info:             info,
+		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+		StmtCtx:          s.sessionVars.StmtCtx,
+		StatsInfo:        plannercore.GetStatsInfo,
+		MaxExecutionTime: maxExecutionTime,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
@@ -1188,61 +1206,10 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
-// checkArgs makes sure all the arguments' types are known and can be handled.
-// integer types are converted to int64 and uint64, time.Time is converted to types.Time.
-// time.Duration is converted to types.Duration, other known types are leaved as it is.
-func checkArgs(args ...interface{}) error {
-	for i, v := range args {
-		switch x := v.(type) {
-		case bool:
-			if x {
-				args[i] = int64(1)
-			} else {
-				args[i] = int64(0)
-			}
-		case int8:
-			args[i] = int64(x)
-		case int16:
-			args[i] = int64(x)
-		case int32:
-			args[i] = int64(x)
-		case int:
-			args[i] = int64(x)
-		case uint8:
-			args[i] = uint64(x)
-		case uint16:
-			args[i] = uint64(x)
-		case uint32:
-			args[i] = uint64(x)
-		case uint:
-			args[i] = uint64(x)
-		case int64:
-		case uint64:
-		case float32:
-		case float64:
-		case string:
-		case []byte:
-		case time.Duration:
-			args[i] = types.Duration{Duration: x}
-		case time.Time:
-			args[i] = types.Time{Time: types.FromGoTime(x), Type: mysql.TypeDatetime}
-		case nil:
-		default:
-			return errors.Errorf("cannot use arg[%d] (type %T):unsupported type", i, v)
-		}
-	}
-	return nil
-}
-
 // ExecutePreparedStmt executes a prepared statement.
-func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args ...interface{}) (sqlexec.RecordSet, error) {
-	err := checkArgs(args...)
-	if err != nil {
-		return nil, err
-	}
-
+func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
 	s.PrepareTxnCtx(ctx)
-	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
+	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1405,13 +1372,6 @@ func getHostByIP(ip string) []string {
 	return addrs
 }
 
-func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
-	if n1 <= n2 {
-		return n1
-	}
-	return n2
-}
-
 // CreateSession4Test creates a new session environment for test.
 func CreateSession4Test(store kv.Storage) (Session, error) {
 	s, err := CreateSession(store)
@@ -1464,7 +1424,7 @@ func loadSystemTZ(se *session) (string, error) {
 			logutil.BgLogger().Error("close result set error", zap.Error(err))
 		}
 	}()
-	req := rss[0].NewRecordBatch()
+	req := rss[0].NewChunk()
 	if err := rss[0].Next(context.Background(), req); err != nil {
 		return "", err
 	}
@@ -1564,14 +1524,11 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
-	saveLease := schemaLease
-	schemaLease = chooseMinLease(schemaLease, 100*time.Millisecond)
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
-	schemaLease = saveLease
 
 	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
@@ -1706,6 +1663,7 @@ var builtinGlobalVariable = []string{
 	variable.AutoIncrementIncrement,
 	variable.CollationServer,
 	variable.NetWriteTimeout,
+	variable.MaxExecutionTime,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,

@@ -63,10 +63,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return
 	}
 
-	ddlLease := time.Duration(0)
-	statisticLease := time.Duration(0)
-	ddlLease = schemaLease
-	statisticLease = statsLease
+	ddlLease := schemaLease
+	statisticLease := statsLease
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
@@ -128,6 +126,11 @@ func SetSchemaLease(lease time.Duration) {
 // SetStatsLease changes the default stats lease time for loading stats info.
 func SetStatsLease(lease time.Duration) {
 	statsLease = lease
+}
+
+// DisableStats4Test disables the stats for tests.
+func DisableStats4Test() {
+	statsLease = -1
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -270,10 +273,10 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		return nil, nil
 	}
 	var rows []chunk.Row
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	for {
 		// Since we collect all the rows, we can not reuse the chunk.
-		iter := chunk.NewIterator4Chunk(req.Chunk)
+		iter := chunk.NewIterator4Chunk(req)
 
 		err := rs.Next(ctx, req)
 		if err != nil {
@@ -286,7 +289,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			rows = append(rows, row)
 		}
-		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
+		req = chunk.Renew(req, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
 }

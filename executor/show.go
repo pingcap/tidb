@@ -76,7 +76,7 @@ type ShowExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
 		e.result = newFirstChunk(e)
