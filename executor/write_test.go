@@ -1279,6 +1279,9 @@ func (s *testSuite) TestUpdate(c *C) {
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated", "Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
 
+	tk.MustExec("update ignore t set a = 42 where a = 2;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "42"))
+
 	// test update ignore for unique key
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a bigint, unique key I_uniq (a));")
@@ -2439,4 +2442,13 @@ func (s *testSuite4) TestAutoIDInRetry(c *C) {
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func (s *testSuite4) TestIssue11059(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (pk int primary key, uk int unique, v int)")
+	tk.MustExec("insert into t values (2, 11, 215)")
+	tk.MustExec("insert into t values (3, 7, 2111)")
+	_, err := tk.Exec("update t set pk = 2 where uk = 7")
+	c.Assert(err, NotNil)
 }
