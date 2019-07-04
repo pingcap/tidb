@@ -641,6 +641,9 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 		return errors.Trace(err)
 	}
 	if !ok {
+		if m.Assertion == kvrpcpb.Assertion_Exist {
+			logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
+		}
 		return nil
 	}
 
@@ -672,9 +675,6 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 				break
 			}
 		}
-	}
-	if m.Assertion == kvrpcpb.Assertion_Exist && !ok {
-		logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
 	}
 	return nil
 }
