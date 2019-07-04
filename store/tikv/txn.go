@@ -67,7 +67,11 @@ type tikvTxn struct {
 	committer *twoPhaseCommitter
 
 	// For data consistency check.
+	// assertions[:confirmed] is the assertion of current transaction.
+	// assertions[confirmed:len(assertions)] is the assertions of current statement.
+	// StmtCommit/StmtRollback may change the confirmed position.
 	assertions []assertionPair
+	confirmed  int
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -106,7 +110,17 @@ func (a assertionPair) String() string {
 
 // SetAssertion sets a assertion for the key operation.
 func (txn *tikvTxn) SetAssertion(key kv.Key, assertion kv.AssertionType) {
-	txn.assertions = append(txn.assertions, assertionPair{key, assertion})
+	// Deep copy the key since it's memory is referenced from union store and overwrite change later.
+	key1 := append([]byte{}, key...)
+	txn.assertions = append(txn.assertions, assertionPair{key1, assertion})
+}
+
+func (txn *tikvTxn) ConfirmAssertions(succ bool) {
+	if succ {
+		txn.confirmed = len(txn.assertions)
+	} else {
+		txn.assertions = txn.assertions[:txn.confirmed]
+	}
 }
 
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
