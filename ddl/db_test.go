@@ -2121,13 +2121,17 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	}
 
 	// Check alter table modify/change generated column.
-	s.tk.MustExec(`alter table test_gv_ddl modify column c bigint as (b+200) stored`)
+	modStoredColErrMsg := "[ddl:3106]'modifying a stored column' is not supported for generated columns."
+	_, err := s.tk.Exec(`alter table test_gv_ddl modify column c bigint as (b+200) stored`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, modStoredColErrMsg)
+
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c bigint(20) YES  <nil> STORED GENERATED`))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
 	s.tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c bigint(20) YES  <nil> STORED GENERATED`))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
 	s.tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
@@ -2720,7 +2724,75 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk.MustExec("admin check table gcai_table")
 }
 
-func (s *testDBSuite6) TestIssue9100(c *C) {
+func (s *testDBSuite5) TestModifyGeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test;")
+	tk.MustExec("use test")
+	modIdxColErrMsg := "[ddl:3106]'modifying an indexed column' is not supported for generated columns."
+	modStoredColErrMsg := "[ddl:3106]'modifying a stored column' is not supported for generated columns."
+
+	// Modify column with single-col-index.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(b));")
+	tk.MustExec("insert into t1 set a=1;")
+	_, err := tk.Exec("alter table t1 modify column b int as (a+2);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, modIdxColErrMsg)
+	tk.MustExec("drop index idx on t1;")
+	tk.MustExec("alter table t1 modify b int as (a+2);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 3"))
+
+	// Modify column with multi-col-index.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(a, b));")
+	tk.MustExec("insert into t1 set a=1;")
+	_, err = tk.Exec("alter table t1 modify column b int as (a+2);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, modIdxColErrMsg)
+	tk.MustExec("drop index idx on t1;")
+	tk.MustExec("alter table t1 modify b int as (a+2);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 3"))
+
+	// Modify column with stored status to a different expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	_, err = tk.Exec("alter table t1 modify column b int as (a+2) stored;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, modStoredColErrMsg)
+
+	// Modify column with stored status to the same expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b bigint as (a+1) stored;")
+	tk.MustExec("alter table t1 modify column b bigint as (a + 1) stored;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+
+	// Modify column with index to the same expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(b));")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b bigint as (a+1);")
+	tk.MustExec("alter table t1 modify column b bigint as (a + 1);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+
+	// Modify column from non-generated to stored generated.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int);")
+	_, err = tk.Exec("alter table t1 modify column b bigint as (a+1) stored;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, modStoredColErrMsg)
+
+	// Modify column from stored generated to non-generated.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b int;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+}
+
+func (s *testDBSuite4) TestIssue9100(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("create table employ (a int, b int) partition by range (b) (partition p0 values less than (1));")
