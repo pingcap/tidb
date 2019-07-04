@@ -28,12 +28,13 @@ var (
 
 // metrics labels.
 const (
-	LabelSession  = "session"
-	LabelDomain   = "domain"
-	LabelDDLOwner = "ddl-owner"
-	LabelDDL      = "ddl"
-	LabelGCWorker = "gcworker"
-	LabelAnalyze  = "analyze"
+	LabelSession   = "session"
+	LabelDomain    = "domain"
+	LabelDDLOwner  = "ddl-owner"
+	LabelDDL       = "ddl"
+	LabelDDLSyncer = "ddl-syncer"
+	LabelGCWorker  = "gcworker"
+	LabelAnalyze   = "analyze"
 
 	opSucc   = "ok"
 	opFailed = "err"
