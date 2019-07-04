@@ -29,9 +29,10 @@ func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests", `panic`), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop", `return("0")`), IsNil)
 
-	port := startMockTikvService()
+	server, port := startMockTikvService()
 	c.Assert(port > 0, IsTrue)
 
+	grpcConnectionCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
 	config.GetGlobalConfig().TiKVClient.GrpcConnectionCount = 1
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
 	rpcClient := newRPCClient(config.Security{})
@@ -50,4 +51,6 @@ func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
 	}
 	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second)
 	c.Assert(err, IsNil)
+	server.Stop()
+	config.GetGlobalConfig().TiKVClient.GrpcConnectionCount = grpcConnectionCount
 }

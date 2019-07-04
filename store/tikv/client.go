@@ -127,6 +127,14 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 	}
 }
 
+func (c *batchCommandsClient) recv() (*tikvpb.BatchCommandsResponse, error) {
+	failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) (*tikvpb.BatchCommandsResponse, error) {
+		return nil, errors.New("injected error in batchRecvLoop")
+	})
+	// When `conn.Close()` is called, `client.Recv()` will return an error.
+	return c.client.Recv()
+}
+
 // `failPendingRequests` must be called in locked contexts in order to avoid double closing channels.
 func (c *batchCommandsClient) failPendingRequests(err error) {
 	failpoint.Inject("panicInFailPendingRequests", nil)
@@ -178,16 +186,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 	}()
 
 	for {
-		var err error = nil
-		var resp *tikvpb.BatchCommandsResponse = nil
-		failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) {
-			err = errors.New("injected error in batchRecvLoop")
-		})
-		if err == nil {
-			// When `conn.Close()` is called, `client.Recv()` will return an error.
-			resp, err = c.client.Recv()
-		}
-
+		resp, err := c.recv()
 		if err != nil {
 			now := time.Now()
 			for { // try to re-create the streaming in the loop.

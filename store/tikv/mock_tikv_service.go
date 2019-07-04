@@ -46,8 +46,8 @@ func (s *server) BatchCommands(ss tikvpb.Tikv_BatchCommandsServer) error {
 	}
 }
 
-// Try to start a gRPC server and retrun the binded port.
-func startMockTikvService() int {
+// Try to start a gRPC server and retrun the server instance and binded port.
+func startMockTikvService() (*grpc.Server, int) {
 	for port := 40000; port < 50000; port++ {
 		lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", "127.0.0.1", port))
 		if err != nil {
@@ -64,8 +64,8 @@ func startMockTikvService() int {
 				)
 			}
 		}()
-		return port
+		return s, port
 	}
 	logutil.BgLogger().Error("can't start mock tikv service because no available ports")
-	return -1
+	return nil, -1
 }
