@@ -375,13 +375,11 @@ func (bj BinaryJSON) Modify(pathExprList []PathExpression, values []BinaryJSON, 
 func (bj BinaryJSON) ArrayInsert(pathExpr PathExpression, value BinaryJSON) (res BinaryJSON, err error) {
 	// Check the path is a index
 	if len(pathExpr.legs) < 1 {
-		// TODO: should return 3165 (42000)
-		return bj, errors.New("A path expression is not a path to a cell in an array")
+		return bj, ErrInvalidJSONPathArrayCell
 	}
 	parentPath, lastLeg := pathExpr.popOneLastLeg()
 	if lastLeg.typ != pathLegIndex {
-		// TODO: should return 3165 (42000)
-		return bj, errors.New("A path expression is not a path to a cell in an array")
+		return bj, ErrInvalidJSONPathArrayCell
 	}
 	// Find the target array
 	obj, exists := bj.Extract([]PathExpression{parentPath})
