@@ -422,9 +422,8 @@ func (s *Server) onConn(conn *clientConn) {
 	s.rwlock.Unlock()
 	metrics.ConnGauge.Set(float64(connections))
 
-	if plugin.IsEnable(plugin.Audit) {
-		conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
-	}
+	conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {

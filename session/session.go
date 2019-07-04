@@ -990,6 +990,9 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
+		if s.sessionVars.ConnectionInfo != nil {
+			pi.Host += ":" + s.sessionVars.ConnectionInfo.ClientPort
+		}
 	}
 	s.processInfo.Store(&pi)
 }

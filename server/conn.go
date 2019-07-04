@@ -1449,9 +1449,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		return err
 	}
 
-	if plugin.IsEnable(plugin.Audit) {
-		cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
-	}
+	cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)

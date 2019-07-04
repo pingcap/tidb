@@ -391,6 +391,7 @@ type SessionVars struct {
 	Killed uint32
 
 	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
+	// Now it is also used by System Table.(INFORMATION_SCHEMA PROCESSLIST Table)
 	ConnectionInfo *ConnectionInfo
 }
 
