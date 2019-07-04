@@ -77,13 +77,13 @@ func (t *DeleteRangeTask) Execute(ctx context.Context) error {
 }
 
 // Execute performs the delete range operation.
-func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (int, error) {
+func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (RangeTaskStat, error) {
 	startKey, rangeEndKey := r.StartKey, r.EndKey
-	completedRegions := 0
+	var stat RangeTaskStat
 	for {
 		select {
 		case <-ctx.Done():
-			return completedRegions, errors.Trace(ctx.Err())
+			return stat, errors.Trace(ctx.Err())
 		default:
 		}
 
@@ -94,7 +94,7 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (in
 		bo := NewBackoffer(ctx, deleteRangeOneRegionMaxBackoff)
 		loc, err := t.store.GetRegionCache().LocateKey(bo, startKey)
 		if err != nil {
-			return completedRegions, errors.Trace(err)
+			return stat, errors.Trace(err)
 		}
 
 		// Delete to the end of the region, except if it's the last region overlapping the range
@@ -115,31 +115,31 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (in
 
 		resp, err := t.store.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
-			return completedRegions, errors.Trace(err)
+			return stat, errors.Trace(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return completedRegions, errors.Trace(err)
+			return stat, errors.Trace(err)
 		}
 		if regionErr != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return completedRegions, errors.Trace(err)
+				return stat, errors.Trace(err)
 			}
 			continue
 		}
 		deleteRangeResp := resp.DeleteRange
 		if deleteRangeResp == nil {
-			return completedRegions, errors.Trace(ErrBodyMissing)
+			return stat, errors.Trace(ErrBodyMissing)
 		}
 		if err := deleteRangeResp.GetError(); err != "" {
-			return completedRegions, errors.Errorf("unexpected delete range err: %v", err)
+			return stat, errors.Errorf("unexpected delete range err: %v", err)
 		}
-		completedRegions++
+		stat.CompletedRegions++
 		startKey = endKey
 	}
 
-	return completedRegions, nil
+	return stat, nil
 }
 
 // CompletedRegions returns the number of regions that are affected by this delete range task
