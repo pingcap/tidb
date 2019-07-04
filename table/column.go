@@ -18,6 +18,7 @@
 package table
 
 import (
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -255,6 +256,13 @@ func NewColDesc(col *Column) *ColDesc {
 	var defaultValue interface{}
 	if !mysql.HasNoDefaultValueFlag(col.Flag) {
 		defaultValue = col.GetDefaultValue()
+		if defaultValStr, ok := defaultValue.(string); ok {
+			if (col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) &&
+				strings.ToUpper(defaultValStr) == strings.ToUpper(ast.CurrentTimestamp) &&
+				col.Decimal > 0 {
+				defaultValue = fmt.Sprintf("%s(%d)", defaultValStr, col.Decimal)
+			}
+		}
 	}
 
 	extra := ""
@@ -423,9 +431,6 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		// Auto increment column doesn't has default value and we should not return error.
 		return GetZeroValue(col), nil
-	}
-	if col.IsGenerated() {
-		return types.Datum{}, nil
 	}
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx

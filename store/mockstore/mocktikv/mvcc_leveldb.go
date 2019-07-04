@@ -641,8 +641,12 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 		return errors.Trace(err)
 	}
 	if !ok {
+		if m.Assertion == kvrpcpb.Assertion_Exist {
+			logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
+		}
 		return nil
 	}
+
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if dec.value.commitTS >= startTS {
 		return &ErrConflict{
@@ -651,22 +655,25 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 			Key:        m.Key,
 		}
 	}
-	if m.Op == kvrpcpb.Op_PessimisticLock && m.Assertion == kvrpcpb.Assertion_NotExist {
-		// Skip rollback keys.
-		for dec.value.valueType == typeRollback {
-			ok, err = dec.Decode(iter)
-			if err != nil {
-				return errors.Trace(err)
+
+	if m.Assertion == kvrpcpb.Assertion_NotExist {
+		for ok {
+			if dec.value.valueType == typeRollback {
+				ok, err = dec.Decode(iter)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else if dec.value.valueType == typeDelete {
+				break
+			} else {
+				if m.Op == kvrpcpb.Op_PessimisticLock {
+					return &ErrKeyAlreadyExist{
+						Key: m.Key,
+					}
+				}
+				logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
+				break
 			}
-			if !ok {
-				return nil
-			}
-		}
-		if dec.value.valueType == typeDelete {
-			return nil
-		}
-		return &ErrKeyAlreadyExist{
-			Key: m.Key,
 		}
 	}
 	return nil
@@ -720,12 +727,6 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	writeValue, err := lock.MarshalBinary()
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	// Check assertions.
-	if (ok && mutation.Assertion == kvrpcpb.Assertion_NotExist) ||
-		(!ok && mutation.Assertion == kvrpcpb.Assertion_Exist) {
-		logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", mutation))
 	}
 
 	batch.Put(writeKey, writeValue)
