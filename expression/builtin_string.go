@@ -22,7 +22,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io/ioutil"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -3491,5 +3493,67 @@ type loadFileFunctionClass struct {
 }
 
 func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "load_file")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseInt(valStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	sig := &builtinInstrLoadFileSig{bf, maxAllowedPacket}
+	return sig, nil
+}
+
+type builtinInstrLoadFileSig struct {
+	baseBuiltinFunc
+	maxAllowedPacket int64
+}
+
+func (b *builtinInstrLoadFileSig) Clone() builtinFunc {
+	newSig := &builtinInstrLoadFileSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
+	return newSig
+}
+
+//MySQL implementation return NULL value when error occurs
+func (b *builtinInstrLoadFileSig) evalString(row chunk.Row) (string, bool, error) {
+	filePath, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, nil
+	}
+	//TODO: check filePath under secure_file_path(not exists in TiDB now)
+	//check inStr valid, get file stat info
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return "", true, nil
+	}
+	//check file readable
+	if fileInfo.IsDir() {
+		return "", true, nil
+	}
+	//check file size MUST be less than MAX_ALLOWED_PACKET
+	if fileInfo.Size() > b.maxAllowedPacket {
+		return "", true, nil
+	}
+	//alloc file_size buffer read file content into that buffer, return buffer
+	inFile, err := os.Open(filePath)
+	if err != nil {
+		return "", true, nil
+	}
+	defer func() {
+		cerr := inFile.Close()
+		if cerr != nil {
+			logutil.BgLogger().Warn("close file failed for load_file", zap.String("path", filePath))
+			err = cerr
+		}
+	}()
+	buf, err := ioutil.ReadAll(inFile)
+	if err != nil {
+		logutil.BgLogger().Warn("read file failed for func load_file", zap.String("path", filePath))
+		return "", true, nil
+	}
+	return string(buf[:]), false, nil
 }

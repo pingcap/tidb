@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -2210,5 +2211,62 @@ func (s *testEvaluatorSuite) TestStringRight(c *C) {
 		res, err := result.ToString()
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, test.expect)
+	}
+}
+
+func (s *testEvaluatorSuite) TestStringLoadFile(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.LoadFile]
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
+	c.Assert(err, IsNil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
+
+	timestamp := strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
+	filePath := "/tmp/load_file_test" + timestamp
+	content := "abcdefg"
+	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0666)
+	c.Assert(err, IsNil)
+	defer func() {
+		cerr := file.Close()
+		c.Assert(cerr, IsNil)
+	}()
+	_, err = file.WriteString(content)
+	c.Assert(err, IsNil)
+	tbl := []struct {
+		Input  interface{}
+		Expect string
+	}{
+		{10, ""},
+		{"$@#!#@!@SADVSD&%$#@!#", ""},
+		{"/tmp", ""},
+	}
+
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		d, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.IsNull(), IsTrue)
+	}
+
+	tblRights := []struct {
+		Input  interface{}
+		Expect string
+	}{
+		{filePath, content},
+	}
+	dtblRights := tblToDtbl(tblRights)
+	for _, t := range dtblRights {
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		d, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.IsNull(), IsFalse)
+		c.Assert(d.GetString(), Equals, t["Expect"][0].GetString())
 	}
 }
