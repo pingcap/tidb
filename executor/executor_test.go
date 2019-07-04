@@ -4086,8 +4086,6 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	rows = re.Rows()
 	// Table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 1)
-	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
-	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
 	c.Assert(rows[0][1], Matches, "t_.*")
 
 	// Test show table regions for partition table when enable split region when create table.
@@ -4099,7 +4097,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	// Table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 3)
 	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
-	partitionDef = tbl.Meta().GetPartitionInfo().Definitions
+	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
 	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
