@@ -14,6 +14,7 @@
 package stmtctx
 
 import (
+	"github.com/pingcap/parser/model"
 	"math"
 	"sort"
 	"strconv"
@@ -436,6 +437,39 @@ func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
 		return true
 	}
 	return false
+}
+
+// ToFlags converts StatementContext to tipb.SelectRequest.Flags.
+func (sc *StatementContext) ToSelectRequestFlags() uint64 {
+	var flags uint64
+	if sc.InInsertStmt {
+		flags |= model.FlagInInsertStmt
+	} else if sc.InUpdateStmt || sc.InDeleteStmt {
+		flags |= model.FlagInUpdateOrDeleteStmt
+	} else if sc.InSelectStmt {
+		flags |= model.FlagInSelectStmt
+	}
+	if sc.IgnoreTruncate {
+		flags |= model.FlagIgnoreTruncate
+	} else if sc.TruncateAsWarning {
+		flags |= model.FlagTruncateAsWarning
+	}
+	if sc.OverflowAsWarning {
+		flags |= model.FlagOverflowAsWarning
+	}
+	if sc.IgnoreZeroInDate {
+		flags |= model.FlagIgnoreZeroInDate
+	}
+	if sc.DividedByZeroAsWarning {
+		flags |= model.FlagDividedByZeroAsWarning
+	}
+	if sc.PadCharToFullLength {
+		flags |= model.FlagPadCharToFullLength
+	}
+	if sc.InLoadDataStmt {
+		flags |= model.FlagInLoadDataStmt
+	}
+	return flags
 }
 
 // CopTasksDetails returns some useful information of cop-tasks during execution.
