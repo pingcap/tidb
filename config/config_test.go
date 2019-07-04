@@ -61,6 +61,8 @@ unrecognized-option-test = true
 	_, err = f.WriteString(`
 token-limit = 0
 enable-table-lock = true
+[log]
+slow-query-cache-size = 50
 [performance]
 [tikv-client]
 commit-timeout="41s"
@@ -80,6 +82,7 @@ max-batch-size=128
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.EnableTableLock, IsTrue)
+	c.Assert(conf.Log.SlowQueryCacheSize, Equals, uint64(50))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

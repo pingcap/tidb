@@ -42,6 +42,8 @@ const (
 	DefaultSlowThreshold = 300
 	// DefaultQueryLogMaxLen is the default max length of the query in the log.
 	DefaultQueryLogMaxLen = 2048
+	// DefaultSlowQueryCacheSize is the default cache size of slow_query.
+	DefaultSlowQueryCacheSize = 1000
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.

@@ -70,6 +70,9 @@ disable-timestamp = false
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
 
+# Slow query cache size uses to control the cache size of slow query tuple, unit is tuple, default value 1000 means cache 1000 tuples of slow query log.
+slow-query-cache-size = 1000
+
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
 
