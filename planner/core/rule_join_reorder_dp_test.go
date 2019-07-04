@@ -56,7 +56,7 @@ func (mj *mockLogicalJoin) recursiveDeriveStats() (*property.StatsInfo, error) {
 	return mj.statsMap[mj.involvedNodeSet], nil
 }
 
-func (s *testJoinReorderDPSuite) newMockJoin(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction) LogicalPlan {
+func (s *testJoinReorderDPSuite) newMockJoin(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, _ []expression.Expression) LogicalPlan {
 	retJoin := mockLogicalJoin{}.init(s.ctx)
 	retJoin.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
 	retJoin.statsMap = s.statsMap
@@ -145,7 +145,7 @@ func (s *testJoinReorderDPSuite) makeStatsMapForTPCHQ5() {
 
 }
 
-func (s *testJoinReorderDPSuite) newDataSource(name string) LogicalPlan {
+func (s *testJoinReorderDPSuite) newDataSource(name string, count int) LogicalPlan {
 	ds := DataSource{}.Init(s.ctx)
 	tan := model.NewCIStr(name)
 	ds.TableAsName = &tan
@@ -158,6 +158,9 @@ func (s *testJoinReorderDPSuite) newDataSource(name string) LogicalPlan {
 		DBName:   model.NewCIStr("test"),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
+	ds.stats = &property.StatsInfo{
+		RowCount: float64(count),
+	}
 	return ds
 }
 
@@ -174,12 +177,12 @@ func (s *testJoinReorderDPSuite) planToString(plan LogicalPlan) string {
 func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
 	s.makeStatsMapForTPCHQ5()
 	joinGroups := make([]LogicalPlan, 0, 6)
-	joinGroups = append(joinGroups, s.newDataSource("lineitem"))
-	joinGroups = append(joinGroups, s.newDataSource("orders"))
-	joinGroups = append(joinGroups, s.newDataSource("customer"))
-	joinGroups = append(joinGroups, s.newDataSource("supplier"))
-	joinGroups = append(joinGroups, s.newDataSource("nation"))
-	joinGroups = append(joinGroups, s.newDataSource("region"))
+	joinGroups = append(joinGroups, s.newDataSource("lineitem", 59986052))
+	joinGroups = append(joinGroups, s.newDataSource("orders", 15000000))
+	joinGroups = append(joinGroups, s.newDataSource("customer", 1500000))
+	joinGroups = append(joinGroups, s.newDataSource("supplier", 100000))
+	joinGroups = append(joinGroups, s.newDataSource("nation", 25))
+	joinGroups = append(joinGroups, s.newDataSource("region", 5))
 	var eqConds []expression.Expression
 	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[0].Schema().Columns[0], joinGroups[1].Schema().Columns[0]))
 	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[1].Schema().Columns[0], joinGroups[2].Schema().Columns[0]))
@@ -189,7 +192,9 @@ func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
 	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[3].Schema().Columns[0], joinGroups[4].Schema().Columns[0]))
 	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[4].Schema().Columns[0], joinGroups[5].Schema().Columns[0]))
 	solver := &joinReorderDPSolver{
-		ctx:     s.ctx,
+		baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
+			ctx: s.ctx,
+		},
 		newJoin: s.newMockJoin,
 	}
 	result, err := solver.solve(joinGroups, eqConds)
@@ -199,12 +204,14 @@ func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
 
 func (s *testJoinReorderDPSuite) TestDPReorderAllCartesian(c *C) {
 	joinGroup := make([]LogicalPlan, 0, 4)
-	joinGroup = append(joinGroup, s.newDataSource("a"))
-	joinGroup = append(joinGroup, s.newDataSource("b"))
-	joinGroup = append(joinGroup, s.newDataSource("c"))
-	joinGroup = append(joinGroup, s.newDataSource("d"))
+	joinGroup = append(joinGroup, s.newDataSource("a", 100))
+	joinGroup = append(joinGroup, s.newDataSource("b", 100))
+	joinGroup = append(joinGroup, s.newDataSource("c", 100))
+	joinGroup = append(joinGroup, s.newDataSource("d", 100))
 	solver := &joinReorderDPSolver{
-		ctx:     s.ctx,
+		baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
+			ctx: s.ctx,
+		},
 		newJoin: s.newMockJoin,
 	}
 	result, err := solver.solve(joinGroup, nil)

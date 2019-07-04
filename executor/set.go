@@ -24,11 +24,13 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // SetExecutor executes set statement.
@@ -40,7 +42,7 @@ type SetExecutor struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
@@ -53,7 +55,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
 			// This is set charset stmt.
 			dt, err := v.Expr.(*expression.Constant).Eval(chunk.Row{})
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			cs := dt.GetString()
 			var co string
@@ -62,7 +64,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
 			}
 			err = e.setCharset(cs, co)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			continue
 		}
@@ -71,7 +73,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
 			// Set user variable.
 			value, err := v.Expr.Eval(chunk.Row{})
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 
 			if value.IsNull() {
@@ -79,7 +81,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
 			} else {
 				svalue, err1 := value.ToString()
 				if err1 != nil {
-					return errors.Trace(err1)
+					return err1
 				}
 				sessionVars.Users[name] = fmt.Sprintf("%v", svalue)
 			}
@@ -91,7 +93,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		for _, n := range syns {
 			err := e.setSysVariable(n, v)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
@@ -124,18 +126,28 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		value, err := e.getVarValue(v, sysVar)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if value.IsNull() {
 			value.SetString("")
 		}
 		svalue, err := value.ToString()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, svalue)
 		if err != nil {
-			return errors.Trace(err)
+			return err
+		}
+		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
+			if auditPlugin.OnGlobalVariableEvent != nil {
+				auditPlugin.OnGlobalVariableEvent(context.Background(), e.ctx.GetSessionVars(), name, svalue)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 	} else {
 		// Set session scope system variable.
@@ -144,7 +156,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		value, err := e.getVarValue(v, nil)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		oldSnapshotTS := sessionVars.SnapshotTS
 		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
@@ -152,20 +164,20 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		err = variable.SetSessionSystemVar(sessionVars, name, value)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
 		if newSnapshotIsSet {
 			err = gcutil.ValidateSnapshot(e.ctx, sessionVars.SnapshotTS)
 			if err != nil {
 				sessionVars.SnapshotTS = oldSnapshotTS
-				return errors.Trace(err)
+				return err
 			}
 		}
 		err = e.loadSnapshotInfoSchemaIfNeeded(name)
 		if err != nil {
 			sessionVars.SnapshotTS = oldSnapshotTS
-			return errors.Trace(err)
+			return err
 		}
 		var valStr string
 		if value.IsNull() {
@@ -173,9 +185,9 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		} else {
 			var err error
 			valStr, err = value.ToString()
-			terror.Log(errors.Trace(err))
+			terror.Log(err)
 		}
-		log.Infof("con:%d %s=%s", sessionVars.ConnectionID, name, valStr)
+		logutil.BgLogger().Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
 
 	return nil
@@ -186,14 +198,14 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 	if len(co) == 0 {
 		co, err = charset.GetDefaultCollation(cs)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	sessionVars := e.ctx.GetSessionVars()
 	for _, v := range variable.SetNamesVariables {
-		terror.Log(errors.Trace(sessionVars.SetSystemVar(v, cs)))
+		terror.Log(sessionVars.SetSystemVar(v, cs))
 	}
-	terror.Log(errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co)))
+	terror.Log(sessionVars.SetSystemVar(variable.CollationConnection, co))
 	return nil
 }
 
@@ -207,14 +219,14 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		} else {
 			s, err1 := variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 			if err1 != nil {
-				return value, errors.Trace(err1)
+				return value, err1
 			}
 			value = types.NewStringDatum(s)
 		}
 		return
 	}
 	value, err = v.Expr.Eval(chunk.Row{})
-	return value, errors.Trace(err)
+	return value, err
 }
 
 func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
@@ -226,11 +238,11 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
 		vars.SnapshotInfoschema = nil
 		return nil
 	}
-	log.Infof("con:%d loadSnapshotInfoSchema, SnapshotTS:%d", vars.ConnectionID, vars.SnapshotTS)
+	logutil.BgLogger().Info("load snapshot info schema", zap.Uint64("conn", vars.ConnectionID), zap.Uint64("SnapshotTS", vars.SnapshotTS))
 	dom := domain.GetDomain(e.ctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(vars.SnapshotTS)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	vars.SnapshotInfoschema = snapInfo
 	return nil

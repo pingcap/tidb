@@ -41,12 +41,14 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	go serverFunc(lease, leaseGrantCh, oracleCh, exit, &wg)
 
 	validator := NewSchemaValidator(lease).(*schemaValidator)
+	c.Assert(validator.IsStarted(), IsTrue)
 
 	for i := 0; i < 10; i++ {
 		delay := time.Duration(100+rand.Intn(900)) * time.Microsecond
 		time.Sleep(delay)
 		// Reload can run arbitrarily, at any time.
-		reload(validator, leaseGrantCh, 0)
+		item := <-leaseGrantCh
+		validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer, nil)
 	}
 
 	// Take a lease, check it's valid.
@@ -57,32 +59,31 @@ func (*testSuite) TestSchemaValidator(c *C) {
 
 	// Stop the validator, validator's items value is nil.
 	validator.Stop()
+	c.Assert(validator.IsStarted(), IsFalse)
 	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
 	c.Assert(isTablesChanged, IsTrue)
 	valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
 	c.Assert(valid, Equals, ResultUnknown)
 	validator.Restart()
 
-	// Sleep for a long time, check schema is invalid.
-	<-oracleCh // Make sure that ts has timed out a lease.
-	time.Sleep(lease)
-	ts := <-oracleCh
+	// Increase the current time by 2 leases, check schema is invalid.
+	ts := uint64(time.Now().Add(2 * lease).UnixNano()) // Make sure that ts has timed out a lease.
 	valid = validator.Check(ts, item.schemaVer, []int64{10})
 	c.Assert(valid, Equals, ResultUnknown, Commentf("validator latest schema ver %v, time %v, item schema ver %v, ts %v",
-		validator.latestSchemaVer, validator.latestSchemaExpire, item.schemaVer, oracle.GetTimeFromTS(ts)))
-
-	currVer := reload(validator, leaseGrantCh, 0)
+		validator.latestSchemaVer, validator.latestSchemaExpire, 0, oracle.GetTimeFromTS(ts)))
+	// Make sure newItem's version is greater than item.schema.
+	newItem := getGreaterVersionItem(c, lease, leaseGrantCh, item.schemaVer)
+	currVer := newItem.schemaVer
+	validator.Update(newItem.leaseGrantTS, newItem.oldVer, currVer, nil)
 	valid = validator.Check(ts, item.schemaVer, nil)
-	c.Assert(valid, Equals, ResultFail)
+	c.Assert(valid, Equals, ResultFail, Commentf("currVer %d, newItem %v", currVer, item))
 	valid = validator.Check(ts, item.schemaVer, []int64{0})
-	c.Assert(valid, Equals, ResultFail)
+	c.Assert(valid, Equals, ResultFail, Commentf("currVer %d, newItem %v", currVer, item))
 	// Check the latest schema version must changed.
 	c.Assert(item.schemaVer, Less, validator.latestSchemaVer)
 
-	// Make sure newItem's version is bigger than currVer.
-	time.Sleep(lease * 2)
-	newItem := <-leaseGrantCh
-
+	// Make sure newItem's version is greater than currVer.
+	newItem = getGreaterVersionItem(c, lease, leaseGrantCh, currVer)
 	// Update current schema version to newItem's version and the delta table IDs is 1, 2, 3.
 	validator.Update(ts, currVer, newItem.schemaVer, []int64{1, 2, 3})
 	// Make sure the updated table IDs don't be covered with the same schema version.
@@ -90,13 +91,13 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
 	c.Assert(isTablesChanged, IsFalse)
 	isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
-	c.Assert(isTablesChanged, IsTrue)
+	c.Assert(isTablesChanged, IsTrue, Commentf("currVer %d, newItem %v", currVer, newItem))
 	// The current schema version is older than the oldest schema version.
 	isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
-	c.Assert(isTablesChanged, IsTrue)
+	c.Assert(isTablesChanged, IsTrue, Commentf("currVer %d, newItem %v", currVer, newItem))
 
 	// All schema versions is expired.
-	ts = uint64(time.Now().Add(lease).UnixNano())
+	ts = uint64(time.Now().Add(2 * lease).UnixNano())
 	valid = validator.Check(ts, newItem.schemaVer, nil)
 	c.Assert(valid, Equals, ResultUnknown)
 
@@ -104,10 +105,18 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	wg.Wait()
 }
 
-func reload(validator SchemaValidator, leaseGrantCh chan leaseGrantItem, ids ...int64) int64 {
-	item := <-leaseGrantCh
-	validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer, ids)
-	return item.schemaVer
+func getGreaterVersionItem(c *C, lease time.Duration, leaseGrantCh chan leaseGrantItem, currVer int64) leaseGrantItem {
+	var newItem leaseGrantItem
+	for i := 0; i < 10; i++ {
+		time.Sleep(lease / 2)
+		newItem = <-leaseGrantCh
+		if newItem.schemaVer > currVer {
+			break
+		}
+	}
+	c.Assert(newItem.schemaVer, Greater, currVer, Commentf("currVer %d, newItem %v", currVer, newItem))
+
+	return newItem
 }
 
 // serverFunc plays the role as a remote server, runs in a separate goroutine.

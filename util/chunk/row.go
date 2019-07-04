@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-// Row represents a row of data, can be used to assess values.
+// Row represents a row of data, can be used to access values.
 type Row struct {
 	c   *Chunk
 	idx int
@@ -72,7 +72,8 @@ func (r Row) GetFloat64(colIdx int) float64 {
 func (r Row) GetString(colIdx int) string {
 	col := r.c.columns[colIdx]
 	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	return hack.String(col.data[start:end])
+	str := string(hack.String(col.data[start:end]))
+	return str
 }
 
 // GetBytes returns the bytes value with the colIdx.
@@ -103,7 +104,7 @@ func (r Row) getNameValue(colIdx int) (string, uint64) {
 		return "", 0
 	}
 	val := *(*uint64)(unsafe.Pointer(&col.data[start]))
-	name := hack.String(col.data[start+8 : end])
+	name := string(hack.String(col.data[start+8 : end]))
 	return name, val
 }
 

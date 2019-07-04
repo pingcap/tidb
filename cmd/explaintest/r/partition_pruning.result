@@ -4273,3 +4273,14 @@ Union_9	750.00	root
   └─Selection_17	250.00	cop	ge(test.t1.a, 10), le(test.t1.a, 43)
     └─TableScan_16	10000.00	cop	table:t1, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table t0, t1;
+drop table if exists t;
+create table t(a timestamp) partition by range(unix_timestamp(a)) (partition p0 values less than(unix_timestamp('2019-02-16 14:20:00')), partition p1 values less than (maxvalue));
+explain select * from t where a between timestamp'2019-02-16 14:19:00' and timestamp'2019-02-16 14:21:00';
+id	count	task	operator info
+Union_8	500.00	root	
+├─TableReader_11	250.00	root	data:Selection_10
+│ └─Selection_10	250.00	cop	ge(test.t.a, 2019-02-16 14:19:00), le(test.t.a, 2019-02-16 14:21:00)
+│   └─TableScan_9	10000.00	cop	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	250.00	root	data:Selection_13
+  └─Selection_13	250.00	cop	ge(test.t.a, 2019-02-16 14:19:00), le(test.t.a, 2019-02-16 14:21:00)
+    └─TableScan_12	10000.00	cop	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo

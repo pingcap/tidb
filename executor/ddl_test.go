@@ -17,23 +17,29 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite3) TestTruncateTable(c *C) {
@@ -88,8 +94,8 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	req := rs.NewRecordBatch()
-	it := chunk.NewIterator4Chunk(req.Chunk)
+	req := rs.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
@@ -102,8 +108,8 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
-	req = rs.NewRecordBatch()
-	it = chunk.NewIterator4Chunk(req.Chunk)
+	req = rs.NewChunk()
+	it = chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
@@ -184,7 +190,10 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("create or replace view v1 (c,d) as select a,b from t1 ")
 	tk.MustExec("create table if not exists t1 (a int ,b int)")
 	_, err = tk.Exec("create or replace view t1 as select * from t1")
-	c.Assert(err.Error(), Equals, ddl.ErrTableIsNotView.GenWithStackByArgs("test", "t1").Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error())
+	// create view using prepare
+	tk.MustExec(`prepare stmt from "create view v10 (x) as select 1";`)
+	tk.MustExec("execute stmt")
 }
 
 func (s *testSuite3) TestCreateDropDatabase(c *C) {
@@ -252,7 +261,7 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-time.Duration(1 * time.Millisecond)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	req := r.NewRecordBatch()
+	req := r.NewChunk()
 	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
@@ -263,7 +272,7 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
 	_, err = tk.Exec("alter table alter_view add column c4 varchar(50)")
-	c.Assert(err.Error(), Equals, ddl.ErrTableIsNotBaseTable.GenWithStackByArgs("test", "alter_view").Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
 }
 
@@ -307,11 +316,11 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("alter table mc modify column c2 text")
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text CHARSET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
-	c.Assert(err.Error(), Equals, ddl.ErrTableIsNotBaseTable.GenWithStackByArgs("test", "alter_view").Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
 }
 
@@ -335,6 +344,10 @@ func (s *testSuite3) TestDefaultDBAfterDropCurDB(c *C) {
 }
 
 func (s *testSuite3) TestRenameTable(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database rename1")
@@ -390,26 +403,82 @@ func (s *testSuite3) TestRenameTable(c *C) {
 	tk.MustExec("drop database rename2")
 }
 
-func (s *testSuite3) TestUnsupportedCharset(c *C) {
+func (s *testSuite3) TestColumnCharsetAndCollate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	dbName := "unsupported_charset"
+	dbName := "col_charset_collate"
 	tk.MustExec("create database " + dbName)
 	tk.MustExec("use " + dbName)
 	tests := []struct {
-		charset string
-		valid   bool
+		colType     string
+		charset     string
+		collates    string
+		exptCharset string
+		exptCollate string
+		errMsg      string
 	}{
-		{"charset UTF8 collate UTF8_bin", true},
-		{"charset utf8mb4", true},
-		{"charset utf16", false},
-		{"charset latin1", true},
-		{"charset binary", true},
-		{"charset ascii", true},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset utf8",
+			collates:    "collate utf8_bin",
+			exptCharset: "utf8",
+			exptCollate: "utf8_bin",
+			errMsg:      "",
+		},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset utf8mb4",
+			collates:    "",
+			exptCharset: "utf8mb4",
+			exptCollate: "utf8mb4_bin",
+			errMsg:      "",
+		},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset utf16",
+			collates:    "",
+			exptCharset: "",
+			exptCollate: "",
+			errMsg:      "Unknown charset utf16",
+		},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset latin1",
+			collates:    "",
+			exptCharset: "latin1",
+			exptCollate: "latin1_bin",
+			errMsg:      "",
+		},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset binary",
+			collates:    "",
+			exptCharset: "binary",
+			exptCollate: "binary",
+			errMsg:      "",
+		},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset ascii",
+			collates:    "",
+			exptCharset: "ascii",
+			exptCollate: "ascii_bin",
+			errMsg:      "",
+		},
 	}
+	sctx := tk.Se.(sessionctx.Context)
+	dm := domain.GetDomain(sctx)
 	for i, tt := range tests {
-		sql := fmt.Sprintf("create table t%d (a varchar(10) %s)", i, tt.charset)
-		if tt.valid {
+		tblName := fmt.Sprintf("t%d", i)
+		sql := fmt.Sprintf("create table %s (a %s %s %s)", tblName, tt.colType, tt.charset, tt.collates)
+		if tt.errMsg == "" {
 			tk.MustExec(sql)
+			is := dm.InfoSchema()
+			c.Assert(is, NotNil)
+
+			tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+			c.Assert(err, IsNil)
+			c.Assert(tb.Meta().Columns[0].Charset, Equals, tt.exptCharset, Commentf(sql))
+			c.Assert(tb.Meta().Columns[0].Collate, Equals, tt.exptCollate, Commentf(sql))
 		} else {
 			_, err := tk.Exec(sql)
 			c.Assert(err, NotNil, Commentf(sql))
@@ -461,38 +530,98 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert t values (%d)", i))
 	}
-	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	dom := domain.GetDomain(tk.Se)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	var hasShardedID bool
-	var count int
-	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
-	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
-		c.Assert(h, GreaterEqual, int64(0))
-		first8bits := h >> 56
-		if first8bits > 0 {
-			hasShardedID = true
-		}
-		count++
-		return true, nil
-	})
-	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 100)
-	c.Assert(hasShardedID, IsTrue)
 
-	// Test that audo_increment column can not use shard_row_id_bits.
-	_, err = tk.Exec("create table auto (id int not null auto_increment primary key) shard_row_id_bits = 4")
-	c.Assert(err, NotNil)
-	tk.MustExec("create table auto (id int not null auto_increment primary key) shard_row_id_bits = 0")
-	_, err = tk.Exec("alter table auto shard_row_id_bits = 4")
-	c.Assert(err, NotNil)
+	assertCountAndShard := func(t table.Table, expectCount int) {
+		var hasShardedID bool
+		var count int
+		c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
+		err = t.IterRecords(tk.Se, t.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
+			c.Assert(h, GreaterEqual, int64(0))
+			first8bits := h >> 56
+			if first8bits > 0 {
+				hasShardedID = true
+			}
+			count++
+			return true, nil
+		})
+		c.Assert(err, IsNil)
+		c.Assert(count, Equals, expectCount)
+		c.Assert(hasShardedID, IsTrue)
+	}
+
+	assertCountAndShard(tbl, 100)
+
+	// After PR 10759, shard_row_id_bits is supported with tables with auto_increment column.
+	tk.MustExec("create table auto (id int not null auto_increment unique) shard_row_id_bits = 4")
+	tk.MustExec("alter table auto shard_row_id_bits = 5")
+	tk.MustExec("drop table auto")
+	tk.MustExec("create table auto (id int not null auto_increment unique) shard_row_id_bits = 0")
+	tk.MustExec("alter table auto shard_row_id_bits = 5")
+	tk.MustExec("drop table auto")
+	tk.MustExec("create table auto (id int not null auto_increment unique)")
+	tk.MustExec("alter table auto shard_row_id_bits = 5")
+	tk.MustExec("drop table auto")
+	tk.MustExec("create table auto (id int not null auto_increment unique) shard_row_id_bits = 4")
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
+	tk.MustExec("drop table auto")
+
+	// After PR 10759, shard_row_id_bits is not supported with pk_is_handle tables.
+	err = tk.ExecToErr("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 4")
+	c.Assert(err.Error(), Equals, "[ddl:207]unsupported shard_row_id_bits for table with primary key as row id.")
+	tk.MustExec("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 0")
+	err = tk.ExecToErr("alter table auto shard_row_id_bits = 5")
+	c.Assert(err.Error(), Equals, "[ddl:207]unsupported shard_row_id_bits for table with primary key as row id.")
+	tk.MustExec("alter table auto shard_row_id_bits = 0")
+
+	// Hack an existing table with shard_row_id_bits and primary key as handle
+	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test"))
+	c.Assert(ok, IsTrue)
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
+	tblInfo := tbl.Meta()
+	tblInfo.ShardRowIDBits = 5
+	tblInfo.MaxShardRowIDBits = 5
+
+	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		_, err = m.GenSchemaVersion()
+		c.Assert(err, IsNil)
+		c.Assert(m.UpdateTable(db.ID, tblInfo), IsNil)
+		return nil
+	})
+	err = dom.Reload()
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert auto(b) values (1), (3), (5)")
+	tk.MustQuery("select id from auto order by id").Check(testkit.Rows("1", "2", "3"))
+
+	tk.MustExec("alter table auto shard_row_id_bits = 0")
+	tk.MustExec("drop table auto")
+
+	// Test shard_row_id_bits with auto_increment column
+	tk.MustExec("create table auto (a int, b int auto_increment unique) shard_row_id_bits = 15")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert auto(a) values (%d)", i))
+	}
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
+	assertCountAndShard(tbl, 100)
+	prevB, err := strconv.Atoi(tk.MustQuery("select b from auto where a=0").Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	for i := 1; i < 100; i++ {
+		b, err := strconv.Atoi(tk.MustQuery(fmt.Sprintf("select b from auto where a=%d", i)).Rows()[0][0].(string))
+		c.Assert(err, IsNil)
+		c.Assert(b, Greater, prevB)
+		prevB = b
+	}
 
 	// Test overflow
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int) shard_row_id_bits = 15")
 	defer tk.MustExec("drop table if exists t1")
 
-	tbl, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	maxID := 1<<(64-15-1) - 1
 	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false)
@@ -592,4 +721,191 @@ func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("1000"))
+}
+
+func (s *testSuite3) TestIllegalFunctionCall4GeneratedColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t1 (b double generated always as (rand()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	_, err = tk.Exec("create table t1 (a varchar(64), b varchar(1024) generated always as (load_file(a)) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime generated always as (curdate()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime generated always as (current_time()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime generated always as (current_timestamp()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime, b varchar(10) generated always as (localtime()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	_, err = tk.Exec("create table t1 (a varchar(1024) generated always as (uuid()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a varchar(1024), b varchar(1024) generated always as (is_free_lock(a)) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
+
+	_, err = tk.Exec("alter table t1 add column d varchar(1024) generated always as (database());")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
+
+	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (connection_id());")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error())
+
+	_, err = tk.Exec("alter table t1 change column c cc bigint generated always as (connection_id());")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("cc").Error())
+}
+
+func (s *testSuite3) TestGeneratedColumnRelatedDDL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("b").Error())
+
+	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
+
+	_, err = tk.Exec("alter table t1 add column d bigint generated always as (a + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1);")
+
+	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	_, err = tk.Exec("alter table t1 add column e bigint as (z + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrBadField.GenWithStackByArgs("z", "generated column function").Error())
+
+	tk.MustExec("drop table t1;")
+}
+
+func (s *testSuite3) TestSetDDLErrorCountLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(variable.DefTiDBDDLErrorCountLimit))
+
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = -1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '-1'"))
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(0))
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", uint64(math.MaxInt64)+1))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '%d'", uint64(math.MaxInt64)+1)))
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(math.MaxInt64))
+	_, err = tk.Exec("set @@global.tidb_ddl_error_count_limit = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(100))
+	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
+	res.Check(testkit.Rows("100"))
+}
+
+// Test issue #9205, fix the precision problem for time type default values
+// See https://github.com/pingcap/tidb/issues/9205 for details
+func (s *testSuite3) TestIssue9205(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(c time DEFAULT '12:12:12.8');`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`alter table t add column c1 time default '12:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t alter column c1 set default '2019-02-01 12:12:10.4';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:10'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t modify c1 time DEFAULT '770:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '770:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+}
+
+func (s *testSuite3) TestCheckDefaultFsp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+
+	_, err := tk.Exec("create table t (  tt timestamp default now(1));")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("create table t (  tt timestamp(1) default current_timestamp);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("create table t (  tt timestamp(1) default now(2));")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	tk.MustExec("create table t (  tt timestamp(1) default now(1));")
+	tk.MustExec("create table t2 (  tt timestamp default current_timestamp());")
+	tk.MustExec("create table t3 (  tt timestamp default current_timestamp(0));")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp default now(2);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp(5) default current_timestamp;")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp(5) default now(2);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t modify column tt timestamp(1) default now();")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("alter table t modify column tt timestamp(4) default now(5);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("alter table t change column tt tttt timestamp(4) default now(5);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
+
+	_, err = tk.Exec("alter table t change column tt tttt timestamp(1) default now();")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
+}
+
+func (s *testSuite3) TestTimestampMinDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tdv;")
+	tk.MustExec("create table tdv(a int);")
+	tk.MustExec("ALTER TABLE tdv ADD COLUMN ts timestamp DEFAULT '1970-01-01 08:00:01';")
 }

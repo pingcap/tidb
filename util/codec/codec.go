@@ -68,21 +68,10 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = encodeBytes(b, vals[i].GetBytes(), comparable)
 		case types.KindMysqlTime:
 			b = append(b, uintFlag)
-			t := vals[i].GetMysqlTime()
-			// Encoding timestamp need to consider timezone.
-			// If it's not in UTC, transform to UTC first.
-			if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
-				err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
-			var v uint64
-			v, err = t.ToPackedUint()
+			b, err = EncodeMySQLTime(sc, vals[i], mysql.TypeUnspecified, b)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
-			b = EncodeUint(b, v)
 		case types.KindMysqlDuration:
 			// duration may have negative value, so we cannot use String to encode directly.
 			b = append(b, durationFlag)
@@ -135,6 +124,29 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 	return b, errors.Trace(err)
 }
 
+// EncodeMySQLTime encodes datum of `KindMysqlTime` to []byte.
+func EncodeMySQLTime(sc *stmtctx.StatementContext, d types.Datum, tp byte, b []byte) (_ []byte, err error) {
+	t := d.GetMysqlTime()
+	// Encoding timestamp need to consider timezone. If it's not in UTC, transform to UTC first.
+	// This is compatible with `PBToExpr > convertTime`, and coprocessor assumes the passed timestamp is in UTC as well.
+	if tp == mysql.TypeUnspecified {
+		tp = t.Type
+	}
+	if tp == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+		err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var v uint64
+	v, err = t.ToPackedUint()
+	if err != nil {
+		return nil, err
+	}
+	b = EncodeUint(b, v)
+	return b, nil
+}
+
 func encodeBytes(b []byte, v []byte, comparable bool) []byte {
 	if comparable {
 		b = append(b, bytesFlag)
@@ -181,7 +193,8 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]by
 	return encode(sc, b, v, false, false)
 }
 
-func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int, comparable, hash bool) (_ []byte, err error) {
+func encodeHashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int) (_ []byte, err error) {
+	const comparable = false
 	for _, i := range colIdx {
 		if row.IsNull(i) {
 			b = append(b, NilFlag)
@@ -194,15 +207,11 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 				break
 			}
 			// encode unsigned integers.
-			if hash {
-				integer := row.GetInt64(i)
-				if integer < 0 {
-					b = encodeUnsignedInt(b, uint64(integer), comparable)
-				} else {
-					b = encodeSignedInt(b, integer, comparable)
-				}
+			integer := row.GetInt64(i)
+			if integer < 0 {
+				b = encodeUnsignedInt(b, uint64(integer), comparable)
 			} else {
-				b = encodeUnsignedInt(b, row.GetUint64(i), comparable)
+				b = encodeSignedInt(b, integer, comparable)
 			}
 		case mysql.TypeFloat:
 			b = append(b, floatFlag)
@@ -235,20 +244,13 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 			b = EncodeInt(b, int64(row.GetDuration(i, 0).Duration))
 		case mysql.TypeNewDecimal:
 			b = append(b, decimalFlag)
-			if hash {
-				// If hash is true, we only consider the original value of this decimal and ignore it's precision.
-				dec := row.GetMyDecimal(i)
-				bin, err := dec.ToHashKey()
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				b = append(b, bin...)
-			} else {
-				b, err = EncodeDecimal(b, row.GetMyDecimal(i), allTypes[i].Flen, allTypes[i].Decimal)
-				if terror.ErrorEqual(err, types.ErrTruncated) {
-					err = sc.HandleTruncate(err)
-				}
+			// If hash is true, we only consider the original value of this decimal and ignore it's precision.
+			dec := row.GetMyDecimal(i)
+			bin, err := dec.ToHashKey()
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
+			b = append(b, bin...)
 		case mysql.TypeEnum:
 			b = encodeUnsignedInt(b, uint64(row.GetEnum(i).ToNumber()), comparable)
 		case mysql.TypeSet:
@@ -280,7 +282,7 @@ func HashValues(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byt
 // HashChunkRow appends the encoded values to byte slice "b", returning the appended slice.
 // If two rows are equal, it will generate the same bytes.
 func HashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int) ([]byte, error) {
-	return encodeChunkRow(sc, b, row, allTypes, colIdx, false, true)
+	return encodeHashChunkRow(sc, b, row, allTypes, colIdx)
 }
 
 // Decode decodes values from a byte slice generated with EncodeKey or EncodeValue
@@ -430,6 +432,17 @@ func CutOne(b []byte) (data []byte, remain []byte, err error) {
 	return b[:l], b[l:], nil
 }
 
+// CutColumnID cuts the column ID from b.
+// It will return the remains as byte slice and column ID
+func CutColumnID(b []byte) (remain []byte, n int64, err error) {
+	if len(b) < 1 {
+		return nil, 0, errors.New("invalid encoded key")
+	}
+	// skip the flag
+	b = b[1:]
+	return DecodeVarint(b)
+}
+
 // SetRawValues set raw datum values from a row data.
 func SetRawValues(data []byte, values []types.Datum) error {
 	for i := 0; i < len(values); i++ {
@@ -458,7 +471,7 @@ func peek(b []byte) (length int, err error) {
 		// Those types are stored in 8 bytes.
 		l = 8
 	case bytesFlag:
-		l, err = peekBytes(b, false)
+		l, err = peekBytes(b)
 	case compactBytesFlag:
 		l, err = peekCompactBytes(b)
 	case decimalFlag:
@@ -479,7 +492,7 @@ func peek(b []byte) (length int, err error) {
 	return
 }
 
-func peekBytes(b []byte, reverse bool) (int, error) {
+func peekBytes(b []byte) (int, error) {
 	offset := 0
 	for {
 		if len(b) < offset+encGroupSize+1 {
@@ -488,12 +501,7 @@ func peekBytes(b []byte, reverse bool) (int, error) {
 		// The byte slice is encoded into many groups.
 		// For each group, there are 8 bytes for data and 1 byte for marker.
 		marker := b[offset+encGroupSize]
-		var padCount byte
-		if reverse {
-			padCount = marker
-		} else {
-			padCount = encMarker - marker
-		}
+		padCount := encMarker - marker
 		offset += encGroupSize + 1
 		// When padCount is not zero, it means we get the end of the byte slice.
 		if padCount != 0 {

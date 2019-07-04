@@ -25,13 +25,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/filesort"
 	"github.com/pingcap/tidb/util/logutil"
-	log "github.com/sirupsen/logrus"
 )
 
 type comparableRow struct {
@@ -264,19 +264,19 @@ func driveGenCmd() {
 	terror.MustNil(err)
 	// Sanity checks
 	if keySize <= 0 {
-		log.Fatal(errors.New("key size must be positive"))
+		log.Fatal("key size must be positive")
 	}
 	if valSize <= 0 {
-		log.Fatal(errors.New("value size must be positive"))
+		log.Fatal("value size must be positive")
 	}
 	if scale <= 0 {
-		log.Fatal(errors.New("scale must be positive"))
+		log.Fatal("scale must be positive")
 	}
 	if _, err = os.Stat(tmpDir); err != nil {
 		if os.IsNotExist(err) {
-			log.Fatal(errors.New("tmpDir does not exist"))
+			log.Fatal("tmpDir does not exist")
 		}
-		log.Fatal(err)
+		log.Fatal(err.Error())
 	}
 
 	cLog("Generating...")
@@ -294,20 +294,20 @@ func driveRunCmd() {
 	terror.MustNil(err)
 	// Sanity checks
 	if bufSize <= 0 {
-		log.Fatal(errors.New("buffer size must be positive"))
+		log.Fatal("buffer size must be positive")
 	}
 	if nWorkers <= 0 {
-		log.Fatal(errors.New("the number of workers must be positive"))
+		log.Fatal("the number of workers must be positive")
 	}
 	if inputRatio < 0 || inputRatio > 100 {
-		log.Fatal(errors.New("input ratio must between 0 and 100 (inclusive)"))
+		log.Fatal("input ratio must between 0 and 100 (inclusive)")
 	}
 	if outputRatio < 0 || outputRatio > 100 {
-		log.Fatal(errors.New("output ratio must between 0 and 100 (inclusive)"))
+		log.Fatal("output ratio must between 0 and 100 (inclusive)")
 	}
 	if _, err = os.Stat(tmpDir); err != nil {
 		if os.IsNotExist(err) {
-			log.Fatal(errors.New("tmpDir does not exist"))
+			log.Fatal("tmpDir does not exist")
 		}
 		terror.MustNil(err)
 	}
@@ -382,9 +382,7 @@ func driveRunCmd() {
 }
 
 func init() {
-	err := logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	err := logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
 	cwd, err1 := os.Getwd()
 	terror.MustNil(err1)

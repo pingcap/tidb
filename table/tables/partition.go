@@ -28,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // Both partition and partitionedTable implement the table.Table interface.
@@ -114,6 +115,22 @@ type PartitionExpr struct {
 	Expr expression.Expression
 }
 
+// rangePartitionString returns the partition string for a range typed partition.
+func rangePartitionString(pi *model.PartitionInfo) string {
+	// partition by range expr
+	if len(pi.Columns) == 0 {
+		return pi.Expr
+	}
+
+	// partition by range columns (c1)
+	if len(pi.Columns) == 1 {
+		return pi.Columns[0].L
+	}
+
+	// partition by range columns (c1, c2, ...)
+	panic("create table assert len(columns) = 1")
+}
+
 func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	var column *expression.Column
 	// The caller should assure partition info is not nil.
@@ -125,42 +142,45 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
 	schema := expression.NewSchema(columns...)
+	partStr := rangePartitionString(pi)
 	for i := 0; i < len(pi.Definitions); i++ {
+
 		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
 			// Expr less than maxvalue is always true.
 			fmt.Fprintf(&buf, "true")
 		} else {
-			fmt.Fprintf(&buf, "((%s) < (%s))", pi.Expr, pi.Definitions[i].LessThan[0])
+			fmt.Fprintf(&buf, "((%s) < (%s))", partStr, pi.Definitions[i].LessThan[0])
 		}
+
 		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		locateExprs = append(locateExprs, exprs[0])
 
 		if i > 0 {
-			fmt.Fprintf(&buf, " and ((%s) >= (%s))", pi.Expr, pi.Definitions[i-1].LessThan[0])
+			fmt.Fprintf(&buf, " and ((%s) >= (%s))", partStr, pi.Definitions[i-1].LessThan[0])
 		} else {
 			// NULL will locate in the first partition, so its expression is (expr < value or expr is null).
-			fmt.Fprintf(&buf, " or ((%s) is null)", pi.Expr)
+			fmt.Fprintf(&buf, " or ((%s) is null)", partStr)
 
 			// Extracts the column of the partition expression, it will be used by partition prunning.
-			if tmps, err1 := expression.ParseSimpleExprsWithSchema(ctx, pi.Expr, schema); err1 == nil {
+			if tmps, err1 := expression.ParseSimpleExprsWithSchema(ctx, partStr, schema); err1 == nil {
 				if col, ok := tmps[0].(*expression.Column); ok {
 					column = col
 				}
 			}
 			if column == nil {
-				log.Warnf("partition pruning won't work on this expr:%s", pi.Expr)
+				logutil.BgLogger().Warn("partition pruning not applicable", zap.String("expression", partStr))
 			}
 		}
 
 		exprs, err = expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
@@ -188,7 +208,7 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
@@ -197,7 +217,7 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 	exprs, err := expression.ParseSimpleExprsWithSchema(ctx, pi.Expr, schema)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
-		log.Error("wrong table partition expression:", errors.ErrorStack(err), pi.Expr)
+		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	if col, ok := exprs[0].(*expression.Column); ok {
@@ -260,8 +280,17 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		idx = 0
 	}
 	if idx < 0 || idx >= len(partitionExprs) {
-		// The data does not belong to any of the partition?
-		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
+		// The data does not belong to any of the partition returns `table has no partition for value %s`.
+		e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+
+		ret, _, err2 := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		if err2 != nil {
+			return 0, errors.Trace(err2)
+		}
+		return 0, errors.Trace(table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("%d", ret)))
 	}
 	return idx, nil
 }
@@ -283,7 +312,13 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 
 // GetPartition returns a Table, which is actually a partition.
 func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
-	return t.partitions[pid]
+	// Attention, can't simply use `return t.partitions[pid]` here.
+	// Because A nil of type *partition is a kind of `table.PhysicalTable`
+	p, ok := t.partitions[pid]
+	if !ok {
+		return nil
+	}
+	return p
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.
@@ -296,7 +331,7 @@ func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.D
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
-func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
@@ -348,7 +383,7 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 		// unlikely to happen in step2.
 		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
 		if err != nil {
-			log.Error("partition update record error, it may write dirty data to txn:", errors.ErrorStack(err))
+			logutil.BgLogger().Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
 			return errors.Trace(err)
 		}
 		return nil

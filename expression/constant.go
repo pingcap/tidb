@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -60,7 +61,7 @@ func (c *Constant) String() string {
 	if c.DeferredExpr != nil {
 		dt, err := c.Eval(chunk.Row{})
 		if err != nil {
-			log.Errorf("Fail to eval constant, err: %s", err.Error())
+			logutil.BgLogger().Error("eval constant failed", zap.Error(err))
 			return ""
 		}
 		c.Value.SetValue(dt.GetValue())
@@ -307,6 +308,11 @@ func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 // IsCorrelated implements Expression interface.
 func (c *Constant) IsCorrelated() bool {
 	return false
+}
+
+// ConstItem implements Expression interface.
+func (c *Constant) ConstItem() bool {
+	return true
 }
 
 // Decorrelate implements Expression interface.

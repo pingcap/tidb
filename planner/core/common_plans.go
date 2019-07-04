@@ -29,11 +29,14 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
 )
+
+var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -87,14 +90,6 @@ type RecoverIndex struct {
 	IndexName string
 }
 
-// RestoreTable is used for recover deleted files by mistake.
-type RestoreTable struct {
-	baseSchemaProducer
-	JobID  int64
-	Table  *ast.TableName
-	JobNum int64
-}
-
 // CleanupIndex is used to delete dangling index data.
 type CleanupIndex struct {
 	baseSchemaProducer
@@ -136,6 +131,17 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
+// ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
+type ReloadExprPushdownBlacklist struct {
+	baseSchemaProducer
+}
+
+// Change represents a change plan.
+type Change struct {
+	baseSchemaProducer
+	*ast.ChangeStmt
+}
+
 // Prepare represents prepare plan.
 type Prepare struct {
 	baseSchemaProducer
@@ -148,11 +154,12 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name      string
-	UsingVars []expression.Expression
-	ExecID    uint32
-	Stmt      ast.StmtNode
-	Plan      Plan
+	Name          string
+	UsingVars     []expression.Expression
+	PrepareParams []types.Datum
+	ExecID        uint32
+	Stmt          ast.StmtNode
+	Plan          Plan
 }
 
 // OptimizePreparedPlan optimizes the prepared statement.
@@ -166,22 +173,40 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		return errors.Trace(ErrStmtNotFound)
 	}
 
-	if len(prepared.Params) != len(e.UsingVars) {
-		return errors.Trace(ErrWrongParamCount)
+	paramLen := len(e.PrepareParams)
+	if paramLen > 0 {
+		// for binary protocol execute, argument is placed in vars.PrepareParams
+		if len(prepared.Params) != paramLen {
+			return errors.Trace(ErrWrongParamCount)
+		}
+		vars.PreparedParams = e.PrepareParams
+		for i, val := range vars.PreparedParams {
+			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			param.Datum = val
+			param.InExecute = true
+		}
+	} else {
+		// for `execute stmt using @a, @b, @c`, using value in e.UsingVars
+		if len(prepared.Params) != len(e.UsingVars) {
+			return errors.Trace(ErrWrongParamCount)
+		}
+
+		for i, usingVar := range e.UsingVars {
+			val, err := usingVar.Eval(chunk.Row{})
+			if err != nil {
+				return err
+			}
+			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			param.Datum = val
+			param.InExecute = true
+			vars.PreparedParams = append(vars.PreparedParams, val)
+		}
 	}
 
-	for i, usingVar := range e.UsingVars {
-		val, err := usingVar.Eval(chunk.Row{})
-		if err != nil {
-			return errors.Trace(err)
-		}
-		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = val
-		vars.PreparedParams = append(vars.PreparedParams, val)
-	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		err := Preprocess(ctx, prepared.Stmt, is, true)
+		err := Preprocess(ctx, prepared.Stmt, is, InPrepare)
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
@@ -189,7 +214,7 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	}
 	p, err := e.getPhysicalPlan(ctx, is, prepared)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	e.Stmt = prepared.Stmt
 	e.Plan = p
@@ -203,20 +228,25 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
-			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			if metrics.ResettablePlanCacheCounterFortTest {
+				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			} else {
+				planCacheCounter.Inc()
+			}
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			return plan, nil
 		}
 	}
 	p, err := OptimizeAstNode(ctx, prepared.Stmt, is)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	if prepared.UseCache {
+	_, isTableDual := p.(*PhysicalTableDual)
+	if !isTableDual && prepared.UseCache {
 		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
@@ -238,7 +268,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if pkCol != nil {
 			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		} else {
 			ts.Ranges = ranger.FullIntRange(false)
@@ -247,19 +277,19 @@ func (e *Execute) rebuildRange(p Plan) error {
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case *PointGetPlan:
 		if x.HandleParam != nil {
 			x.Handle, err = x.HandleParam.Datum.ToInt64(sc)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			return nil
 		}
@@ -273,7 +303,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	case *Insert:
@@ -294,15 +324,14 @@ func (e *Execute) rebuildRange(p Plan) error {
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
 	idxCols, colLengths := expression.IndexInfo2Cols(is.schema.Columns, is.Index)
-	ranges := ranger.FullRange()
-	if len(idxCols) > 0 {
-		var err error
-		ranges, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	if len(idxCols) == 0 {
+		return ranger.FullRange(), nil
 	}
-	return ranges, nil
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
+	if err != nil {
+		return nil, err
+	}
+	return res.Ranges, nil
 }
 
 // Deallocate represents deallocate plan.
@@ -322,13 +351,13 @@ type Show struct {
 	Column      *ast.ColumnName // Used for `desc table column`.
 	Flag        int             // Some flag parsed from sql, such as FULL.
 	Full        bool
-	User        *auth.UserIdentity // Used for show grants.
-	IfNotExists bool               // Used for `show create database if not exists`
+	User        *auth.UserIdentity   // Used for show grants.
+	Roles       []*auth.RoleIdentity // Used for show grants.
+	IfNotExists bool                 // Used for `show create database if not exists`
 
 	Conditions []expression.Expression
 
-	// Used by show variables
-	GlobalScope bool
+	GlobalScope bool // Used by show variables
 }
 
 // Set represents a plan for set stmt.
@@ -336,6 +365,29 @@ type Set struct {
 	baseSchemaProducer
 
 	VarAssigns []*expression.VarAssignment
+}
+
+// SQLBindOpType repreents the SQL bind type
+type SQLBindOpType int
+
+const (
+	// OpSQLBindCreate represents the operation to create a SQL bind.
+	OpSQLBindCreate SQLBindOpType = iota
+	// OpSQLBindDrop represents the operation to drop a SQL bind.
+	OpSQLBindDrop
+)
+
+// SQLBindPlan represents a plan for SQL bind.
+type SQLBindPlan struct {
+	baseSchemaProducer
+
+	SQLBindOp    SQLBindOpType
+	NormdOrigSQL string
+	BindSQL      string
+	IsGlobal     bool
+	BindStmt     ast.StmtNode
+	Charset      string
+	Collation    string
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.
@@ -395,18 +447,29 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 }
 
+// analyzeInfo is used to store the database name, table name and partition name of analyze task.
+type analyzeInfo struct {
+	DBName        string
+	TableName     string
+	PartitionName string
+	// PhysicalTableID is the id for a partition or a table.
+	PhysicalTableID int64
+	Incremental     bool
+}
+
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	PhysicalTableID int64
-	PKInfo          *model.ColumnInfo
-	ColsInfo        []*model.ColumnInfo
+	PKInfo   *model.ColumnInfo
+	ColsInfo []*model.ColumnInfo
+	TblInfo  *model.TableInfo
+	analyzeInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
-	// PhysicalTableID is the id for a partition or a table.
-	PhysicalTableID int64
-	IndexInfo       *model.IndexInfo
+	IndexInfo *model.IndexInfo
+	TblInfo   *model.TableInfo
+	analyzeInfo
 }
 
 // Analyze represents an analyze plan
@@ -423,6 +486,7 @@ type LoadData struct {
 	baseSchemaProducer
 
 	IsLocal     bool
+	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
 	Table       *ast.TableName
 	Columns     []*ast.ColumnName
@@ -438,6 +502,18 @@ type LoadStats struct {
 	baseSchemaProducer
 
 	Path string
+}
+
+// SplitRegion represents a split regions plan.
+type SplitRegion struct {
+	baseSchemaProducer
+
+	TableInfo  *model.TableInfo
+	IndexInfo  *model.IndexInfo
+	Lower      []types.Datum
+	Upper      []types.Datum
+	Num        int
+	ValueLists [][]types.Datum
 }
 
 // DDL represents a DDL statement plan.
@@ -488,6 +564,9 @@ func (e *Explain) prepareSchema() error {
 
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
+	if e.StmtPlan == nil {
+		return nil
+	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
@@ -530,13 +609,18 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
-	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
+	explainID := p.ExplainID().String()
+	row := []string{e.prettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		if runtimeStatsColl.Exists(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.Get(p.ExplainID()).String())
+		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
+		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
+		if runtimeStatsColl.ExistsCopStats(explainID) {
+			row = append(row, runtimeStatsColl.GetCopStats(explainID).String())
+		} else if runtimeStatsColl.ExistsRootStats(explainID) {
+			row = append(row, runtimeStatsColl.GetRootStats(explainID).String())
 		} else {
-			row = append(row, "") //TODO: wait collect more executor info from tikv
+			row = append(row, "time:0ns, loops:0, rows:0")
 		}
 	}
 	e.Rows = append(e.Rows, row)

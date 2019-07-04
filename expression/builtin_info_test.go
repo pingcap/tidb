@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
@@ -41,6 +42,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	d, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 
 	// Test case for schema().
 	fc = funcs[ast.Schema]
@@ -50,6 +52,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	d, err = evalBuiltinFunc(f, chunk.MutRowFromDatums(types.MakeDatums()).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {
@@ -78,6 +81,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
@@ -92,6 +96,24 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
+}
+
+func (s *testEvaluatorSuite) TestCurrentRole(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := mock.NewContext()
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.ActiveRoles = make([]*auth.RoleIdentity, 0, 10)
+	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_1", Hostname: "%"})
+	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_2", Hostname: "localhost"})
+
+	fc := funcs[ast.CurrentRole]
+	f, err := fc.getFunction(ctx, nil)
+	c.Assert(err, IsNil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "`r_1`@`%`,`r_2`@`localhost`")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 func (s *testEvaluatorSuite) TestConnectionID(c *C) {
@@ -106,6 +128,7 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(1))
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 func (s *testEvaluatorSuite) TestVersion(c *C) {
@@ -116,14 +139,45 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.Benchmark]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, nil)))
-	c.Assert(f, IsNil)
-	c.Assert(err, ErrorMatches, "*FUNCTION BENCHMARK does not exist")
+
+	cases := []struct {
+		LoopCount  int
+		Expression interface{}
+		Expected   int64
+		IsNil      bool
+	}{
+		{-3, 1, 0, true},
+		{0, 1, 0, false},
+		{3, 1, 0, false},
+		{3, 1.234, 0, false},
+		{3, types.NewDecFromFloatForTest(1.234), 0, false},
+		{3, "abc", 0, false},
+		{3, types.CurrentTime(mysql.TypeDatetime), 0, false},
+		{3, types.CurrentTime(mysql.TypeTimestamp), 0, false},
+		{3, types.CurrentTime(mysql.TypeDuration), 0, false},
+		{3, json.CreateBinary("[1]"), 0, false},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Benchmark, s.primitiveValsToConstants([]interface{}{
+			t.LoopCount,
+			t.Expression,
+		})...)
+		c.Assert(err, IsNil)
+
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		if t.IsNil {
+			c.Assert(d.IsNull(), IsTrue)
+		} else {
+			c.Assert(d.GetInt64(), Equals, t.Expected)
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestCharset(c *C) {
@@ -166,6 +220,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsFalse)
 	c.Assert(intResult, Equals, int64(10))
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 // TestTiDBVersion for tidb_server().

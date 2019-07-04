@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -47,12 +48,34 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 	switch lp.(type) {
 	case *DataSource:
 		return s.prune(lp.(*DataSource))
+	case *LogicalUnionScan:
+		us := lp.(*LogicalUnionScan)
+		ds := us.Children()[0]
+		ds, err := s.prune(ds.(*DataSource))
+		if err != nil {
+			return nil, err
+		}
+		if ua, ok := ds.(*LogicalUnionAll); ok {
+			// Adjust the UnionScan->Union->DataSource1, DataSource2 ... to
+			// Union->(UnionScan->DataSource1), (UnionScan->DataSource2)
+			children := make([]LogicalPlan, 0, len(ua.Children()))
+			for _, child := range ua.Children() {
+				us := LogicalUnionScan{}.Init(ua.ctx)
+				us.SetChildren(child)
+				children = append(children, us)
+			}
+			ua.SetChildren(children...)
+			return ua, nil
+		}
+		// Only one partition, no union all.
+		us.SetChildren(ds)
+		return us, nil
 	default:
 		children := lp.Children()
 		for i, child := range children {
 			newChild, err := s.rewriteDataSource(child)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			children[i] = newChild
 		}
@@ -90,7 +113,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		// If the select condition would never be satisified, prune that partition.
 		pruned, err := s.canBePruned(ds.context(), col, expr, ds.allConds)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if pruned {
 			continue
@@ -144,7 +167,7 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 	if len(conds) == 1 {
 		// Constant false.
 		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil {
-			ret, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
+			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
 			if err == nil && ret == false {
 				return true, nil
 			}
@@ -164,9 +187,9 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 	// handle the null condition, while calculate range can prune something like:
 	// "select * from t where t is null"
 	accessConds := ranger.ExtractAccessConditionsForColumn(conds, partCol.UniqueID)
-	r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType)
+	r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType, types.UnspecifiedLength)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	return len(r) == 0, nil
 }

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -51,13 +52,13 @@ type QueryCtx interface {
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
 
-	SetProcessInfo(sql string, t time.Time, command byte)
+	SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64)
 
 	// CommitTxn commits the transaction operations.
 	CommitTxn(ctx context.Context) error
 
 	// RollbackTxn undoes the transaction operations.
-	RollbackTxn() error
+	RollbackTxn()
 
 	// WarningCount returns warning count of last executed command.
 	WarningCount() uint16
@@ -87,7 +88,7 @@ type QueryCtx interface {
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 
 	// ShowProcess shows the information about the session.
-	ShowProcess() util.ProcessInfo
+	ShowProcess() *util.ProcessInfo
 
 	// GetSessionVars return SessionVars.
 	GetSessionVars() *variable.SessionVars
@@ -103,7 +104,7 @@ type PreparedStatement interface {
 	ID() int
 
 	// Execute executes the statement.
-	Execute(context.Context, ...interface{}) (ResultSet, error)
+	Execute(context.Context, []types.Datum) (ResultSet, error)
 
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
@@ -136,8 +137,8 @@ type PreparedStatement interface {
 // ResultSet is the result set of an query.
 type ResultSet interface {
 	Columns() []*ColumnInfo
-	NewRecordBatch() *chunk.RecordBatch
-	Next(context.Context, *chunk.RecordBatch) error
+	NewChunk() *chunk.Chunk
+	Next(context.Context, *chunk.Chunk) error
 	StoreFetchedRows(rows []chunk.Row)
 	GetFetchedRows() []chunk.Row
 	Close() error

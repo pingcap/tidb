@@ -305,6 +305,7 @@ func (s *testOverflowSuite) TestDiv(c *C) {
 		{1, -1, 0, true},
 		{math.MaxInt64, math.MinInt64, 0, false},
 		{math.MaxInt64, -1, 0, true},
+		{100, 20, 5, false},
 	}
 
 	for _, t := range tblInt {

@@ -33,8 +33,15 @@ Writing a design document can promote us to think deliberately and gather knowle
 - [Proposal: Support a Global Column Pool](./2018-10-22-the-column-pool.md)
 - [Proposal: Join Reorder Design v1](./2018-10-20-join-reorder-dp-v1.md)
 - [Proposal: Support Window Functions](./2018-10-31-window-functions.md)
+- [Proposal: Access a table using multiple indexes](./2019-04-11-indexmerge.md)
 
 ### Completed
 
 - [Proposal: A new aggregate function execution framework](./2018-07-01-refactor-aggregate-framework.md)
+- [Proposal: TiDB DDL architecture](./2018-10-08-online-DDL.md)
 - [Proposal: Infer the System Timezone of a TiDB cluster via TZ environment variable](./2018-09-10-adding-tz-env.md)
+- [Proposal: Table Partition](./2018-10-19-table-partition.md)
+- [Proposal: Implement View Feature](./2018-10-24-view-support.md)
+- [Proposal: Support restoring SQL text from an AST tree](./2018-11-29-ast-to-sql-text.md)
+- [Proposal: Support Plugin](./2018-12-10-plugin-framework.md)
+- [Proposal: Support Skyline Pruning](./2019-01-25-skyline-pruning.md)

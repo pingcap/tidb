@@ -14,6 +14,9 @@
 package aggregation
 
 import (
+	"strings"
+
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -24,6 +27,51 @@ type WindowFuncDesc struct {
 }
 
 // NewWindowFuncDesc creates a window function signature descriptor.
-func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) *WindowFuncDesc {
-	return &WindowFuncDesc{newBaseFuncDesc(ctx, name, args)}
+func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (*WindowFuncDesc, error) {
+	switch strings.ToLower(name) {
+	case ast.WindowFuncNthValue:
+		val, isNull, ok := expression.GetUint64FromConstant(args[1])
+		// nth_value does not allow `0`, but allows `null`.
+		if !ok || (val == 0 && !isNull) {
+			return nil, nil
+		}
+	case ast.WindowFuncNtile:
+		val, isNull, ok := expression.GetUint64FromConstant(args[0])
+		// ntile does not allow `0`, but allows `null`.
+		if !ok || (val == 0 && !isNull) {
+			return nil, nil
+		}
+	case ast.WindowFuncLead, ast.WindowFuncLag:
+		if len(args) < 2 {
+			break
+		}
+		_, isNull, ok := expression.GetUint64FromConstant(args[1])
+		if !ok || isNull {
+			return nil, nil
+		}
+	}
+	base, err := newBaseFuncDesc(ctx, name, args)
+	if err != nil {
+		return nil, err
+	}
+	return &WindowFuncDesc{base}, nil
+}
+
+// noFrameWindowFuncs is the functions that operate on the entire partition,
+// they should not have frame specifications.
+var noFrameWindowFuncs = map[string]struct{}{
+	ast.WindowFuncCumeDist:    {},
+	ast.WindowFuncDenseRank:   {},
+	ast.WindowFuncLag:         {},
+	ast.WindowFuncLead:        {},
+	ast.WindowFuncNtile:       {},
+	ast.WindowFuncPercentRank: {},
+	ast.WindowFuncRank:        {},
+	ast.WindowFuncRowNumber:   {},
+}
+
+// NeedFrame checks if the function need frame specification.
+func NeedFrame(name string) bool {
+	_, ok := noFrameWindowFuncs[strings.ToLower(name)]
+	return !ok
 }

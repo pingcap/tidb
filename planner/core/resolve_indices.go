@@ -193,6 +193,19 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 			return err
 		}
 	}
+	if p.CompareFilters != nil {
+		err = p.CompareFilters.resolveIndices(p.children[p.OuterIndex].Schema())
+		if err != nil {
+			return err
+		}
+		for i := range p.CompareFilters.affectedColSchema.Columns {
+			resolvedCol, err1 := p.CompareFilters.affectedColSchema.Columns[i].ResolveIndices(p.children[p.OuterIndex].Schema())
+			if err1 != nil {
+				return err1
+			}
+			p.CompareFilters.affectedColSchema.Columns[i] = resolvedCol.(*expression.Column)
+		}
+	}
 	return
 }
 
@@ -308,7 +321,7 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	for i := 0; i < len(p.Schema().Columns)-1; i++ {
+	for i := 0; i < len(p.Schema().Columns)-len(p.WindowFuncDescs); i++ {
 		col := p.Schema().Columns[i]
 		newCol, err := col.ResolveIndices(p.children[0].Schema())
 		if err != nil {
@@ -330,10 +343,26 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 		}
 		p.OrderBy[i].Col = newCol.(*expression.Column)
 	}
-	for i, arg := range p.WindowFuncDesc.Args {
-		p.WindowFuncDesc.Args[i], err = arg.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return err
+	for _, desc := range p.WindowFuncDescs {
+		for i, arg := range desc.Args {
+			desc.Args[i], err = arg.ResolveIndices(p.children[0].Schema())
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if p.Frame != nil {
+		for i := range p.Frame.Start.CalcFuncs {
+			p.Frame.Start.CalcFuncs[i], err = p.Frame.Start.CalcFuncs[i].ResolveIndices(p.children[0].Schema())
+			if err != nil {
+				return err
+			}
+		}
+		for i := range p.Frame.End.CalcFuncs {
+			p.Frame.End.CalcFuncs[i], err = p.Frame.End.CalcFuncs[i].ResolveIndices(p.children[0].Schema())
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -356,20 +385,9 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalApply) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
+	err = p.PhysicalHashJoin.ResolveIndices()
 	if err != nil {
 		return err
-	}
-	err = p.PhysicalJoin.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	for i, col := range p.schema.Columns {
-		newCol, err := col.ResolveIndices(p.PhysicalJoin.schema)
-		if err != nil {
-			return err
-		}
-		p.schema.Columns[i] = newCol.(*expression.Column)
 	}
 	for _, col := range p.OuterSchema {
 		newCol, err := col.Column.ResolveIndices(p.children[0].Schema())
@@ -378,13 +396,17 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 		}
 		col.Column = *newCol.(*expression.Column)
 	}
+	// Resolve index for equal conditions again, because apply is different from
+	// hash join on the fact that equal conditions are evaluated against the join result,
+	// so columns from equal conditions come from merged schema of children, instead of
+	// single child's schema.
 	joinedSchema := expression.MergeSchema(p.children[0].Schema(), p.children[1].Schema())
-	for i, cond := range p.PhysicalJoin.EqualConditions {
+	for i, cond := range p.PhysicalHashJoin.EqualConditions {
 		newSf, err := cond.ResolveIndices(joinedSchema)
 		if err != nil {
 			return err
 		}
-		p.PhysicalJoin.EqualConditions[i] = newSf.(*expression.ScalarFunction)
+		p.PhysicalHashJoin.EqualConditions[i] = newSf.(*expression.ScalarFunction)
 	}
 	return
 }

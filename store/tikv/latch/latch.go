@@ -21,8 +21,9 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/spaolacci/murmur3"
+	"go.uber.org/zap"
 )
 
 type node struct {
@@ -45,14 +46,15 @@ type latch struct {
 // Lock is the locks' information required for a transaction.
 type Lock struct {
 	keys [][]byte
+	// requiredSlots represents required slots.
 	// The slot IDs of the latches(keys) that a startTS must acquire before being able to processed.
 	requiredSlots []int
-	// The number of latches that the transaction has acquired. For status is stale, it include the
-	// latch whose front is current lock already.
+	// acquiredCount represents the number of latches that the transaction has acquired.
+	// For status is stale, it include the latch whose front is current lock already.
 	acquiredCount int
-	// Current transaction's startTS.
+	// startTS represents current transaction's.
 	startTS uint64
-	// Current transaction's commitTS.
+	// commitTS represents current transaction's.
 	commitTS uint64
 
 	wg      sync.WaitGroup
@@ -287,7 +289,9 @@ func (latches *Latches) recycle(currentTS uint64) {
 		total += latch.recycle(currentTS)
 		latch.Unlock()
 	}
-	log.Debugf("recycle run at %v, recycle count = %d...\n", time.Now(), total)
+	logutil.BgLogger().Debug("recycle",
+		zap.Time("start at", time.Now()),
+		zap.Int("count", total))
 }
 
 func findNode(list *node, key []byte) *node {

@@ -24,11 +24,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -79,7 +80,7 @@ func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
 
 // Init creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) Init(ctx context.Context) error {
-	return errors.Trace(is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt))
+	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
 // GetServerInfo gets self server static information.
@@ -95,7 +96,7 @@ func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*Server
 	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
 	infoMap, err := getInfo(ctx, is.etcdCli, key, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	info, ok := infoMap[id]
 	if !ok {
@@ -113,7 +114,7 @@ func (is *InfoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerI
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return allInfo, nil
 }
@@ -127,8 +128,9 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf), clientv3.WithLease(is.session.Lease()))
-	return errors.Trace(err)
+	str := string(hack.String(infoBuf))
+	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
+	return err
 }
 
 // RemoveServerInfo remove self server static information from etcd.
@@ -136,9 +138,9 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	if is.etcdCli == nil {
 		return
 	}
-	err := ddl.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	err := util.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		log.Errorf("[info-syncer] remove server info failed %v", err)
+		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
 	}
 }
 
@@ -152,7 +154,7 @@ func (is InfoSyncer) Done() <-chan struct{} {
 
 // Restart restart the info syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) Restart(ctx context.Context) error {
-	return errors.Trace(is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt))
+	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
 // newSessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
@@ -163,12 +165,12 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", is.serverInfoPath)
 	session, err := owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	is.session = session
 
 	err = is.storeServerInfo(ctx)
-	return errors.Trace(err)
+	return err
 }
 
 // getInfo gets server information from etcd according to the key and opts.
@@ -187,7 +189,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 		resp, err = etcdCli.Get(childCtx, key, opts...)
 		cancel()
 		if err != nil {
-			log.Infof("[info-syncer] get %s failed %v, continue checking.", key, err)
+			logutil.BgLogger().Info("get key failed", zap.String("key", key), zap.Error(err))
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
@@ -195,7 +197,8 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			info := &ServerInfo{}
 			err = json.Unmarshal(kv.Value, info)
 			if err != nil {
-				log.Infof("[info-syncer] get %s, json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
+				logutil.BgLogger().Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
+					zap.Error(err))
 				return nil, errors.Trace(err)
 			}
 			allInfo[info.ID] = info

@@ -225,4 +225,5 @@ type SlowQueryInfo struct {
 	TableIDs string
 	IndexIDs string
 	Internal bool
+	Digest   string
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -74,7 +75,7 @@ type Statement interface {
 	IsPrepared() bool
 
 	// IsReadOnly returns if the statement is read only. For example: SelectStmt without lock.
-	IsReadOnly() bool
+	IsReadOnly(vars *variable.SessionVars) bool
 
 	// RebuildPlan rebuilds the plan of the statement.
 	RebuildPlan() (schemaVersion int64, err error)
@@ -86,10 +87,10 @@ type RecordSet interface {
 	Fields() []*ast.ResultField
 
 	// Next reads records into chunk.
-	Next(ctx context.Context, req *chunk.RecordBatch) error
+	Next(ctx context.Context, req *chunk.Chunk) error
 
-	//NewRecordBatch create a recordBatch.
-	NewRecordBatch() *chunk.RecordBatch
+	//NewChunk create a chunk.
+	NewChunk() *chunk.Chunk
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
