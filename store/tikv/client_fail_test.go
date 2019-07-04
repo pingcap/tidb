@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,6 +25,12 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
+func setGrpcConnectionCount(count uint) {
+	newConf := config.NewConfig()
+	newConf.TiKVClient.GrpcConnectionCount = count
+	config.StoreGlobalConfig(newConf)
+}
+
 func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests", `panic`), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop", `return("0")`), IsNil)
@@ -33,7 +39,7 @@ func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
 	c.Assert(port > 0, IsTrue)
 
 	grpcConnectionCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-	config.GetGlobalConfig().TiKVClient.GrpcConnectionCount = 1
+	setGrpcConnectionCount(1)
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
 	rpcClient := newRPCClient(config.Security{})
 
@@ -52,5 +58,5 @@ func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
 	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second)
 	c.Assert(err, IsNil)
 	server.Stop()
-	config.GetGlobalConfig().TiKVClient.GrpcConnectionCount = grpcConnectionCount
+	setGrpcConnectionCount(grpcConnectionCount)
 }
