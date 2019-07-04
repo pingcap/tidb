@@ -138,9 +138,15 @@ func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
+func enablePessimisticTxn(enable bool) {
+	newConf := config.NewConfig()
+	newConf.PessimisticTxn.Enable = enable
+	config.StoreGlobalConfig(newConf)
+}
+
 func (s *testSuite) TestPessimisticSelectForUpdate(c *C) {
-	defer func() { config.GetGlobalConfig().PessimisticTxn.Enable = false }()
-	config.GetGlobalConfig().PessimisticTxn.Enable = true
+	defer func() { enablePessimisticTxn(false) }()
+	enablePessimisticTxn(true)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -4089,6 +4095,12 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
 }
 
+func setOOMAction(action string) {
+	newConf := config.NewConfig()
+	newConf.OOMAction = action
+	config.StoreGlobalConfig(newConf)
+}
+
 func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4100,7 +4112,11 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	}
 	tk.Se.SetSessionManager(sm)
 	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
-	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
+	orgAction := config.GetGlobalConfig().OOMAction
+	setOOMAction(config.OOMActionCancel)
+	defer func() {
+		setOOMAction(orgAction)
+	}()
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
 	c.Assert(err, NotNil)
