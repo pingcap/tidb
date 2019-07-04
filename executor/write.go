@@ -142,9 +142,9 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 		// the `affectedRows` is increased when adding new record.
 		if sc.DupKeyAsWarning {
-			newHandle, err = t.AddRecord(ctx, newData, table.IsUpdate)
-		} else {
 			newHandle, err = t.AddRecord(ctx, newData, table.IsUpdate, table.SkipHandleCheck)
+		} else {
+			newHandle, err = t.AddRecord(ctx, newData, table.IsUpdate)
 		}
 
 		if err != nil {
