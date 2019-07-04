@@ -369,6 +369,51 @@ func (bj BinaryJSON) Modify(pathExprList []PathExpression, values []BinaryJSON, 
 	return bj, nil
 }
 
+// ArrayInsert insert a BinaryJSON into the given array cell.
+// All path expressions cannot contain * or ** wildcard.
+// If any error occurs, the input won't be changed.
+func (bj BinaryJSON) ArrayInsert(pathExpr PathExpression, value BinaryJSON) (res BinaryJSON, err error) {
+	// Check the path is a index
+	if len(pathExpr.legs) < 1 {
+		// TODO: should return 3165 (42000)
+		return bj, errors.New("A path expression is not a path to a cell in an array")
+	}
+	parentPath, lastLeg := pathExpr.popOneLastLeg()
+	if lastLeg.typ != pathLegIndex {
+		// TODO: should return 3165 (42000)
+		return bj, errors.New("A path expression is not a path to a cell in an array")
+	}
+	// Find the target array
+	obj, exists := bj.Extract([]PathExpression{parentPath})
+	if !exists || obj.TypeCode != TypeCodeArray {
+		return bj, nil
+	}
+
+	idx := lastLeg.arrayIndex
+	count := obj.GetElemCount()
+	if idx >= count {
+		idx = count
+	}
+	// Insert into the array
+	newArray := make([]BinaryJSON, 0, count+1)
+	for i := 0; i < idx; i++ {
+		elem := obj.arrayGetElem(i)
+		newArray = append(newArray, elem)
+	}
+	newArray = append(newArray, value)
+	for i := idx; i < count; i++ {
+		elem := obj.arrayGetElem(i)
+		newArray = append(newArray, elem)
+	}
+	obj = buildBinaryArray(newArray)
+
+	bj, err = bj.Modify([]PathExpression{parentPath}, []BinaryJSON{obj}, ModifySet)
+	if err != nil {
+		return bj, err
+	}
+	return bj, nil
+}
+
 // Remove removes the elements indicated by pathExprList from JSON.
 func (bj BinaryJSON) Remove(pathExprList []PathExpression) (BinaryJSON, error) {
 	for _, pathExpr := range pathExprList {
