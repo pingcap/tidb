@@ -1784,7 +1784,8 @@ func (s *testSuite) TestPointGet(c *C) {
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(sessionctx.Context)
 	tests := map[string]bool{
-		"select * from help_topic where name='aaa'":         true,
+		"select 1 from help_topic where name='aaa'":         true,
+		"select * from help_topic where name='aaa'":         false,
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
@@ -2440,7 +2441,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
+	tk.MustQuery("select 1 from t1 where id = 1")
 
 	cli.priority = pb.CommandPri_Normal
 	tk.MustQuery("select count(*) from t")
@@ -2458,7 +2459,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
+	tk.MustQuery("select 1 from t1 where id = 1")
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select count(*) from t")
