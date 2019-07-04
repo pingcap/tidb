@@ -38,6 +38,8 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
+	conf.Performance.TxnEntryCountLimit = 1000
+	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
@@ -63,6 +65,8 @@ token-limit = 0
 enable-table-lock = true
 delay-clean-table-lock = 5
 [performance]
+txn-entry-count-limit=2000
+txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -76,6 +80,10 @@ max-batch-size=128
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")
+
+	// Test that the value will be overwritten by the config file.
+	c.Assert(conf.Performance.TxnEntryCountLimit, Equals, uint64(2000))
+	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
