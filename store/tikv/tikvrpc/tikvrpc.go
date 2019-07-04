@@ -393,6 +393,7 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.MvccGetByStartTs.Context = ctx
 	case CmdSplitRegion:
 		req.SplitRegion.Context = ctx
+	case CmdEmpty:
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -515,6 +516,7 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.SplitRegion = &kvrpcpb.SplitRegionResponse{
 			RegionError: e,
 		}
+	case CmdEmpty:
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -579,6 +581,7 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.MvccGetByStartTS.GetRegionError()
 	case CmdSplitRegion:
 		e = resp.SplitRegion.GetRegionError()
+	case CmdEmpty:
 	default:
 		return nil, fmt.Errorf("invalid response type %v", resp.Type)
 	}
@@ -651,6 +654,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.MvccGetByStartTS, err = client.MvccGetByStartTs(ctx, req.MvccGetByStartTs)
 	case CmdSplitRegion:
 		resp.SplitRegion, err = client.SplitRegion(ctx, req.SplitRegion)
+	case CmdEmpty:
+		resp.Empty, err = &tikvpb.BatchCommandsEmptyResponse{}, nil
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
