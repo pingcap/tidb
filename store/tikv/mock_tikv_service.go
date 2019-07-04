@@ -5,7 +5,6 @@ import (
 	"net"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -27,10 +26,8 @@ func (s *server) BatchCommands(ss tikvpb.Tikv_BatchCommandsServer) error {
 		responses := make([]*tikvpb.BatchCommandsResponse_Response, 0, len(req.GetRequestIds()))
 		for i := 0; i < len(req.GetRequestIds()); i++ {
 			responses = append(responses, &tikvpb.BatchCommandsResponse_Response{
-				Cmd: &tikvpb.BatchCommandsResponse_Response_Get{
-					Get: &kvrpcpb.GetResponse{
-						Value: []byte{'a', 'b', 'c'},
-					},
+				Cmd: &tikvpb.BatchCommandsResponse_Response_Empty{
+					Empty: &tikvpb.BatchCommandsEmptyResponse{},
 				},
 			})
 		}

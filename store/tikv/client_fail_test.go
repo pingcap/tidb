@@ -20,7 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
@@ -52,8 +52,8 @@ func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop"), IsNil)
 
 	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGet,
-		Get:  &kvrpcpb.GetRequest{},
+		Type:  tikvrpc.CmdEmpty,
+		Empty: &tikvpb.BatchCommandsEmptyRequest{},
 	}
 	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second)
 	c.Assert(err, IsNil)

@@ -66,6 +66,8 @@ const (
 	CmdSplitRegion
 
 	CmdDebugGetRegionProperties CmdType = 2048 + iota
+
+	CmdEmpty CmdType = 3072 + iota
 )
 
 func (t CmdType) String() string {
@@ -163,6 +165,8 @@ type Request struct {
 	PessimisticRollback *kvrpcpb.PessimisticRollbackRequest
 
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesRequest
+
+	Empty *tikvpb.BatchCommandsEmptyRequest
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -212,6 +216,8 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticLock{PessimisticLock: req.PessimisticLock}}
 	case CmdPessimisticRollback:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticRollback{PessimisticRollback: req.PessimisticRollback}}
+	case CmdEmpty:
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Empty{Empty: req.Empty}}
 	}
 	return nil
 }
@@ -258,6 +264,8 @@ type Response struct {
 	PessimisticRollback *kvrpcpb.PessimisticRollbackResponse
 
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesResponse
+
+	Empty *tikvpb.BatchCommandsEmptyResponse
 }
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
@@ -307,6 +315,8 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 		return &Response{Type: CmdPessimisticLock, PessimisticLock: res.PessimisticLock}
 	case *tikvpb.BatchCommandsResponse_Response_PessimisticRollback:
 		return &Response{Type: CmdPessimisticRollback, PessimisticRollback: res.PessimisticRollback}
+	case *tikvpb.BatchCommandsResponse_Response_Empty:
+		return &Response{Type: CmdEmpty, Empty: res.Empty}
 	}
 	return nil
 }
