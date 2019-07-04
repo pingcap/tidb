@@ -411,6 +411,17 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(historyJobs, DeepEquals, historyJobs2)
 }
 
+func (s *testSuite) TestAdminChecksumOfPartitionedTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS admin_checksum_partition_test;")
+	tk.MustExec("CREATE TABLE admin_checksum_partition_test (a INT) PARTITION BY HASH(a) PARTITIONS 4;")
+	tk.MustExec("INSERT INTO admin_checksum_partition_test VALUES (1), (2);")
+
+	r := tk.MustQuery("ADMIN CHECKSUM TABLE admin_checksum_partition_test;")
+	r.Check(testkit.Rows("test admin_checksum_partition_test 1 5 5"))
+}
+
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
 	tk.MustExec("use test")
 	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
