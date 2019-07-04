@@ -526,6 +526,14 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 	return hists, cms, nil
 }
 
+var (
+	fastAnalyzeCounterSample        = metrics.FastAnalyzeCounter.WithLabelValues("sample")
+	fastAnalyzeCounterAccessRegions = metrics.FastAnalyzeCounter.WithLabelValues("access_regions")
+	fastAnalyzeCounterRegionError   = metrics.FastAnalyzeCounter.WithLabelValues("region_error")
+	fastAnalyzeCounterSeekKeys      = metrics.FastAnalyzeCounter.WithLabelValues("seek_keys")
+	fastAnalyzeCounterScanKeys      = metrics.FastAnalyzeCounter.WithLabelValues("scan_keys")
+)
+
 func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 	hists, cms, err := exec.buildStats()
 	if err != nil {
@@ -624,6 +632,9 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		if *err != nil {
 			return
 		}
+
+		fastAnalyzeCounterAccessRegions.Inc()
+
 		ctx := context.Background()
 		resp, *err = client.SendRequest(ctx, rpcCtx.Addr, req, tikv.ReadTimeoutMedium)
 		if *err != nil {
@@ -887,6 +898,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (err error) {
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
 		e.rowCount++
+		fastAnalyzeCounterScanKeys.Inc()
 		randNum := rander.Int63n(int64(e.rowCount))
 		if randNum > int64(MaxSampleSize) && e.sampCursor == int32(MaxSampleSize) {
 			continue
@@ -959,10 +971,16 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 		for _, key := range keys {
 			var iter kv.Iterator
 			iter, *err = snapshot.Iter(key, endKey)
+			fastAnalyzeCounterSeekKeys.Inc()
 			if *err != nil {
 				return
 			}
-			kvMap[string(iter.Key())] = iter.Value()
+			if iter.Valid() {
+				if _, ok := kvMap[string(iter.Key())]; !ok {
+					fastAnalyzeCounterSample.Inc()
+				}
+				kvMap[string(iter.Key())] = iter.Value()
+			}
 		}
 
 		*err = e.handleBatchSeekResponse(kvMap)
@@ -1100,9 +1118,19 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 	}
 	rander := rand.New(rand.NewSource(e.randSeed))
 
+	defer func() {
+		fastAnalyzeCounterAccessRegions.Set(0)
+		fastAnalyzeCounterRegionError.Set(0)
+		fastAnalyzeCounterSample.Set(0)
+		fastAnalyzeCounterScanKeys.Set(0)
+		fastAnalyzeCounterSeekKeys.Set(0)
+	}()
+
 	// Only four rebuilds for sample task are allowed.
 	needRebuild, maxBuildTimes := true, 5
 	for counter := maxBuildTimes; needRebuild && counter > 0; counter-- {
+		fastAnalyzeCounterRegionError.Inc()
+		fastAnalyzeCounterAccessRegions.Set(0)
 		needRebuild, err = e.buildSampTask()
 		if err != nil {
 			return nil, nil, err

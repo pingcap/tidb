@@ -84,4 +84,12 @@ var (
 			Name:      "high_error_rate_feedback_total",
 			Help:      "Counter of query feedback whose actual count is much different than calculated by current statistics",
 		})
+
+	FastAnalyzeCounter = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "fast_analyze_status",
+			Help:      "Counter of some statuses in fast analyze",
+		}, []string{LblType})
 )
