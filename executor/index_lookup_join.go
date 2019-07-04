@@ -89,6 +89,8 @@ type innerCtx struct {
 	readerBuilder *dataReaderBuilder
 	rowTypes      []*types.FieldType
 	keyCols       []int
+	colLens       []int
+	hasPrefixCol  bool
 }
 
 type lookUpJoinTask struct {
@@ -473,6 +475,10 @@ func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) err
 func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoinLookUpContent, error) {
 	lookUpContents := make([]*indexJoinLookUpContent, 0, task.outerResult.NumRows())
 	keyBuf := make([]byte, 0, 64)
+	keyTypes := make([]*types.FieldType, 0, len(iw.keyCols))
+	for _, pos := range iw.keyCols {
+		keyTypes = append(keyTypes, iw.rowTypes[pos])
+	}
 	for i := 0; i < task.outerResult.NumRows(); i++ {
 		dLookUpKey, err := iw.constructDatumLookupKey(task, i)
 		if err != nil {
@@ -490,6 +496,16 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 		}
 		// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
 		task.encodedLookUpKeys.AppendBytes(0, keyBuf)
+		if iw.hasPrefixCol {
+			for i := range iw.outerCtx.keyCols {
+				// If it's a prefix column. Try to fix it.
+				if iw.colLens[i] != types.UnspecifiedLength {
+					ranger.FixPrefixColDatum(&dLookUpKey[i], iw.colLens[i], keyTypes[i])
+				}
+			}
+			// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
+			// So we don't need to do it here.
+		}
 		lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: task.outerResult.GetRow(i)})
 	}
 
