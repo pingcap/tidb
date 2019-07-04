@@ -43,7 +43,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20190619024611-a4759dfe3753
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
-	github.com/pingcap/parser v0.0.0-20190613082312-d2cf6071823d
+	github.com/pingcap/parser v0.0.0-20190701123046-5768e68c1e65
 	github.com/pingcap/pd v0.0.0-20190617100349-293d4b5189bf
 	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
 	github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330
@@ -68,7 +68,7 @@ require (
 	go.uber.org/atomic v1.3.2
 	go.uber.org/zap v1.9.1
 	golang.org/x/net v0.0.0-20190108225652-1e06a53dbb7e
-	golang.org/x/sys v0.0.0-20190109145017-48ac38b7c8cb // indirect
+	golang.org/x/sys v0.0.0-20190109145017-48ac38b7c8cb
 	golang.org/x/text v0.3.0
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
 	golang.org/x/tools v0.0.0-20190130214255-bb1329dc71a0

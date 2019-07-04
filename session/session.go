@@ -111,7 +111,7 @@ type Session interface {
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
-	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param ...interface{}) (sqlexec.RecordSet, error)
+	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
@@ -965,14 +965,23 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	var db interface{}
+	if len(s.sessionVars.CurrentDB) > 0 {
+		db = s.sessionVars.CurrentDB
+	}
+
+	var info interface{}
+	if len(sql) > 0 {
+		info = sql
+	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
-		DB:               s.sessionVars.CurrentDB,
+		DB:               db,
 		Command:          command,
 		Plan:             s.currentPlan,
 		Time:             t,
 		State:            s.Status(),
-		Info:             sql,
+		Info:             info,
 		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
@@ -1197,61 +1206,10 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
-// checkArgs makes sure all the arguments' types are known and can be handled.
-// integer types are converted to int64 and uint64, time.Time is converted to types.Time.
-// time.Duration is converted to types.Duration, other known types are leaved as it is.
-func checkArgs(args ...interface{}) error {
-	for i, v := range args {
-		switch x := v.(type) {
-		case bool:
-			if x {
-				args[i] = int64(1)
-			} else {
-				args[i] = int64(0)
-			}
-		case int8:
-			args[i] = int64(x)
-		case int16:
-			args[i] = int64(x)
-		case int32:
-			args[i] = int64(x)
-		case int:
-			args[i] = int64(x)
-		case uint8:
-			args[i] = uint64(x)
-		case uint16:
-			args[i] = uint64(x)
-		case uint32:
-			args[i] = uint64(x)
-		case uint:
-			args[i] = uint64(x)
-		case int64:
-		case uint64:
-		case float32:
-		case float64:
-		case string:
-		case []byte:
-		case time.Duration:
-			args[i] = types.Duration{Duration: x}
-		case time.Time:
-			args[i] = types.Time{Time: types.FromGoTime(x), Type: mysql.TypeDatetime}
-		case nil:
-		default:
-			return errors.Errorf("cannot use arg[%d] (type %T):unsupported type", i, v)
-		}
-	}
-	return nil
-}
-
 // ExecutePreparedStmt executes a prepared statement.
-func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args ...interface{}) (sqlexec.RecordSet, error) {
-	err := checkArgs(args...)
-	if err != nil {
-		return nil, err
-	}
-
+func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
 	s.PrepareTxnCtx(ctx)
-	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
+	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1348,6 +1306,9 @@ func (s *session) Close() {
 	// TODO: do clean table locks when session exited without execute Close.
 	// TODO: do clean table locks when tidb-server was `kill -9`.
 	if s.HasLockedTables() && config.TableLockEnabled() {
+		if ds := config.TableLockDelayClean(); ds > 0 {
+			time.Sleep(time.Duration(ds) * time.Millisecond)
+		}
 		lockedTables := s.GetAllTableLocks()
 		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
 		if err != nil {
@@ -1705,6 +1666,7 @@ var builtinGlobalVariable = []string{
 	variable.AutoIncrementIncrement,
 	variable.CollationServer,
 	variable.NetWriteTimeout,
+	variable.MaxExecutionTime,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
