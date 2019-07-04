@@ -443,6 +443,11 @@ func GetGlobalConfig() *Config {
 	return globalConf.Load().(*Config)
 }
 
+// StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
+func StoreGlobalConfig(config *Config) {
+	globalConf.Store(config)
+}
+
 // ReloadGlobalConfig reloads global configuration for this server.
 func ReloadGlobalConfig() error {
 	confReloadLock.Lock()
