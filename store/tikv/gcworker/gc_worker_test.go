@@ -236,33 +236,29 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
-	var successRegions int32
-	var failedRegions int32
-	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
-
 	ctx := context.Background()
 	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
