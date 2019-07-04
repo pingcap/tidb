@@ -76,6 +76,9 @@ server-version = ""
 enable-table-lock = false
 >>>>>>> 612936bbd... *: Support LOCK/UNLOCK TABLES feature (#10343)
 
+# delay-clean-table-lock is used to control whether delayed-release the table lock in the abnormal situation. (Milliseconds)
+delay-clean-table-lock = 0
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"

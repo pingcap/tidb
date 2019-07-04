@@ -99,7 +99,8 @@ type Config struct {
 	StmtSummary                  StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 	// EnableTableLock indicate whether enable table lock.
 	// TODO: remove this after table lock features stable.
-	EnableTableLock bool `toml:"enable-table-lock" json:"enable-table-lock"`
+	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
+	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 }
 
 // Log is the log section of config.
@@ -358,6 +359,7 @@ var defaultConf = Config{
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	SplitRegionMaxNum:            1000,
 	EnableTableLock:              false,
+	DelayCleanTableLock:          0,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
@@ -633,6 +635,11 @@ func hasRootPrivilege() bool {
 // TableLockEnabled uses to check whether enabled the table lock feature.
 func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
+}
+
+// TableLockDelayClean uses to get the time of delay clean table lock.
+var TableLockDelayClean = func() uint64 {
+	return GetGlobalConfig().DelayCleanTableLock
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

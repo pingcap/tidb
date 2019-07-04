@@ -68,6 +68,7 @@ alter-primary-key = true
 split-region-max-num=10000
 server-version = "test_version"
 enable-table-lock = true
+delay-clean-table-lock = 5
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
@@ -114,6 +115,7 @@ history-size=100
 	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
 	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
 	c.Assert(conf.EnableTableLock, IsTrue)
+	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
