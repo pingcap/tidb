@@ -300,6 +300,13 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
 		"IndexReader_6 2.00 root index:IndexScan_5",
 		"└─IndexScan_5 2.00 cop table:t1, index:a, b, range:[1 2,1 2], keep order:false"))
+
+	tk.MustExec("create table t2 (a bigint unsigned, primary key(a))")
+	tk.MustExec("insert into t2 values (0), (18446744073709551615)")
+	tk.MustExec("analyze table t2")
+	tk.MustQuery("show stats_buckets where table_name = 't2'").Check(testkit.Rows(
+		"test t2  a 0 0 1 1 0 0",
+		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615"))
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
