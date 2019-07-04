@@ -50,16 +50,16 @@ func (e *WindowExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *WindowExec) Next(ctx context.Context, chk *chunk.RecordBatch) error {
+func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.meetNewGroup && e.remainingRowsInGroup > 0 {
-		err := e.appendResult2Chunk(chk.Chunk)
+		err := e.appendResult2Chunk(chk)
 		if err != nil {
 			return err
 		}
 	}
 	for !e.executed && (chk.NumRows() == 0 || e.remainingRowsInChunk > 0) {
-		err := e.consumeOneGroup(ctx, chk.Chunk)
+		err := e.consumeOneGroup(ctx, chk)
 		if err != nil {
 			e.executed = true
 			return errors.Trace(err)
@@ -121,7 +121,7 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk
 	}
 
 	childResult := newFirstChunk(e.children[0])
-	err = Next(ctx, e.children[0], &chunk.RecordBatch{Chunk: childResult})
+	err = Next(ctx, e.children[0], childResult)
 	if err != nil {
 		return errors.Trace(err)
 	}

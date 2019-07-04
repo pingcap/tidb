@@ -115,13 +115,13 @@ func (mds *mockDataSource) prepareChunks() {
 	mds.chunkPtr = 0
 }
 
-func (mds *mockDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (mds *mockDataSource) Next(ctx context.Context, req *chunk.Chunk) error {
 	if mds.chunkPtr >= len(mds.chunks) {
 		req.Reset()
 		return nil
 	}
 	dataChk := mds.chunks[mds.chunkPtr]
-	dataChk.SwapColumns(req.Chunk)
+	dataChk.SwapColumns(req)
 	mds.chunkPtr++
 	return nil
 }
@@ -270,9 +270,8 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 		if err := aggExec.Open(tmpCtx); err != nil {
 			b.Fatal(err)
 		}
-		batch := chunk.NewRecordBatch(chk)
 		for {
-			if err := aggExec.Next(tmpCtx, batch); err != nil {
+			if err := aggExec.Next(tmpCtx, chk); err != nil {
 				b.Fatal(b)
 			}
 			if chk.NumRows() == 0 {

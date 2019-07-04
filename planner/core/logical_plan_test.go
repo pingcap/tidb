@@ -1148,6 +1148,24 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				12: {"test.t4.a"},
 			},
 		},
+		{
+			sql: "select 1 from (select count(b) as cnt from t) t1;",
+			ans: map[int][]string{
+				1: {"test.t.a"},
+			},
+		},
+		{
+			sql: "select count(1) from (select count(b) as cnt from t) t1;",
+			ans: map[int][]string{
+				1: {"test.t.a"},
+			},
+		},
+		{
+			sql: "select count(1) from (select count(b) as cnt from t group by c) t1;",
+			ans: map[int][]string{
+				1: {"test.t.c"},
+			},
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
@@ -2177,6 +2195,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(a) over(w partition by a) from t window w as ()",
+			result: "[planner:3581]A window which depends on another cannot define partitioning.",
+		},
+		{
+			sql:    "SELECT FIRST_VALUE(a) RESPECT NULLS OVER (w1 PARTITION BY b ORDER BY b ASC, a DESC ROWS 2 PRECEDING) AS 'first_value', a, b FROM ( SELECT a, b FROM `t` ) as t WINDOW w1 AS (PARTITION BY b ORDER BY b ASC, a ASC );",
 			result: "[planner:3581]A window which depends on another cannot define partitioning.",
 		},
 		{

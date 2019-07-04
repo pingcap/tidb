@@ -57,6 +57,9 @@ treat-old-version-utf8-as-utf8mb4 = true
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false
 
+# delay-clean-table-lock is used to control whether delayed-release the table lock in the abnormal situation. (Milliseconds)
+delay-clean-table-lock = 0
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -173,6 +176,18 @@ force-priority = "NO_PRIORITY"
 
 # Bind info lease duration, which influences the duration of loading bind info and handling invalid bind.
 bind-info-lease = "3s"
+
+# The limitation of the number for the entries in one transaction.
+# If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
+txn-entry-count-limit = 300000
+
+# The limitation of the size in byte for the entries in one transaction.
+# If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
+txn-total-size-limit = 104857600
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.

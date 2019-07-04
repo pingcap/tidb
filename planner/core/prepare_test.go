@@ -294,7 +294,7 @@ func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 		partner_id varchar(35) not null,
 		t1_status_id int(10) unsigned
 	  );`)
-	tk.MustExec(`insert into t1 values ("1", "partner1", "10"), ("2", "partner2", "10"), ("3", "partner3", "10"), ("4", "partner4", "10");"`)
+	tk.MustExec(`insert into t1 values ("1", "partner1", "10"), ("2", "partner2", "10"), ("3", "partner3", "10"), ("4", "partner4", "10");`)
 	tk.MustExec("drop table if exists t3")
 	tk.MustExec(`create table t3 (
 		id int(11) not null default '0',

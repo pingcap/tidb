@@ -268,8 +268,8 @@ func (e *IndexReaderExecutor) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	err := e.result.Next(ctx, req.Chunk)
+func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	err := e.result.Next(ctx, req)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
@@ -573,7 +573,7 @@ func (e *IndexLookUpExecutor) Close() error {
 }
 
 // Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -787,7 +787,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
 		chk := newFirstChunk(tableReader)
-		err = tableReader.Next(ctx, chunk.NewRecordBatch(chk))
+		err = tableReader.Next(ctx, chk)
 		if err != nil {
 			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
 			return err

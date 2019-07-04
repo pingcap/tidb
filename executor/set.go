@@ -42,7 +42,7 @@ type SetExecutor struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil

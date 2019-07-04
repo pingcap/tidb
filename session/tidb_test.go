@@ -20,7 +20,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -64,13 +63,6 @@ func (s *testMainSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 	removeStore(c, s.dbName)
-}
-
-// TestCheckArgs is a test case for arg type.
-func (s *testMainSuite) TestCheckArgs(c *C) {
-	checkArgs(nil, true, false, int8(1), int16(1), int32(1), int64(1), 1,
-		uint8(1), uint16(1), uint32(1), uint64(1), uint(1), float32(1), float64(1),
-		"abc", []byte("abc"), time.Now(), time.Hour, time.Local)
 }
 
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
@@ -151,7 +143,11 @@ func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error
 	if err != nil {
 		return nil, err
 	}
-	rs, err := se.ExecutePreparedStmt(ctx, stmtID, args...)
+	params := make([]types.Datum, len(args))
+	for i := 0; i < len(params); i++ {
+		params[i] = types.NewDatum(args[i])
+	}
+	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return nil, err
 	}

@@ -87,10 +87,10 @@ type RecordSet interface {
 	Fields() []*ast.ResultField
 
 	// Next reads records into chunk.
-	Next(ctx context.Context, req *chunk.RecordBatch) error
+	Next(ctx context.Context, req *chunk.Chunk) error
 
-	// NewRecordBatch creates a recordBatch.
-	NewRecordBatch() *chunk.RecordBatch
+	// NewChunk create a chunk.
+	NewChunk() *chunk.Chunk
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.

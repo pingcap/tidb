@@ -4403,3 +4403,32 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite) TestIssue10804(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`SELECT @@information_schema_stats_expiry`).Check(testkit.Rows(`86400`))
+	tk.MustExec("/*!80000 SET SESSION information_schema_stats_expiry=0 */")
+	tk.MustQuery(`SELECT @@information_schema_stats_expiry`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`SELECT @@GLOBAL.information_schema_stats_expiry`).Check(testkit.Rows(`86400`))
+	tk.MustExec("/*!80000 SET GLOBAL information_schema_stats_expiry=0 */")
+	tk.MustQuery(`SELECT @@GLOBAL.information_schema_stats_expiry`).Check(testkit.Rows(`0`))
+}
+
+func (s *testIntegrationSuite) TestInvalidEndingStatement(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	parseErrMsg := "[parser:1064]"
+	errMsgLen := len(parseErrMsg)
+
+	assertParseErr := func(sql string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error()[:errMsgLen], Equals, parseErrMsg)
+	}
+
+	assertParseErr("drop table if exists t'xyz")
+	assertParseErr("drop table if exists t'")
+	assertParseErr("drop table if exists t`")
+	assertParseErr(`drop table if exists t'`)
+	assertParseErr(`drop table if exists t"`)
+}
