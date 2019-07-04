@@ -3063,6 +3063,39 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk2.MustExec("unlock tables")
 }
 
+func (s *testDBSuite2) TestTablesLockDelayClean(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	defer tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	config.GetGlobalConfig().DelayCleanTableLock = 100
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var startTime time.Time
+	go func() {
+		startTime = time.Now()
+		tk.Se.Close()
+		wg.Done()
+	}()
+	time.Sleep(50)
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	wg.Wait()
+	c.Assert(time.Since(startTime).Seconds() > 0.1, IsTrue)
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	config.GetGlobalConfig().DelayCleanTableLock = 0
+}
+
 // TestConcurrentLockTables test concurrent lock/unlock tables.
 func (s *testDBSuite4) TestConcurrentLockTables(c *C) {
 	if israce.RaceEnabled {
