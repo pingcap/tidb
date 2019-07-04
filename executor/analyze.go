@@ -962,7 +962,9 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			if *err != nil {
 				return
 			}
-			kvMap[string(iter.Key())] = iter.Value()
+			if iter.Valid() {
+				kvMap[string(iter.Key())] = iter.Value()
+			}
 		}
 
 		*err = e.handleBatchSeekResponse(kvMap)
