@@ -2,12 +2,14 @@ package infoschema
 
 import (
 	"fmt"
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
 	"math/rand"
 	"os"
 	"time"
+
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 var _ = Suite(&testSlowLogBufferSuit{})
@@ -86,10 +88,17 @@ func testRingBufferBasic(rb *ringBuffer, c *C) {
 	checkFunc(3, 11, 13, []interface{}{11, 12, 13})
 }
 
+func setSlowQueryCacheSize(size uint64) {
+	newConf := config.NewConfig()
+	newConf.Log.SlowQueryCacheSize = size
+	config.StoreGlobalConfig(newConf)
+}
+
 func (*testSlowLogBufferSuit) TestSlowQueryReader(c *C) {
 	logFile := "tidb-slow.log"
 	logNum := 10
-	slowQueryBufferSize = 10
+	defer func() { setSlowQueryCacheSize(logutil.DefaultSlowQueryCacheSize) }()
+	setSlowQueryCacheSize(uint64(logNum))
 	prepareSlowLogFile(logFile, c, logNum)
 	// readFileFirst indicate read file first or read cache first. Read file first will update the cache.
 	checkCache := func(totalSize, cacheSize, beforeCacheSize, afterCacheSize int, updateCache bool) {

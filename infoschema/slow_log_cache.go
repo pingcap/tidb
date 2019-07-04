@@ -24,11 +24,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	defSlowQueryBufferSize = 500000
-	slowQueryBufferSize    = defSlowQueryBufferSize
-)
-
 var globalSlowQueryReader slowLogReader
 
 // slowLogReader uses to read slow log data from slow log file.
@@ -143,7 +138,7 @@ func (s *slowLogReader) updateCache(filePath string, tuples []*slowQueryTuple) {
 	s.Lock()
 	defer s.Unlock()
 	if s.cache == nil {
-		s.cache = newSlowLogBuffer(config.GetGlobalConfig().Log.SlowQueryFile, slowQueryBufferSize)
+		s.cache = newSlowLogBuffer(config.GetGlobalConfig().Log.SlowQueryFile, int(config.GetGlobalConfig().Log.SlowQueryCacheSize))
 	}
 	if filePath != s.cache.filePath {
 		logutil.Logger(context.Background()).Info("slow query cache file not match", zap.String("cache file", s.cache.filePath), zap.String("data file", filePath))
