@@ -1046,6 +1046,72 @@ func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[
 	return mvcc.db.Write(batch, nil)
 }
 
+// GC implements the MVCCStore interface
+func (mvcc *MVCCLevelDB) GC(startKey, endKey []byte, safePoint uint64) error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
+	defer iter.Release()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Mock TiKV usually doesn't need to process large amount of data. So write it in a single batch.
+	batch := &leveldb.Batch{}
+
+	for iter.Valid() {
+		lockDec := lockDecoder{expectKey: currKey}
+		ok, err := lockDec.Decode(iter)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok && lockDec.lock.startTS <= safePoint {
+			return errors.Errorf(
+				"key %+q has lock with startTs %v which is under safePoint %v",
+				currKey,
+				lockDec.lock.startTS,
+				safePoint)
+		}
+
+		keepNext := true
+		dec := valueDecoder{expectKey: currKey}
+
+		for iter.Valid() {
+			ok, err := dec.Decode(iter)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			if !ok {
+				// Go to the next key
+				currKey, _, err = mvccDecode(iter.Key())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				break
+			}
+
+			if dec.value.commitTS > safePoint {
+				continue
+			}
+
+			if dec.value.valueType == typePut || dec.value.valueType == typeDelete {
+				// Keep the latest version if it's `typePut`
+				if !keepNext || dec.value.valueType == typeDelete {
+					batch.Delete(mvccEncode(currKey, dec.value.commitTS))
+				}
+				keepNext = false
+			} else {
+				// Delete all other types
+				batch.Delete(mvccEncode(currKey, dec.value.commitTS))
+			}
+		}
+	}
+
+	return mvcc.db.Write(batch, nil)
+}
+
 // DeleteRange implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) DeleteRange(startKey, endKey []byte) error {
 	return mvcc.doRawDeleteRange(codec.EncodeBytes(nil, startKey), codec.EncodeBytes(nil, endKey))
