@@ -4155,3 +4155,8 @@ func (s *testIntegrationSuite) TestDaynameArithmetic(c *C) {
 		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
 	}
 }
+
+func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
+}

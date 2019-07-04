@@ -792,13 +792,22 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	var db interface{}
+	if len(s.sessionVars.CurrentDB) > 0 {
+		db = s.sessionVars.CurrentDB
+	}
+
+	var info interface{}
+	if len(sql) > 0 {
+		info = sql
+	}
 	pi := util.ProcessInfo{
 		ID:      s.sessionVars.ConnectionID,
-		DB:      s.sessionVars.CurrentDB,
+		DB:      db,
 		Command: command,
 		Time:    t,
 		State:   s.Status(),
-		Info:    sql,
+		Info:    info,
 		StmtCtx: s.sessionVars.StmtCtx,
 
 		MaxExecutionTime: maxExecutionTime,
@@ -1259,6 +1268,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	err = executor.LoadExprPushdownBlacklist(se)
+	if err != nil {
+		return nil, err
+	}
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1353,7 +1367,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 24
+	currentBootstrapVersion = 25
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1411,6 +1425,7 @@ var builtinGlobalVariable = []string{
 	variable.MaxAllowedPacket,
 	variable.TimeZone,
 	variable.BlockEncryptionMode,
+	variable.MaxExecutionTime,
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,

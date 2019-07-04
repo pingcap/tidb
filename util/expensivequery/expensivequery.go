@@ -49,7 +49,7 @@ func (eqh *Handle) Run() {
 		case <-ticker.C:
 			processInfo := eqh.sm.ShowProcessList()
 			for _, info := range processInfo {
-				if len(info.Info) == 0 {
+				if info.Info == nil {
 					continue
 				}
 				costTime := time.Since(info.Time)
