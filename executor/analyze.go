@@ -813,6 +813,9 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 			}
 			v = types.NewIntDatum(key)
 		}
+		if mysql.HasUnsignedFlag(e.pkInfo.Flag) {
+			v.SetUint64(uint64(v.GetInt64()))
+		}
 		if e.collectors[0].Samples[samplePos] == nil {
 			e.collectors[0].Samples[samplePos] = &statistics.SampleItem{}
 		}
