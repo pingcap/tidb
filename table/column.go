@@ -432,9 +432,6 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 		// Auto increment column doesn't has default value and we should not return error.
 		return GetZeroValue(col), nil
 	}
-	if col.IsGenerated() {
-		return types.Datum{}, nil
-	}
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	if sc.BadNullAsWarning {
