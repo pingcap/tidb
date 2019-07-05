@@ -38,6 +38,8 @@ var (
 	RunWorker = true
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = int32(0)
+	// WaitTimeWhenErrorOccured is waiting interval when processing DDL jobs encounter errors.
+	WaitTimeWhenErrorOccured = 1 * time.Second
 )
 
 type workerType byte
@@ -595,6 +597,8 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			return
 		}
+		d.schemaSyncer.NotifyCleanExpiredPaths()
+		// Wait until timeout.
 		select {
 		case <-ctx.Done():
 			return
