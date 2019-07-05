@@ -39,7 +39,7 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockTable()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockTableT(), core.MockTableT2()})
 	s.Parser = parser.New()
 	s.Parser.EnableWindowFunc(true)
 }
@@ -209,6 +209,14 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		{
 			sql:  "select lead(a, 1) over (partition by null) as c from t",
 			best: "TableReader(Table(t))->Window(lead(test.t.a, 1) over())->Projection",
+		},
+		{
+			sql:  "select * from t use index(f) where f = 1 and a = 1",
+			best: "IndexLookUp(Index(t.f)[[1,1]]->Sel([eq(test.t.a, 1)]), Table(t))",
+		},
+		{
+			sql:  "select * from t2 use index(b) where b = 1 and a = 1",
+			best: "IndexReader(Index(t2.b)[[1,1]]->Sel([eq(test.t2.a, 1)]))",
 		},
 	}
 	for i, tt := range tests {

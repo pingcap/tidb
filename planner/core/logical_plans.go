@@ -485,7 +485,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
 		handleCol := ds.getHandleCol()
-		if handleCol != nil {
+		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
 			path.idxCols = append(path.idxCols, handleCol)
 			path.idxColLens = append(path.idxColLens, types.UnspecifiedLength)
 		}
