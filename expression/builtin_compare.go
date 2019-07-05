@@ -1198,7 +1198,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isAlways, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
 	// int non-constant [cmp] non-int constant
-	if arg0IsInt && !arg0IsCon && arg1IsCon {
+	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		finalArg1, arg1, isAlways = RefineComparedConstant(ctx, arg0Type, arg1, c.op)
 		if isAlways && arg1.RetType.EvalType() == types.ETInt {
 			// Judge it is inf or -inf
@@ -1216,7 +1216,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// non-int constant [cmp] int non-constant
-	if arg1IsInt && !arg1IsCon && arg0IsCon {
+	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		finalArg0, arg0, isAlways = RefineComparedConstant(ctx, arg1Type, arg0, symmetricOp[c.op])
 		if isAlways && arg0.RetType.EvalType() == types.ETInt {
 			if arg0.Value.GetInt64()&1 == 1 {
