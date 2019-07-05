@@ -34,7 +34,7 @@ func init() {
 
 	specialNullRejectCheck = map[string]struct{}{
 		ast.NullEQ: struct{}{},
-		ast.Case:	struct{}{},
+		ast.Case:   struct{}{},
 	}
 }
 
@@ -112,7 +112,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 			isDeferredConst = isDeferredConst || isDeferred
 		}
 		if !allConstArg {
-			_, ok :=  specialNullRejectCheck[x.FuncName.L]
+			_, ok := specialNullRejectCheck[x.FuncName.L]
 			if !hasNullArg || !sc.InNullRejectCheck || ok {
 				return expr, isDeferredConst
 			}

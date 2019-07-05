@@ -2723,7 +2723,7 @@ func (s *testSessionSuite) TestLoadClientInteractive(c *C) {
 	tk.MustQuery("select @@wait_timeout").Check(testkit.Rows("28800"))
 }
 
-func (s *testSessionSuite) TestFuncCaseWithLeftJoin(c *C)  {
+func (s *testSessionSuite) TestFuncCaseWithLeftJoin(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table kankan1(id int, name text)")
@@ -2733,7 +2733,7 @@ func (s *testSessionSuite) TestFuncCaseWithLeftJoin(c *C)  {
 	tk.MustExec("create table kankan2(id int, h1 text)")
 	tk.MustExec("insert into kankan2 values(2, 'z')")
 
-	tk.MustQuery( "select * from (select t1.id, t2.h1, case when t1.name='b' then 'case2' when t1.name='a' then " +
+	tk.MustQuery("select * from (select t1.id, t2.h1, case when t1.name='b' then 'case2' when t1.name='a' then " +
 		"'case1' else null end as flag from kankan1 t1 left join kankan2 t2 on t1.id = t2.id) t3 where t3.flag='case1' " +
 		"order by t3.id").Check(testkit.Rows("1 <nil> case1", "2 z case1"))
 }
