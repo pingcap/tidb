@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -288,6 +289,52 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows("1 user-1 localhost information_schema Quit 9223372036 1 do something",
 			"2 user-2 localhost test Init DB 9223372036 2 do something"))
+
+	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
+		ID:      1,
+		User:    "user-1",
+		Host:    "localhost",
+		DB:      "information_schema",
+		Command: byte(1),
+		State:   1,
+		Info:    nil,
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
+	sm.processInfoMap[2] = &util.ProcessInfo{
+		ID:      2,
+		User:    "user-2",
+		Host:    "localhost",
+		DB:      nil,
+		Command: byte(2),
+		State:   2,
+		Info:    strings.Repeat("x", 101),
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
+	tk.Se.SetSessionManager(sm)
+	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 100)),
+		))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
+		testkit.Rows(
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
+		))
 }
 
 func (s *testTableSuite) TestSchemataCharacterSet(c *C) {
