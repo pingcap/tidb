@@ -1965,7 +1965,7 @@ func (it *infoschemaTable) RecordKey(h int64) kv.Key {
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
@@ -2087,7 +2087,7 @@ func (vt *VirtualTable) RecordKey(h int64) kv.Key {
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 

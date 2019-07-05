@@ -19,7 +19,11 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite1) TestShowStatsMeta(c *C) {
+type testShowStatsSuite struct {
+	testSuite
+}
+
+func (s *testShowStatsSuite) TestShowStatsMeta(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
@@ -35,7 +39,7 @@ func (s *testSuite1) TestShowStatsMeta(c *C) {
 	c.Assert(result.Rows()[0][1], Equals, "t")
 }
 
-func (s *testSuite1) TestShowStatsHistograms(c *C) {
+func (s *testShowStatsSuite) TestShowStatsHistograms(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -63,7 +67,7 @@ func (s *testSuite1) TestShowStatsHistograms(c *C) {
 	c.Assert(len(res.Rows()), Equals, 1)
 }
 
-func (s *testSuite1) TestShowStatsBuckets(c *C) {
+func (s *testShowStatsSuite) TestShowStatsBuckets(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -77,7 +81,7 @@ func (s *testSuite1) TestShowStatsBuckets(c *C) {
 	result.Check(testkit.Rows("test t  idx 1 0 1 1 (1, 1) (1, 1)"))
 }
 
-func (s *testSuite1) TestShowStatsHasNullValue(c *C) {
+func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, index idx(a))")
@@ -137,7 +141,7 @@ func (s *testSuite1) TestShowStatsHasNullValue(c *C) {
 	c.Assert(res.Rows()[4][7], Equals, "0")
 }
 
-func (s *testSuite1) TestShowPartitionStats(c *C) {
+func (s *testShowStatsSuite) TestShowPartitionStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("use test")
@@ -170,7 +174,7 @@ func (s *testSuite1) TestShowPartitionStats(c *C) {
 	result.Check(testkit.Rows("test t p0 100"))
 }
 
-func (s *testSuite1) TestShowAnalyzeStatus(c *C) {
+func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")
