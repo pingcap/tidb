@@ -226,58 +226,45 @@ func defaultTimezoneDependent(columns []*expression.Column) bool {
 	return !hasTimestampField(columns)
 }
 
-var (
-	funcCallExprMap = map[string]isTimezoneDependentProcessor{
-		ast.Abs:           isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.Ceiling:       isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.DateDiff:      isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.Day:           isTimezoneDependentProcessor(hasDateField),
-		ast.DayOfMonth:    isTimezoneDependentProcessor(hasDateField),
-		ast.DayOfWeek:     isTimezoneDependentProcessor(hasDateField),
-		ast.DayOfYear:     isTimezoneDependentProcessor(hasDateField),
-		ast.Extract:       isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.Floor:         isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.Hour:          isTimezoneDependentProcessor(hasTimeField),
-		ast.MicroSecond:   isTimezoneDependentProcessor(hasTimeField),
-		ast.Minute:        isTimezoneDependentProcessor(hasTimeField),
-		ast.Mod:           isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.Month:         isTimezoneDependentProcessor(hasDateField),
-		ast.Quarter:       isTimezoneDependentProcessor(hasDateField),
-		ast.Second:        isTimezoneDependentProcessor(hasTimeField),
-		ast.TimeToSec:     isTimezoneDependentProcessor(hasTimeField),
-		ast.ToDays:        isTimezoneDependentProcessor(hasDateField),
-		ast.ToSeconds:     isTimezoneDependentProcessor(hasDateField),
-		ast.Weekday:       isTimezoneDependentProcessor(hasDateField),
-		ast.Year:          isTimezoneDependentProcessor(hasDateField),
-		ast.YearWeek:      isTimezoneDependentProcessor(hasDateField),
-		ast.UnixTimestamp: isTimezoneDependentProcessor(hasTimestampField),
-	}
-)
-
 // checkPartitionFuncValid checks partition function validly.
 func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	switch v := expr.(type) {
 	case *ast.FuncCastExpr, *ast.CaseExpr:
 		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.FuncCallExpr:
+		partCols, err := partitionColumns(ctx, tblInfo, expr)
+		if err != nil {
+			return err
+		}
 		// check function which allowed in partitioning expressions
 		// see https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
-		if f, ok := funcCallExprMap[v.FnName.L]; ok {
-			// Mysql don't allow creating partitions with expressions with non matching
-			// arguments as a (sub)partitioning function,
-			// but we want to allow such expressions when opening existing tables for
-			// easier maintenance. This exception should be deprecated at some point in future so that we always throw an error.
-			// See https://github.com/mysql/mysql-server/blob/5.7/sql/sql_partition.cc#L1072
-			partCols, err := partitionColumns(ctx, tblInfo, expr)
-			if err != nil {
-				return err
-			}
-			if !f(partCols) {
+		switch v.FnName.L {
+		// Mysql don't allow creating partitions with expressions with non matching
+		// arguments as a (sub)partitioning function,
+		// but we want to allow such expressions when opening existing tables for
+		// easier maintenance. This exception should be deprecated at some point in future so that we always throw an error.
+		// See https://github.com/mysql/mysql-server/blob/5.7/sql/sql_partition.cc#L1072
+		case ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Month, ast.Quarter, ast.ToDays, ast.ToSeconds,
+			ast.Weekday, ast.Year, ast.YearWeek:
+			if !hasDateField(partCols) {
 				return errors.Trace(errWrongExprInPartitionFunc)
 			}
-		} else {
+		case ast.Hour, ast.MicroSecond, ast.Minute, ast.Second, ast.TimeToSec:
+			if !hasTimeField(partCols) {
+				return errors.Trace(errWrongExprInPartitionFunc)
+			}
+		case ast.UnixTimestamp:
+			if !hasTimestampField(partCols) {
+				return errors.Trace(errWrongExprInPartitionFunc)
+			}
+		case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Extract, ast.Floor, ast.Mod:
+			if !defaultTimezoneDependent(partCols) {
+				return errors.Trace(errWrongExprInPartitionFunc)
+			}
+		default:
 			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
+		return nil
 	case *ast.BinaryOperationExpr:
 		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
 		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
