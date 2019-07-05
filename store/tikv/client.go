@@ -80,6 +80,7 @@ type connArray struct {
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
 	tikvTransportLayerLoad uint64
+	closed                 chan struct{}
 
 	// Notify rpcClient to check the idle flag
 	idleNotify *uint32
@@ -142,8 +143,8 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 		id, _ := key.(uint64)
 		entry, _ := value.(*batchCommandsEntry)
 		entry.err = err
-		close(entry.res)
 		c.batched.Delete(id)
+		close(entry.res)
 		return true
 	})
 }
@@ -246,6 +247,7 @@ func newConnArray(maxSize uint, addr string, security config.Security, idleNotif
 		batchCommandsCh:        make(chan *batchCommandsEntry, cfg.TiKVClient.MaxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, maxSize),
 		tikvTransportLayerLoad: 0,
+		closed:                 make(chan struct{}),
 
 		idleNotify: idleNotify,
 		idleDetect: time.NewTimer(idleTimeout),
@@ -348,7 +350,10 @@ func (a *connArray) Close() {
 		// After connections are closed, `batchRecvLoop`s will check the flag.
 		atomic.StoreInt32(&c.closed, 1)
 	}
-	close(a.batchCommandsCh)
+	// Don't close(batchCommandsCh) because when Close() is called, someone maybe
+	// calling SendRequest and writing batchCommandsCh, if we close it here the
+	// writing goroutine will panic.
+	close(a.closed)
 
 	for i, c := range a.v {
 		if c != nil {
@@ -394,6 +399,8 @@ func (a *connArray) fetchAllPendingRequests(
 		a.idle = true
 		atomic.CompareAndSwapUint32(a.idleNotify, 0, 1)
 		// This connArray to be recycled
+		return
+	case <-a.closed:
 		return
 	}
 	if headEntry == nil {
