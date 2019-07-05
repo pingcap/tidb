@@ -1071,7 +1071,7 @@ func isTemporalColumn(expr Expression) bool {
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
 // The second return-val only used when isAlways is True
-func tryToConvertConstantInt(ctx sessionctx.Context, isUnsigned bool, con *Constant) (_ *Constant, _ *Constant, isAlways bool) {
+func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, _ *Constant, isAlways bool) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, nil, false
 	}
@@ -1080,10 +1080,8 @@ func tryToConvertConstantInt(ctx sessionctx.Context, isUnsigned bool, con *Const
 		return con, nil, false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	fieldType := types.NewFieldType(mysql.TypeLonglong)
-	if isUnsigned {
-		fieldType.Flag |= mysql.UnsignedFlag
-	}
+	fieldType := targetFieldType
+
 	dt, err = dt.ConvertTo(sc, fieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
@@ -1105,16 +1103,14 @@ func tryToConvertConstantInt(ctx sessionctx.Context, isUnsigned bool, con *Const
 // RefineComparedConstant changes an non-integer constant argument to its ceiling or floor result by the given op.
 // isAlways indicates whether the int column "con" is true/false.
 // The second return-val only used when isAlways is True
-func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Constant, op opcode.Op) (_ *Constant, _ *Constant, isAlways bool) {
+func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant, op opcode.Op) (_ *Constant, _ *Constant, isAlways bool) {
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
 		return con, nil, false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	intFieldType := types.NewFieldType(mysql.TypeLonglong)
-	if isUnsigned {
-		intFieldType.Flag |= mysql.UnsignedFlag
-	}
+	intFieldType := targetFieldType
+
 	var intDatum types.Datum
 	intDatum, err = dt.ConvertTo(sc, intFieldType)
 	if err != nil {
@@ -1142,12 +1138,12 @@ func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Consta
 	case opcode.LT, opcode.GE:
 		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(ctx, isUnsigned, resultCon)
+			return tryToConvertConstantInt(ctx, intFieldType, resultCon)
 		}
 	case opcode.LE, opcode.GT:
 		resultExpr := NewFunctionInternal(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(ctx, isUnsigned, resultCon)
+			return tryToConvertConstantInt(ctx, intFieldType, resultCon)
 		}
 	case opcode.NullEQ, opcode.EQ:
 		switch con.RetType.EvalType() {
@@ -1202,10 +1198,17 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isAlways, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
 	// int non-constant [cmp] non-int constant
-	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		finalArg1, arg1, isAlways = RefineComparedConstant(ctx, mysql.HasUnsignedFlag(arg0Type.Flag), arg1, c.op)
-		if isAlways && arg1.Value.Kind() == types.KindInt64 {
-			if arg1.Value.GetInt64() > 0 {
+	if arg0IsInt && !arg0IsCon && arg1IsCon {
+		finalArg1, arg1, isAlways = RefineComparedConstant(ctx, arg0Type, arg1, c.op)
+		if isAlways && arg1.RetType.EvalType() == types.ETInt {
+			// Judge it is inf or -inf
+			// For int:
+			//			inf:  01111111 & 1 == 1
+			//		   -inf:  10000000 & 1 == 0
+			// For uint:
+			//			inf:  11111111 & 1 == 1
+			//		   -inf:  00000000 & 0 == 0
+			if arg1.Value.GetInt64()&1 == 1 {
 				isPositiveInfinite = true
 			} else {
 				isNegativeInfinite = true
@@ -1213,13 +1216,13 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// non-int constant [cmp] int non-constant
-	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		finalArg0, arg0, isAlways = RefineComparedConstant(ctx, mysql.HasUnsignedFlag(arg1Type.Flag), arg0, symmetricOp[c.op])
-		if isAlways && arg0.Value.Kind() == types.KindInt64 {
-			if arg0.Value.GetInt64() < 0 {
-				isPositiveInfinite = true
-			} else {
+	if arg1IsInt && !arg1IsCon && arg0IsCon {
+		finalArg0, arg0, isAlways = RefineComparedConstant(ctx, arg1Type, arg0, symmetricOp[c.op])
+		if isAlways && arg0.RetType.EvalType() == types.ETInt {
+			if arg0.Value.GetInt64()&1 == 1 {
 				isNegativeInfinite = true
+			} else {
+				isPositiveInfinite = true
 			}
 		}
 	}
