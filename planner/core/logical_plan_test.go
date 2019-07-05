@@ -2274,6 +2274,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(order by test.t.a asc range between 1.0 preceding and 1 following))->Projection",
 		},
 		{
+			sql:    "select sum(a) over(range between 1.0 preceding and 1 following) from t",
+			result: "[planner:3587]Window '<unnamed window>' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		{
 			sql:    "select row_number() over(rows between 1 preceding and 1 following) from t",
 			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
 		},
@@ -2316,6 +2320,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "delete from t order by (sum(a) over())",
 			result: "[planner:3593]You cannot use the window function 'sum' in this context.'",
+		},
+		{
+			sql:    "SELECT DENSE_RANK() OVER w1 AS 'dense_rank', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as t WINDOW w1 AS (PARTITION BY fieldB ORDER BY fieldB DESC, fieldA DESC RANGE BETWEEN CURRENT ROW AND 1250951168 FOLLOWING);",
+			result: "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
 		},
 	}
 

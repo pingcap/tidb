@@ -3182,7 +3182,7 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 		return &newSpec, true
 	}
 	// For functions that operate on the entire partition, the frame clause will be ignored.
-	if !needFrame && spec.Frame != nil {
+	if !needFrame && spec.Frame != nil && spec.Frame.Type != ast.Ranges {
 		specName := spec.Name.O
 		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(windowFuncName, getWindowName(specName)))
 		newSpec := *spec
