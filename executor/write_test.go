@@ -1780,7 +1780,7 @@ func (s *testSuite4) TestQualifiedDelete(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite3) TestLoadDataMissingColumn(c *C) {
+func (s *testSuite4) TestLoadDataMissingColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	createSQL := `create table load_data_missing (id int, t timestamp not null)`
