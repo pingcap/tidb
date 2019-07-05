@@ -659,7 +659,7 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	gcSafePointCacheInterval = 0
 
 	// Avoid blocking runGCJob function
-	s.gcWorker.done = make(chan error, 2)
+	s.gcWorker.done = make(chan error, 1)
 
 	// Test distributed mode
 	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
@@ -667,6 +667,8 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	c.Assert(useDistributedGC, IsTrue)
 	safePoint := s.mustAllocTs(c)
 	s.gcWorker.runGCJob(context.Background(), safePoint, 1)
+	err = <-s.gcWorker.done
+	c.Assert(err, IsNil)
 
 	pdSafePoint := s.mustGetSafePointFromPd(c)
 	c.Assert(pdSafePoint, Equals, safePoint)
@@ -674,6 +676,11 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	etcdSafePoint := s.loadEtcdSafePoint(c)
 	c.Assert(err, IsNil)
 	c.Assert(etcdSafePoint, Equals, safePoint)
+
+	// Test distributed mode with safePoint regressing (although this is impossible)
+	s.gcWorker.runGCJob(context.Background(), safePoint-1, 1)
+	err = <-s.gcWorker.done
+	c.Assert(err, NotNil)
 
 	// Test central mode
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
@@ -686,6 +693,8 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	safePoint = s.mustAllocTs(c)
 	s.gcWorker.runGCJob(context.Background(), safePoint, 1)
 	s.checkCollected(c, g)
+	err = <-s.gcWorker.done
+	c.Assert(err, IsNil)
 
 	etcdSafePoint = s.loadEtcdSafePoint(c)
 	c.Assert(err, IsNil)
