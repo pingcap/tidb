@@ -50,7 +50,7 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	c.Assert(err, IsNil)
 
 	// prepare data
-	totalSize := uint64(256 << 20) // 256MB
+	totalSize := uint64(64 << 20) // 64MB
 	blockSize := uint64(8 << 10)   // 8KB
 	delta := totalSize / 5
 	numRows := totalSize / blockSize
