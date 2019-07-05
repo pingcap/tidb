@@ -1118,19 +1118,10 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 	}
 	rander := rand.New(rand.NewSource(e.randSeed))
 
-	defer func() {
-		fastAnalyzeCounterAccessRegions.Set(0)
-		fastAnalyzeCounterRegionError.Set(0)
-		fastAnalyzeCounterSample.Set(0)
-		fastAnalyzeCounterScanKeys.Set(0)
-		fastAnalyzeCounterSeekKeys.Set(0)
-	}()
-
 	// Only four rebuilds for sample task are allowed.
 	needRebuild, maxBuildTimes := true, 5
 	for counter := maxBuildTimes; needRebuild && counter > 0; counter-- {
 		fastAnalyzeCounterRegionError.Inc()
-		fastAnalyzeCounterAccessRegions.Set(0)
 		needRebuild, err = e.buildSampTask()
 		if err != nil {
 			return nil, nil, err
