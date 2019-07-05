@@ -1981,7 +1981,6 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	case *ast.CleanupTableLockStmt:
 		// This command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
-
 	}
 	p := &DDL{Statement: node}
 	return p, nil
