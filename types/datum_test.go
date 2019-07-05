@@ -170,6 +170,12 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	binLit, err := ParseHexStr("0x9999999999999999999999999999999999999999999")
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, binLit, -1)
+
+	ft = NewFieldType(mysql.TypeTiny)
+	datum := NewBinaryLiteralDatum(NewBinaryLiteralFromUint(0xFFFFFFFFFFF, -1))
+	sc := new(stmtctx.StatementContext)
+	_, err = datum.ConvertTo(sc, ft)
+	c.Assert(err, NotNil)
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {

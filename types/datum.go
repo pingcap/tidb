@@ -1477,8 +1477,14 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 	case KindMysqlJSON:
 		return ConvertJSONToInt(sc, d.GetMysqlJSON(), false)
 	case KindBinaryLiteral, KindMysqlBit:
-		val, err := d.GetBinaryLiteral().ToInt(sc)
-		return int64(val), errors.Trace(err)
+		uval, err := d.GetBinaryLiteral().ToInt(sc)
+		val := int64(uval)
+		if err == nil {
+			if val > upperBound {
+				err = overflow(val, tp)
+			}
+		}
+		return val, errors.Trace(err)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", d.GetValue(), d.GetValue())
 	}
