@@ -147,7 +147,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 			break
 		}
 	}
-	// consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
+	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
 	if len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1 && ds.ctx.GetSessionVars().EnableIndexMerge {
 		needConsiderIndexMerge := true
 		for i := 1; i < len(ds.possibleAccessPaths); i++ {
@@ -228,9 +228,9 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				break
 			}
 		}
-		// if accessConds is empty or tableFilter is not empty, we ignore the access path.
-		// now these conditions are too strict.
-		// for example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
+		// If accessConds is empty or tableFilter is not empty, we ignore the access path.
+		// Now these conditions are too strict.
+		// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
 		// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
 		// TODO: solve the above case
 		if len(path.tableFilters) > 0 || len(path.accessConds) == 0 {

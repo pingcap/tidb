@@ -42,65 +42,65 @@ func getIndexMergePathDigest(paths []*accessPath, startIndex int) string {
 	if len(paths) == startIndex {
 		return "[]"
 	}
-	ixMergeDisgest := "["
+	idxMergeDisgest := "["
 	for i := startIndex; i < len(paths); i++ {
 		if i != startIndex {
-			ixMergeDisgest += ","
+			idxMergeDisgest += ","
 		}
 		path := paths[i]
-		ixMergeDisgest += "{Ixs:["
+		idxMergeDisgest += "{Idxs:["
 		for j := 0; j < len(path.partialIndexPaths); j++ {
 			if j > 0 {
-				ixMergeDisgest += ","
+				idxMergeDisgest += ","
 			}
-			ixMergeDisgest += path.partialIndexPaths[j].index.Name.L
+			idxMergeDisgest += path.partialIndexPaths[j].index.Name.L
 		}
-		ixMergeDisgest += "],TbFilters:["
+		idxMergeDisgest += "],TbFilters:["
 		for j := 0; j < len(path.tableFilters); j++ {
 			if j > 0 {
-				ixMergeDisgest += ","
+				idxMergeDisgest += ","
 			}
-			ixMergeDisgest += path.tableFilters[j].String()
+			idxMergeDisgest += path.tableFilters[j].String()
 		}
-		ixMergeDisgest += "]}"
+		idxMergeDisgest += "]}"
 	}
-	ixMergeDisgest += "]"
-	return ixMergeDisgest
+	idxMergeDisgest += "]"
+	return idxMergeDisgest
 }
 
 func (s *testIndexMergeSuite) TestIndexMergePathGenerateion(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
-		sql           string
-		ixMergeDigest string
+		sql            string
+		idxMergeDigest string
 	}{
 		{
-			sql:           "select * from t",
-			ixMergeDigest: "[]",
+			sql:            "select * from t",
+			idxMergeDigest: "[]",
 		},
 		{
-			sql:           "select * from t where c < 1",
-			ixMergeDigest: "[]",
+			sql:            "select * from t where c < 1",
+			idxMergeDigest: "[]",
 		},
 		{
-			sql:           "select * from t where c < 1 or f > 2",
-			ixMergeDigest: "[{Ixs:[c_d_e,f_g],TbFilters:[]}]",
+			sql:            "select * from t where c < 1 or f > 2",
+			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[]}]",
 		},
 		{
 			sql: "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7)",
-			ixMergeDigest: "[{Ixs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7))]}," +
-				"{Ixs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2))]}]",
+			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7))]}," +
+				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2))]}]",
 		},
 		{
 			sql: "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7) and (c < 1 or g > 2)",
-			ixMergeDigest: "[{Ixs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7)),or(lt(test.t.c, 1), gt(test.t.g, 2))]}," +
-				"{Ixs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(lt(test.t.c, 1), gt(test.t.g, 2))]}," +
-				"{Ixs:[c_d_e,g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(gt(test.t.c, 5), lt(test.t.f, 7))]}]",
+			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7)),or(lt(test.t.c, 1), gt(test.t.g, 2))]}," +
+				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(lt(test.t.c, 1), gt(test.t.g, 2))]}," +
+				"{Idxs:[c_d_e,g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(gt(test.t.c, 5), lt(test.t.f, 7))]}]",
 		},
 		{
 			sql: "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7) and (e < 1 or f > 2)",
-			ixMergeDigest: "[{Ixs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7)),or(lt(test.t.e, 1), gt(test.t.f, 2))]}," +
-				"{Ixs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(lt(test.t.e, 1), gt(test.t.f, 2))]}]",
+			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7)),or(lt(test.t.e, 1), gt(test.t.f, 2))]}," +
+				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(lt(test.t.e, 1), gt(test.t.f, 2))]}]",
 		},
 	}
 	for i, tc := range tests {
@@ -115,7 +115,7 @@ func (s *testIndexMergeSuite) TestIndexMergePathGenerateion(c *C) {
 		}
 		p, err := builder.Build(stmt)
 		if err != nil {
-			c.Assert(err.Error(), Equals, tc.ixMergeDigest, comment)
+			c.Assert(err.Error(), Equals, tc.idxMergeDigest, comment)
 			continue
 		}
 		c.Assert(err, IsNil)
@@ -133,9 +133,9 @@ func (s *testIndexMergeSuite) TestIndexMergePathGenerateion(c *C) {
 			}
 		}
 		ds.ctx.GetSessionVars().EnableIndexMerge = true
-		ixMergeStartIndex := len(ds.possibleAccessPaths)
+		idxMergeStartIndex := len(ds.possibleAccessPaths)
 		_, err = lp.recursiveDeriveStats()
 		c.Assert(err, IsNil)
-		c.Assert(getIndexMergePathDigest(ds.possibleAccessPaths, ixMergeStartIndex), Equals, tc.ixMergeDigest)
+		c.Assert(getIndexMergePathDigest(ds.possibleAccessPaths, idxMergeStartIndex), Equals, tc.idxMergeDigest)
 	}
 }
