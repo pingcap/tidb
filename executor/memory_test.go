@@ -51,7 +51,7 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 
 	// prepare data
 	totalSize := uint64(64 << 20) // 64MB
-	blockSize := uint64(8 << 10)   // 8KB
+	blockSize := uint64(8 << 10)  // 8KB
 	delta := totalSize / 5
 	numRows := totalSize / blockSize
 	_, err = se.Execute(context.Background(), fmt.Sprintf("create table t (c varchar(%v))", blockSize))
