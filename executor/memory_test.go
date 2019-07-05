@@ -16,14 +16,15 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"runtime"
+	"strings"
+	"sync"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"runtime"
-	"strings"
-	"sync"
 )
 
 var _ = SerialSuites(&testMemoryLeak{})
