@@ -3484,6 +3484,7 @@ func throwErrIfInMemOrSysDB(ctx sessionctx.Context, dbLowerName string) error {
 func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
 	uniqueTableID := make(map[int64]struct{})
 	cleanupTables := make([]model.TableLockTpInfo, 0, len(tables))
+	unlockedTablesNum := 0
 	// Check whether the table was already locked by another.
 	for _, tb := range tables {
 		err := throwErrIfInMemOrSysDB(ctx, tb.Schema.L)
@@ -3497,19 +3498,21 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 		if t.Meta().IsView() {
 			return table.ErrUnsupportedOp
 		}
-		tbInfo := t.Meta()
-
-		if tbInfo.Lock == nil || len(tbInfo.Lock.Sessions) == 0 {
-			continue
+		// Maybe the table t was not locked, but still try to unlock this table.
+		// If we skip unlock the table here, the job maybe not consistent with the job.Query.
+		// eg: unlock tables t1,t2;  If t2 is not locked and skip here, then the job will only unlock table t1,
+		// and this behaviour is not consistent with the sql query.
+		if !t.Meta().IsLocked() {
+			unlockedTablesNum++
 		}
-
 		if _, ok := uniqueTableID[t.Meta().ID]; ok {
 			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
 		}
 		uniqueTableID[t.Meta().ID] = struct{}{}
 		cleanupTables = append(cleanupTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID})
 	}
-	if len(cleanupTables) == 0 {
+	// If the num of cleanupTables is 0, or all cleanupTables is unlocked, just return here.
+	if len(cleanupTables) == 0 || len(cleanupTables) == unlockedTablesNum {
 		return nil
 	}
 
