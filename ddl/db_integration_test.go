@@ -681,17 +681,17 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(a varchar(10)) charset utf8")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset := func() {
+	checkCharset := func(chs, coll string) {
 		tbl := testGetTableByName(c, s.ctx, "test", "t")
 		c.Assert(tbl, NotNil)
-		c.Assert(tbl.Meta().Charset, Equals, charset.CharsetUTF8MB4)
-		c.Assert(tbl.Meta().Collate, Equals, charset.CollationUTF8MB4)
+		c.Assert(tbl.Meta().Charset, Equals, chs)
+		c.Assert(tbl.Meta().Collate, Equals, coll)
 		for _, col := range tbl.Meta().Columns {
-			c.Assert(col.Charset, Equals, charset.CharsetUTF8MB4)
-			c.Assert(col.Collate, Equals, charset.CollationUTF8MB4)
+			c.Assert(col.Charset, Equals, chs)
+			c.Assert(col.Collate, Equals, coll)
 		}
 	}
-	checkCharset()
+	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	// Test when column charset can not convert to the target charset.
 	tk.MustExec("drop table t;")
@@ -700,11 +700,16 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from ascii to utf8mb4")
 
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a varchar(10) character set utf8) charset utf8")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci;")
+	checkCharset(charset.CharsetUTF8, "utf8_general_ci")
+
 	// Test when table charset is equal to target charset but column charset is not equal.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(a varchar(10) character set utf8) charset utf8mb4")
-	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset()
+	tk.MustExec("alter table t convert to charset utf8mb4 collate utf8mb4_general_ci;")
+	checkCharset(charset.CharsetUTF8MB4, "utf8mb4_general_ci")
 
 	// Mock table info with charset is "". Old TiDB maybe create table with charset is "".
 	db, ok := domain.GetDomain(s.ctx).InfoSchema().SchemaByName(model.NewCIStr("test"))
@@ -737,7 +742,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	c.Assert(tbl.Meta().Collate, Equals, "")
 	// Test when table charset is "", this for compatibility.
 	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset()
+	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	// Test when column charset is "".
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
@@ -752,7 +757,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	c.Assert(tbl.Meta().Columns[0].Charset, Equals, "")
 	c.Assert(tbl.Meta().Columns[0].Collate, Equals, "")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset()
+	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (a blob) character set utf8;")
@@ -1762,10 +1767,12 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 	for _, fc := range failedCases {
 		c.Assert(tk.ExecToErr(fc.stmt).Error(), Equals, fc.errMsg, Commentf("%v", fc.stmt))
 	}
+	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8' COLLATE = 'utf8_unicode_ci'")
+	verifyDBCharsetAndCollate("alterdb2", "utf8", "utf8_unicode_ci")
 
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_bin")
 
-	err := tk.ExecToErr("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify collate from utf8mb4_bin to utf8mb4_general_ci")
+	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
+	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
 }
