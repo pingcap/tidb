@@ -1153,13 +1153,6 @@ func getHostByIP(ip string) []string {
 	return addrs
 }
 
-func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
-	if n1 <= n2 {
-		return n1
-	}
-	return n2
-}
-
 // CreateSession4Test creates a new session environment for test.
 func CreateSession4Test(store kv.Storage) (Session, error) {
 	s, err := CreateSession(store)
@@ -1302,14 +1295,11 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
-	saveLease := schemaLease
-	schemaLease = chooseMinLease(schemaLease, 100*time.Millisecond)
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.Logger(context.Background()).Fatal("createSession error", zap.Error(err))
 	}
-	schemaLease = saveLease
 
 	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
