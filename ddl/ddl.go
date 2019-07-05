@@ -268,7 +268,7 @@ type DDL interface {
 	// RegisterEventCh registers event channel for ddl.
 	RegisterEventCh(chan<- *util.Event)
 	// SchemaSyncer gets the schema syncer.
-	SchemaSyncer() SchemaSyncer
+	SchemaSyncer() util.SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -297,7 +297,7 @@ type ddlCtx struct {
 	uuid         string
 	store        kv.Storage
 	ownerManager owner.Manager
-	schemaSyncer SchemaSyncer
+	schemaSyncer util.SchemaSyncer
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
@@ -364,7 +364,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := context.WithCancel(ctx)
 	var manager owner.Manager
-	var syncer SchemaSyncer
+	var syncer util.SchemaSyncer
 	if etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
@@ -372,7 +372,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		syncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
-		syncer = NewSchemaSyncer(etcdCli, id)
+		syncer = util.NewSchemaSyncer(etcdCli, id, manager)
 	}
 
 	ddlCtx := &ddlCtx{
@@ -455,6 +455,17 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
 		}
+
+		go tidbutil.WithRecovery(
+			func() { d.schemaSyncer.StartCleanWork() },
+			func(r interface{}) {
+				if r != nil {
+					logutil.Logger(ddlLogCtx).Error("[ddl] DDL syncer clean worker meet panic",
+						zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
+					metrics.PanicCounter.WithLabelValues(metrics.LabelDDLSyncer).Inc()
+				}
+			})
+		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s", metrics.StartCleanWork)).Inc()
 	}
 }
 
@@ -466,6 +477,7 @@ func (d *ddl) close() {
 	startTime := time.Now()
 	close(d.quitCh)
 	d.ownerManager.Cancel()
+	d.schemaSyncer.CloseCleanWork()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
 		logutil.Logger(ddlLogCtx).Error("[ddl] remove self version path failed", zap.Error(err))
@@ -528,7 +540,7 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
-func (d *ddl) SchemaSyncer() SchemaSyncer {
+func (d *ddl) SchemaSyncer() util.SchemaSyncer {
 	return d.schemaSyncer
 }
 
