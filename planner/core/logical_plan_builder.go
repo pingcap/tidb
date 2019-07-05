@@ -2530,21 +2530,14 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	}
 
 	b.inUpdateStmt = true
-	sel := &ast.SelectStmt{
-		Fields:  &ast.FieldList{},
-		From:    update.TableRefs,
-		Where:   update.Where,
-		OrderBy: update.Order,
-		Limit:   update.Limit,
-	}
 
-	p, err := b.buildResultSetNode(sel.From.TableRefs)
+	p, err := b.buildResultSetNode(update.TableRefs.TableRefs)
 	if err != nil {
 		return nil, err
 	}
 
 	var tableList []*ast.TableName
-	tableList = extractTableList(sel.From.TableRefs, tableList, false)
+	tableList = extractTableList(update.TableRefs.TableRefs, tableList, false)
 	for _, t := range tableList {
 		dbName := t.Schema.L
 		if dbName == "" {
@@ -2556,27 +2549,27 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
-	if sel.Where != nil {
-		p, err = b.buildSelection(p, sel.Where, nil)
+	if update.Where != nil {
+		p, err = b.buildSelection(p, update.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if sel.OrderBy != nil {
-		p, err = b.buildSort(p, sel.OrderBy.Items, nil, nil)
+	if update.Order != nil {
+		p, err = b.buildSort(p, update.Order.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if sel.Limit != nil {
-		p, err = b.buildLimit(p, sel.Limit)
+	if update.Limit != nil {
+		p, err = b.buildLimit(p, update.Limit)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	var updateTableList []*ast.TableName
-	updateTableList = extractTableList(sel.From.TableRefs, updateTableList, true)
+	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
 	orderedList, np, err := b.buildUpdateLists(updateTableList, update.List, p)
 	if err != nil {
 		return nil, err
@@ -2736,36 +2729,29 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 		defer b.popTableHints()
 	}
 
-	sel := &ast.SelectStmt{
-		Fields:  &ast.FieldList{},
-		From:    delete.TableRefs,
-		Where:   delete.Where,
-		OrderBy: delete.Order,
-		Limit:   delete.Limit,
-	}
-	p, err := b.buildResultSetNode(sel.From.TableRefs)
+	p, err := b.buildResultSetNode(delete.TableRefs.TableRefs)
 	if err != nil {
 		return nil, err
 	}
 	oldSchema := p.Schema()
 	oldLen := oldSchema.Len()
 
-	if sel.Where != nil {
-		p, err = b.buildSelection(p, sel.Where, nil)
+	if delete.Where != nil {
+		p, err = b.buildSelection(p, delete.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if sel.OrderBy != nil {
-		p, err = b.buildSort(p, sel.OrderBy.Items, nil, nil)
+	if delete.Order != nil {
+		p, err = b.buildSort(p, delete.Order.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if sel.Limit != nil {
-		p, err = b.buildLimit(p, sel.Limit)
+	if delete.Limit != nil {
+		p, err = b.buildLimit(p, delete.Limit)
 		if err != nil {
 			return nil, err
 		}
@@ -3148,7 +3134,7 @@ func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupedFuncs map[*ast.
 				return nil, nil, err
 			}
 			if desc == nil {
-				return nil, nil, ErrWrongArguments.GenWithStackByArgs(windowFunc.F)
+				return nil, nil, ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFunc.F))
 			}
 			preArgs += len(windowFunc.Args)
 			desc.WrapCastForAggArgs(b.ctx)
