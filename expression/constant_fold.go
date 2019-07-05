@@ -23,10 +23,18 @@ import (
 // specialFoldHandler stores functions for special UDF to constant fold
 var specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){}
 
+// specialNullRejectCheck stores function names for special UDF to skip constant fold.
+var specialNullRejectCheck = map[string]struct{}{}
+
 func init() {
 	specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){
 		ast.If:     ifFoldHandler,
 		ast.Ifnull: ifNullFoldHandler,
+	}
+
+	specialNullRejectCheck = map[string]struct{}{
+		ast.NullEQ: struct{}{},
+		ast.Case:   struct{}{},
 	}
 }
 
@@ -104,7 +112,8 @@ func foldConstant(expr Expression) (Expression, bool) {
 			isDeferredConst = isDeferredConst || isDeferred
 		}
 		if !allConstArg {
-			if !hasNullArg || !sc.InNullRejectCheck || x.FuncName.L == ast.NullEQ {
+			_, ok := specialNullRejectCheck[x.FuncName.L]
+			if !hasNullArg || !sc.InNullRejectCheck || ok {
 				return expr, isDeferredConst
 			}
 			constArgs := make([]Expression, len(args))
