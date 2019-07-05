@@ -4414,3 +4414,22 @@ func (s *testIntegrationSuite) TestIssue10804(c *C) {
 	tk.MustExec("/*!80000 SET GLOBAL information_schema_stats_expiry=0 */")
 	tk.MustQuery(`SELECT @@GLOBAL.information_schema_stats_expiry`).Check(testkit.Rows(`0`))
 }
+
+func (s *testIntegrationSuite) TestInvalidEndingStatement(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	parseErrMsg := "[parser:1064]"
+	errMsgLen := len(parseErrMsg)
+
+	assertParseErr := func(sql string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error()[:errMsgLen], Equals, parseErrMsg)
+	}
+
+	assertParseErr("drop table if exists t'xyz")
+	assertParseErr("drop table if exists t'")
+	assertParseErr("drop table if exists t`")
+	assertParseErr(`drop table if exists t'`)
+	assertParseErr(`drop table if exists t"`)
+}
