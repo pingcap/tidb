@@ -161,9 +161,12 @@ func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
 
 	ranges := make(chan *kv.KeyRange, 100)
 
-	handler := func(ctx context.Context, r kv.KeyRange) (int, error) {
+	handler := func(ctx context.Context, r kv.KeyRange) (RangeTaskStat, error) {
 		ranges <- &r
-		return 1, nil
+		stat := RangeTaskStat{
+			CompletedRegions: 1,
+		}
+		return stat, nil
 	}
 
 	runner := NewRangeTaskRunner("test-runner", s.store, concurrency, handler)
@@ -177,7 +180,8 @@ func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
 			err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
 			c.Assert(err, IsNil)
 			s.checkRanges(c, collect(ranges), expectedRanges)
-			c.Assert(int(runner.completedRegions), Equals, len(expectedRanges))
+			c.Assert(runner.CompletedRegions(), Equals, len(expectedRanges))
+			c.Assert(runner.FailedRegions(), Equals, 0)
 		}
 	}
 }
@@ -196,11 +200,15 @@ func (s *testRangeTaskSuite) testRangeTaskErrorImpl(c *C, concurrency int) {
 			errKey := subRange.StartKey
 			c.Logf("Test RangeTask Error concurrency: %v, range: [%+q, %+q), errKey: %+q", concurrency, r.StartKey, r.EndKey, errKey)
 
-			handler := func(ctx context.Context, r kv.KeyRange) (int, error) {
+			handler := func(ctx context.Context, r kv.KeyRange) (RangeTaskStat, error) {
+				stat := RangeTaskStat{0, 0}
 				if bytes.Equal(r.StartKey, errKey) {
-					return 0, errors.New("test error")
+					stat.FailedRegions++
+					return stat, errors.New("test error")
+
 				}
-				return 1, nil
+				stat.CompletedRegions++
+				return stat, nil
 			}
 
 			runner := NewRangeTaskRunner("test-error-runner", s.store, concurrency, handler)
@@ -208,6 +216,8 @@ func (s *testRangeTaskSuite) testRangeTaskErrorImpl(c *C, concurrency int) {
 			err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
 			// RunOnRange returns no error only when all sub tasks are done successfully.
 			c.Assert(err, NotNil)
+			c.Assert(runner.CompletedRegions(), Less, len(subRanges))
+			c.Assert(runner.FailedRegions(), Equals, 1)
 		}
 	}
 }
