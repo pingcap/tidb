@@ -293,8 +293,16 @@ func (e *LoadDataInfo) SetMessage() {
 }
 
 func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datum {
+	totalCols := e.Table.Cols()
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
+			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
+			if totalCols[i].Tp == mysql.TypeTimestamp || totalCols[i].Tp == mysql.TypeDate || totalCols[i].Tp == mysql.TypeDatetime {
+				if mysql.HasNotNullFlag(totalCols[i].Flag) {
+					e.row[i].SetMysqlTime(types.CurrentTime(totalCols[i].Tp))
+					continue
+				}
+			}
 			e.row[i].SetNull()
 			continue
 		}
