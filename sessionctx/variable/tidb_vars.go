@@ -277,6 +277,9 @@ const (
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
+
+	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
+	TiDBEnableIndexMerge = "tidb_enable_index_merge"
 )
 
 // Default TiDB system variable values.
