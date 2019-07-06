@@ -212,7 +212,7 @@ func (s *testSuite) TestAllowInvalidDates(c *C) {
 	runWithMode("ALLOW_INVALID_DATES")
 }
 
-func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
+func (s *testSuite) TestInsertWithAutoidSchema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1(id int primary key auto_increment, n int);`)
