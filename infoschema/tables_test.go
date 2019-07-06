@@ -241,6 +241,42 @@ func (s *testTableSuite) TestCharacterSetCollations(c *C) {
 	tk.MustExec("DROP DATABASE charset_collate_test")
 }
 
+func (s *testTableSuite) TestCurrentTimestampAsDefault(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("DROP DATABASE IF EXISTS default_time_test")
+	tk.MustExec("CREATE DATABASE default_time_test; USE default_time_test")
+
+	tk.MustExec(`CREATE TABLE default_time_table(
+					c_datetime datetime,
+					c_datetime_default datetime default current_timestamp,
+					c_datetime_default_2 datetime(2) default current_timestamp(2),
+					c_timestamp timestamp,
+					c_timestamp_default timestamp default current_timestamp,
+					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
+					c_varchar_default varchar(20) default "current_timestamp",
+					c_varchar_default_3 varchar(20) default "current_timestamp(3)",
+					c_varchar_default_with_case varchar(20) default "cUrrent_tImestamp"
+				);`)
+
+	tk.MustQuery(`SELECT column_name, column_default
+					FROM information_schema.COLUMNS
+					WHERE table_schema = "default_time_test" AND table_name = "default_time_table"
+					ORDER BY column_name`,
+	).Check(testkit.Rows(
+		"c_datetime <nil>",
+		"c_datetime_default CURRENT_TIMESTAMP",
+		"c_datetime_default_2 CURRENT_TIMESTAMP(2)",
+		"c_timestamp <nil>",
+		"c_timestamp_default CURRENT_TIMESTAMP",
+		"c_timestamp_default_3 CURRENT_TIMESTAMP(3)",
+		"c_varchar_default current_timestamp",
+		"c_varchar_default_3 current_timestamp(3)",
+		"c_varchar_default_with_case cUrrent_tImestamp",
+	))
+	tk.MustExec("DROP DATABASE default_time_test")
+}
+
 type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
 }
