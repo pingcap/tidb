@@ -33,8 +33,8 @@ func init() {
 	}
 
 	specialNullRejectCheck = map[string]struct{}{
-		ast.NullEQ: struct{}{},
-		ast.Case:   struct{}{},
+		ast.NullEQ: {},
+		ast.Case:   {},
 	}
 }
 
