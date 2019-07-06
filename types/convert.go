@@ -444,7 +444,8 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		return validFloat, errors.Trace(err)
 	}
 	intCnt += exp
-	if intCnt > 20 {
+	// intCnt will < 0 when overflow
+	if intCnt < 0 || intCnt > 20 {
 		// MaxInt64's has 19 decimal digit.
 		// And the intCnt may contain the len of `+/-`,
 		// so I use 20 here as the early detection.
