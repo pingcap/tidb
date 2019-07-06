@@ -389,5 +389,4 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 		tk.MustExec(tt.insert)
 		tk.MustQuery(tt.query).Check(tt.result)
 	}
-
 }
