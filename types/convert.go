@@ -443,12 +443,14 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	if err != nil {
 		return validFloat, errors.Trace(err)
 	}
-	if exp > 0 && int64(intCnt) > (math.MaxInt64-int64(exp)) {
-		// (exp + incCnt) overflows MaxInt64.
+	intCnt += exp
+	if intCnt > 20 {
+		// MaxInt64's has 19 decimal digit.
+		// And the intCnt may contain the len of `+/-`,
+		// so I use 20 here as the early detection.
 		sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
 		return validFloat[:eIdx], nil
 	}
-	intCnt += exp
 	if intCnt <= 0 {
 		intStr = "0"
 		if intCnt == 0 && len(digits) > 0 {
@@ -474,14 +476,37 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	} else {
 		// convert scientific notation decimal number
 		extraZeroCount := intCnt - len(digits)
-		if extraZeroCount > 20 {
-			// Append overflow warning and return to avoid allocating too much memory.
-			sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
-			return validFloat[:eIdx], nil
-		}
 		intStr = string(digits) + strings.Repeat("0", extraZeroCount)
 	}
+	if isOverflowInt64(intStr) {
+		return validFloat[:eIdx], errors.Errorf("BIGINT overflow")
+	}
 	return intStr, nil
+}
+
+// Check whether overflow i64,
+// the intStr must be a str contain valid integer(so the len of it must >0).
+func isOverflowInt64(intStr string) bool {
+	var ns string
+	if intStr[0] == '+' || intStr[0] == '-' {
+		ns = intStr[1:]
+	} else {
+		ns = intStr
+	}
+	if len(ns) > 19 {
+		return true
+	} else if len(ns) == 19 {
+		for i := 0; i < 18; i++ {
+			// 1<<63 == 9223372036854775808
+			if ns[i] > "922337203685477580"[i] {
+				return true
+			}
+		}
+		if intStr[0] == '-' && ns[18] > '8' || intStr[0] != '-' && ns[18] > '7' {
+			return true
+		}
+	}
+	return false
 }
 
 // StrToFloat converts a string to a float64 at the best-effort.
