@@ -470,12 +470,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		sc := e.ctx.GetSessionVars().StmtCtx
-		datum, err1 := d.ConvertTo(sc, &c.FieldType)
-		if e.filterErr(err1) != nil {
-			return types.Datum{}, err1
-		}
-		recordID = datum.GetInt64()
+		recordID = getAutoRecordID(d, &c.FieldType)
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
@@ -485,7 +480,6 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 		}
 		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 		retryInfo.AddAutoIncrementID(recordID)
-		d.SetAutoID(recordID, c.Flag)
 		return d, nil
 	}
 
@@ -513,7 +507,23 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 	return casted, nil
 }
 
-func (e *InsertValues) handleWarning(err error, logInfo string) {
+func getAutoRecordID(d types.Datum, target *types.FieldType) int64 {
+	var recordID int64
+
+	switch target.Tp {
+	case mysql.TypeFloat, mysql.TypeDouble:
+		f := d.GetFloat64()
+		recordID = int64(f)
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		recordID = d.GetInt64()
+	default:
+		panic("should never happen")
+	}
+
+	return recordID
+}
+
+func (e *InsertValues) handleWarning(err error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	sc.AppendWarning(err)
 	logutil.Logger(context.Background()).Warn(logInfo)
