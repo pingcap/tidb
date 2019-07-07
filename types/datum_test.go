@@ -200,9 +200,6 @@ func (ts *testTypeConvertSuite) TestConvertBinaryLiteralToUnsigned(c *C) {
 		sc = new(stmtctx.StatementContext)
 		_, err = datum.ConvertTo(sc, ft)
 		c.Assert(err.Error(), Equals, fmt.Sprintf("[types:1690]constant %d overflows %s", v, ast.TypeStr(t)))
-
-		ft = NewFieldType(mysql.TypeTiny)
-		ft.Flag = mysql.UnsignedFlag
 	}
 }
 
