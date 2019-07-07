@@ -177,11 +177,6 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) 
 	return nil
 }
 
-// For partition tables, mysql do not support Constant, random or timezone-dependent expressions
-// Based on mysql code to check whether field is valid, every time related type has check_valid_arguments_processor function.
-// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc
-type isTimezoneDependentProcessor func(columns []*expression.Column) bool
-
 // See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L387
 func hasTimestampField(columns []*expression.Column) bool {
 	for _, c := range columns {
@@ -215,6 +210,8 @@ func hasTimeField(columns []*expression.Column) bool {
 	return false
 }
 
+// For partition tables, mysql do not support Constant, random or timezone-dependent expressions
+// Based on mysql code to check whether field is valid, every time related type has check_valid_arguments_processor function.
 // We assume the result of any function that has a TIMESTAMP argument to be
 // timezone-dependent, since a TIMESTAMP value in both numeric and string
 // contexts is interpreted according to the current timezone.
