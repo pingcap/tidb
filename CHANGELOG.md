@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Fix wrong query results caused by column pruning in some cases [11019](https://github.com/pingcap/tidb/pull/11019)
 * Fix the wrongly displayed information in `db` and `info` columns of `show processlist` [11000](https://github.com/pingcap/tidb/pull/11000)
 * Fix the issue that `MAX_EXECUTION_TIME` as a SQL hint and global variable does not work in some cases [10999](https://github.com/pingcap/tidb/pull/10999)
-* Support automatically adjust the incremental gap allocated by auto-increment ID based on the load [10997](https://github.com/pingcap/tidb/pull/10997)
+* Support automatically adjust the incremental step allocated by auto-increment ID based on the load [10997](https://github.com/pingcap/tidb/pull/10997)
 * Fix the issue that the `Distsql` memory information of `MemTracker` is not correctly cleaned when a query ends [10971](https://github.com/pingcap/tidb/pull/10971)
 * Add the `MEM` column in the `information_schema.processlist` table to describe the memory usage of a query [10896](https://github.com/pingcap/tidb/pull/10896)
 * Add the `max_execution_time` global system variable to control the maximum execution time of a query [10940](https://github.com/pingcap/tidb/pull/10940)
