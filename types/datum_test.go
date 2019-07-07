@@ -14,12 +14,14 @@
 package types
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	ast "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -170,6 +172,38 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	binLit, err := ParseHexStr("0x9999999999999999999999999999999999999999999")
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, binLit, -1)
+}
+
+func (ts *testTypeConvertSuite) TestConvertBinaryLiteralToUnsigned(c *C) {
+	testCases := []byte{
+		mysql.TypeTiny,
+		mysql.TypeShort,
+		mysql.TypeInt24,
+		mysql.TypeLong,
+	}
+
+	for _, t := range testCases {
+		var ft = NewFieldType(t)
+		upperBound := IntergerUnsignedUpperBound(t)
+		ft.Flag = mysql.UnsignedFlag
+
+		var v = uint64(upperBound)
+		var datum = NewBinaryLiteralDatum(NewBinaryLiteralFromUint(v, -1))
+		var sc = new(stmtctx.StatementContext)
+		converted, err := datum.ConvertTo(sc, ft)
+		c.Assert(converted.Kind(), Equals, KindUint64)
+		c.Assert(converted.GetUint64(), Equals, v)
+		c.Assert(err, IsNil)
+
+		v = uint64(upperBound + 1)
+		datum = NewBinaryLiteralDatum(NewBinaryLiteralFromUint(v, -1))
+		sc = new(stmtctx.StatementContext)
+		_, err = datum.ConvertTo(sc, ft)
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[types:1690]constant %d overflows %s", v, ast.TypeStr(t)))
+
+		ft = NewFieldType(mysql.TypeTiny)
+		ft.Flag = mysql.UnsignedFlag
+	}
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
