@@ -25,6 +25,7 @@ import (
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -78,11 +80,14 @@ type connArray struct {
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
 	tikvTransportLayerLoad uint64
+	closed                 chan struct{}
 
 	// Notify rpcClient to check the idle flag
 	idleNotify *uint32
 	idle       bool
 	idleDetect *time.Timer
+
+	pendingRequests prometheus.Gauge
 }
 
 type batchCommandsClient struct {
@@ -105,15 +110,68 @@ func (c *batchCommandsClient) isStopped() bool {
 	return atomic.LoadInt32(&c.closed) != 0
 }
 
+func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries []*batchCommandsEntry) {
+	// Use the lock to protect the stream client won't be replaced by RecvLoop,
+	// and new added request won't be removed by `failPendingRequests`.
+	c.clientLock.Lock()
+	defer c.clientLock.Unlock()
+	for i, requestID := range request.RequestIds {
+		c.batched.Store(requestID, entries[i])
+	}
+	if err := c.client.Send(request); err != nil {
+		logutil.BgLogger().Error(
+			"batch commands send error",
+			zap.String("target", c.target),
+			zap.Error(err),
+		)
+		c.failPendingRequests(err)
+	}
+}
+
+func (c *batchCommandsClient) recv() (*tikvpb.BatchCommandsResponse, error) {
+	failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) (*tikvpb.BatchCommandsResponse, error) {
+		return nil, errors.New("injected error in batchRecvLoop")
+	})
+	// When `conn.Close()` is called, `client.Recv()` will return an error.
+	return c.client.Recv()
+}
+
+// `failPendingRequests` must be called in locked contexts in order to avoid double closing channels.
 func (c *batchCommandsClient) failPendingRequests(err error) {
+	failpoint.Inject("panicInFailPendingRequests", nil)
 	c.batched.Range(func(key, value interface{}) bool {
 		id, _ := key.(uint64)
 		entry, _ := value.(*batchCommandsEntry)
 		entry.err = err
-		close(entry.res)
 		c.batched.Delete(id)
+		close(entry.res)
 		return true
 	})
+}
+
+func (c *batchCommandsClient) reCreateStreamingClient(err error) bool {
+	// Hold the lock to forbid batchSendLoop using the old client.
+	c.clientLock.Lock()
+	defer c.clientLock.Unlock()
+	c.failPendingRequests(err) // fail all pending requests.
+
+	// Re-establish a application layer stream. TCP layer is handled by gRPC.
+	tikvClient := tikvpb.NewTikvClient(c.conn)
+	streamClient, err := tikvClient.BatchCommands(context.TODO())
+	if err == nil {
+		logutil.BgLogger().Info(
+			"batchRecvLoop re-create streaming success",
+			zap.String("target", c.target),
+		)
+		c.client = streamClient
+		return true
+	}
+	logutil.BgLogger().Error(
+		"batchRecvLoop re-create streaming fail",
+		zap.String("target", c.target),
+		zap.Error(err),
+	)
+	return false
 }
 
 func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
@@ -129,8 +187,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 	}()
 
 	for {
-		// When `conn.Close()` is called, `client.Recv()` will return an error.
-		resp, err := c.client.Recv()
+		resp, err := c.recv()
 		if err != nil {
 			now := time.Now()
 			for { // try to re-create the streaming in the loop.
@@ -143,28 +200,10 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 					zap.Error(err),
 				)
 
-				// Hold the lock to forbid batchSendLoop using the old client.
-				c.clientLock.Lock()
-				c.failPendingRequests(err) // fail all pending requests.
-
-				// Re-establish a application layer stream. TCP layer is handled by gRPC.
-				tikvClient := tikvpb.NewTikvClient(c.conn)
-				streamClient, err := tikvClient.BatchCommands(context.TODO())
-				c.clientLock.Unlock()
-
-				if err == nil {
-					logutil.BgLogger().Info(
-						"batchRecvLoop re-create streaming success",
-						zap.String("target", c.target),
-					)
-					c.client = streamClient
+				if c.reCreateStreamingClient(err) {
 					break
 				}
-				logutil.BgLogger().Error(
-					"batchRecvLoop re-create streaming fail",
-					zap.String("target", c.target),
-					zap.Error(err),
-				)
+
 				// TODO: Use a more smart backoff strategy.
 				time.Sleep(time.Second)
 			}
@@ -208,6 +247,7 @@ func newConnArray(maxSize uint, addr string, security config.Security, idleNotif
 		batchCommandsCh:        make(chan *batchCommandsEntry, cfg.TiKVClient.MaxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, maxSize),
 		tikvTransportLayerLoad: 0,
+		closed:                 make(chan struct{}),
 
 		idleNotify: idleNotify,
 		idleDetect: time.NewTimer(idleTimeout),
@@ -220,6 +260,7 @@ func newConnArray(maxSize uint, addr string, security config.Security, idleNotif
 
 func (a *connArray) Init(addr string, security config.Security) error {
 	a.target = addr
+	a.pendingRequests = metrics.TiKVPendingBatchRequests.WithLabelValues(a.target)
 
 	opt := grpc.WithInsecure()
 	if len(security.ClusterSSLCA) != 0 {
@@ -309,7 +350,10 @@ func (a *connArray) Close() {
 		// After connections are closed, `batchRecvLoop`s will check the flag.
 		atomic.StoreInt32(&c.closed, 1)
 	}
-	close(a.batchCommandsCh)
+	// Don't close(batchCommandsCh) because when Close() is called, someone maybe
+	// calling SendRequest and writing batchCommandsCh, if we close it here the
+	// writing goroutine will panic.
+	close(a.closed)
 
 	for i, c := range a.v {
 		if c != nil {
@@ -355,6 +399,8 @@ func (a *connArray) fetchAllPendingRequests(
 		a.idle = true
 		atomic.CompareAndSwapUint32(a.idleNotify, 0, 1)
 		// This connArray to be recycled
+		return
+	case <-a.closed:
 		return
 	}
 	if headEntry == nil {
@@ -450,7 +496,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		requests = requests[:0]
 		requestIDs = requestIDs[:0]
 
-		metrics.TiKVPendingBatchRequests.Set(float64(len(a.batchCommandsCh)))
+		a.pendingRequests.Set(float64(len(a.batchCommandsCh)))
 		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests)
 
 		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
@@ -484,27 +530,12 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			requestIDs = append(requestIDs, requestID)
 		}
 
-		request := &tikvpb.BatchCommandsRequest{
+		req := &tikvpb.BatchCommandsRequest{
 			Requests:   requests,
 			RequestIds: requestIDs,
 		}
 
-		// Use the lock to protect the stream client won't be replaced by RecvLoop,
-		// and new added request won't be removed by `failPendingRequests`.
-		batchCommandsClient.clientLock.Lock()
-		for i, requestID := range request.RequestIds {
-			batchCommandsClient.batched.Store(requestID, entries[i])
-		}
-		err := batchCommandsClient.client.Send(request)
-		batchCommandsClient.clientLock.Unlock()
-		if err != nil {
-			logutil.BgLogger().Error(
-				"batch commands send error",
-				zap.String("target", a.target),
-				zap.Error(err),
-			)
-			batchCommandsClient.failPendingRequests(err)
-		}
+		batchCommandsClient.send(req, entries)
 	}
 }
 
@@ -545,6 +576,11 @@ func newRPCClient(security config.Security) *rpcClient {
 		conns:    make(map[string]*connArray),
 		security: security,
 	}
+}
+
+// NewTestRPCClient is for some external tests.
+func NewTestRPCClient() Client {
+	return newRPCClient(config.Security{})
 }
 
 func (c *rpcClient) getConnArray(addr string) (*connArray, error) {
