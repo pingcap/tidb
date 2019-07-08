@@ -103,15 +103,11 @@ type Plugin struct {
 
 // StateValue returns readable state string.
 func (p *Plugin) StateValue() string {
-	disabled, err := p.flushWatcher.getPluginDisabledFlag()
 	flag := "enable"
-	if err != nil {
-		logutil.BgLogger().Error("get plugin disable fail", zap.Error(err))
-		flag = "unknown"
-	} else if disabled {
+	if atomic.LoadUint32(&p.Disabled) == 1 {
 		flag = "disable"
 	}
-	return p.State.String() + "(" + flag + ")"
+	return p.State.String() + "-" + flag
 }
 
 // DisableFlag changes the disable flag of plugin.
@@ -456,6 +452,24 @@ func NotifyFlush(dom *domain.Domain, pluginName string) error {
 		return errors.Errorf("plugin %s doesn't exists or unsupported flush or doesn't start with PD", pluginName)
 	}
 	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, strconv.Itoa(int(p.Disabled)))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// ChangeDisableFlagAndFlush changes plugin disable flag and notify other nodes to do same change..
+func ChangeDisableFlagAndFlush(dom *domain.Domain, pluginName string, disable bool) error {
+	p := getByName(pluginName)
+	disableInt := uint32(0)
+	if disable {
+		disableInt = 1
+	}
+	atomic.StoreUint32(&p.Disabled, disableInt)
+	if p == nil || p.Manifest.flushWatcher == nil || p.State != Ready {
+		return errors.Errorf("plugin %s doesn't exists or unsupported flush or doesn't start with PD", pluginName)
+	}
+	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, strconv.Itoa(int(disableInt)))
 	if err != nil {
 		return err
 	}
