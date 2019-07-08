@@ -438,6 +438,7 @@ func (s *session) StmtCommit() error {
 	})
 	if err != nil {
 		st.doNotCommit = err
+		st.ConfirmAssertions(false)
 		return err
 	}
 
@@ -453,12 +454,14 @@ func (s *session) StmtCommit() error {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	st.ConfirmAssertions(true)
 	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback() {
 	s.txn.cleanup()
+	s.txn.ConfirmAssertions(false)
 	return
 }
 
