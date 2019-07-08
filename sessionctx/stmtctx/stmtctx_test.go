@@ -49,7 +49,7 @@ func TestCopTasksDetails(t *testing.T) {
 	}
 }
 
-func TestStatementContextToFLags(t *testing.T) {
+func TestStatementContextPushDownFLags(t *testing.T) {
 	testCases := []struct {
 		in  *StatementContext
 		out uint64
@@ -70,7 +70,7 @@ func TestStatementContextToFLags(t *testing.T) {
 		{&StatementContext{InUpdateStmt: true, IgnoreZeroInDate: true, InLoadDataStmt: true}, 1168},
 	}
 	for _, tt := range testCases {
-		got := tt.in.ToSelectRequestFlags()
+		got := tt.in.PushDownFlags()
 		if got != tt.out {
 			t.Errorf("get %v, want %v\n", got, tt.out)
 		}

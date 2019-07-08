@@ -1409,7 +1409,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			StartTs:        math.MaxUint64,
-			Flags:          sc.ToSelectRequestFlags(),
+			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
 		maxNumBuckets: maxNumBuckets,
@@ -1477,7 +1477,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			StartTs:        math.MaxUint64,
-			Flags:          sc.ToSelectRequestFlags(),
+			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
 		maxNumBuckets: maxNumBuckets,
@@ -1660,7 +1660,7 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dag
 	}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = sc.ToSelectRequestFlags()
+	dagReq.Flags = sc.PushDownFlags()
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
 	return dagReq, streaming, err
 }

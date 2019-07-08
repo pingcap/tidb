@@ -14,7 +14,6 @@
 package stmtctx
 
 import (
-	"github.com/pingcap/parser/model"
 	"math"
 	"sort"
 	"strconv"
@@ -22,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -439,8 +439,8 @@ func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
 	return false
 }
 
-// ToSelectRequestFlags converts StatementContext to tipb.SelectRequest.Flags.
-func (sc *StatementContext) ToSelectRequestFlags() uint64 {
+// PushDownFlags converts StatementContext to tipb.SelectRequest.Flags.
+func (sc *StatementContext) PushDownFlags() uint64 {
 	var flags uint64
 	if sc.InInsertStmt {
 		flags |= model.FlagInInsertStmt
