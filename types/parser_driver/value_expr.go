@@ -90,7 +90,13 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 32))
 	case types.KindFloat64:
 		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64))
-	case types.KindString, types.KindBytes:
+	case types.KindString:
+		if n.Type.Charset != "" && n.Type.Charset != mysql.DefaultCharset {
+			ctx.WritePlain("_")
+			ctx.WriteKeyWord(n.Type.Charset)
+		}
+		ctx.WriteString(n.GetString())
+	case types.KindBytes:
 		ctx.WriteString(n.GetString())
 	case types.KindMysqlDecimal:
 		ctx.WritePlain(n.GetMysqlDecimal().String())
@@ -191,8 +197,9 @@ func (n *ValueExpr) Accept(v ast.Visitor) (ast.Node, bool) {
 // Used in parsing prepare statement.
 type ParamMarkerExpr struct {
 	ValueExpr
-	Offset int
-	Order  int
+	Offset    int
+	Order     int
+	InExecute bool
 }
 
 // Restore implements Node interface.

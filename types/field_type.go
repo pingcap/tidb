@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	ast "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/types/json"
+	utilMath "github.com/pingcap/tidb/util/math"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -162,18 +163,18 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case int:
 		tp.Tp = mysql.TypeLonglong
-		tp.Flen = len(strconv.FormatInt(int64(x), 10))
+		tp.Flen = utilMath.StrLenOfInt64Fast(int64(x))
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case int64:
 		tp.Tp = mysql.TypeLonglong
-		tp.Flen = len(strconv.FormatInt(x, 10))
+		tp.Flen = utilMath.StrLenOfInt64Fast(x)
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
-		tp.Flen = len(strconv.FormatUint(x, 10))
+		tp.Flen = utilMath.StrLenOfUint64Fast(x)
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case string:

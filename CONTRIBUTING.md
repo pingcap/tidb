@@ -6,12 +6,12 @@ may be different than many other projects you have been involved in. This docume
 ## What is a Contributor?
 
 A Contributor refers to the person who contributes to the following projects:
-- TiDB: https://github.com/pingcap/tidb 
-- TiKV: https://github.com/tikv/tikv 
-- TiSpark: https://github.com/pingcap/tispark 
-- PD: https://github.com/pingcap/pd 
-- Docs: https://github.com/pingcap/docs 
-- Docs-cn: https://github.com/pingcap/docs-cn 
+- TiDB: https://github.com/pingcap/tidb
+- TiKV: https://github.com/tikv/tikv
+- TiSpark: https://github.com/pingcap/tispark
+- PD: https://github.com/pingcap/pd
+- Docs: https://github.com/pingcap/docs
+- Docs-cn: https://github.com/pingcap/docs-cn
 
 ## How to become a TiDB Contributor?
 
@@ -51,6 +51,10 @@ If you are improving the quality of code, then justify/state exactly what you ar
 If you're making code more resilient, test it locally to demonstrate how exactly your patch changes
 things.
 
+### Does this add an error message, or configuration option?
+
+Please mention **@pingcap/usability-team** in your pull request. We can help provide suggestions on naming and style, so that the usage is clear and understandable.
+
 ## Building TiDB on a local OS/shell environment
 
 TiDB development only requires `go` set-up. If you already have, simply type `make` from terminal.
@@ -61,7 +65,7 @@ TiDB is written in [Go](http://golang.org).
 If you don't have a Go development environment,
 please [set one up](http://golang.org/doc/code.html).
 
-The version of GO should be **1.11** or above.
+The version of GO should be **1.12** or above.
 
 After installation, there are two ways to build TiDB binary.
 
@@ -215,12 +219,22 @@ mysql -h127.0.0.1 -P4000 -uroot test --default-character-set utf8
 
 #### Run Test
 
+Run all tests
+
 ```sh
 # Run unit test to make sure all test passed.
 make dev
 
 # Check checklist before you move on.
 make checklist
+```
+
+You can also run a single test in a file. For example, if you want to run
+test `TestToInt64` in file `types/datum.go`, you can do something like
+
+```sh
+cd types
+GO111MODULE=on go test -check.f TestToInt64
 ```
 
 ### Step 5: Keep your branch in sync
@@ -253,7 +267,7 @@ git push -f origin myfeature
 
 ### Step 8: Create a pull request
 
-1. Visit your fork at https://github.com/$user/tidb (replace `$user` obviously).
+1. Visit your fork at `https://github.com/$user/tidb` (replace `$user` obviously).
 2. Click the `Compare & pull request` button next to your `myfeature` branch.
 
 ### Step 9: Get a code review
@@ -273,33 +287,6 @@ review.
 
 The coding style suggested by the Golang community is used in TiDB. See the [style doc](https://github.com/golang/go/wiki/CodeReviewComments) for details.
 
-## Commit message style
+## Commit message and Pull Request style
 
-Please follow this style to make TiDB easy to review, maintain and develop.
-
-```
-<subsystem>: <what changed>
-<BLANK LINE>
-<why this change was made>
-<BLANK LINE>
-<footer>(optional)
-```
-
-The first line is the subject and should be no longer than 70 characters, the
-second line is always blank, and other lines should be wrapped at 80 characters.
-This allows the message to be easier to read on GitHub as well as in various
-git tools.
-
-If the change affects more than one subsystem, you can use comma to separate them like `util/codec,util/types:`.
-
-If the change affects many subsystems, you can use ```*``` instead, like ```*:```.
-
-For the why part, if no specific reason for the change,
-you can use one of some generic reasons like "Improve documentation.",
-"Improve performance.", "Improve robustness.", "Improve test coverage."
-
-[Os X GNU tools]: https://www.topbug.net/blog/2013/04/14/install-and-use-gnu-command-line-tools-in-mac-os-x
-[go-1.8]: https://blog.golang.org/go1.8
-[go-workspace]: https://golang.org/doc/code.html#Workspaces
-[issue]: https://github.com/pingcap/tidb/issues
-[mercurial]: http://mercurial.selenic.com/wiki/Download
+See the [Commit Message and Pull Request Style](https://github.com/pingcap/community/blob/master/commit-message-pr-style.md)

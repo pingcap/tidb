@@ -22,10 +22,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
-var _ SchemaSyncer = &MockSchemaSyncer{}
+var _ util.SchemaSyncer = &MockSchemaSyncer{}
 
 const mockCheckVersInterval = 2 * time.Millisecond
 
@@ -37,7 +38,7 @@ type MockSchemaSyncer struct {
 }
 
 // NewMockSchemaSyncer creates a new mock SchemaSyncer.
-func NewMockSchemaSyncer() SchemaSyncer {
+func NewMockSchemaSyncer() util.SchemaSyncer {
 	return &MockSchemaSyncer{}
 }
 
@@ -113,6 +114,15 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 	}
 }
 
+// NotifyCleanExpiredPaths implements SchemaSyncer.NotifyCleanExpiredPaths interface.
+func (s *MockSchemaSyncer) NotifyCleanExpiredPaths() bool { return true }
+
+// StartCleanWork implements SchemaSyncer.StartCleanWork interface.
+func (s *MockSchemaSyncer) StartCleanWork() {}
+
+// CloseCleanWork implements SchemaSyncer.CloseCleanWork interface.
+func (s *MockSchemaSyncer) CloseCleanWork() {}
+
 type mockDelRange struct {
 }
 
@@ -139,7 +149,7 @@ func (dr *mockDelRange) clear() {}
 
 // MockTableInfo mocks a table info by create table stmt ast and a specified table id.
 func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, stmt.Cols, stmt.Constraints)
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, stmt.Cols, stmt.Constraints, "", "")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -148,5 +158,15 @@ func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID in
 		return nil, errors.Trace(err)
 	}
 	tbl.ID = tableID
+
+	// The specified charset will be handled in handleTableOptions
+	if err = handleTableOptions(stmt.Options, tbl); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err = resolveDefaultTableCharsetAndCollation(tbl, ""); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return tbl, nil
 }

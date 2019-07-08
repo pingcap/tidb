@@ -34,14 +34,14 @@ func (s *testStatisticsSuite) TestNewHistogramBySelectivity(c *C) {
 	sc := ctx.GetSessionVars().StmtCtx
 	intCol := &Column{}
 	intCol.Histogram = *NewHistogram(1, 30, 30, 0, types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity, 0)
-	intCol.isHandle = true
+	intCol.IsHandle = true
 	for i := 0; i < 10; i++ {
 		intCol.Bounds.AppendInt64(0, int64(i*3))
 		intCol.Bounds.AppendInt64(0, int64(i*3+2))
 		intCol.Buckets = append(intCol.Buckets, Bucket{Repeat: 10, Count: int64(30*i + 30)})
 	}
 	coll.Columns[1] = intCol
-	node := &StatsNode{ID: 1, Tp: pkType, Selectivity: 0.56}
+	node := &StatsNode{ID: 1, Tp: PkType, Selectivity: 0.56}
 	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil)})
 	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums(2)})
 	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(5), HighVal: types.MakeDatums(6)})
@@ -76,7 +76,7 @@ num: 30 lower_bound: 27 upper_bound: 29 repeats: 0`
 	stringCol.Buckets = append(stringCol.Buckets, Bucket{Repeat: 10, Count: 300})
 	stringCol.PreCalculateScalar()
 	coll.Columns[2] = stringCol
-	node2 := &StatsNode{ID: 2, Tp: colType, Selectivity: 0.6}
+	node2 := &StatsNode{ID: 2, Tp: ColType, Selectivity: 0.6}
 	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil)})
 	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums("aaa")})
 	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("aaaaaaaaaaa"), HighVal: types.MakeDatums("aaaaaaaaaaaaaa")})
@@ -95,6 +95,7 @@ num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0`
 	c.Assert(newColl.Columns[2].String(), Equals, stringColResult)
 
 	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
+	coll.Indices[0] = idx
 	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
 	for i := 0; i < 5; i++ {
 		low, err1 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3)))
@@ -106,7 +107,7 @@ num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0`
 		idx.Buckets = append(idx.Buckets, Bucket{Repeat: 10, Count: int64(30*i + 30)})
 	}
 	idx.PreCalculateScalar()
-	node3 := &StatsNode{ID: 0, Tp: indexType, Selectivity: 0.47}
+	node3 := &StatsNode{ID: 0, Tp: IndexType, Selectivity: 0.47}
 	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(2), HighVal: types.MakeDatums(3)})
 	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(10), HighVal: types.MakeDatums(13)})
 
@@ -116,7 +117,16 @@ num: 30 lower_bound: 3 upper_bound: 5 repeats: 10
 num: 30 lower_bound: 9 upper_bound: 11 repeats: 10
 num: 30 lower_bound: 12 upper_bound: 14 repeats: 10`
 
-	newIdx, err := idx.newIndexBySelectivity(sc, node3)
-	c.Assert(err, IsNil, Commentf("Test failed: %v", err))
-	c.Assert(newIdx.String(), Equals, idxResult)
+	newColl = coll.NewHistCollBySelectivity(sc, []*StatsNode{node3})
+	c.Assert(newColl.Indices[0].String(), Equals, idxResult)
+}
+
+func (s *testStatisticsSuite) TestTruncateHistogram(c *C) {
+	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLonglong), 1, 0)
+	low, high := types.NewIntDatum(0), types.NewIntDatum(1)
+	hist.AppendBucket(&low, &high, 0, 1)
+	newHist := hist.TruncateHistogram(1)
+	c.Assert(HistogramEqual(hist, newHist, true), IsTrue)
+	newHist = hist.TruncateHistogram(0)
+	c.Assert(newHist.Len(), Equals, 0)
 }

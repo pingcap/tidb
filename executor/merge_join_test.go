@@ -328,7 +328,7 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(1),(2)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
-		"Sort_6 100000000.00 root t1.a:asc, t2.a:asc",
+		"Sort_6 100000000.00 root test.t1.a:asc, test.t2.a:asc",
 		"└─MergeJoin_9 100000000.00 root inner join",
 		"  ├─TableReader_11 10000.00 root data:TableScan_10",
 		"  │ └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -350,13 +350,11 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 	tk.MustExec("insert into s values(1,1)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
 		"Projection_7 10000.00 root 6_aux_0",
-		"└─MergeJoin_8 10000.00 root left outer semi join, left key:test.t.a, right key:test.s.a, other cond:ge(test.s.b, test.t.b)",
-		"  ├─Sort_12 10000.00 root test.t.a:asc",
-		"  │ └─TableReader_11 10000.00 root data:TableScan_10",
-		"  │   └─TableScan_10 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"  └─Sort_16 10000.00 root test.s.a:asc",
-		"    └─TableReader_15 10000.00 root data:TableScan_14",
-		"      └─TableScan_14 10000.00 cop table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─MergeJoin_8 10000.00 root left outer semi join, other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
+		"  ├─TableReader_10 10000.00 root data:TableScan_9",
+		"  │ └─TableScan_9 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─TableReader_12 10000.00 root data:TableScan_11",
+		"    └─TableScan_11 10000.00 cop table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
 		"1",
@@ -387,4 +385,37 @@ func (s *testSuite1) Test3WaysMergeJoin(c *C) {
 	// On the other hand, t1 order kept so no final sort appended
 	result = checkPlanAndRun(tk, c, plan3, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
+}
+
+func (s *testSuite1) TestMergeJoinDifferentTypes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`drop table if exists t2;`)
+	tk.MustExec(`create table t1(a bigint, b bit(1), index idx_a(a));`)
+	tk.MustExec(`create table t2(a bit(1) not null, b bit(1), index idx_a(a));`)
+	tk.MustExec(`insert into t1 values(1, 1);`)
+	tk.MustExec(`insert into t2 values(1, 1);`)
+	tk.MustQuery(`select hex(t1.a), hex(t2.a) from t1 inner join t2 on t1.a=t2.a;`).Check(testkit.Rows(`1 1`))
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`drop table if exists t2;`)
+	tk.MustExec(`create table t1(a float, b double, index idx_a(a));`)
+	tk.MustExec(`create table t2(a double not null, b double, index idx_a(a));`)
+	tk.MustExec(`insert into t1 values(1, 1);`)
+	tk.MustExec(`insert into t2 values(1, 1);`)
+	tk.MustQuery(`select t1.a, t2.a from t1 inner join t2 on t1.a=t2.a;`).Check(testkit.Rows(`1 1`))
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`drop table if exists t2;`)
+	tk.MustExec(`create table t1(a bigint signed, b bigint, index idx_a(a));`)
+	tk.MustExec(`create table t2(a bigint unsigned, b bigint, index idx_a(a));`)
+	tk.MustExec(`insert into t1 values(-1, 0), (-1, 0), (0, 0), (0, 0), (pow(2, 63), 0), (pow(2, 63), 0);`)
+	tk.MustExec(`insert into t2 values(18446744073709551615, 0), (18446744073709551615, 0), (0, 0), (0, 0), (pow(2, 63), 0), (pow(2, 63), 0);`)
+	tk.MustQuery(`select t1.a, t2.a from t1 join t2 on t1.a=t2.a order by t1.a;`).Check(testkit.Rows(
+		`0 0`,
+		`0 0`,
+		`0 0`,
+		`0 0`,
+	))
 }

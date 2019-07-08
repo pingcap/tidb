@@ -153,7 +153,7 @@ Constraint propagation is commonly used as logical plan optimization in traditio
 
  * For the columnar storage format to be supported in the future, we may apply some filters directly when accessing the raw storage.
 
- * Reduce the data transfered from TiKV to TiDB.
+ * Reduce the data transferred from TiKV to TiDB.
 
 ### Disadvantages:
 

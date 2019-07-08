@@ -227,12 +227,28 @@ func (s *testSuite3) TestInsertZeroYear(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
 	tk.MustExec(`create table t1(a year(4));`)
-	tk.MustExec(`insert into t1 values(0000),(00),("0000"),("00");`)
+	tk.MustExec(`insert into t1 values(0000),(00),("0000"),("000"), ("00"), ("0"), (79), ("79");`)
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(
 		`0`,
 		`0`,
+		`0`,
 		`2000`,
 		`2000`,
+		`2000`,
+		`1979`,
+		`1979`,
+	))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(f_year year NOT NULL DEFAULT '0000')ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`insert into t values();`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
+		`0`,
+	))
+	tk.MustExec(`insert into t values('0000');`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
+		`0`,
+		`0`,
 	))
 }
 

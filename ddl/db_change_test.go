@@ -23,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -38,8 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var _ = Suite(&testStateChangeSuite{})
@@ -53,7 +53,6 @@ type testStateChangeSuite struct {
 }
 
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.lease = 200 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -64,7 +63,7 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "create database test_db_state")
+	_, err = s.se.Execute(context.Background(), "create database test_db_state default charset utf8 default collate utf8_bin")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
@@ -76,31 +75,40 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
 func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, index idx (id))")
+	tk.MustExec("create table t (id int)")
 
 	var checkErr error
+	testCases := []struct {
+		sql         string
+		expectedRet string
+	}{
+		{"alter table t add index idx(id)",
+			"CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"},
+		{"alter table t add index idx1(id)",
+			"CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"},
+		{"alter table t add column c int",
+			"CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`),\n  KEY `idx1` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"},
+	}
 	prevState := model.StateNone
 	callback := &ddl.TestDDLCallback{}
+	currTestCaseOffset := 0
 	callback.OnJobUpdatedExported = func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
+		if job.State == model.JobStateDone {
+			currTestCaseOffset++
+		}
 		if job.SchemaState != model.StatePublic {
 			result := tk.MustQuery("show create table t")
 			got := result.Rows()[0][1]
-			var expected string
-			if job.Type == model.ActionAddIndex {
-				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-			} else if job.Type == model.ActionAddColumn {
-				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`),\n  KEY `idx1` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-			}
+			expected := testCases[currTestCaseOffset].expectedRet
 			if got != expected {
 				checkErr = errors.Errorf("got %s, expected %s", got, expected)
 			}
@@ -110,10 +118,10 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	originalCallback := d.GetHook()
 	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
-	tk.MustExec("alter table t add index idx1(id)")
-	c.Assert(checkErr, IsNil)
-	tk.MustExec("alter table t add column c int")
-	c.Assert(checkErr, IsNil)
+	for _, tc := range testCases {
+		tk.MustExec(tc.sql)
+		c.Assert(checkErr, IsNil)
+	}
 }
 
 // TestDropNotNullColumn is used to test issue #8654.
@@ -196,7 +204,7 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 	testInfo.sqlInfos[1].cases[2].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[1].cases[3].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[2].sql = "update t set c2 = 'c2_update'"
-	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')'"
+	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
 	testInfo.sqlInfos[3].cases[4].expectedCompileErr = errors.New("Column count doesn't match value count at row 1")
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
 	s.test(c, "", alterTableSQL, testInfo)
@@ -434,7 +442,7 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column the number of enum column's elements is less than the original: 2")
 	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8mb4 to binary")
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8 to binary")
 	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -880,6 +888,51 @@ func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
 	s.testParallelExecSQL(c, "create database if not exists test_not_exists;")
 }
 
+// TestDDLIfNotExists parallel exec some DDLs with `if not exists` clause. No error returns is expected.
+func (s *testStateChangeSuite) TestDDLIfNotExists(c *C) {
+	defer s.se.Execute(context.Background(), "drop table test_not_exists")
+	_, err := s.se.Execute(context.Background(), "create table if not exists test_not_exists(a int)")
+	c.Assert(err, IsNil)
+
+	// ADD COLUMN
+	s.testParallelExecSQL(c, "alter table test_not_exists add column if not exists b int")
+
+	// ADD INDEX
+	s.testParallelExecSQL(c, "alter table test_not_exists add index if not exists idx_b (b)")
+
+	// CREATE INDEX
+	s.testParallelExecSQL(c, "create index if not exists idx_b on test_not_exists (b)")
+}
+
+// TestDDLIfExists parallel exec some DDLs with `if exists` clause. No error returns is expected.
+func (s *testStateChangeSuite) TestDDLIfExists(c *C) {
+	defer func() {
+		s.se.Execute(context.Background(), "drop table test_exists")
+		s.se.Execute(context.Background(), "drop table test_exists_2")
+	}()
+	_, err := s.se.Execute(context.Background(), "create table if not exists test_exists (a int key, b int)")
+	c.Assert(err, IsNil)
+
+	// DROP COLUMN
+	s.testParallelExecSQL(c, "alter table test_exists drop column if exists b") // only `a` exists now
+
+	// CHANGE COLUMN
+	s.testParallelExecSQL(c, "alter table test_exists change column if exists a c int") // only, `c` exists now
+
+	// MODIFY COLUMN
+	s.testParallelExecSQL(c, "alter table test_exists modify column if exists a bigint")
+
+	// DROP INDEX
+	_, err = s.se.Execute(context.Background(), "alter table test_exists add index idx_c (c)")
+	c.Assert(err, IsNil)
+	s.testParallelExecSQL(c, "alter table test_exists drop index if exists idx_c")
+
+	// DROP PARTITION (ADD PARTITION tested in TestParallelAlterAddPartition)
+	_, err = s.se.Execute(context.Background(), "create table test_exists_2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	c.Assert(err, IsNil)
+	s.testParallelExecSQL(c, "alter table test_exists_2 drop partition if exists p1")
+}
+
 // TestParallelDDLBeforeRunDDLJob tests a session to execute DDL with an outdated information schema.
 // This test is used to simulate the following conditions:
 // In a cluster, TiDB "a" executes the DDL.
@@ -919,7 +972,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 				break
 			}
 			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
-			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
+			log.Info("sleep in TestParallelDDLBeforeRunDDLJob", zap.String("interval", interval.String()))
 			time.Sleep(interval)
 		}
 
@@ -932,7 +985,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 				break
 			}
 			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
-			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
+			log.Info("sleep in TestParallelDDLBeforeRunDDLJob", zap.String("interval", interval.String()))
 			time.Sleep(interval)
 		}
 
@@ -966,4 +1019,18 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 
 	intercept = &ddl.TestInterceptor{}
 	d.(ddl.DDLForTest).SetInterceptoror(intercept)
+}
+
+func (s *testStateChangeSuite) TestParallelAlterSchemaCharsetAndCollate(c *C) {
+	sql := "ALTER SCHEMA test_db_state CHARSET utf8mb4 COLLATE utf8mb4_general_ci"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+	sql = `SELECT default_character_set_name, default_collation_name
+			FROM information_schema.schemata
+			WHERE schema_name='test_db_state'`
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(sql).Check(testkit.Rows("utf8mb4 utf8mb4_general_ci"))
 }

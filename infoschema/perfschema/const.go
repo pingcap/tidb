@@ -15,7 +15,8 @@ package perfschema
 
 // Performance Schema Name.
 const (
-	Name = "PERFORMANCE_SCHEMA"
+	Name      = "PERFORMANCE_SCHEMA"
+	LowerName = "performance_schema"
 )
 
 // perfSchemaTables is a shortcut to involve all table names.
@@ -26,7 +27,6 @@ var perfSchemaTables = []string{
 	tableSetupObjects,
 	tableSetupInstruments,
 	tableSetupConsumers,
-	tableSetupTimers,
 	tableStmtsCurrent,
 	tableStmtsHistory,
 	tableStmtsHistoryLong,
@@ -75,11 +75,6 @@ const tableSetupInstruments = "CREATE TABLE if not exists performance_schema.set
 const tableSetupConsumers = "CREATE TABLE if not exists performance_schema.setup_consumers (" +
 	"NAME			VARCHAR(64) NOT NULL," +
 	"ENABLED			ENUM('YES','NO') NOT NULL);"
-
-// tableSetupTimers contains the column name definitions for table setup_timers, same as MySQL.
-const tableSetupTimers = "CREATE TABLE if not exists performance_schema.setup_timers (" +
-	"NAME			VARCHAR(64) NOT NULL," +
-	"TIMER_NAME		ENUM('NANOSECOND','MICROSECOND','MILLISECOND') NOT NULL);"
 
 // tableStmtsCurrent contains the column name definitions for table events_statements_current, same as MySQL.
 const tableStmtsCurrent = "CREATE TABLE if not exists performance_schema.events_statements_current (" +

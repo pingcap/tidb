@@ -14,19 +14,21 @@
 package expression
 
 import (
-	"time"
+	"strings"
+	"sync/atomic"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // ExpressionsToPB converts expression to tipb.Expr.
@@ -103,10 +105,10 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	ft := expr.GetType()
 	d, err := expr.Eval(chunk.Row{})
 	if err != nil {
-		log.Errorf("Fail to eval constant, err: %s", err.Error())
+		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
 		return nil
 	}
-	tp, val, ok := pc.encodeDatum(d)
+	tp, val, ok := pc.encodeDatum(ft, d)
 	if !ok {
 		return nil
 	}
@@ -117,7 +119,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	return &tipb.Expr{Tp: tp, Val: val, FieldType: ToPBFieldType(ft)}
 }
 
-func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) {
+func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.ExprType, []byte, bool) {
 	var (
 		tp  tipb.ExprType
 		val []byte
@@ -151,24 +153,17 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 		var err error
 		val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		if err != nil {
-			log.Errorf("Fail to encode value, err: %s", err.Error())
+			logutil.BgLogger().Error("encode decimal", zap.Error(err))
 			return tp, nil, false
 		}
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			loc := pc.sc.TimeZone
-			t := d.GetMysqlTime()
-			if t.Type == mysql.TypeTimestamp && loc != time.UTC {
-				err := t.ConvertTimeZone(loc, time.UTC)
-				terror.Log(err)
-			}
-			v, err := t.ToPackedUint()
+			val, err := codec.EncodeMySQLTime(pc.sc, d, ft.Tp, nil)
 			if err != nil {
-				log.Errorf("Fail to encode value, err: %s", err.Error())
+				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
 			}
-			val = codec.EncodeUint(nil, v)
 			return tp, val, true
 		}
 		return tp, nil, false
@@ -247,9 +242,20 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		children = append(children, pbArg)
 	}
 
+	var implicitArgs []byte
+	if args := expr.Function.implicitArgs(); len(args) > 0 {
+		encoded, err := codec.EncodeValue(pc.sc, nil, args...)
+		if err != nil {
+			logutil.BgLogger().Error("encode implicit parameters", zap.Any("datums", args), zap.Error(err))
+			return nil
+		}
+		implicitArgs = encoded
+	}
+
 	// construct expression ProtoBuf.
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
+		Val:       implicitArgs,
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(expr.RetType),
@@ -277,6 +283,23 @@ func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Express
 }
 
 func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
+	// Use the failpoint to control whether to push down an expression in the integration test.
+	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
+	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
+	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) bool {
+		enabled := val.(string)
+		if enabled == "all" {
+			return true
+		}
+		exprs := strings.Split(enabled, ",")
+		for _, expr := range exprs {
+			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
+				return true
+			}
+		}
+		return false
+	})
+
 	switch sf.FuncName.L {
 	case
 		// logical functions.
@@ -328,8 +351,16 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 
 		// date functions.
 		ast.DateFormat:
-
-		return true
+		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
+		return true && !disallowPushdown
 	}
 	return false
+}
+
+// DefaultExprPushdownBlacklist indicates the expressions which can not be pushed down to TiKV.
+var DefaultExprPushdownBlacklist *atomic.Value
+
+func init() {
+	DefaultExprPushdownBlacklist = new(atomic.Value)
+	DefaultExprPushdownBlacklist.Store(make(map[string]struct{}))
 }

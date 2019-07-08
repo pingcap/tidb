@@ -14,7 +14,6 @@
 package aggfuncs
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -107,7 +106,7 @@ func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -170,7 +169,7 @@ func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -235,7 +234,7 @@ func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -299,7 +298,7 @@ func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -361,7 +360,7 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -425,7 +424,7 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -493,7 +492,7 @@ func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalTime(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -557,7 +556,7 @@ func (e *maxMin4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDuration(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -621,13 +620,13 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalJSON(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
 		}
 		if p.isNull {
-			p.val = input
+			p.val = input.Copy()
 			p.isNull = false
 			continue
 		}

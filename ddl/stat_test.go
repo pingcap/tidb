@@ -20,7 +20,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testStatSuite{})
@@ -29,11 +28,9 @@ type testStatSuite struct {
 }
 
 func (s *testStatSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 }
 
 func (s *testStatSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {

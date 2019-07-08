@@ -40,9 +40,13 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 	}
 	for _, val := range values {
 		var d Datum
+		d.SetMinNotNull()
 		d.SetValue(val)
 		x := d.GetValue()
 		c.Assert(x, DeepEquals, val)
+		d.SetCollation(d.Collation())
+		c.Assert(d.Collation(), NotNil)
+		c.Assert(d.Length(), Equals, int(d.length))
 	}
 }
 
@@ -194,6 +198,34 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	c.Assert(converted.GetFloat64(), Equals, datum.GetFloat64())
 }
 
+func (ts *testTypeConvertSuite) TestToFloat64(c *C) {
+	testCases := []struct {
+		d      Datum
+		errMsg string
+		result float64
+	}{
+		{NewDatum(float32(3.00)), "", 3.00},
+		{NewDatum(float64(12345.678)), "", 12345.678},
+		{NewDatum("12345.678"), "", 12345.678},
+		{NewDatum([]byte("12345.678")), "", 12345.678},
+		{NewDatum(int64(12345)), "", 12345},
+		{NewDatum(uint64(123456)), "", 123456},
+		{NewDatum(byte(123)), "cannot convert .*", 0},
+	}
+
+	sc := new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+	for _, t := range testCases {
+		converted, err := t.d.ToFloat64(sc)
+		if t.errMsg == "" {
+			c.Assert(err, IsNil)
+		} else {
+			c.Assert(err, ErrorMatches, t.errMsg)
+		}
+		c.Assert(converted, Equals, t.result)
+	}
+}
+
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
 func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
 	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp)
@@ -264,27 +296,6 @@ func testIsNull(c *C, data interface{}, isnull bool) {
 	c.Assert(d.IsNull(), Equals, isnull, Commentf("data: %v, isnull: %v", data, isnull))
 }
 
-func (ts *testDatumSuite) TestCoerceDatum(c *C) {
-	tests := []struct {
-		a    Datum
-		b    Datum
-		kind byte
-	}{
-		{NewIntDatum(1), NewIntDatum(1), KindInt64},
-		{NewUintDatum(1), NewDecimalDatum(NewDecFromInt(1)), KindMysqlDecimal},
-		{NewFloat64Datum(1), NewDecimalDatum(NewDecFromInt(1)), KindFloat64},
-		{NewFloat64Datum(1), NewFloat64Datum(1), KindFloat64},
-	}
-	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	for _, tt := range tests {
-		x, y, err := CoerceDatum(sc, tt.a, tt.b)
-		c.Check(err, IsNil)
-		c.Check(x.Kind(), Equals, y.Kind())
-		c.Check(x.Kind(), Equals, tt.kind)
-	}
-}
-
 func (ts *testDatumSuite) TestToBytes(c *C) {
 	tests := []struct {
 		a   Datum
@@ -340,7 +351,7 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 	}
 }
 
-func (ts *testDatumSuite) TestCopyDatum(c *C) {
+func (ts *testDatumSuite) TestCloneDatum(c *C) {
 	var raw Datum
 	raw.b = []byte("raw")
 	raw.k = KindRaw
@@ -355,7 +366,7 @@ func (ts *testDatumSuite) TestCopyDatum(c *C) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
-		tt1 := CopyDatum(tt)
+		tt1 := CloneDatum(tt)
 		res, err := tt.CompareDatum(sc, &tt1)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, 0)

@@ -38,5 +38,26 @@ func (*testSysVarSuite) TestSysVar(c *C) {
 
 	f = GetSysVar("explicit_defaults_for_timestamp")
 	c.Assert(f, NotNil)
-	c.Assert(f.Value, Equals, "ON")
+	c.Assert(f.Value, Equals, "1")
+
+	f = GetSysVar("port")
+	c.Assert(f, NotNil)
+	c.Assert(f.Value, Equals, "4000")
+
+	f = GetSysVar("tidb_low_resolution_tso")
+	c.Assert(f.Value, Equals, "0")
+}
+
+func (*testSysVarSuite) TestTxnMode(c *C) {
+	seVar := NewSessionVars()
+	c.Assert(seVar, NotNil)
+	c.Assert(seVar.TxnMode, Equals, "")
+	err := seVar.setTxnMode("pessimistic")
+	c.Assert(err, IsNil)
+	err = seVar.setTxnMode("optimistic")
+	c.Assert(err, IsNil)
+	err = seVar.setTxnMode("")
+	c.Assert(err, IsNil)
+	err = seVar.setTxnMode("something else")
+	c.Assert(err, NotNil)
 }

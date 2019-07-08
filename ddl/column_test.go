@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testColumnSuite{})
@@ -44,7 +44,6 @@ type testColumnSuite struct {
 }
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_column")
 	s.d = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 
@@ -58,7 +57,6 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string,
@@ -936,6 +934,8 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10")},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
+		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStack("unsupported modify decimal column precision")},
+		{"decimal(2,1)", "decimal(2,1)", nil},
 	}
 	for _, tt := range tests {
 		ftA := s.colDefStrToFieldType(c, tt.origin)
@@ -954,7 +954,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
-	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil)
+	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, mysql.DefaultCharset, mysql.DefaultCharset)
 	c.Assert(err, IsNil)
 	return &col.FieldType
 }
@@ -962,7 +962,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 func (s *testColumnSuite) TestFieldCase(c *C) {
 	var fields = []string{"field", "Field"}
 	var colDefs = make([]*ast.ColumnDef, len(fields))
-	var colObjects []interface{}
+	colObjects := make([]interface{}, 0, len(fields))
 	for i, name := range fields {
 		colDefs[i] = &ast.ColumnDef{
 			Name: &ast.ColumnName{
@@ -973,5 +973,6 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 		}
 		colObjects = append(colObjects, colDefs[i])
 	}
-	c.Assert(checkDuplicateColumn(colObjects), NotNil)
+	err := checkDuplicateColumn(colObjects)
+	c.Assert(err.Error(), Equals, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
 }

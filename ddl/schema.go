@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 )
 
-func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	dbInfo := &model.DBInfo{}
 	if err := job.DecodeArgs(dbInfo); err != nil {
@@ -32,20 +32,13 @@ func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo.ID = schemaID
 	dbInfo.State = model.StateNone
 
-	dbs, err := t.ListDatabases()
+	err := checkSchemaNotExists(d, t, schemaID, dbInfo)
 	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	for _, db := range dbs {
-		if db.Name.L == dbInfo.Name.L {
-			if db.ID != schemaID {
-				// The database already exists, can't create it, we should cancel this job now.
-				job.State = model.JobStateCancelled
-				return ver, infoschema.ErrDatabaseExists.GenWithStackByArgs(db.Name)
-			}
-			dbInfo = db
+		if infoschema.ErrDatabaseExists.Equal(err) {
+			// The database already exists, can't create it, we should cancel this job now.
+			job.State = model.JobStateCancelled
 		}
+		return ver, errors.Trace(err)
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -70,8 +63,85 @@ func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 }
 
+func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
+	// d.infoHandle maybe nil in some test.
+	if d.infoHandle == nil {
+		return checkSchemaNotExistsFromStore(t, schemaID, dbInfo)
+	}
+	// Try to use memory schema info to check first.
+	currVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return err
+	}
+	is := d.infoHandle.Get()
+	if is.SchemaMetaVersion() == currVer {
+		return checkSchemaNotExistsFromInfoSchema(is, schemaID, dbInfo)
+	}
+	return checkSchemaNotExistsFromStore(t, schemaID, dbInfo)
+}
+
+func checkSchemaNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, dbInfo *model.DBInfo) error {
+	// Check database exists by name.
+	if is.SchemaExists(dbInfo.Name) {
+		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
+	}
+	// Check database exists by ID.
+	if _, ok := is.SchemaByID(schemaID); ok {
+		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
+	}
+	return nil
+}
+
+func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
+	dbs, err := t.ListDatabases()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, db := range dbs {
+		if db.Name.L == dbInfo.Name.L {
+			if db.ID != schemaID {
+				return infoschema.ErrDatabaseExists.GenWithStackByArgs(db.Name)
+			}
+			dbInfo = db
+		}
+	}
+	return nil
+}
+
+func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var toCharset, toCollate string
+	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
+	}
+
+	dbInfo.Charset = toCharset
+	dbInfo.Collate = toCollate
+
+	if err = t.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(t, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	return ver, nil
+}
+
 func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	dbInfo, err := checkDropSchema(t, job)
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -120,7 +190,7 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func checkDropSchema(t *meta.Meta, job *model.Job) (*model.DBInfo, error) {
+func checkSchemaExistAndCancelNotExistJob(t *meta.Meta, job *model.Job) (*model.DBInfo, error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return nil, errors.Trace(err)

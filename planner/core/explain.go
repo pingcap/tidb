@@ -17,8 +17,10 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/statistics"
 )
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -56,8 +58,8 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 			break
 		}
 	}
-	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
+	if len(p.rangeInfo) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeInfo)
 	} else if haveCorCol {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
@@ -73,7 +75,7 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.UsePseudoStats {
+	if p.stats.StatsVersion == statistics.PseudoVersion {
 		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
@@ -120,7 +122,7 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.UsePseudoStats {
+	if p.stats.StatsVersion == statistics.PseudoVersion {
 		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
@@ -128,12 +130,12 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
-	return "data:" + p.tablePlan.ExplainID()
+	return "data:" + p.tablePlan.ExplainID().String()
 }
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
-	return "index:" + p.indexPlan.ExplainID()
+	return "index:" + p.indexPlan.ExplainID().String()
 }
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -199,12 +201,6 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 			}
 		}
 	}
-	return buffer.String()
-}
-
-// ExplainInfo implements PhysicalPlan interface.
-func (p *PhysicalApply) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.PhysicalJoin.ExplainInfo())
 	return buffer.String()
 }
 
@@ -298,8 +294,90 @@ func (p *PhysicalTopN) ExplainInfo() string {
 	return buffer.String()
 }
 
+func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
+	if bound.Type == ast.CurrentRow {
+		buffer.WriteString("current row")
+		return
+	}
+	if bound.UnBounded {
+		buffer.WriteString("unbounded")
+	} else if len(bound.CalcFuncs) > 0 {
+		sf := bound.CalcFuncs[0].(*expression.ScalarFunction)
+		switch sf.FuncName.L {
+		case ast.DateAdd, ast.DateSub:
+			// For `interval '2:30' minute_second`.
+			fmt.Fprintf(buffer, "interval %s %s", sf.GetArgs()[1].ExplainInfo(), sf.GetArgs()[2].ExplainInfo())
+		case ast.Plus, ast.Minus:
+			// For `1 preceding` of range frame.
+			fmt.Fprintf(buffer, "%s", sf.GetArgs()[1].ExplainInfo())
+		}
+	} else {
+		fmt.Fprintf(buffer, "%d", bound.Num)
+	}
+	if bound.Type == ast.Preceding {
+		buffer.WriteString(" preceding")
+	} else {
+		buffer.WriteString(" following")
+	}
+}
+
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalWindow) ExplainInfo() string {
-	// TODO: Add explain info for partition by, order by and frame.
-	return p.WindowFuncDesc.String()
+	buffer := bytes.NewBufferString("")
+	formatWindowFuncDescs(buffer, p.WindowFuncDescs)
+	buffer.WriteString(" over(")
+	isFirst := true
+	if len(p.PartitionBy) > 0 {
+		buffer.WriteString("partition by ")
+		for i, item := range p.PartitionBy {
+			fmt.Fprintf(buffer, "%s", item.Col.ExplainInfo())
+			if i+1 < len(p.PartitionBy) {
+				buffer.WriteString(", ")
+			}
+		}
+		isFirst = false
+	}
+	if len(p.OrderBy) > 0 {
+		if !isFirst {
+			buffer.WriteString(" ")
+		}
+		buffer.WriteString("order by ")
+		for i, item := range p.OrderBy {
+			order := "asc"
+			if item.Desc {
+				order = "desc"
+			}
+			fmt.Fprintf(buffer, "%s %s", item.Col.ExplainInfo(), order)
+			if i+1 < len(p.OrderBy) {
+				buffer.WriteString(", ")
+			}
+		}
+		isFirst = false
+	}
+	if p.Frame != nil {
+		if !isFirst {
+			buffer.WriteString(" ")
+		}
+		if p.Frame.Type == ast.Rows {
+			buffer.WriteString("rows")
+		} else {
+			buffer.WriteString("range")
+		}
+		buffer.WriteString(" between ")
+		p.formatFrameBound(buffer, p.Frame.Start)
+		buffer.WriteString(" and ")
+		p.formatFrameBound(buffer, p.Frame.End)
+	}
+	buffer.WriteString(")")
+	return buffer.String()
+}
+
+func formatWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc) *bytes.Buffer {
+	for i, desc := range descs {
+		if i != 0 {
+			buffer.WriteString(", ")
+		}
+		buffer.WriteString(desc.String())
+	}
+	return buffer
 }

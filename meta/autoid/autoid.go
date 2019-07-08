@@ -21,11 +21,19 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+)
+
+const (
+	minStep            = 1000
+	maxStep            = 2000000
+	defaultConsumeTime = 10 * time.Second
 )
 
 // Test needs to change it, so it's a variable.
@@ -57,8 +65,10 @@ type allocator struct {
 	end   int64
 	store kv.Storage
 	// dbID is current database's ID.
-	dbID       int64
-	isUnsigned bool
+	dbID          int64
+	isUnsigned    bool
+	lastAllocTime time.Time
+	step          int64
 }
 
 // GetStep is only used by tests
@@ -89,7 +99,10 @@ func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 		var err1 error
 		m := meta.NewMeta(txn)
 		autoID, err1 = m.GetAutoTableID(alloc.dbID, tableID)
-		return errors.Trace(err1)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.GlobalAutoID, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	if alloc.isUnsigned {
@@ -114,12 +127,12 @@ func (alloc *allocator) rebase4Unsigned(tableID int64, requiredBase uint64, allo
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := m.GetAutoTableID(alloc.dbID, tableID)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
 		uCurrentEnd := uint64(currentEnd)
 		if allocIDs {
 			newBase = mathutil.MaxUint64(uCurrentEnd, requiredBase)
-			newEnd = mathutil.MinUint64(math.MaxUint64-uint64(step), newBase) + uint64(step)
+			newEnd = mathutil.MinUint64(math.MaxUint64-uint64(alloc.step), newBase) + uint64(alloc.step)
 		} else {
 			if uCurrentEnd >= requiredBase {
 				newBase = uCurrentEnd
@@ -160,11 +173,11 @@ func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := m.GetAutoTableID(alloc.dbID, tableID)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
 		if allocIDs {
 			newBase = mathutil.MaxInt64(currentEnd, requiredBase)
-			newEnd = mathutil.MinInt64(math.MaxInt64-step, newBase) + step
+			newEnd = mathutil.MinInt64(math.MaxInt64-alloc.step, newBase) + alloc.step
 		} else {
 			if currentEnd >= requiredBase {
 				newBase = currentEnd
@@ -210,14 +223,16 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 	if alloc.base == alloc.end { // step
 		var newBase, newEnd int64
 		startTime := time.Now()
+		consumeDur := startTime.Sub(alloc.lastAllocTime)
+		alloc.step = NextStep(alloc.step, consumeDur)
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
 			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return err1
 			}
-			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(step)))
+			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(alloc.step)))
 			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
 			return err1
 		})
@@ -225,6 +240,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		alloc.lastAllocTime = time.Now()
 		if uint64(newBase) == math.MaxUint64 {
 			return 0, ErrAutoincReadFailed
 		}
@@ -232,7 +248,10 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 	}
 
 	alloc.base = int64(uint64(alloc.base) + 1)
-	log.Debugf("[kv] Alloc id %d, table ID:%d, from %p, database ID:%d", uint64(alloc.base), tableID, alloc, alloc.dbID)
+	logutil.BgLogger().Debug("alloc unsigned ID",
+		zap.Uint64("ID", uint64(alloc.base)),
+		zap.Int64("table ID", tableID),
+		zap.Int64("database ID", alloc.dbID))
 	return alloc.base, nil
 }
 
@@ -240,14 +259,16 @@ func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 	if alloc.base == alloc.end { // step
 		var newBase, newEnd int64
 		startTime := time.Now()
+		consumeDur := startTime.Sub(alloc.lastAllocTime)
+		alloc.step = NextStep(alloc.step, consumeDur)
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
 			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return err1
 			}
-			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, step)
+			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, alloc.step)
 			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
 			return err1
 		})
@@ -255,6 +276,7 @@ func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		alloc.lastAllocTime = time.Now()
 		if newBase == math.MaxInt64 {
 			return 0, ErrAutoincReadFailed
 		}
@@ -262,7 +284,10 @@ func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 	}
 
 	alloc.base++
-	log.Debugf("[kv] Alloc id %d, table ID:%d, from %p, database ID:%d", alloc.base, tableID, alloc, alloc.dbID)
+	logutil.BgLogger().Debug("alloc signed ID",
+		zap.Uint64("ID", uint64(alloc.base)),
+		zap.Int64("table ID", tableID),
+		zap.Int64("database ID", alloc.dbID))
 	return alloc.base, nil
 }
 
@@ -279,72 +304,32 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	return alloc.alloc4Signed(tableID)
 }
 
-var (
-	memID     int64
-	memIDLock sync.Mutex
-)
+// NextStep return new auto id step according to previous step and consuming time.
+func NextStep(curStep int64, consumeDur time.Duration) int64 {
+	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(step)
+		}
+	})
 
-type memoryAllocator struct {
-	mu   sync.Mutex
-	base int64
-	end  int64
-	dbID int64
-}
-
-// Base implements autoid.Allocator Base interface.
-func (alloc *memoryAllocator) Base() int64 {
-	return alloc.base
-}
-
-// End implements autoid.Allocator End interface.
-func (alloc *memoryAllocator) End() int64 {
-	return alloc.end
-}
-
-// NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
-func (alloc *memoryAllocator) NextGlobalAutoID(tableID int64) (int64, error) {
-	memIDLock.Lock()
-	defer memIDLock.Unlock()
-	return memID + 1, nil
-}
-
-// Rebase implements autoid.Allocator Rebase interface.
-func (alloc *memoryAllocator) Rebase(tableID, newBase int64, allocIDs bool) error {
-	// TODO: implement it.
-	return nil
-}
-
-// Alloc implements autoid.Allocator Alloc interface.
-func (alloc *memoryAllocator) Alloc(tableID int64) (int64, error) {
-	if tableID == 0 {
-		return 0, errInvalidTableID.GenWithStack("Invalid tableID")
+	consumeRate := defaultConsumeTime.Seconds() / consumeDur.Seconds()
+	res := int64(float64(curStep) * consumeRate)
+	if res < minStep {
+		return minStep
+	} else if res > maxStep {
+		return maxStep
 	}
-	alloc.mu.Lock()
-	defer alloc.mu.Unlock()
-	if alloc.base == alloc.end { // step
-		memIDLock.Lock()
-		memID = memID + step
-		alloc.end = memID
-		alloc.base = alloc.end - step
-		memIDLock.Unlock()
-	}
-	alloc.base++
-	return alloc.base, nil
+	return res
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
 func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
 	return &allocator{
-		store:      store,
-		dbID:       dbID,
-		isUnsigned: isUnsigned,
-	}
-}
-
-// NewMemoryAllocator returns a new auto increment id generator in memory.
-func NewMemoryAllocator(dbID int64) Allocator {
-	return &memoryAllocator{
-		dbID: dbID,
+		store:         store,
+		dbID:          dbID,
+		isUnsigned:    isUnsigned,
+		step:          step,
+		lastAllocTime: time.Now(),
 	}
 }
 

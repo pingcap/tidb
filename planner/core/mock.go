@@ -34,6 +34,11 @@ func newStringType() types.FieldType {
 	return *ft
 }
 
+func newDateType() types.FieldType {
+	ft := types.NewFieldType(mysql.TypeDate)
+	return *ft
+}
+
 // MockTable is only used for plan related tests.
 func MockTable() *model.TableInfo {
 	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
@@ -232,7 +237,14 @@ func MockTable() *model.TableInfo {
 		Offset:    10,
 		Name:      model.NewCIStr("h"),
 		FieldType: newLongType(),
-		ID:        10,
+		ID:        11,
+	}
+	col7 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    11,
+		Name:      model.NewCIStr("i_date"),
+		FieldType: newDateType(),
+		ID:        12,
 	}
 	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
@@ -243,7 +255,7 @@ func MockTable() *model.TableInfo {
 	col5.Flag = mysql.NotNullFlag
 	col6.Flag = mysql.NoDefaultValueFlag
 	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6},
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6, col7},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
@@ -296,24 +308,25 @@ func MockContext() sessionctx.Context {
 
 // MockPartitionInfoSchema mocks an info schema for partition table.
 func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
-	tableInfo := *MockTable()
+	tableInfo := MockTable()
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
 	cols = append(cols, tableInfo.Columns...)
+	last := tableInfo.Columns[len(tableInfo.Columns)-1]
 	cols = append(cols, &model.ColumnInfo{
 		State:     model.StatePublic,
-		Offset:    10,
-		Name:      model.NewCIStr("h"),
+		Offset:    last.Offset + 1,
+		Name:      model.NewCIStr("ptn"),
 		FieldType: newLongType(),
-		ID:        11,
+		ID:        last.ID + 1,
 	})
 	partition := &model.PartitionInfo{
 		Type:        model.PartitionTypeRange,
-		Expr:        "h",
+		Expr:        "ptn",
 		Enable:      true,
 		Definitions: definitions,
 	}
 	tableInfo.Columns = cols
 	tableInfo.Partition = partition
-	is := infoschema.MockInfoSchema([]*model.TableInfo{&tableInfo})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
 	return is
 }

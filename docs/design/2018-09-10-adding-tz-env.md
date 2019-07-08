@@ -6,13 +6,13 @@
 
 ## Abstract
 
-When it comes to time-related calculation, it is hard for the distributed system. This proposal tries to resolve two problems: 1. timezone may be inconsistent across multiple `TiDB` instances, 2. performance degradation casued by pushing `System` down to `TiKV`. The impact of this proposal is changing the way of `TiDB` inferring system's timezone name. Before this proposal, the default timezone name pushed down to TiKV is `System` when session's timezone is not set. After this, TiDB evaluates system's timezone name via `TZ` environment variable and the path of the soft link of `/etc/localtime`. If both of them are failed, `TiDB` then push `UTC` to `TiKV`.
+When it comes to time-related calculation, it is hard for the distributed system. This proposal tries to resolve two problems: 1. timezone may be inconsistent across multiple `TiDB` instances, 2. performance degradation caused by pushing `System` down to `TiKV`. The impact of this proposal is changing the way of `TiDB` inferring system's timezone name. Before this proposal, the default timezone name pushed down to TiKV is `System` when session's timezone is not set. After this, TiDB evaluates system's timezone name via `TZ` environment variable and the path of the soft link of `/etc/localtime`. If both of them are failed, `TiDB` then push `UTC` to `TiKV`.
 
 ## Background
 
 After we solved the daylight saving time issue, we found the performance degradation of TiKV side. Thanks for the investigation done by engineers from TiKV. The root cause of such performance degradation is that TiKV infers `System` timezone name via a third party lib, which calls a syscall and costs a lot. In our internal benchmark system, after [this PR](https://github.com/pingcap/tidb/pull/6823), our codebase is 1000 times slower than before. We have to address this. 
 
-Another problem needs also to be addressed is the potentially incosistent timezone name across multiple `TiDB` instances. `TiDB` instances may reside at different timezone which could cause incorrect calculation when it comes to time-related calculation. Just getting `TiDB`'s sytem timezone could be broken. We need find a way to ensure the uniqueness of global timezone name across multiple `TiDB`'s timezone name and also to leverage to resolve the performance degradation. 
+Another problem needs also to be addressed is the potentially incosistent timezone name across multiple `TiDB` instances. `TiDB` instances may reside at different timezone which could cause incorrect calculation when it comes to time-related calculation. Just getting `TiDB`'s system timezone could be broken. We need find a way to ensure the uniqueness of global timezone name across multiple `TiDB`'s timezone name and also to leverage to resolve the performance degradation. 
 
 ## Proposal
 
@@ -28,7 +28,7 @@ In our case, which means both `TiDB` and `TiKV`, we need care the first and thir
 
 In this proposal, we suggest setting `TZ` to a valid IANA timezone name which can be read from `TiDB` later. If `TiDB` can't get `TZ` or the supply of `TZ` is invalid, `TiDB` just falls back to evaluate the path of the soft link of `/etc/localtime`. In addition, a warning message telling the user you should set `TZ` properly will be printed. Setting `TZ` can be done in our `tidb-ansible` project, it is also can be done at user side by `export TZ="Asia/Shanghai"`. If both of them are failed, `TiDB` will use `UTC` as timezone name.
 
-The positive side of this change is resolving performance degradation issue and ensuring the uniqueness of gloabl timezone name in multiple `TiDB` instances. 
+The positive side of this change is resolving performance degradation issue and ensuring the uniqueness of global timezone name in multiple `TiDB` instances. 
 
 The negative side is just adding a config item which is a very small matter and the user probably does not care it if we can take care of it and more importantly guarantee the correctness. 
 
@@ -46,9 +46,9 @@ The upgrading process need to be handled in particular. `TZ` environment variabl
 
 ## Implementation
 
-The implementation is relatively easy. We just get `TZ` environment from system and check whether it is valid or not. If it is invalid, TiDB evaluates the path of soft link of `/etc/localtime`. In addition, a warning message needs to be printed indicating user has to set `TZ` variable properly. For example, if `/etc/localtime` links to `/usr/share/zoneinfo/Asia/Shanghai`, then timezone name `TiDB` gets should be `Asia/Shangahi`.
+The implementation is relatively easy. We just get `TZ` environment from system and check whether it is valid or not. If it is invalid, TiDB evaluates the path of soft link of `/etc/localtime`. In addition, a warning message needs to be printed indicating user has to set `TZ` variable properly. For example, if `/etc/localtime` links to `/usr/share/zoneinfo/Asia/Shanghai`, then timezone name `TiDB` gets should be `Asia/Shanghai`.
 
-In order to ensure the uniqueness of global timezone across multiple `TiDB` instances, we need to write timezone name into `variable_value` with variable name `system_tz` in `mysql.tidb`.  This cached value can be read once `TiDB` finishs its bootstrap stage. A method `loadLocalStr` can do this job.
+In order to ensure the uniqueness of global timezone across multiple `TiDB` instances, we need to write timezone name into `variable_value` with variable name `system_tz` in `mysql.tidb`.  This cached value can be read once `TiDB` finishes its bootstrap stage. A method `loadLocalStr` can do this job.
  
 ## Open issues (if applicable)
 

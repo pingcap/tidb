@@ -71,6 +71,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
 		IndexScan:      &tipb.IndexScan{Desc: false},
+		execDetail:     new(execDetail),
 	}
 	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob))
 	var cms *statistics.CMSketch
@@ -138,6 +139,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 			startTS:        analyzeReq.GetStartTs(),
 			isolationLevel: h.isolationLevel,
 			mvccStore:      h.mvccStore,
+			execDetail:     new(execDetail),
 		},
 	}
 	e.fields = make([]*ast.ResultField, len(columns))
@@ -212,7 +214,7 @@ func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error)
 	return datumRow, nil
 }
 
-func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	row, err := e.getNext(ctx)
 	if row == nil || err != nil {
@@ -224,12 +226,12 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.RecordBatch) e
 	return nil
 }
 
-func (e *analyzeColumnsExec) NewRecordBatch() *chunk.RecordBatch {
+func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
 	fields := make([]*types.FieldType, 0, len(e.fields))
 	for _, field := range e.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewRecordBatch(chunk.NewChunkWithCapacity(fields, 1))
+	return chunk.NewChunkWithCapacity(fields, 1)
 }
 
 // Close implements the sqlexec.RecordSet Close interface.

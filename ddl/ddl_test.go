@@ -21,6 +21,7 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -34,7 +35,8 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/testleak"
+	"go.uber.org/zap"
 )
 
 type DDLForTest interface {
@@ -82,28 +84,24 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 		go util.WithRecovery(func() { w.start(d.ddlCtx) },
 			func(r interface{}) {
 				if r != nil {
-					log.Errorf("[ddl-%s] ddl %s meet panic", w, d.uuid)
+					log.Error("[ddl] restart DDL worker meet panic", zap.String("worker", w.String()), zap.String("ID", d.uuid))
 				}
 			})
 		asyncNotify(worker.ddlJobCh)
 	}
 }
 
-// TestLeakCheckCnt is the check count in the package of ddl.
-// In this package CustomParallelSuiteFlag is true, so we need to increase check count.
-const TestLeakCheckCnt = 1000
-
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level:  logLevel,
-		Format: "highlight",
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
 	ReorgWaitTimeout = 30 * time.Millisecond
+
+	testleak.BeforeTest()
 	TestingT(t)
+	testleak.AfterTestT(t)()
 }
 
 func testCreateStore(c *C, name string) kv.Storage {

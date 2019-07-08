@@ -16,7 +16,6 @@ package kv
 import (
 	"context"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -28,7 +27,7 @@ type mockTxn struct {
 
 // Commit always returns a retryable error.
 func (t *mockTxn) Commit(ctx context.Context) error {
-	return ErrRetryable
+	return ErrTxnRetryable
 }
 
 func (t *mockTxn) Rollback() error {
@@ -40,7 +39,7 @@ func (t *mockTxn) String() string {
 	return ""
 }
 
-func (t *mockTxn) LockKeys(keys ...Key) error {
+func (t *mockTxn) LockKeys(_ context.Context, _ uint64, _ ...Key) error {
 	return nil
 }
 
@@ -64,6 +63,10 @@ func (t *mockTxn) StartTS() uint64 {
 	return uint64(0)
 }
 func (t *mockTxn) Get(k Key) ([]byte, error) {
+	return nil, nil
+}
+
+func (t *mockTxn) BatchGet(keys []Key) (map[string][]byte, error) {
 	return nil, nil
 }
 
@@ -98,12 +101,6 @@ func (t *mockTxn) GetMemBuffer() MemBuffer {
 	return nil
 }
 
-func (t *mockTxn) GetSnapshot() Snapshot {
-	return &mockSnapshot{
-		store: NewMemDbBuffer(DefaultTxnMembufCap),
-	}
-}
-
 func (t *mockTxn) SetCap(cap int) {
 
 }
@@ -115,6 +112,8 @@ func (t *mockTxn) Reset() {
 func (t *mockTxn) SetVars(vars *Variables) {
 
 }
+
+func (t *mockTxn) SetAssertion(key Key, assertion AssertionType) {}
 
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
@@ -129,11 +128,11 @@ type mockStorage struct {
 }
 
 func (s *mockStorage) Begin() (Transaction, error) {
-	tx := &mockTxn{
-		opts:  make(map[Option]interface{}),
-		valid: true,
-	}
-	return tx, nil
+	return NewMockTxn(), nil
+}
+
+func (*mockTxn) IsPessimistic() bool {
+	return false
 }
 
 // BeginWithStartTS begins a transaction with startTS.
@@ -172,6 +171,18 @@ func (s *mockStorage) SupportDeleteRange() (supported bool) {
 	return false
 }
 
+func (s *mockStorage) Name() string {
+	return "KVMockStorage"
+}
+
+func (s *mockStorage) Describe() string {
+	return "KVMockStorage is a mock Store implementation, only for unittests in KV package"
+}
+
+func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, nil
+}
+
 // MockTxn is used for test cases that need more interfaces than Transaction.
 type MockTxn interface {
 	Transaction
@@ -203,7 +214,7 @@ func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 			continue
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		m[string(k)] = v
 	}

@@ -90,7 +90,6 @@ type PhysicalIndexScan struct {
 
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
-	filterCondition []expression.Expression
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
@@ -115,7 +114,7 @@ type PhysicalIndexScan struct {
 	// It is used for query feedback.
 	Hist *statistics.Histogram
 
-	rangeDecidedBy []*expression.Column
+	rangeInfo string
 
 	// The index scan may be on a partition.
 	isPartition     bool
@@ -188,11 +187,9 @@ type PhysicalTopN struct {
 
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
-	physicalSchemaProducer
+	PhysicalHashJoin
 
-	PhysicalJoin *PhysicalHashJoin
-	OuterSchema  []*expression.CorrelatedColumn
-
+	OuterSchema   []*expression.CorrelatedColumn
 	rightChOffset int
 }
 
@@ -237,6 +234,12 @@ type PhysicalIndexJoin struct {
 	KeyOff2IdxOff []int
 	//keepOuterOrder indicate whether index join keep order by outer table or not
 	KeepOuterOrder bool
+	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
+	// e.g. select * from t where t.a = t1.a and t.b > t1.b and t.b < t1.b+10
+	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b=10
+	//      need to be evaluated after we fetch the data of t1.
+	// This struct stores them and evaluate them to ranges.
+	CompareFilters *ColWithCmpFuncManager
 }
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.
@@ -245,6 +248,7 @@ type PhysicalMergeJoin struct {
 
 	JoinType JoinType
 
+	CompareFuncs    []expression.CompareFunc
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
@@ -382,7 +386,31 @@ type PhysicalTableDual struct {
 type PhysicalWindow struct {
 	physicalSchemaProducer
 
-	WindowFuncDesc *aggregation.WindowFuncDesc
-	PartitionBy    []property.Item
-	OrderBy        []property.Item
+	WindowFuncDescs []*aggregation.WindowFuncDesc
+	PartitionBy     []property.Item
+	OrderBy         []property.Item
+	Frame           *WindowFrame
+}
+
+// CollectPlanStatsVersion uses to collect the statistics version of the plan.
+func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
+	for _, child := range plan.Children() {
+		statsInfos = CollectPlanStatsVersion(child, statsInfos)
+	}
+	switch copPlan := plan.(type) {
+	case *PhysicalTableReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.tablePlan, statsInfos)
+	case *PhysicalIndexReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
+	case *PhysicalIndexLookUpReader:
+		// For index loop up, only the indexPlan is necessary,
+		// because they use the same stats and we do not set the stats info for tablePlan.
+		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
+	case *PhysicalIndexScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.stats.StatsVersion
+	case *PhysicalTableScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.stats.StatsVersion
+	}
+
+	return statsInfos
 }

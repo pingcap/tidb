@@ -189,7 +189,8 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 	}
 	for _, buffer := range s.bs {
 		for _, kv := range kvs {
-			buffer.Set([]byte(kv.key), []byte(kv.value))
+			err := buffer.Set([]byte(kv.key), []byte(kv.value))
+			c.Assert(err, IsNil)
 		}
 
 		cnt := 0
@@ -197,7 +198,8 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 		c.Assert(err, IsNil)
 		for it.Valid() {
 			cnt++
-			it.Next()
+			err := it.Next()
+			c.Assert(err, IsNil)
 		}
 		c.Assert(cnt, Equals, 6)
 

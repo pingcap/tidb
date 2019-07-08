@@ -18,7 +18,6 @@ import (
 	"encoding/binary"
 	"io"
 	"math"
-	"sort"
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
@@ -42,11 +41,13 @@ type mvccValue struct {
 }
 
 type mvccLock struct {
-	startTS uint64
-	primary []byte
-	value   []byte
-	op      kvrpcpb.Op
-	ttl     uint64
+	startTS     uint64
+	primary     []byte
+	value       []byte
+	op          kvrpcpb.Op
+	ttl         uint64
+	forUpdateTS uint64
+	txnSize     uint64
 }
 
 type mvccEntry struct {
@@ -66,6 +67,7 @@ func (l *mvccLock) MarshalBinary() ([]byte, error) {
 	mh.WriteSlice(&buf, l.value)
 	mh.WriteNumber(&buf, l.op)
 	mh.WriteNumber(&buf, l.ttl)
+	mh.WriteNumber(&buf, l.forUpdateTS)
 	return buf.Bytes(), errors.Trace(mh.err)
 }
 
@@ -78,6 +80,7 @@ func (l *mvccLock) UnmarshalBinary(data []byte) error {
 	mh.ReadSlice(buf, &l.value)
 	mh.ReadNumber(buf, &l.op)
 	mh.ReadNumber(buf, &l.ttl)
+	mh.ReadNumber(buf, &l.forUpdateTS)
 	return errors.Trace(mh.err)
 }
 
@@ -199,7 +202,8 @@ func (l *mvccLock) lockErr(key []byte) error {
 
 func (l *mvccLock) check(ts uint64, key []byte) (uint64, error) {
 	// ignore when ts is older than lock or lock's type is Lock.
-	if l.startTS > ts || l.op == kvrpcpb.Op_Lock {
+	// Pessimistic lock doesn't block read.
+	if l.startTS > ts || l.op == kvrpcpb.Op_Lock || l.op == kvrpcpb.Op_PessimisticLock {
 		return ts, nil
 	}
 	// for point get latest version.
@@ -207,29 +211,6 @@ func (l *mvccLock) check(ts uint64, key []byte) (uint64, error) {
 		return l.startTS - 1, nil
 	}
 	return 0, l.lockErr(key)
-}
-
-func (e *mvccEntry) Clone() *mvccEntry {
-	var entry mvccEntry
-	entry.key = append([]byte(nil), e.key...)
-	for _, v := range e.values {
-		entry.values = append(entry.values, mvccValue{
-			valueType: v.valueType,
-			startTS:   v.startTS,
-			commitTS:  v.commitTS,
-			value:     append([]byte(nil), v.value...),
-		})
-	}
-	if e.lock != nil {
-		entry.lock = &mvccLock{
-			startTS: e.lock.startTS,
-			primary: append([]byte(nil), e.lock.primary...),
-			value:   append([]byte(nil), e.lock.value...),
-			op:      e.lock.op,
-			ttl:     e.lock.ttl,
-		}
-	}
-	return &entry
 }
 
 func (e *mvccEntry) Less(than btree.Item) bool {
@@ -252,165 +233,9 @@ func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, err
 	return nil, nil
 }
 
-func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
-	if len(e.values) > 0 {
-		if e.values[0].commitTS >= startTS {
-			return ErrRetryable("write conflict")
-		}
-	}
-	if e.lock != nil {
-		if e.lock.startTS != startTS {
-			return e.lock.lockErr(e.key.Raw())
-		}
-		return nil
-	}
-	e.lock = &mvccLock{
-		startTS: startTS,
-		primary: primary,
-		value:   mutation.Value,
-		op:      mutation.GetOp(),
-		ttl:     ttl,
-	}
-	return nil
-}
-
-func (e *mvccEntry) getTxnCommitInfo(startTS uint64) *mvccValue {
-	for _, v := range e.values {
-		if v.startTS == startTS {
-			return &v
-		}
-	}
-	return nil
-}
-
-func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
-	if e.lock == nil || e.lock.startTS != startTS {
-		if c := e.getTxnCommitInfo(startTS); c != nil && c.valueType != typeRollback {
-			return nil
-		}
-		return ErrRetryable("txn not found")
-	}
-	if e.lock.op != kvrpcpb.Op_Lock {
-		var valueType mvccValueType
-		if e.lock.op == kvrpcpb.Op_Put {
-			valueType = typePut
-		} else {
-			valueType = typeDelete
-		}
-		e.addValue(mvccValue{
-			valueType: valueType,
-			startTS:   startTS,
-			commitTS:  commitTS,
-			value:     e.lock.value,
-		})
-	}
-	e.lock = nil
-	return nil
-}
-
-func (e *mvccEntry) Rollback(startTS uint64) error {
-	// If current transaction's lock exist.
-	if e.lock != nil && e.lock.startTS == startTS {
-		e.lock = nil
-		e.addValue(mvccValue{
-			valueType: typeRollback,
-			startTS:   startTS,
-			commitTS:  startTS,
-		})
-		return nil
-	}
-
-	// If current transaction's lock not exist.
-	// If commit info of current transaction exist.
-	if c := e.getTxnCommitInfo(startTS); c != nil {
-		// If current transaction is already committed.
-		if c.valueType != typeRollback {
-			return ErrAlreadyCommitted(c.commitTS)
-		}
-		// If current transaction is already rollback.
-		return nil
-	}
-	// If current transaction is not prewritted before.
-	e.addValue(mvccValue{
-		valueType: typeRollback,
-		startTS:   startTS,
-		commitTS:  startTS,
-	})
-	return nil
-}
-
-func (e *mvccEntry) addValue(v mvccValue) {
-	i := sort.Search(len(e.values), func(i int) bool { return e.values[i].commitTS <= v.commitTS })
-	if i >= len(e.values) {
-		e.values = append(e.values, v)
-	} else {
-		e.values = append(e.values[:i+1], e.values[i:]...)
-		e.values[i] = v
-	}
-}
-
-func (e *mvccEntry) containsStartTS(startTS uint64) bool {
-	if e.lock != nil && e.lock.startTS == startTS {
-		return true
-	}
-	for _, item := range e.values {
-		if item.startTS == startTS {
-			return true
-		}
-		if item.commitTS < startTS {
-			return false
-		}
-	}
-	return false
-}
-
-func (e *mvccEntry) dumpMvccInfo() *kvrpcpb.MvccInfo {
-	info := &kvrpcpb.MvccInfo{}
-	if e.lock != nil {
-		info.Lock = &kvrpcpb.MvccLock{
-			Type:       e.lock.op,
-			StartTs:    e.lock.startTS,
-			Primary:    e.lock.primary,
-			ShortValue: e.lock.value,
-		}
-	}
-
-	info.Writes = make([]*kvrpcpb.MvccWrite, len(e.values))
-	info.Values = make([]*kvrpcpb.MvccValue, len(e.values))
-
-	for id, item := range e.values {
-		var tp kvrpcpb.Op
-		switch item.valueType {
-		case typePut:
-			tp = kvrpcpb.Op_Put
-		case typeDelete:
-			tp = kvrpcpb.Op_Del
-		case typeRollback:
-			tp = kvrpcpb.Op_Rollback
-		}
-		info.Writes[id] = &kvrpcpb.MvccWrite{
-			Type:     tp,
-			StartTs:  item.startTS,
-			CommitTs: item.commitTS,
-		}
-
-		info.Values[id] = &kvrpcpb.MvccValue{
-			Value:   item.value,
-			StartTs: item.startTS,
-		}
-	}
-	return info
-}
-
 type rawEntry struct {
 	key   []byte
 	value []byte
-}
-
-func newRawEntry(key []byte) *rawEntry {
-	return &rawEntry{
-		key: key,
-	}
 }
 
 func (e *rawEntry) Less(than btree.Item) bool {
@@ -423,7 +248,9 @@ type MVCCStore interface {
 	Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
-	Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64) []error
+	PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS, forUpdateTS uint64, ttl uint64) []error
+	PessimisticRollback(keys [][]byte, startTS, forUpdateTS uint64) []error
+	Prewrite(req *kvrpcpb.PrewriteRequest) []error
 	Commit(keys [][]byte, startTS, commitTS uint64) error
 	Rollback(keys [][]byte, startTS uint64) error
 	Cleanup(key []byte, startTS uint64) error

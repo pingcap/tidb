@@ -14,7 +14,6 @@
 package binloginfo
 
 import (
-	"io/ioutil"
 	"regexp"
 	"strings"
 	"sync"
@@ -28,21 +27,21 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/logutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
 func init() {
 	grpc.EnableTracing = false
-	// don't need output pumps client's log
-	pumpcli.Logger.Out = ioutil.Discard
 }
 
 // pumpsClient is the client to write binlog, it is opened on server start and never close,
 // shared by all sessions.
 var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
+var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+`)
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {
@@ -83,7 +82,7 @@ var ignoreError uint32
 // DisableSkipBinlogFlag disable the skipBinlog flag.
 func DisableSkipBinlogFlag() {
 	atomic.StoreUint32(&skipBinlog, 0)
-	log.Warn("[binloginfo] disable the skipBinlog flag")
+	logutil.BgLogger().Warn("[binloginfo] disable the skipBinlog flag")
 }
 
 // SetIgnoreError sets the ignoreError flag, this function called when TiDB start
@@ -111,9 +110,9 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	// it will retry in PumpsClient if write binlog fail.
 	err := info.Client.WriteBinlog(info.Data)
 	if err != nil {
-		log.Errorf("write binlog fail %v", errors.ErrorStack(err))
+		logutil.BgLogger().Error("write binlog failed", zap.Error(err))
 		if atomic.LoadUint32(&ignoreError) == 1 {
-			log.Error("write binlog fail but error ignored")
+			logutil.BgLogger().Error("write binlog fail but error ignored")
 			metrics.CriticalErrorCounter.Add(1)
 			// If error happens once, we'll stop writing binlog.
 			atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)
@@ -155,11 +154,8 @@ func addSpecialComment(ddlQuery string) string {
 	if strings.Contains(ddlQuery, specialPrefix) {
 		return ddlQuery
 	}
-	upperQuery := strings.ToUpper(ddlQuery)
-	reg, err := regexp.Compile(`SHARD_ROW_ID_BITS\s*=\s*\d+`)
-	terror.Log(err)
-	loc := reg.FindStringIndex(upperQuery)
-	if len(loc) < 2 {
+	loc := shardPat.FindStringIndex(strings.ToUpper(ddlQuery))
+	if loc == nil {
 		return ddlQuery
 	}
 	return ddlQuery[:loc[0]] + specialPrefix + ddlQuery[loc[0]:loc[1]] + ` */` + ddlQuery[loc[1]:]
@@ -173,8 +169,7 @@ func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 			NodeID: nodeID,
 			State:  node.Online,
 		},
-		IsAvaliable: true,
-		Client:      client,
+		Client: client,
 	}
 
 	pumpInfos := &pumpcli.PumpInfos{
@@ -189,8 +184,7 @@ func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 		ClusterID:          1,
 		Pumps:              pumpInfos,
 		Selector:           pumpcli.NewSelector(pumpcli.Range),
-		RetryTime:          1,
-		BinlogWriteTimeout: 15 * time.Second,
+		BinlogWriteTimeout: time.Second,
 	}
 	pCli.Selector.SetPumps([]*pumpcli.PumpStatus{pump})
 

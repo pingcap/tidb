@@ -49,7 +49,7 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 		return nil, nil, errors.Trace(err)
 	}
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }
@@ -438,6 +438,41 @@ func (s *testKvEncoderSuite) TestAllocatorRebase(c *C) {
 	sql = "insert into t(id, a) values(2000, 'test')"
 	encoder.Encode(sql, tableID)
 	c.Assert(alloc.Base(), Equals, int64(2000))
+	c.Assert(alloc.End(), Equals, int64(2000)+step)
+	nextID, err := alloc.NextGlobalAutoID(tableID)
+	c.Assert(err, IsNil)
+	c.Assert(nextID, Equals, int64(2000)+step+1)
+}
+
+func (s *testKvEncoderSuite) TestError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	alloc := NewAllocator()
+	encoder, err := New("test", alloc)
+	c.Assert(err, IsNil)
+	defer encoder.Close()
+	_, err = New("", alloc)
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "*Incorrect database name ''")
+
+	err = encoder.ExecDDLSQL("x")
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "*You have an error in your SQL syntax.*")
+
+	_, err = encoder.PrepareStmt("")
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "*Can not prepare multiple statements")
+	_, _, err = encoder.EncodePrepareStmt(0, 0, 0)
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "*Prepared statement not found")
+
+	encoder = &kvEncoder{}
+	err = encoder.SetSystemVariable("", "")
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".*please new KvEncoder by kvencoder.New.*")
+	_, ok := encoder.GetSystemVariable("")
+	c.Assert(ok, IsFalse)
+	c.Assert(err, ErrorMatches, ".*please new KvEncoder by kvencoder.New.*")
 }
 
 func (s *testKvEncoderSuite) TestAllocatorRebaseSmaller(c *C) {
@@ -683,4 +718,16 @@ func (s *testKvEncoderSuite) TestRefCount(c *C) {
 	c.Assert(refCount, Equals, int64(1))
 	tmp.Close()
 	c.Assert(refCount, Equals, int64(0))
+}
+
+// TestExoticDatabaseName checks if https://github.com/pingcap/tidb/issues/9532
+// is fixed.
+func (s *testKvEncoderSuite) TestExoticDatabaseName(c *C) {
+	encoder1, err := New("pay-service_micro_db", nil)
+	c.Assert(err, IsNil)
+	encoder1.Close()
+
+	encoder2, err := New("㎩¥`𝕊ℯ®Ⅵ₠—🎤肉 ㏈", nil)
+	c.Assert(err, IsNil)
+	encoder2.Close()
 }
