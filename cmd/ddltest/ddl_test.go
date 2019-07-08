@@ -32,7 +32,6 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
@@ -92,12 +91,12 @@ type TestDDLSuite struct {
 }
 
 func (s *TestDDLSuite) SetUpSuite(c *C) {
-	logutil.InitLogger(&logutil.LogConfig{Level: *logLevel})
+	logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 
 	s.quit = make(chan struct{})
 
 	var err error
-	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
+	s.store, err = session.NewStore(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
 	c.Assert(err, IsNil)
 
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
@@ -598,7 +597,7 @@ func (s *TestDDLSuite) TestSimpleInsert(c *C) {
 	fmt.Printf("[TestSimpleInsert][Time Cost]%v\n", end.Sub(start))
 
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_insert")
@@ -643,7 +642,7 @@ func (s *TestDDLSuite) TestSimpleConflictInsert(c *C) {
 	fmt.Printf("[TestSimpleConflictInsert][Time Cost]%v\n", end.Sub(start))
 
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_conflict_insert")
@@ -691,7 +690,7 @@ func (s *TestDDLSuite) TestSimpleUpdate(c *C) {
 	fmt.Printf("[TestSimpleUpdate][Time Cost]%v\n", end.Sub(start))
 
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_update")
@@ -759,7 +758,7 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 	fmt.Printf("[TestSimpleConflictUpdate][Update][Time Cost]%v\n", end.Sub(start))
 
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_conflict_update")
@@ -804,7 +803,7 @@ func (s *TestDDLSuite) TestSimpleDelete(c *C) {
 	fmt.Printf("[TestSimpleDelete][Time Cost]%v\n", end.Sub(start))
 
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_delete")
@@ -869,7 +868,7 @@ func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
 	fmt.Printf("[TestSimpleConflictDelete][Delete][Time Cost]%v\n", end.Sub(start))
 
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_conflict_delete")
@@ -933,7 +932,7 @@ func (s *TestDDLSuite) TestSimpleMixed(c *C) {
 	fmt.Printf("[TestSimpleMixed][Mixed][Time Cost]%v\n", end.Sub(start))
 
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_mixed")
@@ -1000,7 +999,7 @@ func (s *TestDDLSuite) TestSimpleInc(c *C) {
 	fmt.Printf("[TestSimpleInc][Update][Time Cost]%v\n", end.Sub(start))
 
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_inc")
@@ -1027,5 +1026,5 @@ func addEnvPath(newPath string) {
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-	store.Register("tikv", tikv.Driver{})
+	session.RegisterStore("tikv", tikv.Driver{})
 }

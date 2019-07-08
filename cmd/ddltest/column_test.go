@@ -33,7 +33,7 @@ import (
 // After add column finished, check the records in the table.
 func (s *TestDDLSuite) checkAddColumn(c *C, rowID int64, defaultVal interface{}, updatedVal interface{}) {
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_column")
@@ -83,7 +83,7 @@ func (s *TestDDLSuite) checkAddColumn(c *C, rowID int64, defaultVal interface{},
 
 func (s *TestDDLSuite) checkDropColumn(c *C, rowID int64, alterColumn *table.Column, updateDefault interface{}) {
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_column")

@@ -44,7 +44,7 @@ func getIndex(t table.Table, name string) table.Index {
 
 func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	tbl := s.getTable(c, "test_index")
 
@@ -59,7 +59,7 @@ func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 
 	// read handles from index
 	idx := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), indexInfo)
-	err = ctx.NewTxn(goctx.Background())
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(false)
 	c.Assert(err, IsNil)
@@ -92,13 +92,13 @@ func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
 	c.Assert(err, IsNil)
 
 	ctx := s.ctx
-	err = ctx.NewTxn(goctx.Background())
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 	tbl := s.getTable(c, "test_index")
 
 	// read handles from index
 	idx := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), indexInfo)
-	err = ctx.NewTxn(goctx.Background())
+	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(false)
 	c.Assert(err, IsNil)
