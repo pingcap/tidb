@@ -14,7 +14,10 @@
 package core
 
 import (
+	"fmt"
+	"github.com/pingcap/errors"
 	"math"
+	"reflect"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -533,7 +536,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
 	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
 
-	task = ds.pushDownSelAndResolveVirtualCols(cop, path, finalStats)
+	task, err = ds.pushDownSelAndResolveVirtualCols(cop, path, finalStats)
+	if err != nil {
+		return invalidTask, err
+	}
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -574,9 +580,12 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (ds *DataSource) addPushedDownSelection(copTask *copTask, path *accessPath) {
+func (ds *DataSource) addPushedDownSelection(copTask *copTask, path *accessPath) error {
 	// Add filter condition to table plan now.
-	is := copTask.indexPlan.(*PhysicalIndexScan)
+	is, ok := copTask.indexPlan.(*PhysicalIndexScan)
+	if !ok {
+		return errors.Trace(fmt.Errorf("type assertion fail, expect PhysicalIndexScan, but got %v", reflect.TypeOf(copTask.indexPlan)))
+	}
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
 		copTask.cst += copTask.count() * cpuFactor
@@ -592,9 +601,13 @@ func (ds *DataSource) addPushedDownSelection(copTask *copTask, path *accessPath)
 	}
 	if tableConds != nil {
 		copTask.finishIndexPlan()
-		ts := copTask.tablePlan.(*PhysicalTableScan)
+		ts, ok := copTask.tablePlan.(*PhysicalTableScan)
+		if !ok {
+			return errors.Trace(fmt.Errorf("type assertion fail, expect PhysicalTableScan, but got %v", reflect.TypeOf(copTask.tablePlan)))
+		}
 		ts.filterCondition = append(ts.filterCondition, tableConds...)
 	}
+	return nil
 }
 
 func matchIndicesProp(idxCols []*model.IndexColumn, propItems []property.Item) bool {
@@ -839,7 +852,10 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		copTask.keepOrder = true
 	}
 
-	task = ds.pushDownSelAndResolveVirtualCols(copTask, path, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	task, err = ds.pushDownSelAndResolveVirtualCols(copTask, path, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	if err != nil {
+		return invalidTask, err
+	}
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -853,16 +869,21 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 //	2. substitute virtual columns in TableScan's Schema to corresponding physical columns.
 //	3. substitute virtual columns in TableScan's filters and push them down.
 //	4. add a Projection upon this DataSource.
-func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *accessPath, stats *property.StatsInfo) (t task) {
+func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *accessPath, stats *property.StatsInfo) (t task, err error) {
 	// step 1
 	t = copTask
 	if copTask.indexPlan != nil {
-		ds.addPushedDownSelection(copTask, path)
+		if err := ds.addPushedDownSelection(copTask, path); err != nil {
+			return invalidTask, err
+		}
 	}
 	if copTask.tablePlan == nil { // don't need to handle virtual columns in IndexScan
 		return
 	}
-	ts := copTask.tablePlan.(*PhysicalTableScan)
+	ts, ok := copTask.tablePlan.(*PhysicalTableScan)
+	if !ok {
+		return invalidTask, errors.Trace(fmt.Errorf("type assertion fail, expect PhysicalTableScan, but got %v", reflect.TypeOf(copTask.tablePlan)))
+	}
 	if len(ds.virtualColExprs) > 0 {
 		ds.addPushedDownTableScan(copTask, ts, stats)
 		return

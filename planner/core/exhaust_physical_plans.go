@@ -435,7 +435,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			keyOff2IdxOff[i] = 0
 		}
 		if pkMatched {
-			innerPlan := p.constructInnerTableScan(ds, pkCol, outerJoinKeys, us)
+			innerPlan, err := p.constructInnerTableScan(ds, pkCol, outerJoinKeys, us)
+			if err != nil {
+				logutil.BgLogger().Error("construct inner table scan error", zap.Error(err))
+				return nil
+			}
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
 			return p.constructIndexJoin(prop, outerIdx, innerPlan, nil, keyOff2IdxOff, nil, nil)
@@ -464,7 +468,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 		idxCols, lens := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
 		rangeInfo := helper.buildRangeDecidedByInformation(idxCols, outerJoinKeys)
-		innerPlan := p.constructInnerIndexScan(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
+		innerPlan, err := p.constructInnerIndexScan(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
+		if err != nil {
+			logutil.BgLogger().Error("construct inner index scan error", zap.Error(err))
+			return nil
+		}
 		return p.constructIndexJoin(prop, outerIdx, innerPlan, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
 	}
 	return nil
@@ -514,7 +522,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 }
 
 // constructInnerTableScan is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column, us *LogicalUnionScan) PhysicalPlan {
+func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column, us *LogicalUnionScan) (PhysicalPlan, error) {
 	ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -538,10 +546,13 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 		indexPlanFinished: true,
 	}
 	selStats := ts.stats.Scale(selectionFactor)
-	t := ds.pushDownSelAndResolveVirtualCols(copTask, nil, selStats)
+	t, err := ds.pushDownSelAndResolveVirtualCols(copTask, nil, selStats)
+	if err != nil {
+		return nil, err
+	}
 	t = finishCopTask(ds.ctx, copTask)
 	reader := t.plan()
-	return p.constructInnerUnionScan(us, reader)
+	return p.constructInnerUnionScan(us, reader), nil
 }
 
 func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
@@ -557,7 +568,7 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 
 // constructInnerIndexScan is specially used to construct the inner plan for PhysicalIndexJoin.
 func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, filterConds []expression.Expression,
-	outerJoinKeys []*expression.Column, us *LogicalUnionScan, rangeInfo string) PhysicalPlan {
+	outerJoinKeys []*expression.Column, us *LogicalUnionScan, rangeInfo string) (PhysicalPlan, error) {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
@@ -611,10 +622,13 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	}
 	selectivity := ds.stats.RowCount / ds.tableStats.RowCount
 	finalStats := ds.stats.ScaleByExpectCnt(selectivity * rowCount)
-	t := ds.pushDownSelAndResolveVirtualCols(cop, path, finalStats)
+	t, err := ds.pushDownSelAndResolveVirtualCols(cop, path, finalStats)
+	if err != nil {
+		return nil, err
+	}
 	t = finishCopTask(ds.ctx, t)
 	reader := t.plan()
-	return p.constructInnerUnionScan(us, reader)
+	return p.constructInnerUnionScan(us, reader), nil
 }
 
 var symmetricOp = map[string]string{
@@ -894,7 +908,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 }
 
 func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, idxInfo *model.IndexInfo, accesses,
-	remained []expression.Expression, lastColManager *ColWithCmpFuncManager) {
+remained []expression.Expression, lastColManager *ColWithCmpFuncManager) {
 	// We choose the index by the number of used columns of the range, the much the better.
 	// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
 	// But obviously when the range is nil, we don't need index join.
