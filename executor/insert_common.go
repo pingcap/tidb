@@ -432,30 +432,39 @@ func (e *InsertValues) fillColValue(datum types.Datum, idx int, column *table.Co
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
 func (e *InsertValues) fillRow(row []types.Datum, hasValue []bool) ([]types.Datum, error) {
 	gIdx := 0
+	gCols := make([]*table.Column, 0)
 	for i, c := range e.Table.Cols() {
 		var err error
-		// Get the default value for all no value columns, the auto increment column is different from the others.
-		row[i], err = e.fillColValue(row[i], i, c, hasValue[i])
-		if err != nil {
-			return nil, err
-		}
-
-		// Evaluate the generated columns.
+		// Evaluate the generated columns later after real columns set
 		if c.IsGenerated() {
-			var val types.Datum
-			val, err = e.GenExprs[gIdx].Eval(chunk.MutRowFromDatums(row).ToRow())
-			gIdx++
-			if e.filterErr(err) != nil {
-				return nil, err
-			}
-			row[i], err = table.CastValue(e.ctx, val, c.ToInfo())
+			gCols = append(gCols, c)
+		} else {
+			// Get the default value for all no value columns, the auto increment column is different from the others.
+			row[i], err = e.fillColValue(row[i], i, c, hasValue[i])
 			if err != nil {
 				return nil, err
 			}
+			// Handle the bad null error.
+			if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+				return nil, err
+			}
 		}
-
+	}
+	for _, gCol := range gCols {
+		var err error
+		var val types.Datum
+		colIdx := gCol.ColumnInfo.Offset
+		val, err = e.GenExprs[gIdx].Eval(chunk.MutRowFromDatums(row).ToRow())
+		gIdx++
+		if e.filterErr(err) != nil {
+			return nil, err
+		}
+		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo())
+		if err != nil {
+			return nil, err
+		}
 		// Handle the bad null error.
-		if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+		if row[colIdx], err = gCol.HandleBadNull(row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
 			return nil, err
 		}
 	}
