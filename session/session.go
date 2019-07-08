@@ -1698,6 +1698,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableFastAnalyze,
 	variable.TiDBExpensiveQueryTimeThreshold,
 	variable.TiDBEnableNoopFuncs,
+	variable.TiDBEnableIndexMerge,
 }
 
 var (
