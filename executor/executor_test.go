@@ -443,6 +443,8 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
+		err1 = ld.CheckAndInsertOneBatch()
+		c.Assert(err1, IsNil)
 		if tt.restData == nil {
 			c.Assert(data, HasLen, 0,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
