@@ -17,8 +17,6 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"strings"
-	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -43,6 +41,8 @@ func (s *testMemoryLeak) SetUpSuite(c *C) {
 }
 
 func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
+	c.Skip("too slow")
+
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "create database test_mem")
@@ -51,8 +51,8 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	c.Assert(err, IsNil)
 
 	// prepare data
-	totalSize := uint64(64 << 20) // 64MB
-	blockSize := uint64(8 << 10)  // 8KB
+	totalSize := uint64(256 << 20) // 256MB
+	blockSize := uint64(8 << 10)   // 8KB
 	delta := totalSize / 5
 	numRows := totalSize / blockSize
 	_, err = se.Execute(context.Background(), fmt.Sprintf("create table t (c varchar(%v))", blockSize))
@@ -61,37 +61,11 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 		_, err = se.Execute(context.Background(), "drop table t")
 		c.Assert(err, IsNil)
 	}()
-
-	sqlCh := make(chan string)
-	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			se, err := session.CreateSession4Test(s.store)
-			c.Assert(err, IsNil)
-			_, err = se.Execute(context.Background(), "use test_mem")
-			c.Assert(err, IsNil)
-
-			for {
-				sql, ok := <-sqlCh
-				if !ok {
-					return
-				}
-				_, err = se.Execute(context.Background(), sql)
-				c.Assert(err, IsNil)
-			}
-		}()
+	sql := fmt.Sprintf("insert into t values (space(%v))", blockSize)
+	for i := uint64(0); i < numRows; i++ {
+		_, err = se.Execute(context.Background(), sql)
+		c.Assert(err, IsNil)
 	}
-
-	batchSize := 16
-	for i := uint64(0); i < numRows; i += uint64(batchSize) {
-		val := fmt.Sprintf("(space(%v))", blockSize)
-		sql := "insert into t values " + val + strings.Repeat(","+val, batchSize-1)
-		sqlCh <- sql
-	}
-	close(sqlCh)
-	wg.Wait()
 
 	// read data
 	runtime.GC()
