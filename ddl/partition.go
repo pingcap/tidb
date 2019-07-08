@@ -233,11 +233,12 @@ func hasTimeField(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.Exp
 // the timezone.
 // See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L445
 func defaultTimezoneDependent(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) (bool, error) {
-	if v, err := hasTimestampField(ctx, tblInfo, expr); err != nil {
+	v, err := hasTimestampField(ctx, tblInfo, expr)
+	if err != nil {
 		return false, err
-	} else {
-		return !v, nil
 	}
+
+	return !v, nil
 }
 
 // checkPartitionFuncValid checks partition function validly.
