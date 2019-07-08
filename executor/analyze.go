@@ -527,11 +527,11 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 }
 
 var (
-	FastAnalyzeHistogramSample        = metrics.FastAnalyzeHistogram.WithLabelValues("sample")
-	FastAnalyzeHistogramAccessRegions = metrics.FastAnalyzeHistogram.WithLabelValues("access_regions")
-	FastAnalyzeHistogramRegionError   = metrics.FastAnalyzeHistogram.WithLabelValues("region_error")
-	FastAnalyzeHistogramSeekKeys      = metrics.FastAnalyzeHistogram.WithLabelValues("seek_keys")
-	FastAnalyzeHistogramScanKeys      = metrics.FastAnalyzeHistogram.WithLabelValues("scan_keys")
+	fastAnalyzeHistogramSample        = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "sample")
+	fastAnalyzeHistogramAccessRegions = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "access_regions")
+	fastAnalyzeHistogramRegionError   = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "region_error")
+	fastAnalyzeHistogramSeekKeys      = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "seek_keys")
+	fastAnalyzeHistogramScanKeys      = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "scan_keys")
 )
 
 func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
@@ -779,7 +779,7 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 			break
 		}
 	}
-	FastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
+	fastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
 
 	return false, nil
 }
@@ -984,8 +984,8 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 				kvMap[string(iter.Key())] = iter.Value()
 			}
 		}
-		FastAnalyzeHistogramSeekKeys.Observe(float64(len(keys)))
-		FastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
+		fastAnalyzeHistogramSeekKeys.Observe(float64(len(keys)))
+		fastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
 
 		*err = e.handleBatchSeekResponse(kvMap)
 		if *err != nil {
@@ -1078,7 +1078,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	scanKeysSize, err := e.handleScanTasks(bo)
-	FastAnalyzeHistogramScanKeys.Observe(float64(scanKeysSize))
+	fastAnalyzeHistogramScanKeys.Observe(float64(scanKeysSize))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1133,7 +1133,7 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 			return nil, nil, err
 		}
 	}
-	FastAnalyzeHistogramRegionError.Observe(float64(regionErrorCounter))
+	fastAnalyzeHistogramRegionError.Observe(float64(regionErrorCounter))
 	if needRebuild {
 		errMsg := "build fast analyze task failed, exceed maxBuildTimes: %v"
 		return nil, nil, errors.Errorf(errMsg, maxBuildTimes)
