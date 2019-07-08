@@ -917,10 +917,10 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 
 		err = e.updateCollectorSamples(iter.Value(), iter.Key(), p, hasPKInfo)
 		if err != nil {
-			return 0, err
+			return
 		}
 	}
-	return scanKeysSize, err
+	return
 }
 
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err error) {
@@ -931,9 +931,10 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(t.StartKey, t.EndKey)
 		if err != nil {
-			return 0, err
+			return keysSize, err
 		}
-		keysSize, err = e.handleScanIter(iter)
+		size, err := e.handleScanIter(iter)
+		keysSize += size
 		if err != nil {
 			return keysSize, err
 		}
