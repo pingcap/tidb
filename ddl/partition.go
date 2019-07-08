@@ -267,7 +267,6 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 		default:
 			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
-		return nil
 	case *ast.BinaryOperationExpr:
 		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
 		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
