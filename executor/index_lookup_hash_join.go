@@ -27,7 +27,7 @@ type indexHashJoinOuterWorker struct {
 type innerHashWorker struct {
 	innerWorker
 	matchPtrBytes [][]byte
-	joinResult *indexLookUpResult
+	joinResult    *indexLookUpResult
 }
 
 func (e *IndexLookUpHashJoin) finishInnerWorker(r interface{}) {
