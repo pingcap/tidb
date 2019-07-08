@@ -3119,15 +3119,15 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 	return frame, err
 }
 
-func getAllByItems(spec *ast.WindowSpec) []*ast.ByItem {
-	var items []*ast.ByItem
+func getAllByItems(itemsBuf []*ast.ByItem, spec *ast.WindowSpec) []*ast.ByItem {
+	itemsBuf = itemsBuf[:0]
 	if spec.PartitionBy != nil {
-		items = append(items, spec.PartitionBy.Items...)
+		itemsBuf = append(itemsBuf, spec.PartitionBy.Items...)
 	}
 	if spec.OrderBy != nil {
-		items = append(items, spec.OrderBy.Items...)
+		itemsBuf = append(itemsBuf, spec.OrderBy.Items...)
 	}
-	return items
+	return itemsBuf
 }
 
 func restoreByItemText(item *ast.ByItem) string {
@@ -3167,10 +3167,12 @@ func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr) []w
 	for spec, funcs := range groupedFuncs {
 		windows = append(windows, windowFuncs{spec, funcs})
 	}
+	lItemsBuf := make([]*ast.ByItem, 0, 4)
+	rItemsBuf := make([]*ast.ByItem, 0, 4)
 	sort.SliceStable(windows, func(i, j int) bool {
-		lItems := getAllByItems(windows[i].spec)
-		rItems := getAllByItems(windows[j].spec)
-		return !compareItems(lItems, rItems)
+		lItemsBuf = getAllByItems(lItemsBuf, windows[i].spec)
+		rItemsBuf = getAllByItems(rItemsBuf, windows[j].spec)
+		return !compareItems(lItemsBuf, rItemsBuf)
 	})
 	return windows
 }
