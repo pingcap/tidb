@@ -1,7 +1,7 @@
 package executor
 
 import (
-	"sync"
+	"context"
 	"time"
 	"unsafe"
 
@@ -11,12 +11,13 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	"golang.org/x/net/context"
 )
 
 //IndexLookUpHashJoin is the hash join executor
 type IndexLookUpHashJoin struct {
 	IndexLookUpJoin
+	joinResultCh      chan *indexLookUpResult
+	joinChkResourceCh []chan *chunk.Chunk
 }
 
 type indexHashJoinOuterWorker struct {
@@ -26,6 +27,7 @@ type indexHashJoinOuterWorker struct {
 type innerHashWorker struct {
 	innerWorker
 	matchPtrBytes [][]byte
+	joinResult *indexLookUpResult
 }
 
 func (e *IndexLookUpHashJoin) finishInnerWorker(r interface{}) {
@@ -66,7 +68,7 @@ func (e *IndexLookUpHashJoin) Open(ctx context.Context) error {
 
 	err = e.children[0].Open(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupJoin)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -99,7 +101,7 @@ func (e *IndexLookUpHashJoin) startWorkers(ctx context.Context) {
 	e.workerWg.Add(concurrency)
 	for i := int(0); i < concurrency; i++ {
 		workerID := i
-		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, e.workerWg) }, e.finishInnerWorker)
+		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx) }, e.finishInnerWorker)
 
 	}
 	go util.WithRecovery(e.waitInnerHashWorkersAndCloseResultChan, nil)
@@ -118,7 +120,7 @@ func (e *IndexLookUpHashJoin) Next(ctx context.Context, req *chunk.Chunk) error 
 	}
 
 	if result.err != nil {
-		return errors.Trace(result.err)
+		return result.err
 	}
 	req.SwapColumns(result.chk)
 	result.src <- result.chk
@@ -145,7 +147,7 @@ func (e *IndexLookUpHashJoin) Close() error {
 
 	e.memTracker.Detach()
 	e.memTracker = nil
-	return errors.Trace(e.children[0].Close())
+	return e.children[0].Close()
 }
 
 func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
@@ -205,12 +207,20 @@ func (e *IndexLookUpHashJoin) newInnerWorker(taskCh chan *lookUpJoinTask, worker
 			joinResultCh:      e.joinResultCh,
 		},
 		matchPtrBytes: make([][]byte, 0, 8),
+		joinResult: &indexLookUpResult{
+			src: e.joinChkResourceCh[workerID],
+		},
 	}
+
 	return iw
 }
 
-func (iw *innerHashWorker) run(ctx context.Context, wg *sync.WaitGroup) {
+func (iw *innerHashWorker) run(ctx context.Context) {
 	var task *lookUpJoinTask
+	//var ok bool
+	//joinResult := &indexLookUpResult{
+	//	src: iw.joinChkResourceCh[iw.workerID],
+	//}
 	ok, joinResult := iw.getNewJoinResult()
 	if !ok {
 		return
@@ -225,7 +235,7 @@ func (iw *innerHashWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			break
 		}
 		if task.buildError != nil {
-			joinResult.err = errors.Trace(task.buildError)
+			joinResult.err = task.buildError
 			break
 		}
 		err := iw.handleTask(ctx, task, joinResult)
@@ -252,30 +262,29 @@ func (iw *innerHashWorker) getNewJoinResult() (bool, *indexLookUpResult) {
 func (iw *innerHashWorker) handleTask(ctx context.Context, task *lookUpJoinTask, joinResult *indexLookUpResult) error {
 	lookUpContents, err := iw.constructLookupContent(task)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	err = iw.fetchInnerResults(ctx, task, lookUpContents)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	var ok bool
 	ok, joinResult = iw.join2Chunk(joinResult, task)
 	if !ok {
 		return errors.New("join2Chunk failed")
 	}
+	isNull := false
 	it := task.lookupMap.NewIterator()
 	for key, rowPtr := it.Next(); key != nil; key, rowPtr = it.Next() {
 		iw.matchPtrBytes = task.matchKeyMap.Get(key, iw.matchPtrBytes[:0])
 		if len(iw.matchPtrBytes) == 0 {
 			ptr := *(*uint32)(unsafe.Pointer(&rowPtr[0]))
 			misMatchedRow := task.outerResult.GetRow(int(ptr))
-			isNull := false
 			isNull, _ = task.nullMap[string(key)]
 			iw.joiner.onMissMatch(isNull, misMatchedRow, joinResult.chk)
 		}
 		if joinResult.chk.NumRows() == iw.maxChunkSize {
-			ok := true
 			iw.joinResultCh <- joinResult
 			ok, joinResult = iw.getNewJoinResult()
 			if !ok {
@@ -332,7 +341,7 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *loo
 		innerIter.Begin()
 		matched, isNull, err := iw.joiner.tryToMatch(matchedOuters[i], innerIter, joinResult.chk)
 		if err != nil {
-			joinResult.err = errors.Trace(err)
+			joinResult.err = err
 			return false, joinResult
 		}
 		hasMatch = hasMatch || matched

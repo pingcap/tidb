@@ -77,9 +77,6 @@ type IndexLookUpJoin struct {
 	lastColHelper *plannercore.ColWithCmpFuncManager
 
 	memTracker *memory.Tracker // track memory usage.
-
-	joinResultCh      chan *indexLookUpResult
-	joinChkResourceCh []chan *chunk.Chunk
 }
 
 type outerCtx struct {
@@ -487,7 +484,7 @@ func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) err
 	if iw.outerCtx.keepOrder {
 		err = iw.buildLookUpMap(task)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
