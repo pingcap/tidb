@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -163,11 +164,14 @@ func (e *kvEncoder) PrepareStmt(query string) (stmtID uint32, err error) {
 	return
 }
 
-func (e *kvEncoder) EncodePrepareStmt(tableID int64, stmtID uint32, param ...interface{}) (kvPairs []KvPair, affectedRows uint64, err error) {
+func (e *kvEncoder) EncodePrepareStmt(tableID int64, stmtID uint32, args ...interface{}) (kvPairs []KvPair, affectedRows uint64, err error) {
 	e.se.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	defer e.se.RollbackTxn(context.Background())
-
-	_, err = e.se.ExecutePreparedStmt(context.Background(), stmtID, param...)
+	params := make([]types.Datum, len(args))
+	for i := 0; i < len(params); i++ {
+		params[i] = types.NewDatum(args[i])
+	}
+	_, err = e.se.ExecutePreparedStmt(context.Background(), stmtID, params)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -257,7 +261,7 @@ func initGlobal() error {
 
 	if storeGlobal != nil {
 		if err1 := storeGlobal.Close(); err1 != nil {
-			logutil.Logger(context.Background()).Error("storeGlobal close error", zap.Error(err1))
+			logutil.BgLogger().Error("storeGlobal close error", zap.Error(err1))
 		}
 	}
 	if domGlobal != nil {

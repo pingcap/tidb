@@ -3,22 +3,16 @@ package executor
 import (
 	"context"
 	"fmt"
-	"testing"
-
-	"github.com/klauspost/cpuid"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/spaolacci/murmur3"
 )
 
 var _ = Suite(&pkgTestSuite{})
@@ -33,9 +27,9 @@ type MockExec struct {
 	curRowIdx int
 }
 
-func (m *MockExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (m *MockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	colTypes := m.retTypes()
+	colTypes := retTypes(m)
 	for ; m.curRowIdx < len(m.Rows) && req.NumRows() < req.Capacity(); m.curRowIdx++ {
 		curRow := m.Rows[m.curRowIdx]
 		for i := 0; i < curRow.Len(); i++ {
@@ -88,7 +82,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	innerFilter := outerFilter.Clone()
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	joiner := newJoiner(sctx, plannercore.InnerJoin, false,
-		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.retTypes(), innerExec.retTypes())
+		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, retTypes(outerExec), retTypes(innerExec))
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(sctx, joinSchema, nil),
@@ -98,13 +92,13 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		innerFilter:  []expression.Expression{innerFilter},
 		joiner:       joiner,
 	}
-	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.initCap, innerExec.maxChunkSize)
-	join.innerChunk = innerExec.newFirstChunk()
-	join.outerChunk = outerExec.newFirstChunk()
-	joinChk := join.newFirstChunk()
+	join.innerList = chunk.NewList(retTypes(innerExec), innerExec.initCap, innerExec.maxChunkSize)
+	join.innerChunk = newFirstChunk(innerExec)
+	join.outerChunk = newFirstChunk(outerExec)
+	joinChk := newFirstChunk(join)
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
-		err := join.Next(ctx, chunk.NewRecordBatch(joinChk))
+		err := join.Next(ctx, joinChk)
 		c.Check(err, IsNil)
 		if joinChk.NumRows() == 0 {
 			break
@@ -130,7 +124,7 @@ func prepareOneColChildExec(sctx sessionctx.Context, rowCount int) Executor {
 	return exec
 }
 
-func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *RadixHashJoinExec {
+func prepare4RadixPartition(sctx sessionctx.Context, rowCount int) *HashJoinExec {
 	childExec0 := prepareOneColChildExec(sctx, rowCount)
 	childExec1 := prepareOneColChildExec(sctx, rowCount)
 
@@ -149,64 +143,7 @@ func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *RadixHashJo
 		innerExec:      childExec0,
 		outerExec:      childExec1,
 	}
-	return &RadixHashJoinExec{HashJoinExec: hashJoinExec}
-}
-
-func (s *pkgTestSuite) TestRadixPartition(c *C) {
-	sctx := mock.NewContext()
-	hashJoinExec := buildExec4RadixHashJoin(sctx, 200)
-	sv := sctx.GetSessionVars()
-	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
-	sv.L2CacheSize = 100
-	sv.EnableRadixJoin = true
-	// FIXME: use initChunkSize when join support initChunkSize.
-	sv.MaxChunkSize = 100
-	defer func() {
-		sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize = originL2CacheSize, originEnableRadixJoin, originMaxChunkSize
-	}()
-	sv.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("RootMemTracker"), variable.DefTiDBMemQuotaHashJoin)
-
-	ctx := context.Background()
-	err := hashJoinExec.Open(ctx)
-	c.Assert(err, IsNil)
-
-	hashJoinExec.fetchInnerRows(ctx)
-	c.Assert(hashJoinExec.innerResult.GetMemTracker().BytesConsumed(), Equals, int64(14400))
-
-	hashJoinExec.evalRadixBit()
-	// ceil(log_2(14400/(100*3/4))) = 8
-	c.Assert(len(hashJoinExec.innerParts), Equals, 256)
-	radixBits := hashJoinExec.radixBits
-	c.Assert(radixBits, Equals, uint32(0x00ff))
-
-	err = hashJoinExec.partitionInnerRows()
-	c.Assert(err, IsNil)
-	totalRowCnt := 0
-	for i, part := range hashJoinExec.innerParts {
-		if part == nil {
-			continue
-		}
-		totalRowCnt += part.NumRows()
-		iter := chunk.NewIterator4Chunk(part)
-		keyBuf := make([]byte, 0, 64)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			hasNull, keyBuf, err := hashJoinExec.getJoinKeyFromChkRow(false, row, keyBuf)
-			c.Assert(err, IsNil)
-			c.Assert(hasNull, IsFalse)
-			joinHash := murmur3.Sum32(keyBuf)
-			c.Assert(joinHash&radixBits, Equals, uint32(i)&radixBits)
-		}
-	}
-	c.Assert(totalRowCnt, Equals, 200)
-
-	for _, ch := range hashJoinExec.outerResultChs {
-		close(ch)
-	}
-	for _, ch := range hashJoinExec.joinChkResourceCh {
-		close(ch)
-	}
-	err = hashJoinExec.Close()
-	c.Assert(err, IsNil)
+	return hashJoinExec
 }
 
 func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
@@ -235,59 +172,6 @@ func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
 		c.Check(len(dbss[i]), Equals, len(dbs))
 		for j, db := range dbs {
 			c.Check(dbss[i][j], Equals, db)
-		}
-	}
-}
-
-func BenchmarkPartitionInnerRows(b *testing.B) {
-	sctx := mock.NewContext()
-	hashJoinExec := buildExec4RadixHashJoin(sctx, 1500000)
-	sv := sctx.GetSessionVars()
-	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
-	sv.L2CacheSize = cpuid.CPU.Cache.L2
-	sv.EnableRadixJoin = true
-	sv.MaxChunkSize = 1024
-	defer func() {
-		sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize = originL2CacheSize, originEnableRadixJoin, originMaxChunkSize
-	}()
-	sv.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("RootMemTracker"), variable.DefTiDBMemQuotaHashJoin)
-
-	ctx := context.Background()
-	hashJoinExec.Open(ctx)
-	hashJoinExec.fetchInnerRows(ctx)
-	hashJoinExec.evalRadixBit()
-	b.ResetTimer()
-	hashJoinExec.concurrency = 16
-	hashJoinExec.maxChunkSize = 1024
-	hashJoinExec.initCap = 1024
-	for i := 0; i < b.N; i++ {
-		hashJoinExec.partitionInnerRows()
-		hashJoinExec.innerRowPrts = hashJoinExec.innerRowPrts[:0]
-	}
-}
-
-func (s *pkgTestSuite) TestParallelBuildHashTable4RadixJoin(c *C) {
-	sctx := mock.NewContext()
-	hashJoinExec := buildExec4RadixHashJoin(sctx, 200)
-
-	sv := sctx.GetSessionVars()
-	sv.L2CacheSize = 100
-	sv.EnableRadixJoin = true
-	sv.MaxChunkSize = 100
-	sv.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("RootMemTracker"), variable.DefTiDBMemQuotaHashJoin)
-
-	ctx := context.Background()
-	err := hashJoinExec.Open(ctx)
-	c.Assert(err, IsNil)
-
-	hashJoinExec.partitionInnerAndBuildHashTables(ctx)
-	innerParts := hashJoinExec.innerParts
-	c.Assert(len(hashJoinExec.hashTables), Equals, len(innerParts))
-	for i := 0; i < len(innerParts); i++ {
-		if innerParts[i] == nil {
-			c.Assert(hashJoinExec.hashTables[i], IsNil)
-		} else {
-			c.Assert(hashJoinExec.hashTables[i], NotNil)
 		}
 	}
 }

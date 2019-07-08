@@ -330,6 +330,11 @@ func Logger(ctx context.Context) *zap.Logger {
 	return zaplog.L()
 }
 
+// BgLogger is alias of `logutil.BgLogger()`
+func BgLogger() *zap.Logger {
+	return zaplog.L()
+}
+
 // WithConnID attaches connId to context.
 func WithConnID(ctx context.Context, connID uint32) context.Context {
 	var logger *zap.Logger

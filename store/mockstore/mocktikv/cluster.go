@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -267,6 +268,49 @@ func (c *Cluster) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer) 
 		}
 	}
 	return nil, nil
+}
+
+// ScanRegions returns at most `limit` regions from given `key` and their leaders.
+func (c *Cluster) ScanRegions(key []byte, limit int) ([]*metapb.Region, []*metapb.Peer) {
+	c.RLock()
+	defer c.RUnlock()
+
+	regions := make([]*Region, 0, len(c.regions))
+	for _, region := range c.regions {
+		regions = append(regions, region)
+	}
+
+	sort.Slice(regions, func(i, j int) bool {
+		return bytes.Compare(regions[i].Meta.GetStartKey(), regions[j].Meta.GetStartKey()) < 0
+	})
+
+	keyLocation := sort.Search(len(regions), func(i int) bool {
+		endKey := regions[i].Meta.GetEndKey()
+		if len(endKey) == 0 {
+			return true
+		}
+		return bytes.Compare(regions[i].Meta.GetEndKey(), key) > 0
+	})
+	regions = regions[keyLocation:]
+	if len(regions) > limit {
+		regions = regions[:limit]
+	}
+
+	metas := make([]*metapb.Region, 0, len(regions))
+	leaders := make([]*metapb.Peer, 0, len(regions))
+	for _, region := range regions {
+		leader := region.leaderPeer()
+		if leader == nil {
+			leader = &metapb.Peer{}
+		} else {
+			leader = proto.Clone(leader).(*metapb.Peer)
+		}
+
+		metas = append(metas, proto.Clone(region.Meta).(*metapb.Region))
+		leaders = append(leaders, leader)
+	}
+
+	return metas, leaders
 }
 
 // Bootstrap creates the first Region. The Stores should be in the Cluster before

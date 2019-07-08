@@ -91,7 +91,7 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 	c.TotalSize += rc.TotalSize
 	c.FMSketch.mergeFMSketch(rc.FMSketch)
 	if rc.CMSketch != nil {
-		err := c.CMSketch.MergeCMSketch(rc.CMSketch)
+		err := c.CMSketch.MergeCMSketch(rc.CMSketch, 0)
 		terror.Log(errors.Trace(err))
 	}
 	for _, item := range rc.Samples {
@@ -217,8 +217,8 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		}
 	}
 	ctx := context.TODO()
-	req := s.RecordSet.NewRecordBatch()
-	it := chunk.NewIterator4Chunk(req.Chunk)
+	req := s.RecordSet.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
 	for {
 		err := s.RecordSet.Next(ctx, req)
 		if err != nil {

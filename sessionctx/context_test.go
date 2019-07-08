@@ -11,15 +11,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package chunk
+package sessionctx
 
-// RecordBatch is input parameter of Executor.Next` method.
-// TODO: remove RecordBatch after finishing chunk size control.
-type RecordBatch struct {
-	*Chunk
-}
+import (
+	"fmt"
+	"testing"
+)
 
-// NewRecordBatch is used to construct a RecordBatch.
-func NewRecordBatch(chk *Chunk) *RecordBatch {
-	return &RecordBatch{chk}
+func TestBasicCtxTypeToString(t *testing.T) {
+	tests := []struct {
+		key fmt.Stringer
+		v   string
+	}{
+		{QueryString, "query_string"},
+		{Initing, "initing"},
+		{LastExecuteDDL, "last_execute_ddl"},
+		{basicCtxType(9), "unknown"},
+	}
+	for _, tt := range tests {
+		if tt.key.String() != tt.v {
+			t.Fatalf("want %s but got %s", tt.v, tt.key.String())
+		}
+	}
 }

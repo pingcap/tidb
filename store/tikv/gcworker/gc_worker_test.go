@@ -14,8 +14,11 @@
 package gcworker
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"math"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -23,12 +26,18 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
 func TestT(t *testing.T) {
@@ -41,6 +50,8 @@ type testGCWorkerSuite struct {
 	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
 	dom      *domain.Domain
+	client   *testGCWorkerClient
+	pdClient pd.Client
 }
 
 var _ = Suite(&testGCWorkerSuite{})
@@ -48,9 +59,19 @@ var _ = Suite(&testGCWorkerSuite{})
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
 
+	hijackClient := func(client tikv.Client) tikv.Client {
+		s.client = &testGCWorkerClient{
+			Client: client,
+		}
+		client = s.client
+		return client
+	}
+
 	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	store, err := mockstore.NewMockTikvStore(mockstore.WithCluster(s.cluster))
+	mocktikv.BootstrapWithMultiStores(s.cluster, 3)
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(s.cluster),
+		mockstore.WithHijackClient(hijackClient))
 
 	s.store = store.(tikv.Storage)
 	c.Assert(err, IsNil)
@@ -59,7 +80,8 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	gcWorker, err := NewGCWorker(s.store, mocktikv.NewPDClient(s.cluster))
+	s.pdClient = mocktikv.NewPDClient(s.cluster)
+	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	c.Assert(err, IsNil)
 	gcWorker.Start()
 	gcWorker.Close()
@@ -166,6 +188,40 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
 
+	// Check gc life time small than min.
+	s.oracle.AddOffset(time.Minute * 40)
+	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	lifeTime, err := s.gcWorker.loadDuration(gcLifeTimeKey)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, gcMinLifeTime)
+
+	// Check gc life time small than config.max-txn-use-time
+	s.oracle.AddOffset(time.Minute * 40)
+	config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse = 20*60 - 10 // 20min - 10s
+	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	lifeTime, err = s.gcWorker.loadDuration(gcLifeTimeKey)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, 20*time.Minute)
+
+	// check the tikv_gc_life_time more than config.max-txn-use-time situation.
+	s.oracle.AddOffset(time.Minute * 40)
+	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute*30)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	lifeTime, err = s.gcWorker.loadDuration(gcLifeTimeKey)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, 30*time.Minute)
+
 	// Change auto concurrency
 	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanFalse)
 	c.Assert(err, IsNil)
@@ -180,33 +236,29 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
-	var successRegions int32
-	var failedRegions int32
-	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
-
 	ctx := context.Background()
 	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
@@ -288,4 +340,215 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, true)
+}
+
+const (
+	failRPCErr  = 0
+	failNilResp = 1
+	failErrResp = 2
+)
+
+func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
+	// Put some delete range tasks.
+	_, err := s.gcWorker.session.Execute(context.Background(), `INSERT INTO mysql.gc_delete_range VALUES
+		("1", "2", "31", "32", "10"),
+		("3", "4", "33", "34", "10"),
+		("5", "6", "35", "36", "10")`)
+	c.Assert(err, IsNil)
+
+	ranges := []util.DelRangeTask{
+		{
+			JobID:     1,
+			ElementID: 2,
+			StartKey:  []byte("1"),
+			EndKey:    []byte("2"),
+		},
+		{
+			JobID:     3,
+			ElementID: 4,
+			StartKey:  []byte("3"),
+			EndKey:    []byte("4"),
+		},
+		{
+			JobID:     5,
+			ElementID: 6,
+			StartKey:  []byte("5"),
+			EndKey:    []byte("6"),
+		},
+	}
+
+	// Check the delete range tasks.
+	se := createSession(s.gcWorker.store)
+	preparedRanges, err := util.LoadDeleteRanges(se, 20)
+	se.Close()
+	c.Assert(err, IsNil)
+	c.Assert(preparedRanges, DeepEquals, ranges)
+
+	stores, err := s.gcWorker.getUpStores(context.Background())
+	c.Assert(err, IsNil)
+	c.Assert(len(stores), Equals, 3)
+
+	// Sort by address for checking.
+	sort.Slice(stores, func(i, j int) bool { return stores[i].Address < stores[j].Address })
+
+	sendReqCh := make(chan SentReq, 20)
+
+	// The request sent to the specified key and store wil fail.
+	var failKey []byte = nil
+	var failStore *metapb.Store = nil
+	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		sendReqCh <- SentReq{req, addr}
+		resp := &tikvrpc.Response{
+			Type:               tikvrpc.CmdUnsafeDestroyRange,
+			UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeResponse{},
+		}
+		if bytes.Equal(req.UnsafeDestroyRange.GetStartKey(), failKey) && addr == failStore.GetAddress() {
+			if failType == failRPCErr {
+				return nil, errors.New("error")
+			} else if failType == failNilResp {
+				resp.UnsafeDestroyRange = nil
+			} else if failType == failErrResp {
+				resp.UnsafeDestroyRange.Error = "error"
+			} else {
+				panic("unreachable")
+			}
+		}
+		return resp, nil
+	}
+	defer func() { s.client.unsafeDestroyRangeHandler = nil }()
+
+	// Make the logic in a closure to reduce duplicated code that tests deleteRanges and
+	test := func(redo bool) {
+		deleteRangeFunc := s.gcWorker.deleteRanges
+		loadRangesFunc := util.LoadDeleteRanges
+		if redo {
+			deleteRangeFunc = s.gcWorker.redoDeleteRanges
+			loadRangesFunc = util.LoadDoneDeleteRanges
+		}
+
+		// Make the first request fail.
+		failKey = ranges[0].StartKey
+		failStore = stores[0]
+
+		err = deleteRangeFunc(context.Background(), 20, 1)
+		c.Assert(err, IsNil)
+
+		s.checkDestroyRangeReq(c, sendReqCh, ranges, stores)
+
+		// The first delete range task should be still here since it didn't success.
+		se = createSession(s.gcWorker.store)
+		remainingRanges, err := loadRangesFunc(se, 20)
+		se.Close()
+		c.Assert(err, IsNil)
+		c.Assert(remainingRanges, DeepEquals, ranges[:1])
+
+		failKey = nil
+		failStore = nil
+
+		// Delete the remaining range again.
+		err = deleteRangeFunc(context.Background(), 20, 1)
+		c.Assert(err, IsNil)
+		s.checkDestroyRangeReq(c, sendReqCh, ranges[:1], stores)
+
+		se = createSession(s.gcWorker.store)
+		remainingRanges, err = loadRangesFunc(se, 20)
+		se.Close()
+		c.Assert(err, IsNil)
+		c.Assert(len(remainingRanges), Equals, 0)
+	}
+
+	test(false)
+	// Change the order because the first range is the last successfully deleted.
+	ranges = append(ranges[1:], ranges[0])
+	test(true)
+}
+
+func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
+	s.testDeleteRangesFailureImpl(c, failRPCErr)
+	s.testDeleteRangesFailureImpl(c, failNilResp)
+	s.testDeleteRangesFailureImpl(c, failErrResp)
+}
+
+type SentReq struct {
+	req  *tikvrpc.Request
+	addr string
+}
+
+// checkDestroyRangeReq checks whether given sentReq matches given ranges and stores.
+func (s *testGCWorkerSuite) checkDestroyRangeReq(c *C, sendReqCh chan SentReq, expectedRanges []util.DelRangeTask, expectedStores []*metapb.Store) {
+	sentReq := make([]SentReq, 0, len(expectedStores)*len(expectedStores))
+Loop:
+	for {
+		select {
+		case req := <-sendReqCh:
+			sentReq = append(sentReq, req)
+		default:
+			break Loop
+		}
+	}
+
+	sort.Slice(sentReq, func(i, j int) bool {
+		cmp := bytes.Compare(sentReq[i].req.UnsafeDestroyRange.StartKey, sentReq[j].req.UnsafeDestroyRange.StartKey)
+		return cmp < 0 || (cmp == 0 && sentReq[i].addr < sentReq[j].addr)
+	})
+
+	sortedRanges := append([]util.DelRangeTask{}, expectedRanges...)
+	sort.Slice(sortedRanges, func(i, j int) bool {
+		return bytes.Compare(sortedRanges[i].StartKey, sortedRanges[j].StartKey) < 0
+	})
+
+	for rangeIndex := range sortedRanges {
+		for storeIndex := range expectedStores {
+			i := rangeIndex*len(expectedStores) + storeIndex
+			c.Assert(sentReq[i].addr, Equals, expectedStores[storeIndex].Address)
+			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetStartKey(), DeepEquals, sortedRanges[rangeIndex].StartKey)
+			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetEndKey(), DeepEquals, sortedRanges[rangeIndex].EndKey)
+		}
+	}
+}
+
+type testGCWorkerClient struct {
+	tikv.Client
+	unsafeDestroyRangeHandler handler
+}
+
+type handler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
+
+func (c *testGCWorkerClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdUnsafeDestroyRange && c.unsafeDestroyRangeHandler != nil {
+		return c.unsafeDestroyRangeHandler(addr, req)
+	}
+
+	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
+	gcSafePointCacheInterval = 0
+	err := RunGCJob(context.Background(), s.store, 0, "mock", 1)
+	c.Assert(err, IsNil)
+	gcWorker, err := NewGCWorker(s.store, s.pdClient)
+	c.Assert(err, IsNil)
+	gcWorker.Start()
+	useDistributedGC, err := gcWorker.(*GCWorker).checkUseDistributedGC()
+	c.Assert(useDistributedGC, IsTrue)
+	c.Assert(err, IsNil)
+	safePoint := uint64(time.Now().Unix())
+	gcWorker.(*GCWorker).runGCJob(context.Background(), safePoint, 1)
+	getSafePoint, err := loadSafePoint(gcWorker.(*GCWorker).store.GetSafePointKV())
+	c.Assert(err, IsNil)
+	c.Assert(getSafePoint, Equals, safePoint)
+	gcWorker.Close()
+}
+
+func loadSafePoint(kv tikv.SafePointKV) (uint64, error) {
+	val, err := kv.Get(tikv.GcSavedSafePoint)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(val, 10, 64)
+}
+
+func (s *testGCWorkerSuite) TestRunDistGCJob(c *C) {
+	err := RunDistributedGCJob(context.Background(), s.store, s.pdClient, 0, "mock", 1)
+	c.Assert(err, IsNil)
 }

@@ -61,7 +61,7 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		desc:             us.desc,
 		conditions:       us.conditions,
 		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
-		retFieldTypes:    us.retTypes(),
+		retFieldTypes:    retTypes(us),
 		outputOffset:     outputOffset,
 		handleBytes:      make([]byte, 0, 16),
 		memIdxHandles:    make(map[int64]struct{}, len(us.dirty.addedRows)),
@@ -216,7 +216,7 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 		desc:          us.desc,
 		conditions:    us.conditions,
 		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),
-		retFieldTypes: us.retTypes(),
+		retFieldTypes: retTypes(us),
 		colIDs:        colIDs,
 		handleBytes:   make([]byte, 0, 16),
 	}
@@ -345,7 +345,7 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		kvRanges:         kvRanges,
 		desc:             idxLookUpReader.desc,
 		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
-		retFieldTypes:    us.retTypes(),
+		retFieldTypes:    retTypes(us),
 		outputOffset:     outputOffset,
 		handleBytes:      make([]byte, 0, 16),
 		memIdxHandles:    make(map[int64]struct{}, len(us.dirty.addedRows)),
@@ -359,7 +359,7 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		table:         idxLookUpReader.table,
 		desc:          idxLookUpReader.desc,
 		conditions:    us.conditions,
-		retFieldTypes: us.retTypes(),
+		retFieldTypes: retTypes(us),
 
 		idxReader: memIdxReader,
 	}

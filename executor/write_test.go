@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -1278,6 +1279,9 @@ func (s *testSuite) TestUpdate(c *C) {
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated", "Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
 
+	tk.MustExec("update ignore t set a = 42 where a = 2;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "42"))
+
 	// test update ignore for unique key
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a bigint, unique key I_uniq (a));")
@@ -2352,7 +2356,7 @@ func (s *testSuite4) TestReplaceLog(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1, table.WithAssertion(txn))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -2438,4 +2442,56 @@ func (s *testSuite4) TestAutoIDInRetry(c *C) {
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func (s *testSuite4) TestIssue11059(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (pk int primary key, uk int unique, v int)")
+	tk.MustExec("insert into t values (2, 11, 215)")
+	tk.MustExec("insert into t values (3, 7, 2111)")
+	_, err := tk.Exec("update t set pk = 2 where uk = 7")
+	c.Assert(err, NotNil)
+}
+
+func (s *testSuite4) TestSetWithRefGenCol(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (i int, j int as (i+1) not null);`)
+	tk.MustExec(`insert into t set i = j + 1;`)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustExec(`insert into t set i = j + 100;`)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "100 101"))
+
+	tk.MustExec(`create table te (i int)`)
+	tk.MustExec(`insert into te set i = i + 10;`)
+	tk.MustQuery("select * from te").Check(testkit.Rows("<nil>"))
+	tk.MustExec(`insert into te set i = i;`)
+	tk.MustQuery("select * from te").Check(testkit.Rows("<nil>", "<nil>"))
+
+	tk.MustExec(`create table tn (i int not null)`)
+	tk.MustExec(`insert into tn set i = i;`)
+	tk.MustQuery("select * from tn").Check(testkit.Rows("0"))
+	tk.MustExec(`insert into tn set i = i + 10;`)
+	tk.MustQuery("select * from tn").Check(testkit.Rows("0", "10"))
+
+	//
+	tk.MustExec(`create table t1 (j int(11) GENERATED ALWAYS AS (i + 1) stored, i int(11) DEFAULT '10');`)
+	tk.MustExec(`insert into t1 values()`)
+	tk.MustQuery("select * from t1").Check(testkit.Rows("11 10"))
+	tk.MustExec(`insert into t1 values()`)
+	tk.MustQuery("select * from t1").Check(testkit.Rows("11 10", "11 10"))
+
+	tk.MustExec(`create table t2 (j int(11) GENERATED ALWAYS AS (i + 1) stored not null, i int(11) DEFAULT '5');`)
+	tk.MustExec(`insert into t2 set i = j + 9`)
+	tk.MustQuery("select * from t2").Check(testkit.Rows("10 9"))
+	_, err := tk.Exec(`insert into t2 set j = i + 1`)
+	c.Assert(err, NotNil)
+	tk.MustExec(`insert into t2 set i = j + 100`)
+	tk.MustQuery("select * from t2").Check(testkit.Rows("10 9", "101 100"))
+
+	tk.MustExec(`create table t3(j int(11) GENERATED ALWAYS AS (i + 1) stored, i int(11) DEFAULT '5');`)
+	tk.MustExec(`insert into t3 set i = j + 100`)
+	tk.MustQuery("select * from t3").Check(testkit.Rows("<nil> <nil>"))
+	_, err = tk.Exec(`insert into t3 set j = i + 1`)
+	c.Assert(err, NotNil)
 }
