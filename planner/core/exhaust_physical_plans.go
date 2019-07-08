@@ -908,7 +908,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 }
 
 func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, idxInfo *model.IndexInfo, accesses,
-remained []expression.Expression, lastColManager *ColWithCmpFuncManager) {
+	remained []expression.Expression, lastColManager *ColWithCmpFuncManager) {
 	// We choose the index by the number of used columns of the range, the much the better.
 	// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
 	// But obviously when the range is nil, we don't need index join.
