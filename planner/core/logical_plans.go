@@ -355,7 +355,6 @@ type DataSource struct {
 	handleCol *expression.Column
 
 	// fields for virtual generated columns
-	hasVirtualCol    bool
 	virtualColSchema *expression.Schema
 	virtualColExprs  []expression.Expression
 }

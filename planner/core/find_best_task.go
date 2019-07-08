@@ -863,7 +863,7 @@ func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *a
 		return
 	}
 	ts := copTask.tablePlan.(*PhysicalTableScan)
-	if !ds.hasVirtualCol {
+	if len(ds.virtualColExprs) > 0 {
 		ds.addPushedDownTableScan(copTask, ts, stats)
 		return
 	}
