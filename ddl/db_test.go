@@ -81,14 +81,6 @@ type testDBSuite struct {
 	autoIDStep int64
 }
 
-var tableLockEnabled uint32 = 0
-
-func init() {
-	config.TableLockEnabled = func() bool {
-		return atomic.LoadUint32(&tableLockEnabled) > 0
-	}
-}
-
 func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
@@ -99,7 +91,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 	s.autoIDStep = autoid.GetStep()
 	ddl.WaitTimeWhenErrorOccured = 0
 	// Test for table lock.
-	atomic.StoreUint32(&tableLockEnabled, 1)
+	config.GetGlobalConfig().EnableTableLock = true
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
