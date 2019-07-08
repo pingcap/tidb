@@ -51,23 +51,23 @@ func TestCopTasksDetails(t *testing.T) {
 
 func TestStatementContextToFLags(t *testing.T) {
 	testCases := []struct {
-		in  StatementContext
+		in  *StatementContext
 		out uint64
 	}{
-		{StatementContext{InInsertStmt: true}, 8},
-		{StatementContext{InUpdateStmt: true}, 16},
-		{StatementContext{InDeleteStmt: true}, 16},
-		{StatementContext{InSelectStmt: true}, 32},
-		{StatementContext{IgnoreTruncate: true}, 1},
-		{StatementContext{TruncateAsWarning: true}, 2},
-		{StatementContext{OverflowAsWarning: true}, 64},
-		{StatementContext{IgnoreZeroInDate: true}, 128},
-		{StatementContext{DividedByZeroAsWarning: true}, 256},
-		{StatementContext{PadCharToFullLength: true}, 4},
-		{StatementContext{InLoadDataStmt: true}, 1024},
-		{StatementContext{InSelectStmt: true, TruncateAsWarning: true}, 34},
-		{StatementContext{DividedByZeroAsWarning: true, IgnoreTruncate: true}, 257},
-		{StatementContext{InUpdateStmt: true, IgnoreZeroInDate: true, InLoadDataStmt: true}, 1168},
+		{&StatementContext{InInsertStmt: true}, 8},
+		{&StatementContext{InUpdateStmt: true}, 16},
+		{&StatementContext{InDeleteStmt: true}, 16},
+		{&StatementContext{InSelectStmt: true}, 32},
+		{&StatementContext{IgnoreTruncate: true}, 1},
+		{&StatementContext{TruncateAsWarning: true}, 2},
+		{&StatementContext{OverflowAsWarning: true}, 64},
+		{&StatementContext{IgnoreZeroInDate: true}, 128},
+		{&StatementContext{DividedByZeroAsWarning: true}, 256},
+		{&StatementContext{PadCharToFullLength: true}, 4},
+		{&StatementContext{InLoadDataStmt: true}, 1024},
+		{&StatementContext{InSelectStmt: true, TruncateAsWarning: true}, 34},
+		{&StatementContext{DividedByZeroAsWarning: true, IgnoreTruncate: true}, 257},
+		{&StatementContext{InUpdateStmt: true, IgnoreZeroInDate: true, InLoadDataStmt: true}, 1168},
 	}
 	for _, tt := range testCases {
 		got := tt.in.ToSelectRequestFlags()
