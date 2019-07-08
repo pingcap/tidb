@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -240,6 +241,42 @@ func (s *testTableSuite) TestCharacterSetCollations(c *C) {
 	tk.MustExec("DROP DATABASE charset_collate_test")
 }
 
+func (s *testTableSuite) TestCurrentTimestampAsDefault(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("DROP DATABASE IF EXISTS default_time_test")
+	tk.MustExec("CREATE DATABASE default_time_test; USE default_time_test")
+
+	tk.MustExec(`CREATE TABLE default_time_table(
+					c_datetime datetime,
+					c_datetime_default datetime default current_timestamp,
+					c_datetime_default_2 datetime(2) default current_timestamp(2),
+					c_timestamp timestamp,
+					c_timestamp_default timestamp default current_timestamp,
+					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
+					c_varchar_default varchar(20) default "current_timestamp",
+					c_varchar_default_3 varchar(20) default "current_timestamp(3)",
+					c_varchar_default_with_case varchar(20) default "cUrrent_tImestamp"
+				);`)
+
+	tk.MustQuery(`SELECT column_name, column_default
+					FROM information_schema.COLUMNS
+					WHERE table_schema = "default_time_test" AND table_name = "default_time_table"
+					ORDER BY column_name`,
+	).Check(testkit.Rows(
+		"c_datetime <nil>",
+		"c_datetime_default CURRENT_TIMESTAMP",
+		"c_datetime_default_2 CURRENT_TIMESTAMP(2)",
+		"c_timestamp <nil>",
+		"c_timestamp_default CURRENT_TIMESTAMP",
+		"c_timestamp_default_3 CURRENT_TIMESTAMP(3)",
+		"c_varchar_default current_timestamp",
+		"c_varchar_default_3 current_timestamp(3)",
+		"c_varchar_default_with_case cUrrent_tImestamp",
+	))
+	tk.MustExec("DROP DATABASE default_time_test")
+}
+
 type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
 }
@@ -288,6 +325,52 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows("1 user-1 localhost information_schema Quit 9223372036 1 do something",
 			"2 user-2 localhost test Init DB 9223372036 2 do something"))
+
+	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
+		ID:      1,
+		User:    "user-1",
+		Host:    "localhost",
+		DB:      "information_schema",
+		Command: byte(1),
+		State:   1,
+		Info:    nil,
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
+	sm.processInfoMap[2] = &util.ProcessInfo{
+		ID:      2,
+		User:    "user-2",
+		Host:    "localhost",
+		DB:      nil,
+		Command: byte(2),
+		State:   2,
+		Info:    strings.Repeat("x", 101),
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
+	tk.Se.SetSessionManager(sm)
+	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 100)),
+		))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
+		testkit.Rows(
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
+		))
 }
 
 func (s *testTableSuite) TestSchemataCharacterSet(c *C) {

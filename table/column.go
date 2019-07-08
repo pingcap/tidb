@@ -19,6 +19,7 @@ package table
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -256,6 +257,13 @@ func NewColDesc(col *Column) *ColDesc {
 	var defaultValue interface{}
 	if !mysql.HasNoDefaultValueFlag(col.Flag) {
 		defaultValue = col.GetDefaultValue()
+		if defaultValStr, ok := defaultValue.(string); ok {
+			if (col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) &&
+				strings.ToUpper(defaultValStr) == strings.ToUpper(ast.CurrentTimestamp) &&
+				col.Decimal > 0 {
+				defaultValue = fmt.Sprintf("%s(%d)", defaultValStr, col.Decimal)
+			}
+		}
 	}
 
 	extra := ""

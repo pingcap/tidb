@@ -60,7 +60,7 @@ func (eqh *Handle) Run() {
 			}
 			processInfo := eqh.sm.ShowProcessList()
 			for _, info := range processInfo {
-				if len(info.Info) == 0 || info.ExceedExpensiveTimeThresh {
+				if info.Info == nil || info.ExceedExpensiveTimeThresh {
 					continue
 				}
 				if costTime := time.Since(info.Time); costTime >= curInterval {
@@ -126,8 +126,8 @@ func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
 	if len(info.User) > 0 {
 		logFields = append(logFields, zap.String("user", info.User))
 	}
-	if len(info.DB) > 0 {
-		logFields = append(logFields, zap.String("database", info.DB))
+	if info.DB != nil && len(info.DB.(string)) > 0 {
+		logFields = append(logFields, zap.String("database", info.DB.(string)))
 	}
 	var tableIDs, indexIDs string
 	if len(info.StmtCtx.TableIDs) > 0 {
@@ -144,7 +144,10 @@ func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
 	}
 
 	const logSQLLen = 1024 * 8
-	sql := info.Info
+	var sql string
+	if info.Info != nil {
+		sql = info.Info.(string)
+	}
 	if len(sql) > logSQLLen {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}

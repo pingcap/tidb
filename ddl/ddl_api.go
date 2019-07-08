@@ -2262,8 +2262,10 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
 		return ErrUnknownCharacterSet.GenWithStack("Unknown character set: '%s', collation: '%s'", toCharset, toCollate)
 	}
-	if toCharset == charset.CharsetUTF8MB4 && origCharset == charset.CharsetUTF8 {
-		// TiDB only allow utf8 to be changed to utf8mb4.
+	if (origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
+		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) {
+		// TiDB only allow utf8 to be changed to utf8mb4, or changing the collation when the charset is utf8/utf8mb4.
 		return nil
 	}
 
@@ -2551,7 +2553,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(t.Cols(), col, newCol); err != nil {
+	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -2602,20 +2604,6 @@ func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	}
 	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
 		return ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
-	}
-
-	// If the modified column is generated, check whether it refers to any auto-increment columns.
-	for _, option := range specNewColumn.Options {
-		if option.Tp == ast.ColumnOptionGenerated {
-			_, t, err := d.getSchemaAndTableByIdent(ctx, ident)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			_, dependColNames := findDependedColumnNames(specNewColumn)
-			if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
-				return errors.Trace(err)
-			}
-		}
 	}
 
 	originalColName := specNewColumn.Name.Name

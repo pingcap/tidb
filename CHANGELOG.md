@@ -1,6 +1,148 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [3.0.0] 2019-06-28
+## New Features
+* Support Window Functions; compatible with all window functions in MySQL 8.0, including `NTILE`, `LEAD`, `LAG`, `PERCENT_RANK`, `NTH_VALUE`, `CUME_DIST`, `FIRST_VALUE` , `LAST_VALUE`, `RANK`, `DENSE_RANK`, and `ROW_NUMBER`
+* Support Views (Experimental)
+* Improve Table Partition
+    - Support Range Partition
+    - Support Hash Partition
+* Add the plug-in framework, supporting plugins such as IP Whitelist (Enterprise feature) and Audit Log (Enterprise feature).
+* Support the SQL Plan Management function to create SQL execution plan binding to ensure query stability (Experimental)
+
+## SQL Optimizer
+* Optimize the `NOT EXISTS` subquery and convert it to `Anti Semi Join` to improve performance
+* Optimize the constant propagation on the `Outer Join`, and add the optimization rule of `Outer Join` elimination to reduce non-effective computations and improve performance
+* Optimize the `IN` subquery to execute `Inner Join` after aggregation to improve performance
+* Optimize `Index Join` to adapt to more scenarios
+* Improve the Partition Pruning optimization rule of Range Partition 
+* Optimize the query logic for `_tidb_rowid`to avoid full table scan and improve performance
+* Match more prefix columns of the indexes when extracting access conditions of composite indexes if there are relevant columns in the filter to improve performance
+* Improve the accuracy of cost estimates by using order correlation between columns
+* Optimize `Join Reorder` based on the Greedy algorithm and the dynamic planning algorithm to improve accuracy for index selection using `Join` 
+* Support Skyline Pruning, with some rules to prevent the execution plan from relying too heavily on statistics to improve query stability
+* Improve the accuracy of row count estimation for single-column indexes with NULL values 
+* Support `FAST ANALYZE` that randomly samples in each Region to avoid full table scan and improve performance with statistics collection 
+* Support the incremental Analyze operation on monotonically increasing index columns to improve performance with statistics collection 
+* Support using subqueries in the `DO` statement
+* Support using `Index Join` in transactions
+* Optimize `prepare`/`execute` to support DDL statements with no parameters
+* Modify the system behaviour to auto load statistics when the `stats-lease` variable value is 0
+* Support exporting historical statistics  
+* Support the `dump`/`load` correlation of histograms  
+
+## SQL Execution Engine
+* Optimize log output: `EXECUTE` outputs user variables and `COMMIT` outputs slow query logs to facilitate troubleshooting
+* Support the `EXPLAIN ANALYZE` function to improve SQL tuning usability
+* Support the `admin show next_row_id` command to get the ID of the next row
+* Add six built-in functions: `JSON_QUOTE`, `JSON_ARRAY_APPEND`, `JSON_MERGE_PRESERVE`, `BENCHMARK` ,`COALESCE`, and `NAME_CONST`
+* Optimize control logics on the chunk size to dynamically adjust based on the query context, to reduce the SQL execution time and resource consumption 
+*  Support tracking and controlling memory usage in three operators - `TableReader`, `IndexReader` and `IndexLookupReader` 
+* Optimize the Merge Join operator to support an empty `ON` condition 
+* Optimize write performance for single tables that contains too many columns 
+* Improve the performance of `admin show ddl jobs` by supporting scanning data in reverse order
+* Add the `split table region` statement to manually split the table Region to alleviate the hotspot issue
+* Add the `split index region` statement to manually split the index Region to alleviate the hotspot issue 
+* Add a blacklist to prohibit pushing down expressions to Coprocessor
+* Optimize the `Expensive Query` log to print the SQL query in the log when it exceeds the configured limit of execution time or memory
+
+## DDL
+* Support migrating from character set `utf8` to `utf8mb4`
+* Change the default character set from`utf8` to `utf8mb4` 
+* Add the `alter schema` statement to modify the character set and the collation of the database 
+* Support ALTER algorithm `INPLACE`/`INSTANT`
+* Support `SHOW CREATE VIEW`
+* Support `SHOW CREATE USER` 
+* Support fast recovery of mistakenly deleted tables
+* Support adjusting the number of concurrencies of ADD INDEX dynamically  
+* Add the `pre_split_regions` option that pre-allocates Regions when creating the table using the `CREATE TABLE` statement, to relieve write hot Regions caused by lots of writes after the table creation 
+* Support splitting Regions by the index and range of the table specified using SQL statements to relieve hotspot issues 
+* Add the `ddl_error_count_limit` global variable to limit the number of DDL task retries 
+* Add a feature to use `SHARD_ROW_ID_BITS` to scatter row IDs when the column contains an AUTO_INCREMENT attribute to relieve the hotspot issue
+* Optimize the lifetime of invalid DDL metadata to speed up recovering the normal execution of DDL operations after upgrading the TiDB cluster 
+
+## Transactions
+* Support the pessimistic transaction model (Experimental)  
+* Optimize transaction processing logics to adapt to more scenarios: 
+    - Change the default value `tidb_disable_txn_auto_retry` to `on`, which means non-auto committed transactions will not be retried   
+    - Add the `tidb_batch_commit` system variable to split a transaction into multiple ones to be executed concurrently  
+    - Add the `tidb_low_resolution_tso` system variable to control the number of TSOs to obtain in batches and reduce the number of times that transactions request for TSOs,  to improve performance in scenarios with relatively low requirement of consistency 
+    - Add the `tidb_skip_isolation_level_check` variable to control whether to report errors when the isolation level is set to SERIALIZABLE 
+    - Modify the `tidb_disable_txn_auto_retry` system variable to make it work on all retryable errors  
+
+## Permission Management
+* Perform permission check on the `ANALYZE`, `USE`, `SET GLOBAL`, and  `SHOW PROCESSLIST` statements
+* Support Role Based Access Control (RBAC) (Experimental)
+
+## Server
+* Optimize slow query logs
+    - Restructure the log format
+    - Optimize the log content 
+    - Optimize the log query method to support using the `INFORMATION_SCHEMA.SLOW_QUERY` and `ADMIN SHOW SLOW` statements of the memory table to query slow query logs
+* Develop a unified log format specification with restructured log system to facilitate collection and analysis by tools  
+* Support using SQL statements to manage Binlog services, including querying status, enabling Binlog, maintaining and sending Binlog strategies.   
+* Support using `unix_socket` to connect to the database
+* Support `Trace` for SQL statements
+* Support getting information for a TiDB instance via the `/debug/zip` HTTP interface to facilitate troubleshooting.
+* Optimize monitoring items to facilitate troubleshooting: 
+    - Add the `high_error_rate_feedback_total` monitoring item to monitor the difference between the actual data volume and the estimated data volume based on statistics 
+    - Add a QPS monitoring item in the database dimension
+* Optimize the system initialization process to only allow the DDL owner to perform the initialization. This reduces the startup time for initialization or upgrading. 
+* Optimize the execution logic of `kill query` to improve performance and ensure resource is release properly 
+* Add a startup option `config-check` to check the validity of the configuration file
+* Add the `tidb_back_off_weight` system variable to control the backoff time of internal error retries
+* Add the `wait_timeout`and `interactive_timeout` system variables to control the maximum idle connections allowed
+* Add the connection pool for TiKV to shorten the connection establishing time
+
+## Compatibility
+* Support the `ALLOW_INVALID_DATES` SQL mode
+* Support the MySQL 320 Handshake protocol
+* Support manifesting unsigned BIGINT columns as auto-increment columns  
+* Support the `SHOW CREATE DATABASE IF NOT EXISTS` syntax
+* Optimize the fault tolerance of `load data` for CSV files
+* Abandon the predicate pushdown operation when the filtering condition contains a user variable to improve the compatibility with MySQL’s behavior of using user variables to simulate Window Functions 
+
+
+## [3.0.0-rc.3] 2019-06-21
+## SQL Optimizer
+* Remove the feature of collecting virtual generated column statistics[#10629](https://github.com/pingcap/tidb/pull/10629)
+* Fix the issue that the primary key constant overflows during point queries [#10699](https://github.com/pingcap/tidb/pull/10699)
+* Fix the issue that using uninitialized information in `fast analyze` causes panic [#10691](https://github.com/pingcap/tidb/pull/10691)
+* Fix the issue that executing the `create view` statement using `prepare` causes panic because of wrong column information [#10713](https://github.com/pingcap/tidb/pull/10713)
+* Fix the issue that the column information is not cloned when handling window functions [#10720](https://github.com/pingcap/tidb/pull/10720)
+* Fix the wrong estimation for the selectivity rate of the inner table selection in index join [#10854](https://github.com/pingcap/tidb/pull/10854)
+* Support automatic loading statistics when the `stats-lease` variable value is 0 [#10811](https://github.com/pingcap/tidb/pull/10811)
+
+## Execution Engine
+* Fix the issue that resources are not correctly released when calling the `Close` function in `StreamAggExec` [#10636](https://github.com/pingcap/tidb/pull/10636)
+* Fix the issue that the order of `table_option` and `partition_options` is incorrect in the result of executing the `show create table` statement for partitioned tables [#10689](https://github.com/pingcap/tidb/pull/10689)
+* Improve the performance of `admin show ddl jobs` by supporting scanning data in reverse order [#10687](https://github.com/pingcap/tidb/pull/10687)
+* Fix the issue that the result of the `show grants` statement in RBAC is incompatible with that of MySQL when this statement has the `current_user` field [#10684](https://github.com/pingcap/tidb/pull/10684)
+* Fix the issue that UUIDs might generate duplicate values ​​on multiple nodes [#10712](https://github.com/pingcap/tidb/pull/10712)
+* Fix the issue that the `show view` privilege is not considered in `explain` [#10635](https://github.com/pingcap/tidb/pull/10635) 
+* Add the `split table region` statement to manually split the table Region to alleviate the hotspot issue [#10765](https://github.com/pingcap/tidb/pull/10765) 
+* Add the `split index region` statement to manually split the index Region to alleviate the hotspot issue [#10764](https://github.com/pingcap/tidb/pull/10764) 
+* Fix the incorrect execution issue when you execute multiple statements such as `create user`, `grant`, or `revoke` consecutively [#10737] (https://github.com/pingcap/tidb/pull/10737) 
+* Add a blacklist to prohibit pushing down expressions to Coprocessor [#10791](https://github.com/pingcap/tidb/pull/10791) 
+* Add the feature of printing the `expensive query` log when a query exceeds the memory configuration limit [#10849](https://github.com/pingcap/tidb/pull/10849) 
+* Add the `bind-info-lease` configuration item to control the update time of the modified binding execution plan [#10727](https://github.com/pingcap/tidb/pull/10727) 
+* Fix the OOM issue in high concurrent scenarios caused by the failure to quickly release Coprocessor resources, resulted from the `execdetails.ExecDetails` pointer [#10832] (https://github.com/pingcap/tidb/pull/10832) 
+* Fix the panic issue caused by the `kill` statement in some cases [#10876](https://github.com/pingcap/tidb/pull/10876) 
+## Server
+* Fix the issue that goroutine might leak when repairing GC [#10683](https://github.com/pingcap/tidb/pull/10683) 
+* Support displaying the `host` information in slow queries [#10693](https://github.com/pingcap/tidb/pull/10693) 
+* Support reusing idle links that interact with TiKV [#10632](https://github.com/pingcap/tidb/pull/10632) 
+* Fix the support for enabling the `skip-grant-table` option in RBAC [#10738](https://github.com/pingcap/tidb/pull/10738) 
+* Fix the issue that `pessimistic-txn` configuration goes invalid [#10825](https://github.com/pingcap/tidb/pull/10825) 
+* Fix the issue that the actively cancelled ticlient requests are still retried [#10850](https://github.com/pingcap/tidb/pull/10850) 
+* Improve performance in the case where pessimistic transactions conflict with optimistic transactions [#10881](https://github.com/pingcap/tidb/pull/10881) 
+## DDL
+* Fix the issue that modifying charset using `alter table` causes the `blob` type change [#10698](https://github.com/pingcap/tidb/pull/10698) 
+* Add a feature to use `SHARD_ROW_ID_BITS` to scatter row IDs when the column contains an `AUTO_INCREMENT` attribute to alleviate the hotspot issue [#10794](https://github.com/pingcap/tidb/pull/10794) 
+* Prohibit adding stored generated columns by using the `alter table` statement [#10808](https://github.com/pingcap/tidb/pull/10808) 
+* Optimize the invalid survival time of DDL metadata to shorten the period during which the DDL operation is slower after cluster upgrade [#10795](https://github.com/pingcap/tidb/pull/10795) 
+
 ## [3.0.0-rc.2] 2019-05-28
 ### SQL Optimizer
 * Support Index Join in more scenarios

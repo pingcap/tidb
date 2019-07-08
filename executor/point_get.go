@@ -43,7 +43,9 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		idxVals:      p.IndexValues,
 		handle:       p.Handle,
 		startTS:      startTS,
+		lock:         p.Lock,
 	}
+	b.isSelectForUpdate = p.IsForUpdate
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
 	return e
@@ -60,6 +62,7 @@ type PointGetExecutor struct {
 	startTS  uint64
 	snapshot kv.Snapshot
 	done     bool
+	lock     bool
 }
 
 // Open implements the Executor interface.
@@ -79,8 +82,12 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
+	snapshotTS := e.startTS
+	if e.lock {
+		snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	}
 	var err error
-	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
+	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
 	if err != nil {
 		return err
 	}
@@ -95,7 +102,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err1
 		}
 		if len(handleVal) == 0 {
-			return nil
+			return e.lockKeyIfNeeded(ctx, idxKey)
 		}
 		e.handle, err1 = tables.DecodeHandle(handleVal)
 		if err1 != nil {
@@ -122,6 +129,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
 	}
+	err = e.lockKeyIfNeeded(ctx, key)
+	if err != nil {
+		return err
+	}
 	if len(val) == 0 {
 		if e.idxInfo != nil {
 			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
@@ -130,6 +141,17 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	return e.decodeRowValToChunk(val, req)
+}
+
+func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
+	if e.lock {
+		txn, err := e.ctx.Txn(true)
+		if err != nil {
+			return err
+		}
+		return txn.LockKeys(ctx, e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS(), kv.Key(key))
+	}
+	return nil
 }
 
 func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
