@@ -274,14 +274,13 @@ func (iw *innerHashWorker) handleTask(ctx context.Context, task *lookUpJoinTask,
 	if !ok {
 		return errors.New("join2Chunk failed")
 	}
-	isNull := false
 	it := task.lookupMap.NewIterator()
 	for key, rowPtr := it.Next(); key != nil; key, rowPtr = it.Next() {
 		iw.matchPtrBytes = task.matchKeyMap.Get(key, iw.matchPtrBytes[:0])
 		if len(iw.matchPtrBytes) == 0 {
 			ptr := *(*uint32)(unsafe.Pointer(&rowPtr[0]))
 			misMatchedRow := task.outerResult.GetRow(int(ptr))
-			isNull, _ = task.nullMap[string(key)]
+			isNull, _ := task.nullMap[string(key)]
 			iw.joiner.onMissMatch(isNull, misMatchedRow, joinResult.chk)
 		}
 		if joinResult.chk.NumRows() == iw.maxChunkSize {
@@ -337,6 +336,7 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *loo
 	innerIter := chunk.NewIterator4Slice([]chunk.Row{innerRow})
 	hasMatch := false
 	hasNull := false
+	var ok bool
 	for i := 0; i < len(matchedOuters); i++ {
 		innerIter.Begin()
 		matched, isNull, err := iw.joiner.tryToMatch(matchedOuters[i], innerIter, joinResult.chk)
@@ -347,7 +347,6 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *loo
 		hasMatch = hasMatch || matched
 		hasNull = hasNull || isNull
 		if joinResult.chk.NumRows() == iw.maxChunkSize {
-			ok := true
 			iw.joinResultCh <- joinResult
 			ok, joinResult = iw.getNewJoinResult()
 			if !ok {
