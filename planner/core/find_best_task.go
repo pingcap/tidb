@@ -884,7 +884,7 @@ func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *a
 	if !ok {
 		return invalidTask, errors.Trace(fmt.Errorf("type assertion fail, expect PhysicalTableScan, but got %v", reflect.TypeOf(copTask.tablePlan)))
 	}
-	if len(ds.virtualColExprs) > 0 {
+	if len(ds.virtualColExprs) == 0 {
 		ds.addPushedDownTableScan(copTask, ts, stats)
 		return
 	}
