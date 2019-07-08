@@ -3065,7 +3065,7 @@ func (s *testSuite) TestContainDotColumn(c *C) {
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongTableName))
 }
 
-func (s *testSuite) TestCheckIndexx(c *C) {
+func (s *testSuite) TestCheckIndex(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
 	se, err := session.CreateSession4Test(s.store)

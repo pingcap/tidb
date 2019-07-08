@@ -420,7 +420,8 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
 	// idxInfo := findIndexByName("c3", tblInfo.Indices)
-	idxInfo := findIndexByName("c2", tblInfo.Indices)
+	// idxInfo := findIndexByName("c2", tblInfo.Indices)
+	idxInfo := tblInfo.Indices[1]
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	sc := s.ctx.GetSessionVars().StmtCtx
 	tk.Se.GetSessionVars().IndexLookupSize = 3
@@ -431,7 +432,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	// Index c2 is missing 11.
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(11), 1)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(11), 1, nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -465,9 +466,9 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	// Two indices have the same handle.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	// err = indexOpr.Delete(sc, txn, types.MakeDatums(13), 2)
+	// err = indexOpr.Delete(sc, txn, types.MakeDatums(13), 2, nil)
 	// c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(12), 2)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(12), 2, nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -481,7 +482,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(12), 2)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(11), 1)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(11), 1, nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -492,7 +493,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	// Recover records.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(21), 1)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(21), 1, nil)
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(11), 1)
 	c.Assert(err, IsNil)

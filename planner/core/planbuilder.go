@@ -570,8 +570,7 @@ func (b *PlanBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 
 	// TODO: Handle generated column.
 	genExprs := make(map[model.TableColumnID]expression.Expression)
-	reader := b.buildPhysicalIndexLookUpReader(dbName, tbl, idx, 1, genExprs)
-	return reader, nil
+	return b.buildPhysicalIndexLookUpReader(dbName, tbl, idx, 1, genExprs)
 	//	id := 1
 	//	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
 	//	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
@@ -690,6 +689,8 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 func getGenColumns(expr expression.Expression) []*expression.Column {
 	col, ok := expr.(*expression.Column)
 	if ok {
+		// return []*expression.Column{col.Clone().(*expression.Column)}
+		log.Infof("get gen col %#v", col)
 		return []*expression.Column{col}
 	}
 
@@ -701,7 +702,6 @@ func getGenColumns(expr expression.Expression) []*expression.Column {
 	for _, arg := range scalaFunc.GetArgs() {
 		retCols := getGenColumns(arg)
 		if retCols != nil {
-			log.Infof("get gen col %#v", col)
 			cols = append(cols, retCols...)
 		}
 	}
@@ -709,15 +709,42 @@ func getGenColumns(expr expression.Expression) []*expression.Column {
 }
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, id int,
-	genExprs map[model.TableColumnID]expression.Expression) Plan {
+	genExprs map[model.TableColumnID]expression.Expression) (Plan, error) {
 	tblInfo := tbl.Meta()
 	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
 	tblColumns := make([]*model.ColumnInfo, 0, len(tbl.Cols()))
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
+
+	exprs := make(map[model.TableColumnID]expression.Expression)
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
+	mockTablePlan.SetSchema(expression.TableInfo2SchemaWithDBName(b.ctx, dbName, tblInfo))
+	for _, column := range idx.Columns {
+		col := table.FindCol(tbl.Cols(), column.Name.L)
+		if !col.IsGenerated() {
+			continue
+		}
+		log.Infof("222 gen col %v", col)
+		columnName := &ast.ColumnName{Name: column.Name}
+		columnName.SetText(column.Name.O)
+
+		colExpr, _, err := mockTablePlan.findColumn(columnName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		expr, _, err := b.rewrite(col.GeneratedExpr, mockTablePlan, nil, true)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
+		genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ColumnInfo.ID}
+		exprs[genColumnID] = expr
+	}
+
 	str := ""
 	str2 := ""
 	var genCols []*expression.Column
 	colsMap := make(map[int64]struct{})
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
 	for _, idxCol := range idx.Columns {
 		for _, col := range tblInfo.Columns {
 			if idxCol.Name.L == col.Name.L {
@@ -733,7 +760,8 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 				str2 += fmt.Sprintf("col %v, field tp %v ", col.Name, col.FieldType)
 			}
 			genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}
-			if expr, ok := genExprs[genColumnID]; ok {
+			//			if expr, ok := genExprs[genColumnID]; ok {
+			if expr, ok := exprs[genColumnID]; ok {
 				cols := getGenColumns(expr)
 				if cols != nil {
 					genCols = append(genCols, cols...)
@@ -747,7 +775,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 		if _, ok := colsMap[col.ID]; !ok {
 			c := table.FindCol(tbl.Cols(), col.ColName.O)
 			if c != nil {
-				log.Infof("222 gen col %v, field tp %v; ", col.ColName, col.RetType)
 				col.Index = len(tblColumns)
 				tblColumns = append(tblColumns, c.ColumnInfo)
 				tblSchema.Append(&expression.Column{
@@ -755,7 +782,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 					RetType:  &c.FieldType,
 				})
-				str2 += fmt.Sprintf("col %v, field tp %v; ", c.Name, c.FieldType)
+				str2 += fmt.Sprintf("no.%d, col %v, field tp %v; ", col.Index, c.Name, c.FieldType)
 				colsMap[c.ID] = struct{}{}
 			}
 		}
@@ -771,7 +798,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 	}
 	str2 += fmt.Sprintf("col %v", tblColumns[len(tblColumns)-1].Name)
 	tblSchema.Append(handleCol)
-	log.Warnf("table %v, idx:%v, columns %#v, tbl columns %#v, len %v", tblInfo.Name, idx.Name, str, str2, len(tblColumns))
+	log.Warnf("*********************************   table %v, idx %v, columns %#v, tbl columns %#v, len %v, exprs %d", tblInfo.Name, idx.Name, str, str2, len(tblColumns), len(exprs))
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
 		TableAsName:      &tblInfo.Name,
@@ -781,6 +808,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 		dataSourceSchema: schema,
 		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
+		GenExprs:         exprs,
 	}.Init(b.ctx)
 	is.stats = property.NewSimpleStats(0)
 	cop := &copTask{indexPlan: is}
@@ -793,7 +821,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 	is.initSchema(id, idx, true)
 	t := finishCopTask(b.ctx, cop)
 	rootT := t.(*rootTask)
-	return rootT.p
+	return rootT.p, nil
 }
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(dbName model.CIStr, tbl table.Table,
@@ -808,8 +836,14 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(dbName model.CIStr, tbl ta
 			log.Warnf("index %s state %s isn't public in table %s", idxInfo.Name, idxInfo.State, tblInfo.Name)
 		} else {
 			indices = append(indices, idx)
-			reader := b.buildPhysicalIndexLookUpReader(dbName, tbl, idxInfo, i, genExprs)
+			reader, err := b.buildPhysicalIndexLookUpReader(dbName, tbl, idxInfo, i, genExprs)
+			if err != nil {
+				return nil, nil, err
+			}
 			indexLookUpReaders = append(indexLookUpReaders, reader)
+			for i, expr := range genExprs {
+				log.Infof("******** no.%d, expr %v", i, expr.ExplainInfo())
+			}
 		}
 	}
 	if len(indexLookUpReaders) == 0 {

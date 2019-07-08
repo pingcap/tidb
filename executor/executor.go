@@ -157,7 +157,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 		cols := schema.Columns
 		e.retFieldTypes = make([]*types.FieldType, len(cols))
 		for i := range cols {
-			log.Warnf("------- new executor, id %s, col %v", id, cols[i])
+			log.Warnf("------- new executor, id %s, col %v, no. %d", id, cols[i], cols[i].Index)
 			e.retFieldTypes[i] = cols[i].RetType
 		}
 	}
@@ -495,9 +495,9 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *Ind
 	var err error
 	handles := make(map[int64]struct{}, 1024)
 	for {
-		log.Infof("====================== check idnex handle. 0")
+		log.Infof("====================== check no.%d idx handle. 0", num)
 		err = src.Next(ctx, chk)
-		log.Infof("====================== check idnex handle. 1")
+		log.Infof("====================== check no.%d idx handle. 1", num)
 		if err != nil {
 			break
 		}

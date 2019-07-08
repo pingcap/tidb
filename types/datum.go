@@ -249,6 +249,9 @@ func (d *Datum) SetMysqlBit(b BinaryLiteral) {
 
 // GetMysqlDecimal gets Decimal value
 func (d *Datum) GetMysqlDecimal() *MyDecimal {
+	if d.x == nil {
+		return nil
+	}
 	return d.x.(*MyDecimal)
 }
 

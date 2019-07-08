@@ -192,7 +192,7 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 
 func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*tableScanExec, error) {
 	columns := executor.TblScan.Columns
-	log.Infof("table scan, columns %v, col %v", len(columns), columns[0])
+	log.Infof("table scan, columns %v, the first col %v", len(columns), columns[0])
 	ctx.evalCtx.setColumnInfo(columns)
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.TblScan.Desc)
 	if err != nil {

@@ -207,6 +207,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	case types.ETDecimal:
 		res, isNull, err = sf.EvalDecimal(sf.GetCtx(), row)
 	case types.ETDatetime, types.ETTimestamp:
+		// log.Infof("............. expr %v, row idx %d, row len %v", sf, row.Idx(), row.Len())
 		res, isNull, err = sf.EvalTime(sf.GetCtx(), row)
 	case types.ETDuration:
 		res, isNull, err = sf.EvalDuration(sf.GetCtx(), row)

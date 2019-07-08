@@ -715,7 +715,8 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	for len(handles) < w.batchSize {
 		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
 		err = errors.Trace(idxResult.Next(ctx, chk))
-		log.Warnf("===================================================== extract task handles, batch size: %v, rows: %v", w.batchSize, chk.NumRows())
+		log.Warnf("===================================================== extract task handles, batch size: %v, rows: %v, keep order %v, ret chk %v",
+			w.batchSize, chk.NumRows(), w.keepOrder, retChk)
 		if err != nil {
 			return handles, nil, err
 		}
@@ -726,16 +727,24 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			h := chk.GetRow(i).GetInt64(chk.NumCols() - 1)
 			handles = append(handles, h)
 
-			if w.isCheckOp {
-				if retChk == nil {
-					retChk = chunk.NewChunkWithCapacity(w.tps, w.maxChunkSize)
-				}
-				retChk.AppendRow(chunk.MutRowFromDatums(chk.GetRow(i).GetDatumRow(w.tps)).ToRow())
-			}
+			//		if w.isCheckOp {
+			//			if retChk == nil {
+			//				retChk = chunk.NewChunkWithCapacity(w.tps, w.maxChunkSize)
+			//			}
+			//			// retChk.Append(chk, 0, chk.NumRows())// (chunk.MutRowFromDatums(chk.GetRow(i).GetDatumRow(w.tps)).ToRow())
+			//		}
 			if len(w.tps) > 1 {
-				log.Infof("xxx ..... cols len %v, tps len %v, datum1: %v, datum2: %v, handle: %v",
-					chk.NumCols(), len(w.tps), chk.GetRow(i).GetDatum(0, w.tps[0]), chk.GetRow(i).GetDatum(1, w.tps[1]), h)
+				colVal0 := chk.GetRow(i).GetDatum(0, w.tps[0])
+				colVal1 := chk.GetRow(i).GetDatum(1, w.tps[1])
+				log.Infof("xxx ..... cols len %v, tps len %v, datum1: %v, datum2: %v, handle: %v, col %v, col %#v",
+					chk.NumCols(), len(w.tps), colVal0, colVal1, h, colVal0, colVal0)
 			}
+		}
+		if w.isCheckOp {
+			if retChk == nil {
+				retChk = chunk.NewChunkWithCapacity(w.tps, w.maxChunkSize)
+			}
+			retChk.Append(chk, 0, chk.NumRows())
 		}
 	}
 	w.batchSize *= 2
@@ -750,15 +759,19 @@ func (w *indexWorker) buildTableTask(handles []int64, retChk *chunk.Chunk) *look
 	if w.keepOrder {
 		// Save the index order.
 		indexOrder = make(map[int64]int, len(handles))
+		var str string
 		for i, h := range handles {
 			indexOrder[h] = i
+			str += fmt.Sprintf(" h %d, offset %d;", h, i)
 		}
+		log.Infof("......... %s, ret chk %v", str, retChk)
 	}
 	task := &lookupTableTask{
 		handles:    handles,
 		indexOrder: indexOrder,
 		idxRows:    retChk,
 	}
+
 	task.doneCh = make(chan error, 1)
 	return task
 }
@@ -783,16 +796,16 @@ type tableWorker struct {
 func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	var task *lookupTableTask
 	var ok bool
-	// 	defer func() {
-	// 		if r := recover(); r != nil {
-	// 			buf := make([]byte, 4096)
-	// 			stackSize := runtime.Stack(buf, false)
-	// 			buf = buf[:stackSize]
-	// 			log.Errorf("tableWorker panic stack is:\n%s", buf)
-	//	logutil.Logger(ctx).Error("tableWorker in IndexLookUpExecutor panicked", zap.String("stack", string(buf)))
-	// 			task.doneCh <- errors.Errorf("%v", r)
-	// 		}
-	// 	}()
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("tableWorker panic stack is:\n%s", buf)
+			logutil.Logger(ctx).Error("tableWorker in IndexLookUpExecutor panicked", zap.String("stack", string(buf)))
+			task.doneCh <- errors.Errorf("%v", r)
+		}
+	}()
 	for {
 		// Don't check ctx.Done() on purpose. If background worker get the signal and all
 		// exit immediately, session's goroutine doesn't know this and still calling Next(),
@@ -845,11 +858,6 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		}
 
 		tblReaderExec := tableReader.(*TableReaderExecutor)
-		//	str := ""
-		//	for i := 0; i < chk.NumRows(); i++ {
-		//		str += fmt.Sprintf("no.%d, row %v", i, chk.GetRow(i).GetDatumRow(w.tps))
-		//	}
-		//	log.Warnf("rows %v, cnt %v", str, chk.NumRows())
 		i := 0
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -861,6 +869,8 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			for j, col := range w.cols {
 				if col.IsGenerated() && !col.GeneratedStored {
 					expr := w.genExprs[model.TableColumnID{TableID: w.tbl.Meta().ID, ColumnID: col.ID}]
+					log.Infof("xxx ------------------------------------------- idx %v, j %v, row len %v, cols len %v, col %v, rows %v, handles %v, expr %v",
+						w.checkIndexValue.idxInfo.Name, j, row.Len(), len(w.cols), col, chk.NumRows(), len(task.handles), expr)
 					// Eval the column value
 					val, err := expr.Eval(row)
 					if err != nil {
@@ -901,9 +911,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 					i, offset, j, idxRow.GetInt64(idxRow.Len()-1), handle,
 					tableReader.Schema().Columns[j].ColName, val, idxRow.GetDatum(j, tp))
 				if ret != 0 {
-					log.Errorf("handle %#v, index:%#v != record:%#v", handle, idxRow.GetDatum(j, tp), vals[j])
-					// panic("xxx")
-					return errors.Errorf("handle %#v, index:%#v != record:%#v", handle, idxRow.GetDatum(j, tp), vals[j])
+					return errors.Errorf("handle %#v, index:%#v != record:%#v", handle, idxRow.GetDatum(j, tp), val)
 				}
 			}
 			i++
@@ -974,35 +982,25 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	//	if handleCnt != len(task.rows) {
-	//		if w.isCheckOp {
-	//			obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
-	//			for _, row := range task.rows {
-	//				handle := row.GetInt64(w.handleIdx)
-	//				obtainedHandlesMap[handle] = struct{}{}
-	//			}
-	//			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d, missing handles %v in a batch",
-	//				w.idxLookup.index.Name.O, handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
-	//		}
-	//
-	//		if len(w.idxLookup.tblPlans) == 1 {
-	//			obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
-	//			for _, row := range task.rows {
-	//				handle := row.GetInt64(w.handleIdx)
-	//				obtainedHandlesMap[handle] = struct{}{}
-	//			}
-	//
-	//			logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
-	//				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
-	//				zap.Int64s("missing_handles", GetLackHandles(task.handles, obtainedHandlesMap)),
-	//				zap.Int64s("total_handles", task.handles))
-	//
-	//			// table scan in double read can never has conditions according to convertToIndexScan.
-	//			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
-	//			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
-	//				w.idxLookup.index.Name.O, handleCnt, len(task.rows))
-	//		}
-	//	}
+	if handleCnt != len(task.rows) {
+		if len(w.idxLookup.tblPlans) == 1 {
+			obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
+			for _, row := range task.rows {
+				handle := row.GetInt64(w.handleIdx)
+				obtainedHandlesMap[handle] = struct{}{}
+			}
+
+			logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
+				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
+				zap.Int64s("missing_handles", GetLackHandles(task.handles, obtainedHandlesMap)),
+				zap.Int64s("total_handles", task.handles))
+
+			// table scan in double read can never has conditions according to convertToIndexScan.
+			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
+			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
+				w.idxLookup.index.Name.O, handleCnt, len(task.rows))
+		}
+	}
 
 	return nil
 }

@@ -119,6 +119,8 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	isPartition     bool
 	physicalTableID int64
+
+	GenExprs map[model.TableColumnID]expression.Expression
 }
 
 // PhysicalMemTable reads memory table.

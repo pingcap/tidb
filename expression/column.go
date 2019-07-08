@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -285,6 +286,7 @@ func (col *Column) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Du
 
 // EvalJSON returns JSON representation of Column.
 func (col *Column) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
+	log.Infof("........... idx %d, col %v", col.Index, col.ColName)
 	if row.IsNull(col.Index) {
 		return json.BinaryJSON{}, true, nil
 	}

@@ -354,7 +354,7 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 		b.err = errors.Trace(err)
 		return
 	}
-	readerExec.genExprs = genExprs
+	// readerExec.genExprs = genExprs
 	readerExec.isCheckOp = true
 	readerExec.ranges = ranger.FullRange()
 }
@@ -1962,8 +1962,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	}
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
-	log.Warnf(".......................... dag req:%v, output offsets %v, cols %v",
-		indexReq.Executors[0].IdxScan, indexReq.OutputOffsets, is.Index.Columns)
+	log.Warnf(".......................... dag req:%v, output offsets %v, cols %v, exprs %d",
+		indexReq.Executors[0].IdxScan, indexReq.OutputOffsets, is.Index.Columns, len(is.GenExprs))
 	tbl, _ := b.is.TableByID(is.Table.ID)
 
 	for i := 0; i < v.Schema().Len(); i++ {
@@ -1998,6 +1998,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		tblPlans:          v.TablePlans,
 	}
 
+	e.genExprs = is.GenExprs
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
