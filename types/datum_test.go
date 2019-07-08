@@ -14,12 +14,14 @@
 package types
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	ast "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -170,16 +172,6 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	binLit, err := ParseHexStr("0x9999999999999999999999999999999999999999999")
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, binLit, -1)
-
-	ft = NewFieldType(mysql.TypeTiny)
-	datum := NewBinaryLiteralDatum(NewBinaryLiteralFromUint(0xFFFFFFFFFFF, -1))
-	sc := new(stmtctx.StatementContext)
-	_, err = datum.ConvertTo(sc, ft)
-	c.Assert(err.Error(), Equals, "[types:1690]constant 17592186044415 overflows tinyint")
-
-	ft.Flag |= mysql.UnsignedFlag
-	_, err = datum.ConvertTo(sc, ft)
-	c.Assert(err.Error(), Equals, "[types:1690]constant 17592186044415 overflows tinyint")
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
@@ -419,5 +411,27 @@ func BenchmarkCompareDatumByReflect(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		reflect.DeepEqual(vals, vals1)
+	}
+}
+
+func (ts *testDatumSuite) TestBinaryLiteralOverflow(c *C) {
+	intTypes := []byte{
+		mysql.TypeTiny,
+		mysql.TypeShort,
+		mysql.TypeInt24,
+		mysql.TypeLong,
+	}
+
+	datum := NewBinaryLiteralDatum(NewBinaryLiteralFromUint(0xFFFFFFFFFFF, -1))
+	sc := new(stmtctx.StatementContext)
+	for _, t := range intTypes {
+		ft := NewFieldType(t)
+		_, err := datum.ConvertTo(sc, ft)
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[types:1690]constant 17592186044415 overflows %s", ast.TypeStr(t)))
+
+		// Unsigned int
+		ft.Flag |= mysql.UnsignedFlag
+		_, err = datum.ConvertTo(sc, ft)
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[types:1690]constant 17592186044415 overflows %s", ast.TypeStr(t)))
 	}
 }
