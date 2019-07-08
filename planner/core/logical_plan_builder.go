@@ -18,6 +18,7 @@ import (
 	"math"
 	"math/bits"
 	"reflect"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -96,7 +98,10 @@ func (b *PlanBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			p = np
 			newArgList = append(newArgList, newArg)
 		}
-		newFunc := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
+		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
+		if err != nil {
+			return nil, nil, err
+		}
 		combined := false
 		for j, oldFunc := range plan4Agg.AggFuncs {
 			if oldFunc.Equal(b.ctx, newFunc) {
@@ -118,7 +123,10 @@ func (b *PlanBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		}
 	}
 	for _, col := range p.Schema().Columns {
-		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		if err != nil {
+			return nil, nil, err
+		}
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
 		newCol, _ := col.Clone().(*expression.Column)
 		newCol.RetType = newFunc.RetTp
@@ -753,7 +761,7 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	return proj, oldLen, nil
 }
 
-func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) *LogicalAggregation {
+func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggregation, error) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagPushDownAgg
 	plan4Agg := LogicalAggregation{
@@ -762,7 +770,10 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) *LogicalAggre
 	}.Init(b.ctx)
 	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
-		aggDesc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		if err != nil {
+			return nil, err
+		}
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, aggDesc)
 	}
 	plan4Agg.SetChildren(child)
@@ -772,7 +783,7 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) *LogicalAggre
 	for i, col := range plan4Agg.schema.Columns {
 		col.RetType = plan4Agg.AggFuncs[i].RetTp
 	}
-	return plan4Agg
+	return plan4Agg, nil
 }
 
 // unionJoinFieldType finds the type which can carry the given types in Union.
@@ -844,7 +855,10 @@ func (b *PlanBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 
 	unionDistinctPlan := b.buildUnionAll(distinctSelectPlans)
 	if unionDistinctPlan != nil {
-		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
+		unionDistinctPlan, err = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
+		if err != nil {
+			return nil, err
+		}
 		if len(allSelectPlans) > 0 {
 			// Can't change the statements order in order to get the correct column info.
 			allSelectPlans = append([]LogicalPlan{unionDistinctPlan}, allSelectPlans...)
@@ -2082,7 +2096,10 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	}
 
 	if sel.Distinct {
-		p = b.buildDistinct(p, oldLen)
+		p, err = b.buildDistinct(p, oldLen)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if sel.OrderBy != nil {
@@ -2515,21 +2532,14 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	}
 
 	b.inUpdateStmt = true
-	sel := &ast.SelectStmt{
-		Fields:  &ast.FieldList{},
-		From:    update.TableRefs,
-		Where:   update.Where,
-		OrderBy: update.Order,
-		Limit:   update.Limit,
-	}
 
-	p, err := b.buildResultSetNode(sel.From.TableRefs)
+	p, err := b.buildResultSetNode(update.TableRefs.TableRefs)
 	if err != nil {
 		return nil, err
 	}
 
 	var tableList []*ast.TableName
-	tableList = extractTableList(sel.From.TableRefs, tableList, false)
+	tableList = extractTableList(update.TableRefs.TableRefs, tableList, false)
 	for _, t := range tableList {
 		dbName := t.Schema.L
 		if dbName == "" {
@@ -2541,27 +2551,27 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
-	if sel.Where != nil {
-		p, err = b.buildSelection(p, sel.Where, nil)
+	if update.Where != nil {
+		p, err = b.buildSelection(p, update.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if sel.OrderBy != nil {
-		p, err = b.buildSort(p, sel.OrderBy.Items, nil, nil)
+	if update.Order != nil {
+		p, err = b.buildSort(p, update.Order.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if sel.Limit != nil {
-		p, err = b.buildLimit(p, sel.Limit)
+	if update.Limit != nil {
+		p, err = b.buildLimit(p, update.Limit)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	var updateTableList []*ast.TableName
-	updateTableList = extractTableList(sel.From.TableRefs, updateTableList, true)
+	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
 	orderedList, np, err := b.buildUpdateLists(updateTableList, update.List, p)
 	if err != nil {
 		return nil, err
@@ -2721,36 +2731,29 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 		defer b.popTableHints()
 	}
 
-	sel := &ast.SelectStmt{
-		Fields:  &ast.FieldList{},
-		From:    delete.TableRefs,
-		Where:   delete.Where,
-		OrderBy: delete.Order,
-		Limit:   delete.Limit,
-	}
-	p, err := b.buildResultSetNode(sel.From.TableRefs)
+	p, err := b.buildResultSetNode(delete.TableRefs.TableRefs)
 	if err != nil {
 		return nil, err
 	}
 	oldSchema := p.Schema()
 	oldLen := oldSchema.Len()
 
-	if sel.Where != nil {
-		p, err = b.buildSelection(p, sel.Where, nil)
+	if delete.Where != nil {
+		p, err = b.buildSelection(p, delete.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if sel.OrderBy != nil {
-		p, err = b.buildSort(p, sel.OrderBy.Items, nil, nil)
+	if delete.Order != nil {
+		p, err = b.buildSort(p, delete.Order.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if sel.Limit != nil {
-		p, err = b.buildLimit(p, sel.Limit)
+	if delete.Limit != nil {
+		p, err = b.buildLimit(p, delete.Limit)
 		if err != nil {
 			return nil, err
 		}
@@ -3102,11 +3105,70 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 	return frame, err
 }
 
+func getAllByItems(itemsBuf []*ast.ByItem, spec *ast.WindowSpec) []*ast.ByItem {
+	itemsBuf = itemsBuf[:0]
+	if spec.PartitionBy != nil {
+		itemsBuf = append(itemsBuf, spec.PartitionBy.Items...)
+	}
+	if spec.OrderBy != nil {
+		itemsBuf = append(itemsBuf, spec.OrderBy.Items...)
+	}
+	return itemsBuf
+}
+
+func restoreByItemText(item *ast.ByItem) string {
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(0, &sb)
+	err := item.Expr.Restore(ctx)
+	if err != nil {
+		return ""
+	}
+	return sb.String()
+}
+
+func compareItems(lItems []*ast.ByItem, rItems []*ast.ByItem) bool {
+	minLen := mathutil.Min(len(lItems), len(rItems))
+	for i := 0; i < minLen; i++ {
+		res := strings.Compare(restoreByItemText(lItems[i]), restoreByItemText(rItems[i]))
+		if res != 0 {
+			return res < 0
+		}
+		res = compareBool(lItems[i].Desc, rItems[i].Desc)
+		if res != 0 {
+			return res < 0
+		}
+	}
+	return len(lItems) < len(rItems)
+}
+
+type windowFuncs struct {
+	spec  *ast.WindowSpec
+	funcs []*ast.WindowFuncExpr
+}
+
+// sortWindowSpecs sorts the window specifications by reversed alphabetical order, then we could add less `Sort` operator
+// in physical plan because the window functions with the same partition by and order by clause will be at near places.
+func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr) []windowFuncs {
+	windows := make([]windowFuncs, 0, len(groupedFuncs))
+	for spec, funcs := range groupedFuncs {
+		windows = append(windows, windowFuncs{spec, funcs})
+	}
+	lItemsBuf := make([]*ast.ByItem, 0, 4)
+	rItemsBuf := make([]*ast.ByItem, 0, 4)
+	sort.SliceStable(windows, func(i, j int) bool {
+		lItemsBuf = getAllByItems(lItemsBuf, windows[i].spec)
+		rItemsBuf = getAllByItems(rItemsBuf, windows[j].spec)
+		return !compareItems(lItemsBuf, rItemsBuf)
+	})
+	return windows
+}
+
 func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
 	args := make([]ast.ExprNode, 0, 4)
 	windowMap := make(map[*ast.WindowFuncExpr]int)
-	for spec, funcs := range groupedFuncs {
+	for _, window := range sortWindowSpecs(groupedFuncs) {
 		args = args[:0]
+		spec, funcs := window.spec, window.funcs
 		for _, windowFunc := range funcs {
 			args = append(args, windowFunc.Args...)
 		}
@@ -3128,9 +3190,12 @@ func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupedFuncs map[*ast.
 		descs := make([]*aggregation.WindowFuncDesc, 0, len(funcs))
 		preArgs := 0
 		for _, windowFunc := range funcs {
-			desc := aggregation.NewWindowFuncDesc(b.ctx, windowFunc.F, args[preArgs:preArgs+len(windowFunc.Args)])
+			desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFunc.F, args[preArgs:preArgs+len(windowFunc.Args)])
+			if err != nil {
+				return nil, nil, err
+			}
 			if desc == nil {
-				return nil, nil, ErrWrongArguments.GenWithStackByArgs(windowFunc.F)
+				return nil, nil, ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFunc.F))
 			}
 			preArgs += len(windowFunc.Args)
 			desc.WrapCastForAggArgs(b.ctx)
@@ -3257,14 +3322,14 @@ func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
 	if ref.Frame != nil {
 		return ErrWindowNoInherentFrame.GenWithStackByArgs(ref.Name.O)
 	}
+	if spec.PartitionBy != nil {
+		return errors.Trace(ErrWindowNoChildPartitioning)
+	}
 	if ref.OrderBy != nil {
 		if spec.OrderBy != nil {
 			return ErrWindowNoRedefineOrderBy.GenWithStackByArgs(getWindowName(spec.Name.O), ref.Name.O)
 		}
 		spec.OrderBy = ref.OrderBy
-	}
-	if spec.PartitionBy != nil {
-		return errors.Trace(ErrWindowNoChildPartitioning)
 	}
 	spec.PartitionBy = ref.PartitionBy
 	spec.Ref = model.NewCIStr("")

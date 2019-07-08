@@ -15,7 +15,6 @@ package mocktikv
 
 import (
 	"bytes"
-	"context"
 	"math"
 	"sync"
 
@@ -342,7 +341,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()
 	if err != nil {
-		logutil.Logger(context.Background()).Error("scan new iterator fail", zap.Error(err))
+		logutil.BgLogger().Error("scan new iterator fail", zap.Error(err))
 		return nil
 	}
 
@@ -366,7 +365,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 		skip := skipDecoder{currKey}
 		ok, err = skip.Decode(iter)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("seek to next key error", zap.Error(err))
+			logutil.BgLogger().Error("seek to next key error", zap.Error(err))
 			break
 		}
 		currKey = skip.currKey
@@ -421,7 +420,7 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 			helper.entry.values = append(helper.entry.values, value)
 		}
 		if err != nil {
-			logutil.Logger(context.Background()).Error("unmarshal fail", zap.Error(err))
+			logutil.BgLogger().Error("unmarshal fail", zap.Error(err))
 			break
 		}
 		succ = iter.Prev()
@@ -642,8 +641,12 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 		return errors.Trace(err)
 	}
 	if !ok {
+		if m.Assertion == kvrpcpb.Assertion_Exist {
+			logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
+		}
 		return nil
 	}
+
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if dec.value.commitTS >= startTS {
 		return &ErrConflict{
@@ -652,9 +655,25 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 			Key:        m.Key,
 		}
 	}
-	if m.Op == kvrpcpb.Op_PessimisticLock && m.Assertion == kvrpcpb.Assertion_NotExist {
-		return &ErrKeyAlreadyExist{
-			Key: m.Key,
+
+	if m.Assertion == kvrpcpb.Assertion_NotExist {
+		for ok {
+			if dec.value.valueType == typeRollback {
+				ok, err = dec.Decode(iter)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else if dec.value.valueType == typeDelete {
+				break
+			} else {
+				if m.Op == kvrpcpb.Op_PessimisticLock {
+					return &ErrKeyAlreadyExist{
+						Key: m.Key,
+					}
+				}
+				logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
+				break
+			}
 		}
 	}
 	return nil
@@ -708,12 +727,6 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	writeValue, err := lock.MarshalBinary()
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	// Check assertions.
-	if (ok && mutation.Assertion == kvrpcpb.Assertion_NotExist) ||
-		(!ok && mutation.Assertion == kvrpcpb.Assertion_Exist) {
-		logutil.Logger(context.Background()).Error("ASSERTION FAIL!!!", zap.Stringer("mutation", mutation))
 	}
 
 	batch.Put(writeKey, writeValue)

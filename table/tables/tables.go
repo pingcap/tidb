@@ -18,7 +18,6 @@
 package tables
 
 import (
-	"context"
 	"encoding/binary"
 	"math"
 	"strings"
@@ -106,7 +105,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		// Print some information when the column's offset isn't equal to i.
 		if colInfo.Offset != i {
-			logutil.Logger(context.Background()).Error("wrong table schema", zap.Any("table", tblInfo), zap.Any("column", colInfo), zap.Int("index", i), zap.Int("offset", colInfo.Offset), zap.Int("columnNumber", colsLen))
+			logutil.BgLogger().Error("wrong table schema", zap.Any("table", tblInfo), zap.Any("column", colInfo), zap.Int("index", i), zap.Int("offset", colInfo.Offset), zap.Int("columnNumber", colsLen))
 		}
 
 		col := table.ToColumn(colInfo)
@@ -378,7 +377,7 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			if err != nil {
 				return err
 			}
-			if err := t.buildIndexForRow(ctx, rm, h, newVs, idx); err != nil {
+			if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn); err != nil {
 				return err
 			}
 			break
@@ -419,10 +418,10 @@ func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.Retrie
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
-	opt := &table.AddRecordOpt{}
-	if len(opts) != 0 {
-		opt = opts[0]
+func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
+	var opt table.AddRecordOpt
+	for _, fn := range opts {
+		fn.ApplyOn(&opt)
 	}
 	var hasRecordID bool
 	cols := t.Cols()
@@ -457,8 +456,17 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	sessVars := ctx.GetSessionVars()
 
 	rm, err := t.getRollbackableMemStore(ctx)
+	var createIdxOpts []table.CreateIdxOptFunc
+	if len(opts) > 0 {
+		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))
+		for _, fn := range opts {
+			if raw, ok := fn.(table.CreateIdxOptFunc); ok {
+				createIdxOpts = append(createIdxOpts, raw)
+			}
+		}
+	}
 	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, recordID, r, rm, &opt.CreateIdxOpt)
+	h, err := t.addIndices(ctx, recordID, r, rm, createIdxOpts)
 	if err != nil {
 		return h, err
 	}
@@ -556,13 +564,17 @@ func (t *tableCommon) genIndexKeyStr(colVals []types.Datum) (string, error) {
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
 func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []types.Datum, rm kv.RetrieverMutator,
-	opt *table.CreateIdxOpt) (int64, error) {
+	opts []table.CreateIdxOptFunc) (int64, error) {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return 0, err
 	}
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
+	var opt table.CreateIdxOpt
+	for _, fn := range opts {
+		fn(&opt)
+	}
 	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !opt.SkipHandleCheck {
 		if err := CheckHandleExists(ctx, t, recordID, nil); err != nil {
@@ -587,7 +599,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opt); err != nil {
+		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupKeyErr
 			}
@@ -780,14 +792,14 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
-			logutil.Logger(context.Background()).Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h), zap.Any("record", rec), zap.Error(err))
+			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h), zap.Any("record", rec), zap.Error(err))
 			return err
 		}
 		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h, txn); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
-				logutil.Logger(context.Background()).Debug("row index not exists", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h))
+				logutil.BgLogger().Debug("row index not exists", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h))
 				continue
 			}
 			return err
@@ -802,8 +814,8 @@ func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
-	if _, err := idx.Create(ctx, rm, vals, h); err != nil {
+func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
+	if _, err := idx.Create(ctx, rm, vals, h, table.WithAssertion(txn)); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)
@@ -838,7 +850,7 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		return nil
 	}
 
-	logutil.Logger(context.Background()).Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
+	logutil.BgLogger().Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
 
 	colMap := make(map[int64]*types.FieldType)
 	for _, col := range cols {
@@ -1047,7 +1059,7 @@ var (
 	recordPrefixSep = []byte("_r")
 )
 
-// FindIndexByColName implements table.Table FindIndexByColName interface.
+// FindIndexByColName returns a public table index containing only one column named `name`.
 func FindIndexByColName(t table.Table, name string) table.Index {
 	for _, idx := range t.Indices() {
 		// only public index can be read.

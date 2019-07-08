@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -74,11 +73,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *SortExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
+func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)
@@ -106,7 +101,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	for {
 		chk := newFirstChunk(e.children[0])
-		err := Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return err
 		}
@@ -234,11 +229,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *TopNExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
+func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
 		e.totalLimit = e.limit.Offset + e.limit.Count
@@ -273,7 +264,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		srcChk := newFirstChunk(e.children[0])
 		// adjust required rows by total limit
 		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
-		err := Next(ctx, e.children[0], chunk.NewRecordBatch(srcChk))
+		err := Next(ctx, e.children[0], srcChk)
 		if err != nil {
 			return err
 		}
@@ -298,7 +289,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	}
 	childRowChk := newFirstChunk(e.children[0])
 	for {
-		err := Next(ctx, e.children[0], chunk.NewRecordBatch(childRowChk))
+		err := Next(ctx, e.children[0], childRowChk)
 		if err != nil {
 			return err
 		}

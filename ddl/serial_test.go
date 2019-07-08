@@ -48,7 +48,7 @@ type testSerialSuite struct {
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
 	session.SetSchemaLease(200 * time.Millisecond)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -418,14 +418,16 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
-	// recover table lock config.
-	originValue := config.GetGlobalConfig().EnableTableLock
-	defer func() {
-		config.GetGlobalConfig().EnableTableLock = originValue
-	}()
 
 	// Test for enable table lock config.
-	config.GetGlobalConfig().EnableTableLock = false
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.EnableTableLock = false
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(cfg)
+	}()
+
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 }

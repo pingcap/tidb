@@ -76,7 +76,7 @@ type ShowExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
 		e.result = newFirstChunk(e)
@@ -402,7 +402,7 @@ func (e *ShowExec) fetchShowColumns() error {
 			// SHOW COLUMNS result expects string value
 			defaultValStr := fmt.Sprintf("%v", desc.DefaultValue)
 			// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
-			if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && strings.ToUpper(defaultValStr) != strings.ToUpper(ast.CurrentTimestamp) {
+			if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && !strings.HasPrefix(strings.ToUpper(defaultValStr), strings.ToUpper(ast.CurrentTimestamp)) {
 				timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
 				if err != nil {
 					return errors.Trace(err)
@@ -692,6 +692,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 					}
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
+					if col.Decimal > 0 {
+						buf.WriteString(fmt.Sprintf("(%d)", col.Decimal))
+					}
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.

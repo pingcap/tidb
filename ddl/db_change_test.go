@@ -204,7 +204,7 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 	testInfo.sqlInfos[1].cases[2].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[1].cases[3].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[2].sql = "update t set c2 = 'c2_update'"
-	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')'"
+	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
 	testInfo.sqlInfos[3].cases[4].expectedCompileErr = errors.New("Column count doesn't match value count at row 1")
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
 	s.test(c, "", alterTableSQL, testInfo)
@@ -886,6 +886,51 @@ func (s *testStateChangeSuite) TestCreateTableIfNotExists(c *C) {
 func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
 	defer s.se.Execute(context.Background(), "drop database test_not_exists")
 	s.testParallelExecSQL(c, "create database if not exists test_not_exists;")
+}
+
+// TestDDLIfNotExists parallel exec some DDLs with `if not exists` clause. No error returns is expected.
+func (s *testStateChangeSuite) TestDDLIfNotExists(c *C) {
+	defer s.se.Execute(context.Background(), "drop table test_not_exists")
+	_, err := s.se.Execute(context.Background(), "create table if not exists test_not_exists(a int)")
+	c.Assert(err, IsNil)
+
+	// ADD COLUMN
+	s.testParallelExecSQL(c, "alter table test_not_exists add column if not exists b int")
+
+	// ADD INDEX
+	s.testParallelExecSQL(c, "alter table test_not_exists add index if not exists idx_b (b)")
+
+	// CREATE INDEX
+	s.testParallelExecSQL(c, "create index if not exists idx_b on test_not_exists (b)")
+}
+
+// TestDDLIfExists parallel exec some DDLs with `if exists` clause. No error returns is expected.
+func (s *testStateChangeSuite) TestDDLIfExists(c *C) {
+	defer func() {
+		s.se.Execute(context.Background(), "drop table test_exists")
+		s.se.Execute(context.Background(), "drop table test_exists_2")
+	}()
+	_, err := s.se.Execute(context.Background(), "create table if not exists test_exists (a int key, b int)")
+	c.Assert(err, IsNil)
+
+	// DROP COLUMN
+	s.testParallelExecSQL(c, "alter table test_exists drop column if exists b") // only `a` exists now
+
+	// CHANGE COLUMN
+	s.testParallelExecSQL(c, "alter table test_exists change column if exists a c int") // only, `c` exists now
+
+	// MODIFY COLUMN
+	s.testParallelExecSQL(c, "alter table test_exists modify column if exists a bigint")
+
+	// DROP INDEX
+	_, err = s.se.Execute(context.Background(), "alter table test_exists add index idx_c (c)")
+	c.Assert(err, IsNil)
+	s.testParallelExecSQL(c, "alter table test_exists drop index if exists idx_c")
+
+	// DROP PARTITION (ADD PARTITION tested in TestParallelAlterAddPartition)
+	_, err = s.se.Execute(context.Background(), "create table test_exists_2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	c.Assert(err, IsNil)
+	s.testParallelExecSQL(c, "alter table test_exists_2 drop partition if exists p1")
 }
 
 // TestParallelDDLBeforeRunDDLJob tests a session to execute DDL with an outdated information schema.

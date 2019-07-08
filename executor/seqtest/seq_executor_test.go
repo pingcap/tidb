@@ -91,7 +91,7 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 		session.SetSchemaLease(0)
-		session.SetStatsLease(0)
+		session.DisableStats4Test()
 	}
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -131,7 +131,7 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err1, IsNil)
 		rs := rss[0]
-		req := rs.NewRecordBatch()
+		req := rs.NewChunk()
 		err = rs.Next(ctx, req)
 		c.Assert(err, IsNil)
 		rs.Close()
@@ -145,7 +145,7 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
 	c.Assert(err, IsNil)
 	rs := rss[0]
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err, NotNil)
 	rs.Close()
@@ -217,7 +217,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"`c2` smallint unsigned default null," +
 		"`c3` mediumint unsigned default null," +
 		"`c4` int unsigned default null," +
-		"`c5` bigint unsigned default null);`"
+		"`c5` bigint unsigned default null);"
 
 	tk.MustExec(testSQL)
 	testSQL = "show create table t1"
@@ -641,7 +641,7 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
@@ -673,7 +673,7 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	rss, err := tk.Se.Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	c.Assert(err, IsNil)
 	rs := rss[0]
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err.Error(), Equals, "HashAggExec.parallelExec error")
 }
@@ -694,7 +694,7 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 	rss, err := tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	c.Assert(err, IsNil)
 	rs := rss[0]
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err.Error(), Equals, "HashAggExec.unparallelExec error")
 }
@@ -708,6 +708,10 @@ func checkGoroutineExists(keyword string) bool {
 }
 
 func (s *seqTestSuite) TestAdminShowNextID(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
 	step := int64(10)
 	autoIDStep := autoid.GetStep()
 	autoid.SetStep(step)
