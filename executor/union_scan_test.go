@@ -181,4 +181,13 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustQuery("select * from t use index (idx) where a>0 and b>0;").Check(testkit.Rows("1 1", "3 3"))
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt (a bigint, b int,c int,primary key (a,b));")
+	tk.MustExec("insert into tt set a=1,b=1;")
+	tk.MustExec("begin;")
+	tk.MustExec("update tt set c=1;")
+	tk.MustQuery("select * from tt use index (PRIMARY) where c is not null;").Check(testkit.Rows("1 1 1"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table tt")
 }

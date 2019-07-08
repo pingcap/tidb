@@ -131,9 +131,8 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		us.addedRows, err = mIdxReader.getMemRows()
 		us.memIdxHandles = mIdxReader.memIdxHandles
 	case *IndexLookUpExecutor:
-		mIdxLookUpReader := buildMemIndexLookUpReader(us, x)
-		us.addedRows, err = mIdxLookUpReader.getMemRows()
-		us.memIdxHandles = mIdxLookUpReader.idxReader.memIdxHandles
+		us.memIdxHandles = make(map[int64]struct{}, len(us.dirty.addedRows))
+		err = us.buildAndSortAddedRows(x.table)
 	}
 	if err != nil {
 		return err
@@ -358,6 +357,7 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for h := range us.dirty.addedRows {
+		us.memIdxHandles[h] = struct{}{}
 		newData, err := us.rowWithColsInTxn(t, h)
 		if err != nil {
 			return err
