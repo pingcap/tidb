@@ -35,8 +35,8 @@ func (s *testStatsSuite) TestConversion(c *C) {
 	tk.MustExec("insert into t(a,b) values (1, 1),(3, 1),(5, 10)")
 	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-	h.DumpStatsDeltaToKV(handle.DumpAll)
-	h.Update(is)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -73,7 +73,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t")
 	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -131,7 +131,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := s.do.StatsHandle()
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 
 	// Insert 30 fake data
 	fakeData := make([][]byte, 0, 30)

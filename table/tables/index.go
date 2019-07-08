@@ -196,8 +196,12 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64,
-	opts ...*table.CreateIdxOpt) (int64, error) {
+func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...table.CreateIdxOptFunc) (int64, error) {
+	var opt table.CreateIdxOpt
+	for _, fn := range opts {
+		fn(&opt)
+	}
+	ss := opt.AssertionProto
 	writeBufs := ctx.GetSessionVars().GetWriteStmtBufs()
 	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	key, distinct, err := c.GenIndexKey(ctx.GetSessionVars().StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
@@ -209,16 +213,27 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 	if !distinct {
 		// non-unique index doesn't need store value, write a '0' to reduce space
 		err = rm.Set(key, []byte{'0'})
+		if ss != nil {
+			ss.SetAssertion(key, kv.None)
+		}
+		return 0, err
+	}
+
+	if skipCheck {
+		err = rm.Set(key, EncodeHandle(h))
+		if ss != nil {
+			ss.SetAssertion(key, kv.None)
+		}
 		return 0, err
 	}
 
 	var value []byte
-	if !skipCheck {
-		value, err = rm.Get(key)
-	}
-
-	if skipCheck || kv.IsErrNotFound(err) {
+	value, err = rm.Get(key)
+	if kv.IsErrNotFound(err) {
 		err = rm.Set(key, EncodeHandle(h))
+		if ss != nil {
+			ss.SetAssertion(key, kv.NotExist)
+		}
 		return 0, err
 	}
 

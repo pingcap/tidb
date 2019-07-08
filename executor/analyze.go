@@ -77,7 +77,7 @@ const (
 )
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return err
@@ -813,6 +813,9 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 			}
 			v = types.NewIntDatum(key)
 		}
+		if mysql.HasUnsignedFlag(e.pkInfo.Flag) {
+			v.SetUint64(uint64(v.GetInt64()))
+		}
 		if e.collectors[0].Samples[samplePos] == nil {
 			e.collectors[0].Samples[samplePos] = &statistics.SampleItem{}
 		}
@@ -962,7 +965,9 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			if *err != nil {
 				return
 			}
-			kvMap[string(iter.Key())] = iter.Value()
+			if iter.Valid() {
+				kvMap[string(iter.Key())] = iter.Value()
+			}
 		}
 
 		*err = e.handleBatchSeekResponse(kvMap)

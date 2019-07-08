@@ -48,6 +48,8 @@ type PointGetPlan struct {
 	expr             expression.Expression
 	ctx              sessionctx.Context
 	IsTableDual      bool
+	Lock             bool
+	IsForUpdate      bool
 }
 
 type nameValuePair struct {
@@ -141,6 +143,10 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				tableDual.SetSchema(fp.Schema())
 				return tableDual.Init(ctx, &property.StatsInfo{})
 			}
+			if x.LockTp == ast.SelectLockForUpdate {
+				fp.Lock = true
+				fp.IsForUpdate = true
+			}
 			return fp
 		}
 	case *ast.UpdateStmt:
@@ -159,7 +165,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 // 3. All the columns must be public and generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetPlan {
-	if selStmt.Having != nil || selStmt.LockTp != ast.SelectLockNone {
+	if selStmt.Having != nil {
 		return nil
 	} else if selStmt.Limit != nil {
 		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
@@ -452,6 +458,9 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	if fastSelect.IsTableDual {
 		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
 	}
+	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		fastSelect.Lock = true
+	}
 	orderedList := buildOrderedList(ctx, fastSelect, updateStmt.List)
 	if orderedList == nil {
 		return nil
@@ -511,6 +520,9 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	}
 	if fastSelect.IsTableDual {
 		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
+	}
+	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		fastSelect.Lock = true
 	}
 	delPlan := Delete{
 		SelectPlan: fastSelect,

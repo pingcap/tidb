@@ -181,7 +181,7 @@ func (s *testExecSuite) TestTableReaderRequiredRows(c *C) {
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)
@@ -233,7 +233,7 @@ func (s *testExecSuite) TestIndexReaderRequiredRows(c *C) {
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)

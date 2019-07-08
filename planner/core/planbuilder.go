@@ -303,6 +303,9 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
 		vars = append(vars, newExpr)
 	}
 	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID}
+	if v.BinaryArgs != nil {
+		exe.PrepareParams = v.BinaryArgs.([]types.Datum)
+	}
 	return exe, nil
 }
 
@@ -1984,12 +1987,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
-	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok && trace.Format == "row" {
-		return nil, errors.New("trace only supports select query when format is row")
-	}
-
 	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
-
 	switch trace.Format {
 	case "row":
 		retFields := []string{"operation", "duration", "spanID"}
