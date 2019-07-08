@@ -103,6 +103,7 @@ type lookUpJoinTask struct {
 	encodedLookUpKeys *chunk.Chunk
 	lookupMap         *mvmap.MVMap
 	matchKeyMap       *mvmap.MVMap
+	nullMap           map[string]bool
 	matchedInners     []chunk.Row
 
 	doneCh   chan error
@@ -141,9 +142,9 @@ type innerWorker struct {
 	ctx         sessionctx.Context
 	executorChk *chunk.Chunk
 
-<<<<<<< HEAD
-	indexRanges   []*ranger.Range
-	keyOff2IdxOff []int
+	indexRanges           []*ranger.Range
+	nextColCompareFilters *plannercore.ColWithCmpFuncManager
+	keyOff2IdxOff         []int
 
 	joiner            joiner
 	maxChunkSize      int
@@ -156,11 +157,6 @@ type indexLookUpResult struct {
 	chk *chunk.Chunk
 	err error
 	src chan<- *chunk.Chunk
-=======
-	indexRanges           []*ranger.Range
-	nextColCompareFilters *plannercore.ColWithCmpFuncManager
-	keyOff2IdxOff         []int
->>>>>>> master
 }
 
 // Open implements the Executor interface.
@@ -391,6 +387,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		encodedLookUpKeys: chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, ow.ctx.GetSessionVars().MaxChunkSize),
 		lookupMap:         mvmap.NewMVMap(),
 		matchKeyMap:       mvmap.NewMVMap(),
+		nullMap:           make(map[string]bool),
 	}
 	task.memTracker = memory.NewTracker(stringutil.MemoizeStr(func() string { return fmt.Sprintf("lookup join task %p", task) }), -1)
 	task.memTracker.AttachTo(ow.parentMemTracker)
@@ -487,17 +484,11 @@ func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) err
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
 	if iw.outerCtx.keepOrder {
 		err = iw.buildLookUpMap(task)
 		if err != nil {
 			return errors.Trace(err)
 		}
-=======
-	err = iw.buildLookUpMap(task)
-	if err != nil {
-		return err
->>>>>>> master
 	}
 	return nil
 }
@@ -523,34 +514,21 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 		if err != nil {
 			return nil, err
 		}
-<<<<<<< HEAD
-		outerRow := task.outerResult.GetRow(i)
-		if !iw.hasNullInOuterJoinKey(outerRow) {
-			// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
-			task.encodedLookUpKeys.AppendBytes(0, keyBuf)
-		} else {
-			task.encodedLookUpKeys.AppendNull(0)
-		}
 		if !iw.outerCtx.keepOrder {
 			if tmpPtr = task.lookupMap.Get(keyBuf, tmpPtr[:0]); len(tmpPtr) == 0 {
-				if !iw.hasNullInOuterJoinKey(outerRow) {
-					dLookUpKeys = append(dLookUpKeys, dLookUpKey)
+				if !iw.hasNullInOuterJoinKey(task.outerResult.GetRow(i)) {
+					task.encodedLookUpKeys.AppendBytes(0, keyBuf)
+					lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: task.outerResult.GetRow(i)})
 				}
 			}
 			rowPtr := uint32(i)
 			*(*uint32)(unsafe.Pointer(&valBuf[0])) = rowPtr
 			task.lookupMap.Put(keyBuf, valBuf)
 		} else {
-			if !iw.hasNullInOuterJoinKey(outerRow) {
-				dLookUpKeys = append(dLookUpKeys, dLookUpKey)
-			}
+			// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
+			task.encodedLookUpKeys.AppendBytes(0, keyBuf)
+			lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: task.outerResult.GetRow(i)})
 		}
-
-=======
-		// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
-		task.encodedLookUpKeys.AppendBytes(0, keyBuf)
-		lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: task.outerResult.GetRow(i)})
->>>>>>> master
 	}
 
 	task.memTracker.Consume(task.encodedLookUpKeys.MemoryUsage())
@@ -571,8 +549,12 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 		// IndexNestedLoopJoin, thus the filter will always be false if
 		// outerValue is null, and we don't need to lookup it.
 		if outerValue.IsNull() {
-			dLookupKey = append(dLookupKey, outerValue)
-			continue
+			if !iw.outerCtx.keepOrder {
+				dLookupKey = append(dLookupKey, outerValue)
+				continue
+			} else {
+				return nil, nil
+			}
 		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
