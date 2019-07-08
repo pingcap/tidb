@@ -917,12 +917,17 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		val, err = ConvertFloatToUint(sc, d.GetMysqlSet().ToNumber(), upperBound, tp)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err = d.GetBinaryLiteral().ToInt(sc)
+		if err == nil {
+			if (val > upperBound) {
+				err = overflow(val, tp)
+			}
+		}
 	case KindMysqlJSON:
 		var i64 int64
 		i64, err = ConvertJSONToInt(sc, d.GetMysqlJSON(), true)
 		val = uint64(i64)
 	default:
-		return invalidConv(d, target.Tp)
+		return invalidConv(d, tp)
 	}
 	ret.SetUint64(val)
 	if err != nil {

@@ -175,7 +175,11 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	datum := NewBinaryLiteralDatum(NewBinaryLiteralFromUint(0xFFFFFFFFFFF, -1))
 	sc := new(stmtctx.StatementContext)
 	_, err = datum.ConvertTo(sc, ft)
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]constant 17592186044415 overflows tinyint")
+
+	ft.Flag |= mysql.UnsignedFlag
+	_, err = datum.ConvertTo(sc, ft)
+	c.Assert(err.Error(), Equals, "[types:1690]constant 17592186044415 overflows tinyint")
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
