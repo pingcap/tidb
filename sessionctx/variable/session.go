@@ -338,6 +338,9 @@ type SessionVars struct {
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
+	// EnableIndexMerge enables the generation of IndexMergePath.
+	EnableIndexMerge bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -444,6 +447,7 @@ func NewSessionVars() *SessionVars {
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
+		EnableIndexMerge:            false,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -818,6 +822,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
+	case TiDBEnableIndexMerge:
+		s.EnableIndexMerge = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
