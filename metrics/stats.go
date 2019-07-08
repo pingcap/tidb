@@ -85,11 +85,12 @@ var (
 			Help:      "Counter of query feedback whose actual count is much different than calculated by current statistics",
 		})
 
-	FastAnalyzeCounter = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
+	FastAnalyzeHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
 			Name:      "fast_analyze_status",
-			Help:      "Counter of some statuses in fast analyze",
-		}, []string{LblType})
+			Help:      "Bucketed histogram of some stats in fast analyze.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
+		}, []string{LblSQLType, LblType})
 )
