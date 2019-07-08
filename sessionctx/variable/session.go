@@ -451,7 +451,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		EnableIndexMerge:            false,
-        EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
+		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -826,7 +826,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
-  case TiDBEnableIndexMerge:
+	case TiDBEnableIndexMerge:
 		s.EnableIndexMerge = TiDBOptOn(val)
 	case TiDBEnableNoopFuncs:
 		s.EnableNoopFuncs = TiDBOptOn(val)

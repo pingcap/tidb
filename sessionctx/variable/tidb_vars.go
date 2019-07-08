@@ -278,7 +278,7 @@ const (
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
 
-    // TiDBEnableIndexMerge indicates to generate IndexMergePath.
+	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
 	TiDBEnableIndexMerge = "tidb_enable_index_merge"
 
 	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
