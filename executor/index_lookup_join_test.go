@@ -31,7 +31,7 @@ func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 
 	rs, err := tk.Exec("select /*+ TIDB_INLJ(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
 	c.Assert(err, IsNil)
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	for i := 0; i < 5; i++ {
 		rs.Next(context.Background(), req)
 	}
