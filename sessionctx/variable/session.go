@@ -451,7 +451,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		EnableIndexMerge:            false,
-    EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
+        EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
