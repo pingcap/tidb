@@ -552,9 +552,8 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 			if !iw.outerCtx.keepOrder {
 				dLookupKey = append(dLookupKey, outerValue)
 				continue
-			} else {
-				return nil, nil
 			}
+			return nil, nil
 		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
