@@ -197,6 +197,25 @@ func (s *testIntegrationSuite) TestEndIncluded(c *C) {
 	tk.MustExec("admin check table t")
 }
 
+func (s *testIntegrationSuite) TestIndexLength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table idx_len(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0))")
+	tk.MustExec("create index idx on idx_len(a)")
+	tk.MustExec("alter table idx_len add index idxa(a)")
+	tk.MustExec("create index idx1 on idx_len(b)")
+	tk.MustExec("alter table idx_len add index idxb(b)")
+	tk.MustExec("create index idx2 on idx_len(c)")
+	tk.MustExec("alter table idx_len add index idxc(c)")
+	tk.MustExec("create index idx3 on idx_len(d)")
+	tk.MustExec("alter table idx_len add index idxd(d)")
+	tk.MustExec("create index idx4 on idx_len(f)")
+	tk.MustExec("alter table idx_len add index idxf(f)")
+	tk.MustExec("create index idx5 on idx_len(g)")
+	tk.MustExec("alter table idx_len add index idxg(g)")
+	tk.MustExec("create table idx_len1(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0), index(a), index(b), index(c), index(d), index(f), index(g))")
+}
+
 func (s *testIntegrationSuite) TestNullGeneratedColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
