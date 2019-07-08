@@ -439,7 +439,7 @@ func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
 	return false
 }
 
-// ToFlags converts StatementContext to tipb.SelectRequest.Flags.
+// ToSelectRequestFlags converts StatementContext to tipb.SelectRequest.Flags.
 func (sc *StatementContext) ToSelectRequestFlags() uint64 {
 	var flags uint64
 	if sc.InInsertStmt {
