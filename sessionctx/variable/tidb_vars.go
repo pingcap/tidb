@@ -277,6 +277,12 @@ const (
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
+
+	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
+	TiDBEnableIndexMerge = "tidb_enable_index_merge"
+
+	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
+	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
 )
 
 // Default TiDB system variable values.
@@ -339,6 +345,7 @@ const (
 	DefTiDBExpensiveQueryTimeThreshold = 60 // 60s
 	DefTiDBWaitSplitRegionFinish       = true
 	DefWaitSplitRegionTimeout          = 300 // 300s
+	DefTiDBEnableNoopFuncs             = false
 )
 
 // Process global variables.

@@ -191,4 +191,7 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 		OrderBy: orderByClause,
 	}
 	c.Assert(Cacheable(stmt), IsTrue)
+
+	boundExpr := &ast.FrameBound{Expr: &driver.ParamMarkerExpr{}}
+	c.Assert(Cacheable(boundExpr), IsFalse)
 }
