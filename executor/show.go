@@ -62,7 +62,7 @@ type ShowExec struct {
 	Column      *ast.ColumnName // Used for `desc table column`.
 	Flag        int             // Some flag parsed from sql, such as FULL.
 	Full        bool
-	User        *auth.UserIdentity   // Used for show grants.
+	User        *auth.UserIdentity   // Used by show grants, show create user.
 	Roles       []*auth.RoleIdentity // Used for show grants.
 	IfNotExists bool                 // Used for `show create database if not exists`
 
@@ -941,8 +941,23 @@ func (e *ShowExec) fetchShowCreateUser() error {
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
+
+	userName, hostName := e.User.Username, e.User.Hostname
+	sessVars := e.ctx.GetSessionVars()
+	if e.User.CurrentUser {
+		userName = sessVars.User.AuthUsername
+		hostName = sessVars.User.AuthHostname
+	} else {
+		// Show create user requires the SELECT privilege on mysql.user.
+		// Ref https://dev.mysql.com/doc/refman/5.7/en/show-create-user.html
+		activeRoles := sessVars.ActiveRoles
+		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.SelectPriv) {
+			return e.tableAccessDenied("SELECT", mysql.UserTable)
+		}
+	}
+
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`,
-		mysql.SystemDB, mysql.UserTable, e.User.Username, e.User.Hostname)
+		mysql.SystemDB, mysql.UserTable, userName, hostName)
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -951,9 +966,8 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' %s",
-		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname),
-		"REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK")
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
+		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname))
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
