@@ -230,8 +230,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		mutation.asserted = true
 	}
 
-	entrylimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
-	if len(keys) > int(entrylimit) || size > int(kv.TxnTotalSizeLimit) {
+	if size > int(kv.TxnTotalSizeLimit) {
 		return kv.ErrTxnTooLarge
 	}
 	const logEntryCount = 10000

@@ -793,6 +793,8 @@ func (s *seqTestSuite) TestCartesianProduct(c *C) {
 	plannercore.AllowCartesianProduct.Store(true)
 }
 
+// the entry count is removed, so the batch insert/delete may not used anymore.
+/*
 func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	defer func() {
@@ -909,6 +911,7 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("0"))
 }
+ */
 
 type checkPrioClient struct {
 	tikv.Client
