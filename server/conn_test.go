@@ -38,7 +38,7 @@ type ConnTestSuite struct {
 	store kv.Storage
 }
 
-var _ = Suite(ConnTestSuite{})
+var _ = Suite(new(ConnTestSuite))
 
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
@@ -371,6 +371,29 @@ func mapBelong(m1, m2 map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func (ts *ConnTestSuite) TestConnKillError(c *C) {
+	connID := 1
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+	tc := &TiDBContext{
+		session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	sv := &Server{
+		capability: defaultCapability,
+	}
+	cc := &clientConn{
+		connectionID: uint32(connID),
+		server:       sv,
+		ctx:          tc,
+		alloc:        arena.NewAllocator(32 * 1024),
+	}
+	sv.KillAllConnections()
+
+	err = cc.handleQuery(context.Background(), "use test")
+	fmt.Println(err)
 }
 
 func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {

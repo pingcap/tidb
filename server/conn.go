@@ -1178,7 +1178,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	status := atomic.LoadInt32(&cc.status)
 	if status == connStatusShutdown || status == connStatusWaitShutdown {
 		killConn(cc)
-		return errors.New("killed by another connection")
+		return executor.ErrQueryInterrupted
 	}
 	if rs != nil {
 		if len(rs) == 1 {
