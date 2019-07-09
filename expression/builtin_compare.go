@@ -1070,22 +1070,22 @@ func isTemporalColumn(expr Expression) bool {
 }
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
-// The second returned value is only used when isAlways is True
 func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (
-	_ *Constant, // The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
-	_ *Constant, // It is used to get more information about why the 'con' is always true/false.
+	correctVal *Constant, // The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
+	exceptionalVal *Constant,
+	// The val is nil or else indicates whether the int column [cmp] const is always true/false.
+	// It is used to get more information about why the 'con' is always true/false.
 	// If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 	// If the op == EQ,NullEQ and the constant can never be equal to the int column, return the constant.
 	//	(eg. "integer  =  1.1" is definitely false.)
 	// Otherwise, return nil.
-	isAlways bool, // isAlways indicates whether the 'int column [cmp] const' is always true/false.
 ) {
 	if con.GetType().EvalType() == types.ETInt {
-		return con, nil, false
+		return con, nil
 	}
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
-		return con, nil, false
+		return con, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 
@@ -1095,32 +1095,31 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 			return con, &Constant{
 				Value:   dt,
 				RetType: targetFieldType,
-			}, true
+			}
 		}
-		return con, nil, false
+		return con, nil
 	}
 	return &Constant{
 		Value:        dt,
 		RetType:      targetFieldType,
 		DeferredExpr: con.DeferredExpr,
-	}, nil, false
+	}, nil
 }
 
 // RefineComparedConstant changes a non-integer constant argument to its ceiling or floor result by the given op.
-// isAlways indicates whether the 'int column [cmp] const' is always true/false.
-// The second returned value is only used when isAlways is True
 func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant, op opcode.Op) (
-	_ *Constant, // The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
-	_ *Constant, // It is used to get more information about why the 'con' is always true/false.
+	correctVal *Constant, // The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
+	exceptionalVal *Constant,
+	// The val is nil or else indicates whether the int column [cmp] const is always true/false.
+	// It is used to get more information about why the 'con' is always true/false.
 	// If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 	// If the op == EQ,NullEQ and the constant can never be equal to the int column, return the constant.
 	//	(eg. "integer  =  1.1" is definitely false.)
 	// Otherwise, return nil.
-	isAlways bool, // isAlways indicates whether the 'int column [cmp] const' is always true/false.
 ) {
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
-		return con, nil, false
+		return con, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 
@@ -1131,20 +1130,20 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 			return con, &Constant{
 				Value:   intDatum,
 				RetType: targetFieldType,
-			}, true
+			}
 		}
-		return con, nil, false
+		return con, nil
 	}
 	c, err := intDatum.CompareDatum(sc, &con.Value)
 	if err != nil {
-		return con, nil, false
+		return con, nil
 	}
 	if c == 0 {
 		return &Constant{
 			Value:        intDatum,
 			RetType:      targetFieldType,
 			DeferredExpr: con.DeferredExpr,
-		}, nil, false
+		}, nil
 	}
 	switch op {
 	case opcode.LT, opcode.GE:
@@ -1168,7 +1167,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 			return con, &Constant{
 				Value:   con.Value,
 				RetType: con.GetType(),
-			}, true
+			}
 		case types.ETString:
 			// We try to convert the string constant to double.
 			// If the double result equals the int result, we can return the int result;
@@ -1176,25 +1175,25 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 			var doubleDatum types.Datum
 			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
 			if err != nil {
-				return con, nil, false
+				return con, nil
 			}
 			if c, err = doubleDatum.CompareDatum(sc, &intDatum); err != nil {
-				return con, nil, false
+				return con, nil
 			}
 			if c != 0 {
 				return con, &Constant{
 					Value:   con.Value,
 					RetType: con.GetType(),
-				}, true
+				}
 			}
 			return &Constant{
 				Value:        intDatum,
 				RetType:      targetFieldType,
 				DeferredExpr: con.DeferredExpr,
-			}, nil, false
+			}, nil
 		}
 	}
-	return con, nil, false
+	return con, nil
 }
 
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
@@ -1209,30 +1208,36 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isPositiveInfinite, isNegativeInfinite := false, false
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		finalArg1, arg1, isAlways = RefineComparedConstant(ctx, arg0Type, arg1, c.op)
-		if isAlways && arg1.RetType.EvalType() == types.ETInt {
-			// Judge it is inf or -inf
-			// For int:
-			//			inf:  01111111 & 1 == 1
-			//		   -inf:  10000000 & 1 == 0
-			// For uint:
-			//			inf:  11111111 & 1 == 1
-			//		   -inf:  00000000 & 0 == 0
-			if arg1.Value.GetInt64()&1 == 1 {
-				isPositiveInfinite = true
-			} else {
-				isNegativeInfinite = true
+		finalArg1, arg1 = RefineComparedConstant(ctx, arg0Type, arg1, c.op)
+		if arg1 != nil {
+			isAlways = true
+			if arg1.RetType.EvalType() == types.ETInt {
+				// Judge it is inf or -inf
+				// For int:
+				//			inf:  01111111 & 1 == 1
+				//		   -inf:  10000000 & 1 == 0
+				// For uint:
+				//			inf:  11111111 & 1 == 1
+				//		   -inf:  00000000 & 0 == 0
+				if arg1.Value.GetInt64()&1 == 1 {
+					isPositiveInfinite = true
+				} else {
+					isNegativeInfinite = true
+				}
 			}
 		}
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		finalArg0, arg0, isAlways = RefineComparedConstant(ctx, arg1Type, arg0, symmetricOp[c.op])
-		if isAlways && arg0.RetType.EvalType() == types.ETInt {
-			if arg0.Value.GetInt64()&1 == 1 {
-				isNegativeInfinite = true
-			} else {
-				isPositiveInfinite = true
+		finalArg0, arg0 = RefineComparedConstant(ctx, arg1Type, arg0, symmetricOp[c.op])
+		if arg0 != nil {
+			isAlways = true
+			if arg0.RetType.EvalType() == types.ETInt {
+				if arg0.Value.GetInt64()&1 == 1 {
+					isNegativeInfinite = true
+				} else {
+					isPositiveInfinite = true
+				}
 			}
 		}
 	}

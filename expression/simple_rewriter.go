@@ -471,7 +471,7 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 	if leftEt == types.ETInt {
 		for i := 0; i < len(elems); i++ {
 			if c, ok := elems[i].(*Constant); ok {
-				elems[i], _, _ = RefineComparedConstant(sr.ctx, leftFt, c, opcode.EQ)
+				elems[i], _ = RefineComparedConstant(sr.ctx, leftFt, c, opcode.EQ)
 			}
 		}
 	}
