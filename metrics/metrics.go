@@ -98,7 +98,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TiKVBackoffCounter)
 	prometheus.MustRegister(TiKVBackoffHistogram)
-	prometheus.MustRegister(TiKVConnPoolHistogram)
 	prometheus.MustRegister(TiKVCoprocessorHistogram)
 	prometheus.MustRegister(TiKVLoadSafepointCounter)
 	prometheus.MustRegister(TiKVLockResolverCounter)
