@@ -133,6 +133,11 @@ type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer
 }
 
+// ReloadDisabledOptimizeList reloads the data from disabled_optimize_list table.
+type ReloadDisabledOptimizeList struct {
+	baseSchemaProducer
+}
+
 // AdminPluginsAction indicate action will be taken on plugins.
 type AdminPluginsAction int
 

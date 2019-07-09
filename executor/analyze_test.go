@@ -265,7 +265,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.String(), Equals, "Table:41 Count:20\n"+
+	c.Assert(tbl.String(), Equals, "Table:43 Count:20\n"+
 		"column:1 ndv:20 totColSize:0\n"+
 		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
 		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+

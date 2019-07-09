@@ -65,6 +65,21 @@ var optRuleList = []logicalOptRule{
 	&joinReOrderSolver{},
 }
 
+var optRuleNames = []string{
+	"column_prune",
+	"build_keys",
+	"decorrelate",
+	"aggregation_eliminate",
+	"projection_eliminate",
+	"max_min_eliminate",
+	"predicate_push_down",
+	"outer_join_eliminate",
+	"partition_processor",
+	"aggregation_push_down",
+	"topn_push_down",
+	"join_reorder",
+}
+
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
 	optimize(LogicalPlan) (LogicalPlan, error)
@@ -143,7 +158,7 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
 		// apply i-th optimizing rule.
-		if flag&(1<<uint(i)) == 0 {
+		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(i) {
 			continue
 		}
 		logic, err = rule.optimize(logic)
@@ -152,6 +167,14 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 		}
 	}
 	return logic, err
+}
+
+func isLogicalRuleDisabled(i int) bool {
+	if i >= len(optRuleNames) {
+		return false
+	}
+	_, disabled := DefaultDisabledLogicalRulesList.Load().(map[string]struct{})[optRuleNames[i]]
+	return disabled
 }
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
@@ -190,6 +213,11 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	return false
 }
 
+// DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
+var DefaultDisabledLogicalRulesList *atomic.Value
+
 func init() {
 	expression.EvalAstExpr = evalAstExpr
+	DefaultDisabledLogicalRulesList = new(atomic.Value)
+	DefaultDisabledLogicalRulesList.Store(make(map[string]struct{}))
 }

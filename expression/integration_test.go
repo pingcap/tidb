@@ -4405,6 +4405,11 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestDisabledOptimizeList(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select * from mysql.disabled_optimize_list`).Check(testkit.Rows())
+}
+
 func (s *testIntegrationSuite) TestIssue10804(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`SELECT @@information_schema_stats_expiry`).Check(testkit.Rows(`86400`))

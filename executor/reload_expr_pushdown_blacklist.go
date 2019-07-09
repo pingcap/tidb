@@ -41,9 +41,19 @@ func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 		return err
 	}
 	newBlacklist := make(map[string]struct{})
+	// insertSQL is for compatibility with disabled_optimize_list
+	insertSQL := "insert into mysql.disabled_optimize_list values"
+	defer func() {
+		insertLen := len(insertSQL)
+		insertSQL = insertSQL[:insertLen-1]
+		if insertSQL[insertLen-2] == ')' {
+			_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), insertSQL)
+		}
+	}()
 	for _, row := range rows {
-		name := row.GetString(0)
-		newBlacklist[strings.ToLower(name)] = struct{}{}
+		name := strings.ToLower(row.GetString(0))
+		newBlacklist[name] = struct{}{}
+		insertSQL += "(\"" + name + "\", \"expr_push_down\"),"
 	}
 	expression.DefaultExprPushdownBlacklist.Store(newBlacklist)
 	return nil
