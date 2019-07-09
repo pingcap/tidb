@@ -20,7 +20,7 @@ GOVERALLS := goveralls
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "vendor"
+PACKAGE_LIST  := go list ./...| grep -vE "vendor|cmd"
 PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go" | grep -vE "vendor")
@@ -40,7 +40,7 @@ CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
 
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy
+.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy ddltest
 
 default: server buildsucc
 
@@ -115,6 +115,9 @@ test: checklist gotest explaintest
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
+
+ddltest:
+	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
 
 gotest: failpoint-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
