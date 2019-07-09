@@ -719,6 +719,27 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	}
 }
 
+func (s *testTypeConvertSuite) TestIsOverflowInt64(t *C) {
+	cases := []struct {
+		num   string
+		valid bool
+	}{
+		{"1", true},
+		{"-1", true},
+		{"+1", true},
+		{"9223372036854775807", true},
+		{"+9223372036854775807", true},
+		{"-9223372036854775808", true},
+
+		{"9223372036854775808", false},
+		{"+9223372036854775808", false},
+		{"-92233720368547758080", false},
+	}
+	for _, c := range cases {
+		t.Assert(isOverflowInt64(c.num), Equals, c.valid)
+	}
+}
+
 // TestConvertTime tests time related conversion.
 // time conversion is complicated including Date/Datetime/Time/Timestamp etc,
 // Timestamp may involving timezone.
