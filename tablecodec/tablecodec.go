@@ -551,7 +551,8 @@ func DecodeIndexKV(key, value []byte, colsLen int, pkStatus PrimaryKeyStatus) ([
 		} else {
 			handleDatum = types.NewIntDatum(handle)
 		}
-		handleBytes, err := codec.EncodeValue(nil, b, handleDatum)
+		handleBytes := make([]byte, 0, 8)
+		handleBytes, err = codec.EncodeValue(nil, handleBytes, handleDatum)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -190,4 +190,12 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustQuery("select * from tt use index (PRIMARY) where c is not null;").Check(testkit.Rows("1 1 1"))
 	tk.MustExec("commit")
 	tk.MustExec("admin check table tt")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int,b int,primary key(a,b) );")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("select * from t1 use index(primary) where a=1;")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t1;")
 }
