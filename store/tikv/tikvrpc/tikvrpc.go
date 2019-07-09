@@ -66,6 +66,8 @@ const (
 	CmdSplitRegion
 
 	CmdDebugGetRegionProperties CmdType = 2048 + iota
+
+	CmdEmpty CmdType = 3072 + iota
 )
 
 func (t CmdType) String() string {
@@ -163,6 +165,8 @@ type Request struct {
 	PessimisticRollback *kvrpcpb.PessimisticRollbackRequest
 
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesRequest
+
+	Empty *tikvpb.BatchCommandsEmptyRequest
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -212,6 +216,8 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticLock{PessimisticLock: req.PessimisticLock}}
 	case CmdPessimisticRollback:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticRollback{PessimisticRollback: req.PessimisticRollback}}
+	case CmdEmpty:
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Empty{Empty: req.Empty}}
 	}
 	return nil
 }
@@ -258,6 +264,8 @@ type Response struct {
 	PessimisticRollback *kvrpcpb.PessimisticRollbackResponse
 
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesResponse
+
+	Empty *tikvpb.BatchCommandsEmptyResponse
 }
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
@@ -307,6 +315,8 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 		return &Response{Type: CmdPessimisticLock, PessimisticLock: res.PessimisticLock}
 	case *tikvpb.BatchCommandsResponse_Response_PessimisticRollback:
 		return &Response{Type: CmdPessimisticRollback, PessimisticRollback: res.PessimisticRollback}
+	case *tikvpb.BatchCommandsResponse_Response_Empty:
+		return &Response{Type: CmdEmpty, Empty: res.Empty}
 	}
 	return nil
 }
@@ -383,6 +393,7 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.MvccGetByStartTs.Context = ctx
 	case CmdSplitRegion:
 		req.SplitRegion.Context = ctx
+	case CmdEmpty:
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -505,6 +516,7 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.SplitRegion = &kvrpcpb.SplitRegionResponse{
 			RegionError: e,
 		}
+	case CmdEmpty:
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -569,6 +581,7 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.MvccGetByStartTS.GetRegionError()
 	case CmdSplitRegion:
 		e = resp.SplitRegion.GetRegionError()
+	case CmdEmpty:
 	default:
 		return nil, fmt.Errorf("invalid response type %v", resp.Type)
 	}
@@ -641,6 +654,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.MvccGetByStartTS, err = client.MvccGetByStartTs(ctx, req.MvccGetByStartTs)
 	case CmdSplitRegion:
 		resp.SplitRegion, err = client.SplitRegion(ctx, req.SplitRegion)
+	case CmdEmpty:
+		resp.Empty, err = &tikvpb.BatchCommandsEmptyResponse{}, nil
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
