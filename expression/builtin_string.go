@@ -272,17 +272,26 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinConcatSig{bf}
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	sig := &builtinConcatSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinConcatSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinConcatSig) Clone() builtinFunc {
 	newSig := &builtinConcatSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -296,6 +305,10 @@ func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err
 			return d, isNull, err
 		}
 		s = append(s, []byte(d)...)
+	}
+	if uint64(len(s)) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
+		return "", true, nil
 	}
 	return string(s), false, nil
 }
@@ -337,12 +350,19 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 
-	sig := &builtinConcatWSSig{bf}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	sig := &builtinConcatWSSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinConcatWSSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinConcatWSSig) Clone() builtinFunc {
@@ -380,8 +400,13 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 		strs = append(strs, val)
 	}
 
+	result := strings.Join(strs, sep)
+	if uint64(len(result)) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
+		return "", true, nil
+	}
 	// TODO: check whether the length of result is larger than Flen
-	return strings.Join(strs, sep), false, nil
+	return result, false, nil
 }
 
 type leftFunctionClass struct {
