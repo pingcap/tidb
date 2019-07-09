@@ -82,7 +82,7 @@ func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 
 func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 	args, l := expr.GetArgs(), len(expr.GetArgs())
-	firstCondition := true
+	isFirstCondition := true
 	isDeferredConst := false
 	for i := 0; i < l-1; i += 2 {
 		foldedArg, isDeferred := foldConstant(args[i])
@@ -93,19 +93,19 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 			if err != nil {
 				return expr, false
 			}
-			if firstCondition && condition != 0 && !isNull {
-				return retProcess(args[i+1], expr.GetType())
+			if isFirstCondition && condition != 0 && !isNull {
+				return retProcess(args[i+1], expr.GetType(), isDeferredConst)
 			}
 		} else {
-			firstCondition = false
+			isFirstCondition = false
 		}
 		foldedArg1, isDeferred1 := foldConstant(args[i+1])
 		expr.GetArgs()[i+1] = foldedArg1
 		isDeferredConst = isDeferredConst || isDeferred1
 	}
 
-	if l%2 == 1 && firstCondition {
-		return retProcess(args[l-1], expr.GetType())
+	if l%2 == 1 && isFirstCondition {
+		return retProcess(args[l-1], expr.GetType(), isDeferredConst)
 	} else if l%2 == 1 {
 		foldedArg, isDeferred := foldConstant(args[l-1])
 		expr.GetArgs()[l-1] = foldedArg
@@ -115,14 +115,15 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 	return expr, isDeferredConst
 }
 
-func retProcess(expr Expression, retType *types.FieldType) (Expression, bool) {
-	foldedExpr, b := foldConstant(expr)
+func retProcess(expr Expression, retType *types.FieldType, isDeferredConst bool) (Expression, bool) {
+	foldedExpr, isDeferred := foldConstant(expr)
+	isDeferredConst = isDeferredConst || isDeferred
 	if fc, isConst := foldedExpr.(*Constant); isConst {
 		fc.RetType = retType
-		return fc, b
+		return fc, isDeferredConst
 	}
 
-	return foldedExpr, b
+	return foldedExpr, isDeferredConst
 }
 
 func foldConstant(expr Expression) (Expression, bool) {
