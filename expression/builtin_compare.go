@@ -1070,8 +1070,16 @@ func isTemporalColumn(expr Expression) bool {
 }
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
-// The second return-val only used when isAlways is True
-func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, _ *Constant, isAlways bool) {
+// The second returned value is only used when isAlways is True
+func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (
+	_ *Constant, // The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
+	_ *Constant, // It is used to get more information about why the 'con' is always true/false.
+	// If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
+	// If the op == EQ,NullEQ and the constant can never be equal to the int column, return the constant.
+	//	(eg. "integer  =  1.1" is definitely false.)
+	// Otherwise, return nil.
+	isAlways bool, // isAlways indicates whether the 'int column [cmp] const' is always true/false.
+) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, nil, false
 	}
@@ -1080,45 +1088,49 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 		return con, nil, false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	fieldType := targetFieldType
 
-	dt, err = dt.ConvertTo(sc, fieldType)
+	dt, err = dt.ConvertTo(sc, targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return con, &Constant{
-				Value:        dt,
-				RetType:      fieldType,
-				DeferredExpr: con.DeferredExpr,
+				Value:   dt,
+				RetType: targetFieldType,
 			}, true
 		}
 		return con, nil, false
 	}
 	return &Constant{
 		Value:        dt,
-		RetType:      fieldType,
+		RetType:      targetFieldType,
 		DeferredExpr: con.DeferredExpr,
 	}, nil, false
 }
 
-// RefineComparedConstant changes an non-integer constant argument to its ceiling or floor result by the given op.
-// isAlways indicates whether the int column "con" is true/false.
-// The second return-val only used when isAlways is True
-func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant, op opcode.Op) (_ *Constant, _ *Constant, isAlways bool) {
+// RefineComparedConstant changes a non-integer constant argument to its ceiling or floor result by the given op.
+// isAlways indicates whether the 'int column [cmp] const' is always true/false.
+// The second returned value is only used when isAlways is True
+func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant, op opcode.Op) (
+	_ *Constant, // The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
+	_ *Constant, // It is used to get more information about why the 'con' is always true/false.
+	// If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
+	// If the op == EQ,NullEQ and the constant can never be equal to the int column, return the constant.
+	//	(eg. "integer  =  1.1" is definitely false.)
+	// Otherwise, return nil.
+	isAlways bool, // isAlways indicates whether the 'int column [cmp] const' is always true/false.
+) {
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
 		return con, nil, false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	intFieldType := targetFieldType
 
 	var intDatum types.Datum
-	intDatum, err = dt.ConvertTo(sc, intFieldType)
+	intDatum, err = dt.ConvertTo(sc, targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return con, &Constant{
-				Value:        intDatum,
-				RetType:      intFieldType,
-				DeferredExpr: con.DeferredExpr,
+				Value:   intDatum,
+				RetType: targetFieldType,
 			}, true
 		}
 		return con, nil, false
@@ -1130,7 +1142,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 	if c == 0 {
 		return &Constant{
 			Value:        intDatum,
-			RetType:      intFieldType,
+			RetType:      targetFieldType,
 			DeferredExpr: con.DeferredExpr,
 		}, nil, false
 	}
@@ -1138,12 +1150,12 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 	case opcode.LT, opcode.GE:
 		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(ctx, intFieldType, resultCon)
+			return tryToConvertConstantInt(ctx, targetFieldType, resultCon)
 		}
 	case opcode.LE, opcode.GT:
 		resultExpr := NewFunctionInternal(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(ctx, intFieldType, resultCon)
+			return tryToConvertConstantInt(ctx, targetFieldType, resultCon)
 		}
 	case opcode.NullEQ, opcode.EQ:
 		switch con.RetType.EvalType() {
@@ -1154,9 +1166,8 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 		//   2. "integer <=> 1.1" is definitely false.
 		case types.ETReal, types.ETDecimal:
 			return con, &Constant{
-				Value:        con.Value,
-				RetType:      con.GetType(),
-				DeferredExpr: con.DeferredExpr,
+				Value:   con.Value,
+				RetType: con.GetType(),
 			}, true
 		case types.ETString:
 			// We try to convert the string constant to double.
@@ -1172,14 +1183,13 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 			}
 			if c != 0 {
 				return con, &Constant{
-					Value:        con.Value,
-					RetType:      con.GetType(),
-					DeferredExpr: con.DeferredExpr,
+					Value:   con.Value,
+					RetType: con.GetType(),
 				}, true
 			}
 			return &Constant{
 				Value:        intDatum,
-				RetType:      intFieldType,
+				RetType:      targetFieldType,
 				DeferredExpr: con.DeferredExpr,
 			}, nil, false
 		}
