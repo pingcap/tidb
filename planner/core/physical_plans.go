@@ -82,6 +82,8 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	ExtraHandleCol *expression.Column
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -262,6 +264,8 @@ type PhysicalLock struct {
 	basePhysicalPlan
 
 	Lock ast.SelectLockType
+
+	TblID2Handle map[int64][]*expression.Column
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -346,6 +350,8 @@ type PhysicalUnionScan struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
+
+	HandleCol *expression.Column
 }
 
 // IsPartition returns true and partition ID if it works on a partition.

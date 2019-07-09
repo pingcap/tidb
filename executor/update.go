@@ -40,6 +40,7 @@ type UpdateExec struct {
 	// The value is true if the row is changed, or false otherwise
 	updatedRowKeys map[int64]map[int64]bool
 	tblID2table    map[int64]table.Table
+	tblID2Handle   map[int64][]*expression.Column
 
 	rows        [][]types.Datum // The rows fetched from TableExec.
 	newRowsData [][]types.Datum // The new values to be set.
@@ -65,7 +66,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 	}
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
-	for id, cols := range schema.TblID2Handle {
+	for id, cols := range e.tblID2Handle {
 		tbl := e.tblID2table[id]
 		if e.updatedRowKeys[id] == nil {
 			e.updatedRowKeys[id] = make(map[int64]bool)
@@ -168,7 +169,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	fields := retTypes(e.children[0])
 	schema := e.children[0].Schema()
 	colsInfo := make([]*table.Column, len(fields))
-	for id, cols := range schema.TblID2Handle {
+	for id, cols := range e.tblID2Handle {
 		tbl := e.tblID2table[id]
 		for _, col := range cols {
 			offset := getTableOffset(schema, col)

@@ -432,6 +432,8 @@ type Update struct {
 	OrderedList []*expression.Assignment
 
 	SelectPlan PhysicalPlan
+
+	TblID2Handle map[int64][]*expression.Column
 }
 
 // Delete represents a delete plan.
@@ -442,6 +444,8 @@ type Delete struct {
 	IsMultiTable bool
 
 	SelectPlan PhysicalPlan
+
+	TblID2Handle map[int64][]*expression.Column
 }
 
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.

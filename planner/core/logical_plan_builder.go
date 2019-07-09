@@ -378,6 +378,10 @@ func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
 		return nil, err
 	}
 
+	handleMap1 := b.handleHelper.popMap()
+	handleMap2 := b.handleHelper.popMap()
+	b.handleHelper.mergeAndPush(handleMap1, handleMap2)
+
 	joinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.Init(b.ctx)
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
@@ -870,6 +874,11 @@ func (b *PlanBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 	}
 
 	oldLen := unionPlan.Schema().Len()
+
+	for i := 0; i < len(union.SelectList.Selects); i++ {
+		b.handleHelper.popMap()
+	}
+	b.handleHelper.pushMap(nil)
 
 	if union.OrderBy != nil {
 		unionPlan, err = b.buildSort(unionPlan, union.OrderBy.Items, nil, nil)
@@ -2040,6 +2049,8 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	if sel.LockTp != ast.SelectLockNone {
 		p = b.buildSelectLock(p, sel.LockTp)
 	}
+	b.handleHelper.popMap()
+	b.handleHelper.pushMap(nil)
 
 	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg {
@@ -2130,6 +2141,7 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 }
 
 func (b *PlanBuilder) buildTableDual() *LogicalTableDual {
+	b.handleHelper.pushMap(nil)
 	return LogicalTableDual{RowCount: 1}.Init(b.ctx)
 }
 
@@ -2279,7 +2291,12 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 		schema.Append(handleCol)
 	}
 	if handleCol != nil {
-		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
+		ds.handleCol = handleCol
+		handleMap := make(map[int64][]*expression.Column)
+		handleMap[tableInfo.ID] = []*expression.Column{handleCol}
+		b.handleHelper.pushMap(handleMap)
+	} else {
+		b.handleHelper.pushMap(nil)
 	}
 
 	var result LogicalPlan = ds
@@ -2291,8 +2308,8 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	if txn.Valid() && !txn.IsReadOnly() {
-		us := LogicalUnionScan{}.Init(b.ctx)
+	if txn.Valid() && !txn.IsReadOnly() && !isMemDB {
+		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx)
 		us.SetChildren(ds)
 		result = us
 	}
@@ -2421,6 +2438,9 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 	}
 
 	proj.SetSchema(ds.Schema().Clone())
+	for _, cols := range b.handleHelper.tailMap() {
+		cols[0] = proj.schema.RetrieveColumn(cols[0])
+	}
 	return proj, nil
 }
 
@@ -2576,7 +2596,12 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	}
 	p = np
 
-	updt := Update{OrderedList: orderedList}.Init(b.ctx)
+	updt := Update{
+		OrderedList: orderedList,
+		// TblID2Handle: p.Schema().TblID2Handle,
+		TblID2Handle: b.handleHelper.popMap(),
+	}.Init(b.ctx)
+	// updt.TblID2Handle = updt.SelectPlan.Schema().TblID2Handle
 	updt.SetSchema(p.Schema())
 	updt.SelectPlan, err = DoOptimize(b.optFlag, p)
 	if err != nil {
@@ -2774,6 +2799,8 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	del := Delete{
 		Tables:       tables,
 		IsMultiTable: delete.IsMultiTable,
+		//TblID2Handle: p.Schema().TblID2Handle,
+		TblID2Handle: b.handleHelper.tailMap(),
 	}.Init(b.ctx)
 
 	del.SelectPlan, err = DoOptimize(b.optFlag, p)
@@ -2781,7 +2808,7 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 		return nil, err
 	}
 
-	del.SetSchema(expression.NewSchema())
+	del.SetSchema(del.SelectPlan.Schema())
 
 	var tableList []*ast.TableName
 	tableList = extractTableList(delete.TableRefs.TableRefs, tableList, true)
@@ -2839,7 +2866,9 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 		}
 	}
 
-	return del, nil
+	err = del.ResolveIndices()
+
+	return del, err
 }
 
 func getWindowName(name string) string {

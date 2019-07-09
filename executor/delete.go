@@ -34,6 +34,7 @@ type DeleteExec struct {
 	Tables       []*ast.TableName
 	IsMultiTable bool
 	tblID2Table  map[int64]table.Table
+	tblID2Handle map[int64][]*expression.Column
 	// tblMap is the table map value is an array which contains table aliases.
 	// Table ID may not be unique for deleting multiple tables, for statements like
 	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
@@ -87,7 +88,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	)
 	for i, t := range e.tblID2Table {
 		id, tbl = i, t
-		handleCol = e.children[0].Schema().TblID2Handle[id][0]
+		handleCol = e.tblID2Handle[id][0]
 		break
 	}
 
@@ -143,7 +144,7 @@ func (e *DeleteExec) getColPosInfos(schema *expression.Schema) []tblColPosInfo {
 	var colPosInfos []tblColPosInfo
 	// Extract the columns' position information of this table in the delete's schema, together with the table id
 	// and its handle's position in the schema.
-	for id, cols := range schema.TblID2Handle {
+	for id, cols := range e.tblID2Handle {
 		tbl := e.tblID2Table[id]
 		for _, col := range cols {
 			if !e.matchingDeletingTable(id, col) {

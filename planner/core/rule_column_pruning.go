@@ -83,12 +83,6 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) er
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
-	// Prune TblID2Handle since that handle column may be pruned.
-	for k, cols := range p.schema.TblID2Handle {
-		if p.schema.ColumnIndex(cols[0]) == -1 {
-			delete(p.schema.TblID2Handle, k)
-		}
-	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
 	return child.PruneColumns(selfUsedCols)
@@ -204,9 +198,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) error {
-	for _, col := range p.Schema().TblID2Handle {
-		parentUsedCols = append(parentUsedCols, col[0])
-	}
+	parentUsedCols = append(parentUsedCols, p.handleCol)
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
@@ -221,19 +213,14 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 		handleCol     *expression.Column
 		handleColInfo *model.ColumnInfo
 	)
+	if ds.handleCol != nil {
+		handleCol = ds.handleCol
+		handleColInfo = ds.Columns[ds.schema.ColumnIndex(handleCol)]
+	}
 	for i := len(used) - 1; i >= 0; i-- {
-		if ds.tableInfo.PKIsHandle && mysql.HasPriKeyFlag(ds.Columns[i].Flag) {
-			handleCol = ds.schema.Columns[i]
-			handleColInfo = ds.Columns[i]
-		}
 		if !used[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
-		}
-	}
-	for k, cols := range ds.schema.TblID2Handle {
-		if ds.schema.ColumnIndex(cols[0]) == -1 {
-			delete(ds.schema.TblID2Handle, k)
 		}
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
@@ -245,6 +232,9 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 		}
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
+	}
+	if ds.handleCol != nil && ds.schema.ColumnIndex(ds.handleCol) == -1 {
+		ds.handleCol = nil
 	}
 	return nil
 }
@@ -259,11 +249,6 @@ func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) err
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
-		}
-	}
-	for k, cols := range p.schema.TblID2Handle {
-		if p.schema.ColumnIndex(cols[0]) == -1 {
-			delete(p.schema.TblID2Handle, k)
 		}
 	}
 	return nil
@@ -356,7 +341,7 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	}
 
-	for _, cols := range p.children[0].Schema().TblID2Handle {
+	for _, cols := range p.tblID2Handle {
 		parentUsedCols = append(parentUsedCols, cols...)
 	}
 	return p.children[0].PruneColumns(parentUsedCols)

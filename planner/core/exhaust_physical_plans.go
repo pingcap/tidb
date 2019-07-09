@@ -36,7 +36,10 @@ import (
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	childProp := prop.Clone()
-	us := PhysicalUnionScan{Conditions: p.conditions}.Init(p.ctx, p.stats, childProp)
+	us := PhysicalUnionScan{
+		Conditions: p.conditions,
+		HandleCol:  p.handleCol,
+	}.Init(p.ctx, p.stats, childProp)
 	return []PhysicalPlan{us}
 }
 
@@ -542,7 +545,10 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	}
 	// Use `reader.stats` instead of `us.stats` because it should be more accurate. No need to specify
 	// childrenReqProps now since we have got reader already.
-	physicalUnionScan := PhysicalUnionScan{Conditions: us.conditions}.Init(us.ctx, reader.statsInfo(), nil)
+	physicalUnionScan := PhysicalUnionScan{
+		Conditions: us.conditions,
+		HandleCol:  us.handleCol,
+	}.Init(us.ctx, reader.statsInfo(), nil)
 	physicalUnionScan.SetChildren(reader)
 	return physicalUnionScan
 }
@@ -1285,7 +1291,8 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	childProp := prop.Clone()
 	lock := PhysicalLock{
-		Lock: p.Lock,
+		Lock:         p.Lock,
+		TblID2Handle: p.tblID2Handle,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 	return []PhysicalPlan{lock}
 }

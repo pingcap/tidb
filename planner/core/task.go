@@ -50,6 +50,8 @@ type copTask struct {
 	// In double read case, it may output one more column for handle(row id).
 	// We need to prune it, so we add a project do this.
 	doubleReadNeedProj bool
+
+	extraHandleCol *expression.Column
 }
 
 func (t *copTask) invalid() bool {
@@ -210,7 +212,11 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		cst: t.cst,
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		p := PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.Init(ctx)
+		p := PhysicalIndexLookUpReader{
+			tablePlan:      t.tablePlan,
+			indexPlan:      t.indexPlan,
+			ExtraHandleCol: t.extraHandleCol,
+		}.Init(ctx)
 		p.stats = t.tablePlan.statsInfo()
 		if t.doubleReadNeedProj {
 			schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema

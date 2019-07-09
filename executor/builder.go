@@ -496,6 +496,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 	e := &SelectLockExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
 		Lock:         v.Lock,
+		tblID2Handle: v.TblID2Handle,
 	}
 	return e
 }
@@ -784,9 +785,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), reader)}
 	// Get the handle column index of the below plannercore.
 	// We can guarantee that there must be only one col in the map.
-	for _, cols := range v.Children()[0].Schema().TblID2Handle {
-		us.belowHandleIndex = cols[0].Index
-	}
+	us.belowHandleIndex = v.HandleCol.Index
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
@@ -1296,7 +1295,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.SelectPlan.Schema().TblID2Handle {
+	for id := range v.TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
@@ -1304,7 +1303,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err != nil {
 		return nil
 	}
-	columns2Handle := buildColumns2Handle(v.SelectPlan.Schema(), tblID2table)
+	columns2Handle := buildColumns2Handle(v.SelectPlan.Schema(), v.TblID2Handle, tblID2table)
 	base := newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	updateExec := &UpdateExec{
@@ -1312,6 +1311,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		SelectExec:     selExec,
 		OrderedList:    v.OrderedList,
 		tblID2table:    tblID2table,
+		tblID2Handle:   v.TblID2Handle,
 		columns2Handle: columns2Handle,
 	}
 	return updateExec
@@ -1358,13 +1358,13 @@ func (c cols2HandleSlice) findHandle(ordinal int32) (int32, bool) {
 }
 
 // buildColumns2Handle builds columns to handle mapping.
-func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.Table) cols2HandleSlice {
-	if len(schema.TblID2Handle) < 2 {
+func buildColumns2Handle(schema *expression.Schema, tblID2Handle map[int64][]*expression.Column, tblID2Table map[int64]table.Table) cols2HandleSlice {
+	if len(tblID2Handle) < 2 {
 		// skip buildColumns2Handle mapping if there are only single table.
 		return nil
 	}
 	var cols2Handles cols2HandleSlice
-	for tblID, handleCols := range schema.TblID2Handle {
+	for tblID, handleCols := range tblID2Handle {
 		tbl := tblID2Table[tblID]
 		for _, handleCol := range handleCols {
 			offset := getTableOffset(schema, handleCol)
@@ -1378,7 +1378,7 @@ func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.SelectPlan.Schema().TblID2Handle {
+	for id := range v.TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
@@ -1394,6 +1394,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
 		tblID2Table:  tblID2table,
+		tblID2Handle: v.TblID2Handle,
 	}
 	return deleteExec
 }
@@ -1949,8 +1950,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		e.feedback.Invalidate()
 	}
 	e.dagPB.CollectRangeCounts = &collectIndex
-	if cols, ok := v.Schema().TblID2Handle[is.Table.ID]; ok {
-		e.handleIdx = cols[0].Index
+	if v.ExtraHandleCol != nil {
+		e.handleIdx = v.ExtraHandleCol.Index
 	}
 	return e, nil
 }

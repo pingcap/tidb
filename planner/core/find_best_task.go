@@ -441,15 +441,15 @@ func isCoveringIndex(columns []*expression.Column, indexColumns []*model.IndexCo
 }
 
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
-func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
-	if len(ds.schema.TblID2Handle) > 0 {
-		return
+func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.Column, bool) {
+	handleCol := ds.handleCol
+	if handleCol != nil {
+		return handleCol, false
 	}
-	pkInfo := model.NewExtraHandleColInfo()
-	ts.Columns = append(ts.Columns, pkInfo)
-	handleCol := ds.newExtraHandleSchemaCol()
+	handleCol = ds.newExtraHandleSchemaCol()
 	ts.schema.Append(handleCol)
-	ts.schema.TblID2Handle[ds.tableInfo.ID] = []*expression.Column{handleCol}
+	ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+	return handleCol, true
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
@@ -521,8 +521,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			cop.cst = rowCount * descScanFactor
 		}
 		if cop.tablePlan != nil {
-			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
-			cop.doubleReadNeedProj = true
+			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+			cop.extraHandleCol = col
+			cop.doubleReadNeedProj = isNew
 		}
 		cop.keepOrder = true
 		is.KeepOrder = true
