@@ -724,6 +724,10 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		ret = p
 	case ast.AdminReloadExprPushdownBlacklist:
 		return &ReloadExprPushdownBlacklist{}, nil
+	case ast.AdminPluginEnable:
+		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
+	case ast.AdminPluginDisable:
+		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}

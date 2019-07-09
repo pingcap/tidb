@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
@@ -740,4 +741,46 @@ func (s *testSuite2) TestSelectGlobalVar(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.UnknownSystemVar), IsTrue, Commentf("err %v", err))
 	err = tk.ExecToErr("select @@global.invalid")
 	c.Assert(terror.ErrorEqual(err, variable.UnknownSystemVar), IsTrue, Commentf("err %v", err))
+}
+
+func (s *testSuite2) TestEnableNoopFunctionsVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// test for tidb_enable_noop_functions
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+
+	_, err := tk.Exec(`select get_lock('lock1', 2);`)
+	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	_, err = tk.Exec(`select release_lock('lock1');`)
+	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+
+	// change session var to 1
+	tk.MustExec(`set tidb_enable_noop_functions=1;`)
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select get_lock("lock", 10)`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select release_lock("lock")`).Check(testkit.Rows("1"))
+
+	// restore to 0
+	tk.MustExec(`set tidb_enable_noop_functions=0;`)
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+
+	_, err = tk.Exec(`select get_lock('lock2', 10);`)
+	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	_, err = tk.Exec(`select release_lock('lock2');`)
+	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+
+	// set test
+	_, err = tk.Exec(`set tidb_enable_noop_functions='abc'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`set tidb_enable_noop_functions=11`)
+	c.Assert(err, NotNil)
+	tk.MustExec(`set tidb_enable_noop_functions="off";`)
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("off"))
+	tk.MustExec(`set tidb_enable_noop_functions="on";`)
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("on"))
+	tk.MustExec(`set tidb_enable_noop_functions=0;`)
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
 }

@@ -82,6 +82,11 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	if !ok {
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
 	}
+	if !ctx.GetSessionVars().EnableNoopFuncs {
+		if _, ok := noopFuncs[funcName]; ok {
+			return nil, ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+		}
+	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
 	f, err := fc.getFunction(ctx, funcArgs)
