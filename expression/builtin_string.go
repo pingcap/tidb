@@ -368,6 +368,7 @@ type builtinConcatWSSig struct {
 func (b *builtinConcatWSSig) Clone() builtinFunc {
 	newSig := &builtinConcatWSSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 

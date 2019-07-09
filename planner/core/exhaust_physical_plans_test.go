@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -40,6 +41,7 @@ func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Sche
 
 func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 	s.ctx.GetSessionVars().PlanID = -1
+	s.ctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864")
 	joinNode := LogicalJoin{}.Init(s.ctx)
 	dataSourceNode := DataSource{}.Init(s.ctx)
 	dsSchema := expression.NewSchema()

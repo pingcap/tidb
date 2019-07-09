@@ -556,6 +556,7 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
+	s.ctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864")
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

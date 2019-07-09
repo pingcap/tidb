@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -1360,6 +1361,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			err: ErrUnknownColumn,
 		},
 	}
+	s.ctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864")
 	for _, tt := range tests {
 		sql := tt.sql
 		comment := Commentf("for %s", sql)
