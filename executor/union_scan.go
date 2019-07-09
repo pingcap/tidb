@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/set"
 )
 
 // DirtyDB stores uncommitted write operations for a transaction.
@@ -103,7 +104,7 @@ type UnionScanExec struct {
 
 	addedRows [][]types.Datum
 	// memIdxHandles is uses to store the handle ids that has been read by memIndexReader.
-	memIdxHandles       map[int64]struct{}
+	memIdxHandles       set.Int64Set
 	cursor4AddRows      int
 	sortErr             error
 	snapshotRows        [][]types.Datum
@@ -131,7 +132,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		us.addedRows, err = mIdxReader.getMemRows()
 		us.memIdxHandles = mIdxReader.memIdxHandles
 	case *IndexLookUpExecutor:
-		us.memIdxHandles = make(map[int64]struct{}, len(us.dirty.addedRows))
+		us.memIdxHandles = set.NewInt64Set()
 		err = us.buildAndSortAddedRows(x.table)
 	}
 	if err != nil {
@@ -252,14 +253,14 @@ func (us *UnionScanExec) getMissIndexRowsByHandle(handle int64) error {
 		return nil
 	}
 	// Don't miss in memBuffer reader.
-	if _, ok := us.memIdxHandles[handle]; ok {
+	if us.memIdxHandles.Exist(handle) {
 		return nil
 	}
-	ds, err := us.getMemRow(handle)
-	if ds == nil || err != nil {
+	memRow, err := us.getMemRow(handle)
+	if memRow == nil || err != nil {
 		return err
 	}
-	us.snapshotRows = append(us.snapshotRows, ds)
+	us.snapshotRows = append(us.snapshotRows, memRow)
 	return nil
 }
 
@@ -357,7 +358,7 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for h := range us.dirty.addedRows {
-		us.memIdxHandles[h] = struct{}{}
+		us.memIdxHandles.Insert(h)
 		newData, err := us.rowWithColsInTxn(t, h)
 		if err != nil {
 			return err
