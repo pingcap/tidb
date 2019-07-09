@@ -2063,7 +2063,8 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 
 	var tableList []*ast.TableName
 	tableList = extractTableList(sel.From.TableRefs, tableList)
-	for _, t := range tableList {
+	tableListForUpdate := extractTableListForUpdate(tableList, update.List)
+	for _, t := range tableListForUpdate {
 		dbName := t.Schema.L
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
@@ -2402,4 +2403,31 @@ func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
 		return getInnerFromParentheses(pexpr.Expr)
 	}
 	return expr
+}
+
+func extractTableListForUpdate(refTables []*ast.TableName, sets []*ast.Assignment) []*ast.TableName {
+	// if there's only one tbl , we won't bother
+	if len(refTables) == 1 {
+		return refTables
+	}
+	tbls := make([]*ast.TableName, 0, len(sets))
+	var tblsMap map[string]*ast.TableName
+
+	for _, a := range sets {
+		c := a.Column
+
+		if c.Table.L != "" {
+			for _, tbl := range refTables {
+				if strings.EqualFold(tbl.Name.L, c.Name.L) {
+					tblsMap["`"+tbl.Schema.L+"`.`"+tbl.Name.L+"`"] = tbl
+				}
+			}
+		}
+	}
+
+	for _, tbl := range tblsMap {
+		tbls = append(tbls, tbl)
+	}
+
+	return tbls
 }
