@@ -19,6 +19,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"io"
 
 	. "github.com/pingcap/check"
@@ -38,7 +40,7 @@ type ConnTestSuite struct {
 	store kv.Storage
 }
 
-var _ = Suite(ConnTestSuite{})
+var _ = Suite(&ConnTestSuite{})
 
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
@@ -420,7 +422,7 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	c.Assert(err, IsNil)
 
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
 	c.Assert(err, IsNil)
@@ -429,7 +431,33 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	c.Assert(err, IsNil)
 
 	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
+}
+
+type mockTiDBCtx struct {
+	TiDBContext
+	rs  []ResultSet
+	err error
+}
+
+func (c *mockTiDBCtx) Execute(ctx context.Context, sql string) ([]ResultSet, error) {
+	return c.rs, c.err
+}
+
+func (c *mockTiDBCtx) GetSessionVars() *variable.SessionVars {
+	return &variable.SessionVars{}
+}
+
+func (ts *ConnTestSuite) TestShutDown(c *C) {
+	cc := &clientConn{}
+
+	// mock delay response
+	cc.ctx = &mockTiDBCtx{rs: []ResultSet{&tidbResultSet{}}, err: nil}
+	// set killed flag
+	cc.status = connStatusShutdown
+	// assert ErrQueryInterrupted
+	err := cc.handleQuery(context.Background(), "dummy")
+	c.Assert(err, Equals, executor.ErrQueryInterrupted)
 }
