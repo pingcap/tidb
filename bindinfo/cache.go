@@ -67,6 +67,7 @@ func newBindRecord(row chunk.Row) *BindRecord {
 	}
 }
 
+// size calculates the memory size of a bind meta.
 func (m *BindMeta) size() float64 {
 	res := len(m.OriginalSQL) + len(m.BindSQL) + len(m.Db) + len(m.Status) + 2*int(unsafe.Sizeof(m.CreateTime)) + len(m.Charset) + len(m.Collation)
 	return float64(res)
