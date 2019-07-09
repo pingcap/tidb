@@ -277,7 +277,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	sig := &builtinConcatSig{bf, maxAllowedPacket}
@@ -354,7 +354,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	sig := &builtinConcatWSSig{bf, maxAllowedPacket}
