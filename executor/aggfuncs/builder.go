@@ -51,6 +51,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitXor(aggFuncDesc, ordinal)
 	case ast.AggFuncBitAnd:
 		return buildBitAnd(aggFuncDesc, ordinal)
+	case ast.AggFuncVarPop:
+		return buildVarPop(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -341,6 +343,14 @@ func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 	}
 	return &bitAndUint64{baseBitAggFunc{base}}
+}
+
+func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args: aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	return &varPop4Float64{baseAggFunc: base}
 }
 
 // buildRowNumber builds the AggFunc implementation for function "ROW_NUMBER".
