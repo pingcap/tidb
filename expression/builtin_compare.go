@@ -1204,14 +1204,14 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	arg1IsInt := arg1Type.EvalType() == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
-	isAlways, finalArg0, finalArg1 := false, args[0], args[1]
+	finalArg0, finalArg1 := args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
+	var exceptionalArg0, exceptionalArg1 *Constant = nil, nil
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		finalArg1, arg1 = RefineComparedConstant(ctx, arg0Type, arg1, c.op)
-		if arg1 != nil {
-			isAlways = true
-			if arg1.RetType.EvalType() == types.ETInt {
+		finalArg1, exceptionalArg1 = RefineComparedConstant(ctx, arg0Type, arg1, c.op)
+		if exceptionalArg1 != nil {
+			if exceptionalArg1.RetType.EvalType() == types.ETInt {
 				// Judge it is inf or -inf
 				// For int:
 				//			inf:  01111111 & 1 == 1
@@ -1219,7 +1219,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 				// For uint:
 				//			inf:  11111111 & 1 == 1
 				//		   -inf:  00000000 & 0 == 0
-				if arg1.Value.GetInt64()&1 == 1 {
+				if exceptionalArg1.Value.GetInt64()&1 == 1 {
 					isPositiveInfinite = true
 				} else {
 					isNegativeInfinite = true
@@ -1229,11 +1229,10 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		finalArg0, arg0 = RefineComparedConstant(ctx, arg1Type, arg0, symmetricOp[c.op])
-		if arg0 != nil {
-			isAlways = true
-			if arg0.RetType.EvalType() == types.ETInt {
-				if arg0.Value.GetInt64()&1 == 1 {
+		finalArg0, exceptionalArg0 = RefineComparedConstant(ctx, arg1Type, arg0, symmetricOp[c.op])
+		if exceptionalArg0 != nil {
+			if exceptionalArg0.RetType.EvalType() == types.ETInt {
+				if exceptionalArg0.Value.GetInt64()&1 == 1 {
 					isNegativeInfinite = true
 				} else {
 					isPositiveInfinite = true
@@ -1241,10 +1240,10 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			}
 		}
 	}
-	if !isAlways && !isPositiveInfinite && !isNegativeInfinite {
+	if exceptionalArg0 == nil && exceptionalArg1 == nil && !isPositiveInfinite && !isNegativeInfinite {
 		return []Expression{finalArg0, finalArg1}
 	}
-	if isAlways && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
+	if (exceptionalArg0 != nil || exceptionalArg1 != nil) && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
 		return []Expression{Zero.Clone(), One.Clone()}
 	}
