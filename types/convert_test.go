@@ -724,16 +724,16 @@ func (s *testTypeConvertSuite) TestIsOverflowInt64(t *C) {
 		num   string
 		valid bool
 	}{
-		{"1", true},
-		{"-1", true},
-		{"+1", true},
-		{"9223372036854775807", true},
-		{"+9223372036854775807", true},
-		{"-9223372036854775808", true},
+		{"1", false},
+		{"-1", false},
+		{"+1", false},
+		{"9223372036854775807", false},
+		{"+9223372036854775807", false},
+		{"-9223372036854775808", false},
 
-		{"9223372036854775808", false},
-		{"+9223372036854775808", false},
-		{"-92233720368547758080", false},
+		{"9223372036854775808", true},
+		{"+9223372036854775808", true},
+		{"-92233720368547758080", true},
 	}
 	for _, c := range cases {
 		t.Assert(isOverflowInt64(c.num), Equals, c.valid)
