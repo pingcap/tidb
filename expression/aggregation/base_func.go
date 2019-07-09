@@ -97,6 +97,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
+	case ast.AggFuncJsonObjectAgg:
+		a.typeInfer4JsonFuncs(ctx)
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank:
 		a.typeInfer4NumberFuncs()
 	case ast.WindowFuncCumeDist:
@@ -204,6 +206,12 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
+func (a *baseFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
+	a.RetTp = types.NewFieldType(mysql.TypeJSON)
+	types.SetBinChsClnFlag(a.RetTp)
+	a.RetTp.Flag |= mysql.NotNullFlag
+}
+
 func (a *baseFuncDesc) typeInfer4NumberFuncs() {
 	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	a.RetTp.Flen = 21
@@ -279,6 +287,7 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncMin:      {},
 	ast.AggFuncFirstRow: {},
 	ast.WindowFuncNtile: {},
+	ast.AggFuncJsonObjectAgg: {},
 }
 
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.

@@ -53,6 +53,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitAnd(aggFuncDesc, ordinal)
 	case ast.AggFuncVarPop:
 		return buildVarPop(aggFuncDesc, ordinal)
+	case ast.AggFuncJsonObjectAgg:
+		return buildJsonObjectAgg(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -352,6 +354,7 @@ func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return &bitAndUint64{baseBitAggFunc{base}}
 }
 
+<<<<<<< HEAD
 // buildVarPop builds the AggFunc implementation for function "VAR_POP".
 func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseVarPopAggFunc{
@@ -359,16 +362,32 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			args:    aggFuncDesc.Args,
 			ordinal: ordinal,
 		},
+=======
+// buildJsonObjectAgg builds the AggFunc implementation for function "json_objectagg".
+func buildJsonObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+>>>>>>> update the parser dep and add json_objectagg aggfunc
 	}
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
+<<<<<<< HEAD
 	default:
 		if aggFuncDesc.HasDistinct {
 			return &varPop4DistinctFloat64{base}
 		}
 		return &varPop4Float64{base}
 	}
+=======
+	case aggregation.CompleteMode, aggregation.Partial1Mode:
+		return &original4JsonObjectAgg{baseJsonObjectAgg{base}}
+	case aggregation.Partial2Mode, aggregation.FinalMode:
+		return &partial4JsonObjectAgg{baseJsonObjectAgg{base}}
+	}
+	return nil
+>>>>>>> update the parser dep and add json_objectagg aggfunc
 }
 
 // buildRowNumber builds the AggFunc implementation for function "ROW_NUMBER".
