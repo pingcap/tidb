@@ -911,7 +911,7 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("0"))
 }
- */
+*/
 
 type checkPrioClient struct {
 	tikv.Client
