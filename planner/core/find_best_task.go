@@ -14,7 +14,6 @@
 package core
 
 import (
-	"fmt"
 	"github.com/pingcap/errors"
 	"math"
 	"reflect"
@@ -584,7 +583,7 @@ func (ds *DataSource) addPushedDownSelection(copTask *copTask, path *accessPath)
 	// Add filter condition to table plan now.
 	is, ok := copTask.indexPlan.(*PhysicalIndexScan)
 	if !ok {
-		return errors.Trace(fmt.Errorf("type assertion fail, expect PhysicalIndexScan, but got %v", reflect.TypeOf(copTask.indexPlan)))
+		return errors.Errorf("type assertion fail, expect PhysicalIndexScan, but got %v", reflect.TypeOf(copTask.indexPlan))
 	}
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
@@ -603,7 +602,7 @@ func (ds *DataSource) addPushedDownSelection(copTask *copTask, path *accessPath)
 		copTask.finishIndexPlan()
 		ts, ok := copTask.tablePlan.(*PhysicalTableScan)
 		if !ok {
-			return errors.Trace(fmt.Errorf("type assertion fail, expect PhysicalTableScan, but got %v", reflect.TypeOf(copTask.tablePlan)))
+			return errors.Errorf("type assertion fail, expect PhysicalTableScan, but got %v", reflect.TypeOf(copTask.tablePlan))
 		}
 		ts.filterCondition = append(ts.filterCondition, tableConds...)
 	}
@@ -882,7 +881,7 @@ func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *a
 	}
 	ts, ok := copTask.tablePlan.(*PhysicalTableScan)
 	if !ok {
-		return invalidTask, errors.Trace(fmt.Errorf("type assertion fail, expect PhysicalTableScan, but got %v", reflect.TypeOf(copTask.tablePlan)))
+		return invalidTask, errors.Errorf("type assertion fail, expect PhysicalTableScan, but got %v", reflect.TypeOf(copTask.tablePlan))
 	}
 	if len(ds.virtualColExprs) == 0 {
 		ds.addPushedDownTableScan(copTask, ts, stats)
