@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -67,4 +69,23 @@ func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {
 	for i := range exprs {
 		c.Assert(exprs[i].Equal(s.ctx, funcs[i]), IsTrue)
 	}
+}
+
+func (s *testEvaluatorSuite) TestNewNotExistFunction(c *C) {
+	defer testleak.AfterTest(c)()
+
+	mockCtx := mock.NewContext()
+	typeLong := types.NewFieldType(mysql.TypeLonglong)
+	funcName := "xxx"
+
+	// db empty
+	expr, err := NewFunction(mockCtx, funcName, typeLong)
+	c.Assert(expr, IsNil)
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[expression:1305]FUNCTION %s does not exist", funcName))
+
+	// db not empty
+	mockCtx.GetSessionVars().CurrentDB = "test"
+	expr, err = NewFunction(mockCtx, funcName, typeLong)
+	c.Assert(expr, IsNil)
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[expression:1305]FUNCTION %s.%s does not exist", "test", funcName))
 }

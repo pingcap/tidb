@@ -85,7 +85,12 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
+		dbFuncName := ctx.GetSessionVars().CurrentDB
+		if dbFuncName != "" {
+			dbFuncName += "."
+		}
+		dbFuncName += funcName
+		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", dbFuncName)
 	}
 	if !ctx.GetSessionVars().EnableNoopFuncs {
 		if _, ok := noopFuncs[funcName]; ok {
