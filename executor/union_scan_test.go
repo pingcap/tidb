@@ -149,7 +149,7 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert t values (3,3),(1,1),(4,4),(-1,-1);")
 	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("-1 -1", "1 1", "2 2", "3 2", "3 3", "4 4"))
-	tk.MustQuery("select * from t use index (idx) order by b desc").Check(testkit.Rows("4 4", "3 3", "3 2", "2 2", "1 1", "-1 -1"))
+	tk.MustQuery("select b from t use index (idx) order by b desc").Check(testkit.Rows("4", "3", "2", "2", "1", "-1"))
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 
@@ -182,6 +182,7 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 
+	// Test index lookup reader corner case.
 	tk.MustExec("drop table if exists tt")
 	tk.MustExec("create table tt (a bigint, b int,c int,primary key (a,b));")
 	tk.MustExec("insert into tt set a=1,b=1;")
@@ -191,11 +192,24 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table tt")
 
+	// Test index reader corner case.
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int,b int,primary key(a,b) );")
+	tk.MustExec("create table t1 (a int,b int,primary key(a,b));")
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t1 values(1, 1);")
-	tk.MustExec("select * from t1 use index(primary) where a=1;")
+	tk.MustQuery("select * from t1 use index(primary) where a=1;").Check(testkit.Rows("1 1"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t1;")
+
+	// Test index reader with pk handle.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int unsigned key,b int,c varchar(10), index idx(b,a,c));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 (a,b) values (0, 0), (1, 1);")
+	tk.MustQuery("select a,b from t1 use index(idx) where b>0;").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select a,b,c from t1 ignore index(idx) where a>=1 order by a desc").Check(testkit.Rows("1 1 <nil>"))
+	tk.MustExec("insert into t1 values (2, 2, null), (3, 3, 'a');")
+	tk.MustQuery("select a,b from t1 use index(idx) where b>1 and c is not null;").Check(testkit.Rows("3 3"))
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t1;")
 }
