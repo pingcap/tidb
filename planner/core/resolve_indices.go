@@ -453,6 +453,7 @@ func (p *Update) ResolveIndices() (err error) {
 	return
 }
 
+// ResolveIndices implements Plan interface.
 func (p *Delete) ResolveIndices() (err error) {
 	for i, cols := range p.TblID2Handle {
 		for j, col := range cols {
@@ -466,6 +467,7 @@ func (p *Delete) ResolveIndices() (err error) {
 	return
 }
 
+// ResolveIndices implements Plan interface.
 func (p *PhysicalLock) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {
