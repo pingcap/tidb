@@ -450,6 +450,8 @@ type Update struct {
 
 	SelectPlan PhysicalPlan
 
+	// TblID2Handle stores the handle columns for each table id. One table id may map to multiple columns
+	// since there may be something like self-join.
 	TblID2Handle map[int64][]*expression.Column
 }
 
@@ -462,6 +464,8 @@ type Delete struct {
 
 	SelectPlan PhysicalPlan
 
+	// TblID2Handle stores the handle columns for each table id. One table id may map to multiple columns
+	// since there may be something like self-join.
 	TblID2Handle map[int64][]*expression.Column
 }
 

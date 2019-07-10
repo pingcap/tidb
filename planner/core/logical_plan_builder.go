@@ -2599,11 +2599,9 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	p = np
 
 	updt := Update{
-		OrderedList: orderedList,
-		// TblID2Handle: p.Schema().TblID2Handle,
+		OrderedList:  orderedList,
 		TblID2Handle: b.handleHelper.popMap(),
 	}.Init(b.ctx)
-	// updt.TblID2Handle = updt.SelectPlan.Schema().TblID2Handle
 	updt.SetSchema(p.Schema())
 	updt.SelectPlan, err = DoOptimize(b.optFlag, p)
 	if err != nil {

@@ -187,8 +187,14 @@ type PlanBuilder struct {
 
 	windowSpecs map[string]*ast.WindowSpec
 
-	tblID2Handle []map[int64][]*expression.Column
-
+	// handleHelper records the handle column position for tables. Delete/Update/SelectLock/UnionScan may need this information.
+	// It collects the information by the following procedure:
+	//   Since we build the plan tree from bottom to top, we maintain a stack to record the current handle information.
+	//   If it's a dataSource/tableDual node, we create a new map.
+	//   If it's a aggregation, we pop the map and push a nil map since no handle information left.
+	//   If it's a union, we pop all children's and push a nil map.
+	//   If it's a join, we pop its children's out then merge them and push the new map to stack.
+	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
 	handleHelper *handleColHelper
 }
 
