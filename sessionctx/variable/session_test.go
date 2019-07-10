@@ -169,6 +169,18 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 select * from t;`
 	sql := "select * from t"
 	digest := parser.DigestHash(sql)
-	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", digest, statsInfos, copTasks, memMax, sql)
+	logString := seVar.SlowLogFormat(&variable.SlowQueryLogItems{
+		TxnTS:       txnTS,
+		SQL:         sql,
+		Digest:      digest,
+		TimeTotal:   costTime,
+		TimeParse:   time.Duration(10),
+		TimeCompile: time.Duration(10),
+		IndexIDs:    "[1,2]",
+		StatsInfos:  statsInfos,
+		CopTasks:    copTasks,
+		ExecDetail:  execDetail,
+		MemMax:      memMax,
+	})
 	c.Assert(logString, Equals, resultString)
 }
