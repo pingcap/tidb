@@ -1110,7 +1110,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 // ExceptionalVal : It is used to get more information about why the expression is always true/false.
 // 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 // 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return the constant.
-func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
+func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
 		return con, false
@@ -1118,12 +1118,12 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 	sc := ctx.GetSessionVars().StmtCtx
 
 	var intDatum types.Datum
-	intDatum, err = dt.ConvertTo(sc, targetFieldType)
+	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
 				Value:   intDatum,
-				RetType: targetFieldType,
+				RetType: &targetFieldType,
 			}, true
 		}
 		return con, false
@@ -1135,7 +1135,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 	if c == 0 {
 		return &Constant{
 			Value:        intDatum,
-			RetType:      targetFieldType,
+			RetType:      &targetFieldType,
 			DeferredExpr: con.DeferredExpr,
 		}, false
 	}
@@ -1143,12 +1143,12 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 	case opcode.LT, opcode.GE:
 		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(ctx, targetFieldType, resultCon)
+			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
 		}
 	case opcode.LE, opcode.GT:
 		resultExpr := NewFunctionInternal(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(ctx, targetFieldType, resultCon)
+			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
 		}
 	case opcode.NullEQ, opcode.EQ:
 		switch con.RetType.EvalType() {
@@ -1175,14 +1175,11 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 				return con, false
 			}
 			if c != 0 {
-				return &Constant{
-					Value:   con.Value,
-					RetType: con.GetType(),
-				}, true
+				return con, true
 			}
 			return &Constant{
 				Value:        intDatum,
-				RetType:      targetFieldType,
+				RetType:      &targetFieldType,
 				DeferredExpr: con.DeferredExpr,
 			}, false
 		}
@@ -1202,7 +1199,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isPositiveInfinite, isNegativeInfinite := false, false
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		arg1, isExceptional = RefineComparedConstant(ctx, arg0Type, arg1, c.op)
+		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		finalArg1 = arg1
 		if isExceptional {
 			if arg1.RetType.EvalType() == types.ETInt {
@@ -1223,7 +1220,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		arg0, isExceptional = RefineComparedConstant(ctx, arg1Type, arg0, symmetricOp[c.op])
+		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		finalArg0 = arg0
 		if isExceptional {
 			if arg0.RetType.EvalType() == types.ETInt {
@@ -1235,9 +1232,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			}
 		}
 	}
-	if !isExceptional && !isPositiveInfinite && !isNegativeInfinite {
-		return []Expression{finalArg0, finalArg1}
-	}
+
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
 		return []Expression{Zero.Clone(), One.Clone()}
@@ -1257,7 +1252,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		return []Expression{One.Clone(), Zero.Clone()}
 	}
 
-	return args
+	return []Expression{finalArg0, finalArg1}
 }
 
 // getFunction sets compare built-in function signatures for various types.
