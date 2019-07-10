@@ -735,7 +735,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			schema.Append(col)
 			continue
 		}
-		newExpr, np, err := b.rewriteWithPreprocess(field.Expr, p, mapper, windowMapper, true, nil)
+		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -875,7 +875,7 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, union *ast.UnionStmt) (Log
 	oldLen := unionPlan.Schema().Len()
 
 	if union.OrderBy != nil {
-		unionPlan, err = b.buildSort(unionPlan, union.OrderBy.Items, nil, nil)
+		unionPlan, err = b.buildSort(ctx, unionPlan, union.OrderBy.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -980,7 +980,7 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
-func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
+func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
 	} else {
@@ -992,7 +992,7 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	for _, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
-		it, np, err := b.rewriteWithPreprocess(item.Expr, p, aggMapper, windowMapper, true, nil)
+		it, np, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -2104,7 +2104,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.OrderBy != nil {
-		p, err = b.buildSort(p, sel.OrderBy.Items, orderMap, windowMapper)
+		p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
 		if err != nil {
 			return nil, err
 		}
@@ -2559,7 +2559,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 	}
 	if update.Order != nil {
-		p, err = b.buildSort(p, update.Order.Items, nil, nil)
+		p, err = b.buildSort(ctx, p, update.Order.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -2655,7 +2655,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 					return expr
 				}
 			}
-			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, nil, false, rewritePreprocess)
+			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess)
 		}
 		if err != nil {
 			return nil, nil, err
@@ -2747,7 +2747,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 
 	if delete.Order != nil {
-		p, err = b.buildSort(p, delete.Order.Items, nil, nil)
+		p, err = b.buildSort(ctx, p, delete.Order.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
