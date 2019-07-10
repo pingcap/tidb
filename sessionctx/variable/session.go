@@ -1020,6 +1020,22 @@ const (
 	SlowLogMemMax = "Mem_max"
 )
 
+// SlowQueryLogItems is a collection of items that should be included in the
+// slow query log.
+type SlowQueryLogItems struct {
+	TxnTS       uint64
+	SQL         string
+	Digest      string
+	TimeTotal   time.Duration
+	TimeParse   time.Duration
+	TimeCompile time.Duration
+	IndexIDs    string
+	StatsInfos  map[string]uint64
+	CopTasks    *stmtctx.CopTasksDetails
+	ExecDetail  execdetails.ExecDetails
+	MemMax      int64
+}
+
 // SlowLogFormat uses for formatting slow log.
 // The slow log output is like below:
 // # Time: 2019-04-28T15:24:04.309074+08:00
@@ -1038,36 +1054,38 @@ const (
 // # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
 // # Memory_max: 4096
 // select * from t_slim;
-func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string,
-	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, sql string) string {
+func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	var buf bytes.Buffer
-	execDetailStr := execDetail.String()
-	buf.WriteString(SlowLogRowPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
+
+	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
 	if s.User != nil {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogUserStr + SlowLogSpaceMarkStr + s.User.String() + "\n")
+		writeSlowLogItem(&buf, SlowLogUserStr, s.User.String())
 	}
 	if s.ConnectionID != 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogConnIDStr + SlowLogSpaceMarkStr + strconv.FormatUint(s.ConnectionID, 10) + "\n")
+		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
 	}
-	buf.WriteString(SlowLogRowPrefixStr + SlowLogQueryTimeStr + SlowLogSpaceMarkStr + strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64) + "\n")
-	if len(execDetailStr) > 0 {
+	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
+
+	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
 	}
+
 	if len(s.CurrentDB) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogDBStr + SlowLogSpaceMarkStr + s.CurrentDB + "\n")
+		writeSlowLogItem(&buf, SlowLogDBStr, s.CurrentDB)
 	}
-	if len(indexIDs) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogIndexIDsStr + SlowLogSpaceMarkStr + indexIDs + "\n")
+	if len(logItems.IndexIDs) > 0 {
+		writeSlowLogItem(&buf, SlowLogIndexIDsStr, logItems.IndexIDs)
 	}
-	buf.WriteString(SlowLogRowPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
-	if len(digest) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
+
+	writeSlowLogItem(&buf, SlowLogIsInternalStr, strconv.FormatBool(s.InRestrictedSQL))
+	if len(logItems.Digest) > 0 {
+		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
-	if len(statsInfos) > 0 {
+	if len(logItems.StatsInfos) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
 		vStr := ""
-		for k, v := range statsInfos {
+		for k, v := range logItems.StatsInfos {
 			if v == 0 {
 				vStr = "pseudo"
 			} else {
@@ -1083,28 +1101,31 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 		}
 		buf.WriteString("\n")
 	}
-	if copTasks != nil {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
+	if logItems.CopTasks != nil {
+		writeSlowLogItem(&buf, SlowLogNumCopTasksStr, strconv.FormatInt(int64(logItems.CopTasks.NumCopTasks), 10))
 		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
-			SlowLogCopProcAvg, SlowLogSpaceMarkStr, copTasks.AvgProcessTime.Seconds(),
-			SlowLogCopProcP90, SlowLogSpaceMarkStr, copTasks.P90ProcessTime.Seconds(),
-			SlowLogCopProcMax, SlowLogSpaceMarkStr, copTasks.MaxProcessTime.Seconds(),
-			SlowLogCopProcAddr, SlowLogSpaceMarkStr, copTasks.MaxProcessAddress) + "\n")
+			SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
+			SlowLogCopProcP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90ProcessTime.Seconds(),
+			SlowLogCopProcMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessTime.Seconds(),
+			SlowLogCopProcAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessAddress) + "\n")
 		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
-			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, copTasks.AvgWaitTime.Seconds(),
-			SlowLogCopWaitP90, SlowLogSpaceMarkStr, copTasks.P90WaitTime.Seconds(),
-			SlowLogCopWaitMax, SlowLogSpaceMarkStr, copTasks.MaxWaitTime.Seconds(),
-			SlowLogCopWaitAddr, SlowLogSpaceMarkStr, copTasks.MaxWaitAddress) + "\n")
+			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
+			SlowLogCopWaitP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90WaitTime.Seconds(),
+			SlowLogCopWaitMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitTime.Seconds(),
+			SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
 	}
-	if memMax > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
+	if logItems.MemMax > 0 {
+		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
 	}
-	if len(sql) == 0 {
-		sql = ";"
-	}
-	buf.WriteString(sql)
-	if sql[len(sql)-1] != ';' {
+
+	buf.WriteString(logItems.SQL)
+	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {
 		buf.WriteString(";")
 	}
 	return buf.String()
+}
+
+// writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
+func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
+	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
 }

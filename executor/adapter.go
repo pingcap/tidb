@@ -630,10 +630,34 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(&variable.SlowQueryLogItems{
+			TxnTS:       txnTS,
+			SQL:         sql,
+			Digest:      digest,
+			TimeTotal:   costTime,
+			TimeParse:   a.Ctx.GetSessionVars().StmtCtx.DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().StmtCtx.DurationCompile,
+			IndexIDs:    indexIDs,
+			StatsInfos:  statsInfos,
+			CopTasks:    copTaskInfo,
+			ExecDetail:  execDetail,
+			MemMax:      memMax,
+		}))
 	} else {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(&variable.SlowQueryLogItems{
+			TxnTS:       txnTS,
+			SQL:         sql,
+			Digest:      digest,
+			TimeTotal:   costTime,
+			TimeParse:   a.Ctx.GetSessionVars().StmtCtx.DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().StmtCtx.DurationCompile,
+			IndexIDs:    indexIDs,
+			StatsInfos:  statsInfos,
+			CopTasks:    copTaskInfo,
+			ExecDetail:  execDetail,
+			MemMax:      memMax,
+		}))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
