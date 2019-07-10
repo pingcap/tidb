@@ -1048,6 +1048,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	startTS := time.Now()
+	s.GetSessionVars().StmtCtx.StartTime = startTS
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1056,11 +1057,13 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("sql", sql))
 		return nil, util.SyntaxError(err)
 	}
+	durParse := time.Since(startTS)
+	s.GetSessionVars().StmtCtx.DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
-		sessionExecuteParseDurationInternal.Observe(time.Since(startTS).Seconds())
+		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
-		sessionExecuteParseDurationGeneral.Observe(time.Since(startTS).Seconds())
+		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
 	}
 
 	var tempStmtNodes []ast.StmtNode
@@ -1093,10 +1096,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			}
 			s.handleInvalidBindRecord(ctx, stmtNode)
 		}
+		durCompile := time.Since(startTS)
+		s.GetSessionVars().StmtCtx.DurationCompile = durCompile
 		if isInternal {
-			sessionExecuteCompileDurationInternal.Observe(time.Since(startTS).Seconds())
+			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
 		} else {
-			sessionExecuteCompileDurationGeneral.Observe(time.Since(startTS).Seconds())
+			sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
 		}
 		s.currentPlan = stmt.Plan
 

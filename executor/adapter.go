@@ -147,8 +147,7 @@ type ExecStmt struct {
 	StmtNode ast.StmtNode
 
 	Ctx sessionctx.Context
-	// StartTime stands for the starting time when executing the statement.
-	StartTime         time.Time
+
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
@@ -199,7 +198,6 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
-	a.StartTime = time.Now()
 	sctx := a.Ctx
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
@@ -608,7 +606,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		return
 	}
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(a.StartTime)
+	costTime := time.Since(a.Ctx.GetSessionVars().StmtCtx.StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
@@ -646,7 +644,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:      sql,
 			Digest:   digest,
-			Start:    a.StartTime,
+			Start:    a.Ctx.GetSessionVars().StmtCtx.StartTime,
 			Duration: costTime,
 			Detail:   sessVars.StmtCtx.GetExecDetails(),
 			Succ:     succ,

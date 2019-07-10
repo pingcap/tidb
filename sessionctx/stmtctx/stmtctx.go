@@ -70,6 +70,13 @@ type StatementContext struct {
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
 
+	// StartTime is the query start time.
+	StartTime time.Time
+	// DurationParse is the duration of pasing SQL string to AST.
+	DurationParse time.Duration
+	// DurationCompile is the duration of compiling AST to execution plan.
+	DurationCompile time.Duration
+
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
