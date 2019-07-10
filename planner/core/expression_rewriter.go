@@ -42,13 +42,11 @@ func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	b := &PlanBuilder{
-		ctx:       ctx,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
-	}
+	var is infoschema.InfoSchema
 	if ctx.GetSessionVars().TxnCtx.InfoSchema != nil {
-		b.is = ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+		is = ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
+	b := NewPlanBuilder(ctx, is)
 	fakePlan := LogicalTableDual{}.Init(ctx)
 	newExpr, _, err := b.rewrite(expr, fakePlan, nil, true)
 	if err != nil {
