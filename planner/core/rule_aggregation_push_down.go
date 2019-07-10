@@ -13,6 +13,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/parser/ast"
@@ -314,7 +315,7 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 	return newAgg
 }
 
-func (a *aggregationPushDownSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (a *aggregationPushDownSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	if !p.context().GetSessionVars().AllowAggPushDown {
 		return p, nil
 	}

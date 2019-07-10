@@ -36,7 +36,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
 	builder := plannercore.NewPlanBuilder(sctx, is)
-	p, err := builder.Build(node)
+	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if sctx.GetSessionVars().EnableCascadesPlanner {
 		return cascades.FindBestPlan(sctx, logic)
 	}
-	return plannercore.DoOptimize(builder.GetOptFlag(), logic)
+	return plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
 }
 
 func init() {

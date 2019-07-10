@@ -14,6 +14,8 @@
 package core
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -103,6 +105,7 @@ func (s *testIndexMergeSuite) TestIndexMergePathGenerateion(c *C) {
 				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(lt(test.t.e, 1), gt(test.t.f, 2))]}]",
 		},
 	}
+	ctx := context.TODO()
 	for i, tc := range tests {
 		comment := Commentf("case:%v sql:%s", i, tc.sql)
 		stmt, err := s.ParseOneStmt(tc.sql, "", "")
@@ -113,13 +116,13 @@ func (s *testIndexMergeSuite) TestIndexMergePathGenerateion(c *C) {
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		p, err := builder.Build(stmt)
+		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tc.idxMergeDigest, comment)
 			continue
 		}
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		lp := p.(LogicalPlan)
 		c.Assert(err, IsNil)

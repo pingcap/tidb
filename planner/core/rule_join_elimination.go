@@ -14,6 +14,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 )
@@ -205,6 +207,6 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 	return o.tryToEliminateOuterJoin(join, aggCols, parentSchema)
 }
 
-func (o *outerJoinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (o *outerJoinEliminator) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	return o.doOptimize(p, nil, nil)
 }

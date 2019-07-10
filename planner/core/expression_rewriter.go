@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -38,19 +39,19 @@ import (
 var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx sessionctx.Context) ([][]types.Datum, error)
 
 // evalAstExpr evaluates ast expression directly.
-func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
+func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
 	b := &PlanBuilder{
-		ctx:       ctx,
+		ctx:       sctx,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 	}
-	if ctx.GetSessionVars().TxnCtx.InfoSchema != nil {
-		b.is = ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	if is := sctx.GetSessionVars().TxnCtx.InfoSchema; is != nil {
+		b.is = is.(infoschema.InfoSchema)
 	}
-	fakePlan := LogicalTableDual{}.Init(ctx)
-	newExpr, _, err := b.rewrite(expr, fakePlan, nil, true)
+	fakePlan := LogicalTableDual{}.Init(sctx)
+	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -81,7 +82,7 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mock
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
-func (b *PlanBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
+func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
 	expr, resultPlan, err := b.rewriteWithPreprocess(exprNode, p, aggMapper, nil, asScalar, nil)
 	return expr, resultPlan, err
 }
@@ -236,14 +237,14 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	}
 }
 
-func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan, error) {
+func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.SubqueryExpr) (LogicalPlan, error) {
 	if er.schema != nil {
 		outerSchema := er.schema.Clone()
 		er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
 		defer func() { er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1] }()
 	}
 
-	np, err := er.b.buildResultSetNode(subq.Query)
+	np, err := er.b.buildResultSetNode(ctx, subq.Query)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +366,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 		er.err = errors.Errorf("Unknown compare type %T.", v.R)
 		return v, true
 	}
-	np, err := er.buildSubquery(subq)
+	np, err := er.buildSubquery(context.TODO(), subq)
 	if err != nil {
 		er.err = err
 		return v, true
@@ -622,7 +623,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
 		return v, true
 	}
-	np, err := er.buildSubquery(subq)
+	np, err := er.buildSubquery(context.TODO(), subq)
 	if err != nil {
 		er.err = err
 		return v, true
@@ -635,7 +636,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		}
 		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
 	} else {
-		physicalPlan, err := DoOptimize(er.b.optFlag, np)
+		physicalPlan, err := DoOptimize(context.TODO(), er.b.optFlag, np)
 		if err != nil {
 			er.err = err
 			return v, true
@@ -690,7 +691,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = errors.Errorf("Unknown compare type %T.", v.Sel)
 		return v, true
 	}
-	np, err := er.buildSubquery(subq)
+	np, err := er.buildSubquery(context.TODO(), subq)
 	if err != nil {
 		er.err = err
 		return v, true
@@ -778,7 +779,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 }
 
 func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Node, bool) {
-	np, err := er.buildSubquery(v)
+	np, err := er.buildSubquery(context.TODO(), v)
 	if err != nil {
 		er.err = err
 		return v, true
@@ -802,7 +803,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		}
 		return v, true
 	}
-	physicalPlan, err := DoOptimize(er.b.optFlag, np)
+	physicalPlan, err := DoOptimize(context.TODO(), er.b.optFlag, np)
 	if err != nil {
 		er.err = err
 		return v, true
