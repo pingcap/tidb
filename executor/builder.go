@@ -553,6 +553,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		DBName:       model.NewCIStr(v.DBName),
 		Table:        v.Table,
 		Column:       v.Column,
+		IndexName:    v.IndexName,
 		User:         v.User,
 		Roles:        v.Roles,
 		IfNotExists:  v.IfNotExists,
