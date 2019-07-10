@@ -303,6 +303,9 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
 		vars = append(vars, newExpr)
 	}
 	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID}
+	if v.BinaryArgs != nil {
+		exe.PrepareParams = v.BinaryArgs.([]types.Datum)
+	}
 	return exe, nil
 }
 
@@ -670,6 +673,10 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		ret = p
 	case ast.AdminReloadExprPushdownBlacklist:
 		return &ReloadExprPushdownBlacklist{}, nil
+	case ast.AdminPluginEnable:
+		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
+	case ast.AdminPluginDisable:
+		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -1077,38 +1084,27 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		IfNotExists: show.IfNotExists,
 		GlobalScope: show.GlobalScope,
 	}.Init(b.ctx)
-	switch showTp := show.Tp; showTp {
-	case ast.ShowProcedureStatus:
-		p.SetSchema(buildShowProcedureSchema())
-	case ast.ShowTriggers:
-		p.SetSchema(buildShowTriggerSchema())
-	case ast.ShowEvents:
-		p.SetSchema(buildShowEventsSchema())
-	case ast.ShowWarnings, ast.ShowErrors:
-		p.SetSchema(buildShowWarningsSchema())
-	default:
-		isView := false
-		switch showTp {
-		case ast.ShowTables, ast.ShowTableStatus:
-			if p.DBName == "" {
-				return nil, ErrNoDB
-			}
-		case ast.ShowCreateTable:
-			user := b.ctx.GetSessionVars().User
-			var err error
-			if user != nil {
-				err = ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
-			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
-			if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
-				isView = table.Meta().IsView()
-			}
-		case ast.ShowCreateView:
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	isView := false
+	switch show.Tp {
+	case ast.ShowTables, ast.ShowTableStatus:
+		if p.DBName == "" {
+			return nil, ErrNoDB
 		}
-		p.SetSchema(buildShowSchema(show, isView))
+	case ast.ShowCreateTable:
+		user := b.ctx.GetSessionVars().User
+		var err error
+		if user != nil {
+			err = ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
+		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
+			isView = table.Meta().IsView()
+		}
+	case ast.ShowCreateView:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 	}
+	p.SetSchema(buildShowSchema(show, isView))
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
@@ -2135,6 +2131,14 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 	var names []string
 	var ftypes []byte
 	switch s.Tp {
+	case ast.ShowProcedureStatus:
+		return buildShowProcedureSchema()
+	case ast.ShowTriggers:
+		return buildShowTriggerSchema()
+	case ast.ShowEvents:
+		return buildShowEventsSchema()
+	case ast.ShowWarnings, ast.ShowErrors:
+		return buildShowWarningsSchema()
 	case ast.ShowEngines:
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
 	case ast.ShowDatabases:
@@ -2158,9 +2162,6 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowColumns:
 		names = table.ColDescFieldNames(s.Full)
-	case ast.ShowWarnings, ast.ShowErrors:
-		names = []string{"Level", "Code", "Message"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
 	case ast.ShowCharset:
 		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}

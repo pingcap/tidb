@@ -133,6 +133,23 @@ type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer
 }
 
+// AdminPluginsAction indicate action will be taken on plugins.
+type AdminPluginsAction int
+
+const (
+	// Enable indicates enable plugins.
+	Enable AdminPluginsAction = iota + 1
+	// Disable indicates disable plugins.
+	Disable
+)
+
+// AdminPlugins administrates tidb plugins.
+type AdminPlugins struct {
+	baseSchemaProducer
+	Action  AdminPluginsAction
+	Plugins []string
+}
+
 // Change represents a change plan.
 type Change struct {
 	baseSchemaProducer
@@ -151,11 +168,12 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name      string
-	UsingVars []expression.Expression
-	ExecID    uint32
-	Stmt      ast.StmtNode
-	Plan      Plan
+	Name          string
+	UsingVars     []expression.Expression
+	PrepareParams []types.Datum
+	ExecID        uint32
+	Stmt          ast.StmtNode
+	Plan          Plan
 }
 
 // OptimizePreparedPlan optimizes the prepared statement.
@@ -169,20 +187,36 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		return errors.Trace(ErrStmtNotFound)
 	}
 
-	if len(prepared.Params) != len(e.UsingVars) {
-		return errors.Trace(ErrWrongParamCount)
+	paramLen := len(e.PrepareParams)
+	if paramLen > 0 {
+		// for binary protocol execute, argument is placed in vars.PrepareParams
+		if len(prepared.Params) != paramLen {
+			return errors.Trace(ErrWrongParamCount)
+		}
+		vars.PreparedParams = e.PrepareParams
+		for i, val := range vars.PreparedParams {
+			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			param.Datum = val
+			param.InExecute = true
+		}
+	} else {
+		// for `execute stmt using @a, @b, @c`, using value in e.UsingVars
+		if len(prepared.Params) != len(e.UsingVars) {
+			return errors.Trace(ErrWrongParamCount)
+		}
+
+		for i, usingVar := range e.UsingVars {
+			val, err := usingVar.Eval(chunk.Row{})
+			if err != nil {
+				return err
+			}
+			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			param.Datum = val
+			param.InExecute = true
+			vars.PreparedParams = append(vars.PreparedParams, val)
+		}
 	}
 
-	for i, usingVar := range e.UsingVars {
-		val, err := usingVar.Eval(chunk.Row{})
-		if err != nil {
-			return err
-		}
-		param := prepared.Params[i].(*driver.ParamMarkerExpr)
-		param.Datum = val
-		param.InExecute = true
-		vars.PreparedParams = append(vars.PreparedParams, val)
-	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
