@@ -597,7 +597,7 @@ func hasRootPrivilege() bool {
 }
 
 // TableLockEnabled uses to check whether enabled the table lock feature.
-var TableLockEnabled = func() bool {
+func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
 }
 
