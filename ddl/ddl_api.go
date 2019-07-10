@@ -1327,12 +1327,16 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		// do pre-split and scatter.
 		sp, ok := d.store.(kv.SplitableStore)
 		if ok && atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
-			var preSplit func()
+			var (
+				preSplit      func()
+				scatterRegion bool
+			)
 			val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
 			if err != nil {
-				logutil.BgLogger().Warn("[ddl] pre-split region failed", zap.Error(err))
+				logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
+			} else {
+				scatterRegion = variable.TiDBOptOn(val)
 			}
-			scatterRegion := variable.TiDBOptOn(val)
 			pi := tbInfo.GetPartitionInfo()
 			if pi != nil {
 				preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
