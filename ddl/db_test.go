@@ -81,14 +81,6 @@ type testDBSuite struct {
 	autoIDStep int64
 }
 
-var tableLockEnabled uint32 = 0
-
-func init() {
-	config.TableLockEnabled = func() bool {
-		return atomic.LoadUint32(&tableLockEnabled) > 0
-	}
-}
-
 func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
@@ -99,7 +91,10 @@ func setUpSuite(s *testDBSuite, c *C) {
 	s.autoIDStep = autoid.GetStep()
 	ddl.WaitTimeWhenErrorOccured = 0
 	// Test for table lock.
-	atomic.StoreUint32(&tableLockEnabled, 1)
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.EnableTableLock = true
+	config.StoreGlobalConfig(&newCfg)
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -3176,6 +3171,22 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
 	_, err = tk2.Exec("alter database test charset='utf8mb4'")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	// Test for admin cleanup table locks.
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock table t1 write, t2 write")
+	_, err = tk2.Exec("lock tables t1 write, t2 read")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk2.MustExec("admin cleanup table lock t1,t2")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
+	// cleanup unlocked table.
+	tk2.MustExec("admin cleanup table lock t1,t2")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
+	tk2.MustExec("lock tables t1 write, t2 read")
+	checkTableLock(c, tk2.Se, "test", "t1", model.TableLockWrite)
+	checkTableLock(c, tk2.Se, "test", "t2", model.TableLockRead)
 
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
