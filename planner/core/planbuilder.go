@@ -15,6 +15,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 
@@ -2070,7 +2071,7 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(show)
 	}
-	targetPlan, err := OptimizeAstNode(b.ctx, explain.Stmt, b.is)
+	targetPlan, err := OptimizeAstNode(context.TODO(), b.ctx, explain.Stmt, b.is)
 	if err != nil {
 		return nil, err
 	}

@@ -14,6 +14,7 @@
 package core_test
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"time"
@@ -167,7 +168,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 		execPlan, ok := p.(*core.Execute)
 		c.Check(ok, IsTrue)
 		executor.ResetContextOfStmt(tk.Se, stmt)
-		err = execPlan.OptimizePreparedPlan(tk.Se, is)
+		err = execPlan.OptimizePreparedPlan(context.TODO(), tk.Se, is)
 		c.Check(err, IsNil)
 		planStr[i] = core.ToString(execPlan.Plan)
 		c.Check(planStr[i], Matches, expectedPattern, Commentf("for %s", sql1))
