@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file. See also [R
 
 ## [2.1.14] 2019-07-04
 * Fix wrong query results caused by column pruning in some cases [#11019](https://github.com/pingcap/tidb/pull/11019)
-* Fix the wrongly displayed information in `db` and `info` columns of `show processlist` [11000](https://github.com/pingcap/tidb/pull/11000)
+* Fix the wrongly displayed information in `db` and `info` columns of `show processlist` [#11000](https://github.com/pingcap/tidb/pull/11000)
 * Fix the issue that `MAX_EXECUTION_TIME` as a SQL hint and global variable does not work in some cases [10999](https://github.com/pingcap/tidb/pull/10999)
 * Support automatically adjust the incremental step allocated by auto-increment ID based on the load [10997](https://github.com/pingcap/tidb/pull/10997)
 * Fix the issue that the `Distsql` memory information of `MemTracker` is not correctly cleaned when a query ends [10971](https://github.com/pingcap/tidb/pull/10971)
