@@ -60,3 +60,14 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	err = tk1.ExecToErr("explain select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error())
 }
+
+func (s *testSuite1) TestExplainWrite(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("explain analyze insert into t values (1)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("explain analyze update t set a=2 where a=1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
+	tk.MustExec("explain analyze insert into t values (1)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
+}
