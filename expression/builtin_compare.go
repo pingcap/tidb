@@ -1070,56 +1070,50 @@ func isTemporalColumn(expr Expression) bool {
 }
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
-func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (
-	correctVal *Constant, // The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
-	exceptionalVal *Constant,
-	// The val is nil or else indicates whether the int column [cmp] const is always true/false.
-	// It is used to get more information about why the 'con' is always true/false.
-	// If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-	// If the op == EQ,NullEQ and the constant can never be equal to the int column, return the constant.
-	//	(eg. "integer  =  1.1" is definitely false.)
-	// Otherwise, return nil.
-) {
+// isExceptional indicates whether the 'int column [cmp] const' is always true/false.
+// isExceptional also indicates whether the returned Constant is correctVal or exceptionalVal.
+// CorrectVal: The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
+// ExceptionalVal : It is used to get more information about why the expression is always true/false.
+// 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
+// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return the constant.
+func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
 	if con.GetType().EvalType() == types.ETInt {
-		return con, nil
+		return con, false
 	}
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
-		return con, nil
+		return con, false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 
 	dt, err = dt.ConvertTo(sc, targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
-			return con, &Constant{
+			return &Constant{
 				Value:   dt,
 				RetType: targetFieldType,
-			}
+			}, true
 		}
-		return con, nil
+		return con, false
 	}
 	return &Constant{
 		Value:        dt,
 		RetType:      targetFieldType,
 		DeferredExpr: con.DeferredExpr,
-	}, nil
+	}, false
 }
 
 // RefineComparedConstant changes a non-integer constant argument to its ceiling or floor result by the given op.
-func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant, op opcode.Op) (
-	correctVal *Constant, // The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
-	exceptionalVal *Constant,
-	// The val is nil or else indicates whether the int column [cmp] const is always true/false.
-	// It is used to get more information about why the 'con' is always true/false.
-	// If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-	// If the op == EQ,NullEQ and the constant can never be equal to the int column, return the constant.
-	//	(eg. "integer  =  1.1" is definitely false.)
-	// Otherwise, return nil.
-) {
+// isExceptional indicates whether the 'int column [cmp] const' is always true/false.
+// isExceptional also indicates whether the returned Constant is correctVal or exceptionalVal.
+// CorrectVal: The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
+// ExceptionalVal : It is used to get more information about why the expression is always true/false.
+// 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
+// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return the constant.
+func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
-		return con, nil
+		return con, false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 
@@ -1127,23 +1121,23 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 	intDatum, err = dt.ConvertTo(sc, targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
-			return con, &Constant{
+			return &Constant{
 				Value:   intDatum,
 				RetType: targetFieldType,
-			}
+			}, true
 		}
-		return con, nil
+		return con, false
 	}
 	c, err := intDatum.CompareDatum(sc, &con.Value)
 	if err != nil {
-		return con, nil
+		return con, false
 	}
 	if c == 0 {
 		return &Constant{
 			Value:        intDatum,
 			RetType:      targetFieldType,
 			DeferredExpr: con.DeferredExpr,
-		}, nil
+		}, false
 	}
 	switch op {
 	case opcode.LT, opcode.GE:
@@ -1164,10 +1158,10 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 		//   1. "integer  =  1.1" is definitely false.
 		//   2. "integer <=> 1.1" is definitely false.
 		case types.ETReal, types.ETDecimal:
-			return con, &Constant{
+			return &Constant{
 				Value:   con.Value,
 				RetType: con.GetType(),
-			}
+			}, true
 		case types.ETString:
 			// We try to convert the string constant to double.
 			// If the double result equals the int result, we can return the int result;
@@ -1175,25 +1169,25 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType *types.Field
 			var doubleDatum types.Datum
 			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
 			if err != nil {
-				return con, nil
+				return con, false
 			}
 			if c, err = doubleDatum.CompareDatum(sc, &intDatum); err != nil {
-				return con, nil
+				return con, false
 			}
 			if c != 0 {
-				return con, &Constant{
+				return &Constant{
 					Value:   con.Value,
 					RetType: con.GetType(),
-				}
+				}, true
 			}
 			return &Constant{
 				Value:        intDatum,
 				RetType:      targetFieldType,
 				DeferredExpr: con.DeferredExpr,
-			}, nil
+			}, false
 		}
 	}
-	return con, nil
+	return con, false
 }
 
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
@@ -1204,14 +1198,14 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	arg1IsInt := arg1Type.EvalType() == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
-	finalArg0, finalArg1 := args[0], args[1]
+	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
-	var exceptionalArg0, exceptionalArg1 *Constant = nil, nil
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		finalArg1, exceptionalArg1 = RefineComparedConstant(ctx, arg0Type, arg1, c.op)
-		if exceptionalArg1 != nil {
-			if exceptionalArg1.RetType.EvalType() == types.ETInt {
+		arg1, isExceptional = RefineComparedConstant(ctx, arg0Type, arg1, c.op)
+		finalArg1 = arg1
+		if isExceptional {
+			if arg1.RetType.EvalType() == types.ETInt {
 				// Judge it is inf or -inf
 				// For int:
 				//			inf:  01111111 & 1 == 1
@@ -1219,7 +1213,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 				// For uint:
 				//			inf:  11111111 & 1 == 1
 				//		   -inf:  00000000 & 0 == 0
-				if exceptionalArg1.Value.GetInt64()&1 == 1 {
+				if arg1.Value.GetInt64()&1 == 1 {
 					isPositiveInfinite = true
 				} else {
 					isNegativeInfinite = true
@@ -1229,10 +1223,11 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		finalArg0, exceptionalArg0 = RefineComparedConstant(ctx, arg1Type, arg0, symmetricOp[c.op])
-		if exceptionalArg0 != nil {
-			if exceptionalArg0.RetType.EvalType() == types.ETInt {
-				if exceptionalArg0.Value.GetInt64()&1 == 1 {
+		arg0, isExceptional = RefineComparedConstant(ctx, arg1Type, arg0, symmetricOp[c.op])
+		finalArg0 = arg0
+		if isExceptional {
+			if arg0.RetType.EvalType() == types.ETInt {
+				if arg0.Value.GetInt64()&1 == 1 {
 					isNegativeInfinite = true
 				} else {
 					isPositiveInfinite = true
@@ -1240,10 +1235,10 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			}
 		}
 	}
-	if exceptionalArg0 == nil && exceptionalArg1 == nil && !isPositiveInfinite && !isNegativeInfinite {
+	if !isExceptional && !isPositiveInfinite && !isNegativeInfinite {
 		return []Expression{finalArg0, finalArg1}
 	}
-	if (exceptionalArg0 != nil || exceptionalArg1 != nil) && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
+	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
 		return []Expression{Zero.Clone(), One.Clone()}
 	}

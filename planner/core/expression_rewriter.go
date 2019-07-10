@@ -1127,7 +1127,11 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	if leftEt == types.ETInt {
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
-				args[i], _ = expression.RefineComparedConstant(er.ctx, leftFt, c, opcode.EQ)
+				isExceptional := false
+				args[i], isExceptional = expression.RefineComparedConstant(er.ctx, leftFt, c, opcode.EQ)
+				if isExceptional {
+					args[i] = c
+				}
 			}
 		}
 	}

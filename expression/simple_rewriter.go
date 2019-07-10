@@ -468,10 +468,15 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 		return
 	}
 	leftEt := leftFt.EvalType()
+
 	if leftEt == types.ETInt {
 		for i := 0; i < len(elems); i++ {
 			if c, ok := elems[i].(*Constant); ok {
-				elems[i], _ = RefineComparedConstant(sr.ctx, leftFt, c, opcode.EQ)
+				isExceptional := false
+				elems[i], isExceptional = RefineComparedConstant(sr.ctx, leftFt, c, opcode.EQ)
+				if isExceptional {
+					elems[i] = c
+				}
 			}
 		}
 	}
