@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1324,25 +1325,29 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
-		var preSplitAndScatter func()
 		// do pre-split and scatter.
-		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-			preSplitAndScatter = func() {
-				preSplitTableShardRowIDBitsRegion(d.store, tbInfo, ctx.GetSessionVars().WaitSplitRegionFinish)
+		sp, ok := d.store.(kv.SplitableStore)
+		if ok && atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
+			var (
+				preSplit      func()
+				scatterRegion bool
+			)
+			val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
+			} else {
+				scatterRegion = variable.TiDBOptOn(val)
 			}
-		} else if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			pi := tbInfo.GetPartitionInfo()
 			if pi != nil {
-				preSplitAndScatter = func() { splitPartitionTableRegion(d.store, pi) }
+				preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
 			} else {
-				preSplitAndScatter = func() { splitTableRegion(d.store, tbInfo.ID) }
+				preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
 			}
-		}
-		if preSplitAndScatter != nil {
-			if ctx.GetSessionVars().WaitSplitRegionFinish {
-				preSplitAndScatter()
+			if scatterRegion {
+				preSplit()
 			} else {
-				go preSplitAndScatter()
+				go preSplit()
 			}
 		}
 
@@ -3009,7 +3014,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		// The session will release all table locks it holds, if we don't add the new locking table id here,
 		// the session may forget to release the new locked table id when this ddl job was executed successfully
 		// but the session was killed before return.
-		ctx.AddTableLock(([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}}))
+		ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}})
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
