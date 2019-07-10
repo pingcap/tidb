@@ -1070,12 +1070,12 @@ func isTemporalColumn(expr Expression) bool {
 }
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
-// isExceptional indicates whether the 'int column [cmp] const' is always true/false.
-// isExceptional also indicates whether the returned Constant is correctVal or exceptionalVal.
-// CorrectVal: The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
-// ExceptionalVal : It is used to get more information about why the expression is always true/false.
+// isExceptional indicates whether the 'int column [cmp] const' might be true/false.
+// If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
+// CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
+// ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 // 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return the constant.
+// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
@@ -1104,12 +1104,12 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 }
 
 // RefineComparedConstant changes a non-integer constant argument to its ceiling or floor result by the given op.
-// isExceptional indicates whether the 'int column [cmp] const' is always true/false.
-// isExceptional also indicates whether the returned Constant is correctVal or exceptionalVal.
-// CorrectVal: The computed result. If the constant can convert to int, return the val. Else return 'con'(the input).
-// ExceptionalVal : It is used to get more information about why the expression is always true/false.
+// isExceptional indicates whether the 'int column [cmp] const' might be true/false.
+// If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
+// CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
+// ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 // 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return the constant.
+// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
@@ -1158,10 +1158,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		//   1. "integer  =  1.1" is definitely false.
 		//   2. "integer <=> 1.1" is definitely false.
 		case types.ETReal, types.ETDecimal:
-			return &Constant{
-				Value:   con.Value,
-				RetType: con.GetType(),
-			}, true
+			return con, true
 		case types.ETString:
 			// We try to convert the string constant to double.
 			// If the double result equals the int result, we can return the int result;
@@ -1201,20 +1198,18 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		finalArg1 = arg1
-		if isExceptional {
-			if arg1.RetType.EvalType() == types.ETInt {
-				// Judge it is inf or -inf
-				// For int:
-				//			inf:  01111111 & 1 == 1
-				//		   -inf:  10000000 & 1 == 0
-				// For uint:
-				//			inf:  11111111 & 1 == 1
-				//		   -inf:  00000000 & 0 == 0
-				if arg1.Value.GetInt64()&1 == 1 {
-					isPositiveInfinite = true
-				} else {
-					isNegativeInfinite = true
-				}
+		if isExceptional && arg1.RetType.EvalType() == types.ETInt {
+			// Judge it is inf or -inf
+			// For int:
+			//			inf:  01111111 & 1 == 1
+			//		   -inf:  10000000 & 1 == 0
+			// For uint:
+			//			inf:  11111111 & 1 == 1
+			//		   -inf:  00000000 & 0 == 0
+			if arg1.Value.GetInt64()&1 == 1 {
+				isPositiveInfinite = true
+			} else {
+				isNegativeInfinite = true
 			}
 		}
 	}
@@ -1222,13 +1217,11 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		finalArg0 = arg0
-		if isExceptional {
-			if arg0.RetType.EvalType() == types.ETInt {
-				if arg0.Value.GetInt64()&1 == 1 {
-					isNegativeInfinite = true
-				} else {
-					isPositiveInfinite = true
-				}
+		if isExceptional && arg0.RetType.EvalType() == types.ETInt {
+			if arg0.Value.GetInt64()&1 == 1 {
+				isNegativeInfinite = true
+			} else {
+				isPositiveInfinite = true
 			}
 		}
 	}
