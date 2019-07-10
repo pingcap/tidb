@@ -1972,11 +1972,6 @@ func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData
 	return table.ErrUnsupportedOp
 }
 
-// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
-func (it *infoschemaTable) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
-	return 0, table.ErrUnsupportedOp
-}
-
 // AllocHandle implements table.Table AllocHandle interface.
 func (it *infoschemaTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
@@ -2092,11 +2087,6 @@ func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.
 // UpdateRecord implements table.Table UpdateRecord interface.
 func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
-}
-
-// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
-func (vt *VirtualTable) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
-	return 0, table.ErrUnsupportedOp
 }
 
 // AllocHandle implements table.Table AllocHandle interface.
