@@ -64,7 +64,7 @@ type ShowExec struct {
 	IndexName   model.CIStr     // Used for show table regions.
 	Flag        int             // Some flag parsed from sql, such as FULL.
 	Full        bool
-	User        *auth.UserIdentity   // Used for show grants.
+	User        *auth.UserIdentity   // Used by show grants, show create user.
 	Roles       []*auth.RoleIdentity // Used for show grants.
 	IfNotExists bool                 // Used for `show create database if not exists`
 
@@ -406,7 +406,7 @@ func (e *ShowExec) fetchShowColumns() error {
 			// SHOW COLUMNS result expects string value
 			defaultValStr := fmt.Sprintf("%v", desc.DefaultValue)
 			// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
-			if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && strings.ToUpper(defaultValStr) != strings.ToUpper(ast.CurrentTimestamp) {
+			if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && !strings.HasPrefix(strings.ToUpper(defaultValStr), strings.ToUpper(ast.CurrentTimestamp)) {
 				timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
 				if err != nil {
 					return errors.Trace(err)
@@ -696,6 +696,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 					}
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
+					if col.Decimal > 0 {
+						buf.WriteString(fmt.Sprintf("(%d)", col.Decimal))
+					}
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
@@ -942,8 +945,23 @@ func (e *ShowExec) fetchShowCreateUser() error {
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
+
+	userName, hostName := e.User.Username, e.User.Hostname
+	sessVars := e.ctx.GetSessionVars()
+	if e.User.CurrentUser {
+		userName = sessVars.User.AuthUsername
+		hostName = sessVars.User.AuthHostname
+	} else {
+		// Show create user requires the SELECT privilege on mysql.user.
+		// Ref https://dev.mysql.com/doc/refman/5.7/en/show-create-user.html
+		activeRoles := sessVars.ActiveRoles
+		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.SelectPriv) {
+			return e.tableAccessDenied("SELECT", mysql.UserTable)
+		}
+	}
+
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`,
-		mysql.SystemDB, mysql.UserTable, e.User.Username, e.User.Hostname)
+		mysql.SystemDB, mysql.UserTable, userName, hostName)
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -952,9 +970,8 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' %s",
-		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname),
-		"REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK")
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
+		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname))
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
@@ -1031,7 +1048,7 @@ func (e *ShowExec) fetchShowPlugins() error {
 	tiPlugins := plugin.GetAll()
 	for _, ps := range tiPlugins {
 		for _, p := range ps {
-			e.appendRow([]interface{}{p.Name, p.State.String(), p.Kind.String(), p.Path, p.License, strconv.Itoa(int(p.Version))})
+			e.appendRow([]interface{}{p.Name, p.StateValue(), p.Kind.String(), p.Path, p.License, strconv.Itoa(int(p.Version))})
 		}
 	}
 	return nil

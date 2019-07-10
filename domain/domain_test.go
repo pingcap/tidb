@@ -138,7 +138,7 @@ func TestInfo(t *testing.T) {
 	<-dom.ddl.SchemaSyncer().Done()
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		if dom.SchemaValidator.IsStarted() {
 			syncerStarted = true
 			break

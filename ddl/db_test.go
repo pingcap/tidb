@@ -81,14 +81,6 @@ type testDBSuite struct {
 	autoIDStep int64
 }
 
-var tableLockEnabled uint32 = 0
-
-func init() {
-	config.TableLockEnabled = func() bool {
-		return atomic.LoadUint32(&tableLockEnabled) > 0
-	}
-}
-
 func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
@@ -99,7 +91,10 @@ func setUpSuite(s *testDBSuite, c *C) {
 	s.autoIDStep = autoid.GetStep()
 	ddl.WaitTimeWhenErrorOccured = 0
 	// Test for table lock.
-	atomic.StoreUint32(&tableLockEnabled, 1)
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.EnableTableLock = true
+	config.StoreGlobalConfig(&newCfg)
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -3179,6 +3174,39 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
+}
+
+func (s *testDBSuite2) TestTablesLockDelayClean(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	defer tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	config.GetGlobalConfig().DelayCleanTableLock = 100
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var startTime time.Time
+	go func() {
+		startTime = time.Now()
+		tk.Se.Close()
+		wg.Done()
+	}()
+	time.Sleep(50)
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	wg.Wait()
+	c.Assert(time.Since(startTime).Seconds() > 0.1, IsTrue)
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	config.GetGlobalConfig().DelayCleanTableLock = 0
 }
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.

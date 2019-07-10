@@ -2198,6 +2198,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:3581]A window which depends on another cannot define partitioning.",
 		},
 		{
+			sql:    "SELECT FIRST_VALUE(a) RESPECT NULLS OVER (w1 PARTITION BY b ORDER BY b ASC, a DESC ROWS 2 PRECEDING) AS 'first_value', a, b FROM ( SELECT a, b FROM `t` ) as t WINDOW w1 AS (PARTITION BY b ORDER BY b ASC, a ASC );",
+			result: "[planner:3581]A window which depends on another cannot define partitioning.",
+		},
+		{
 			sql:    "select sum(a) over(w) from t window w as (rows between 1 preceding AND 1 following)",
 			result: "[planner:3582]Window 'w' has a frame definition, so cannot be referenced by another window.",
 		},
@@ -2282,6 +2286,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
 		{
+			sql:    "SELECT NTH_VALUE(a, 1.0) OVER() FROM t",
+			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
 			sql:    "select nth_value(a, 0) over() from t",
 			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
@@ -2308,6 +2316,11 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "delete from t order by (sum(a) over())",
 			result: "[planner:3593]You cannot use the window function 'sum' in this context.'",
+		},
+		{
+			// The best execution order should be (a,c), (a, b, c), (a, b), (), it requires only 2 sort operations.
+			sql:    "select sum(a) over (partition by a order by b), sum(b) over (order by a, b, c), sum(c) over(partition by a order by c), sum(d) over() from t",
+			result: "TableReader(Table(t))->Sort->Window(sum(cast(test.t.c)) over(partition by test.t.a order by test.t.c asc range between unbounded preceding and current row))->Sort->Window(sum(cast(test.t.b)) over(order by test.t.a asc, test.t.b asc, test.t.c asc range between unbounded preceding and current row))->Window(sum(cast(test.t.a)) over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row))->Window(sum(cast(test.t.d)) over())->Projection",
 		},
 	}
 

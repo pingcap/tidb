@@ -35,9 +35,15 @@ type testClientSuite struct {
 
 var _ = Suite(&testClientSuite{})
 
+func setMaxBatchSize(size uint) {
+	newConf := config.NewConfig()
+	newConf.TiKVClient.MaxBatchSize = size
+	config.StoreGlobalConfig(newConf)
+}
+
 func (s *testClientSuite) TestConn(c *C) {
-	globalConfig := config.GetGlobalConfig()
-	globalConfig.TiKVClient.MaxBatchSize = 0 // Disable batch.
+	maxBatchSize := config.GetGlobalConfig().TiKVClient.MaxBatchSize
+	setMaxBatchSize(0)
 
 	client := newRPCClient(config.Security{})
 
@@ -55,6 +61,7 @@ func (s *testClientSuite) TestConn(c *C) {
 	conn3, err := client.getConnArray(addr)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
+	setMaxBatchSize(maxBatchSize)
 }
 
 func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
