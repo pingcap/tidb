@@ -2068,6 +2068,14 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 			sql:  "select max(t3.b) from (t t1 left join t t2 on t1.a = t2.a) right join t t3 on t1.b = t3.b",
 			best: "DataScan(t3)->TopN([test.t3.b true],0,1)->Aggr(max(test.t3.b))->Projection",
 		},
+		{
+			sql:  "select t1.a ta, t1.b tb from t t1 left join t t2 on t1.a = t2.a",
+			best: "DataScan(t1)->Projection",
+		},
+		{
+			sql:  "select t1.a, t1.b from t t1 left join t t2 on t1.a = t2.a order by t2.a",
+			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)->Sort->Projection",
+		},
 	}
 
 	for i, tt := range tests {
