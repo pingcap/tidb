@@ -990,6 +990,18 @@ func buildShowDDLJobsFields() *expression.Schema {
 	return schema
 }
 
+func buildTableRegionsSchema() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema.Append(buildColumn("", "REGION_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "START_KEY", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_Key", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "LEADER_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "LEADER_STORE_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "PEERS", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCATTERING", mysql.TypeTiny, 1))
+	return schema
+}
+
 func buildShowDDLJobQueriesFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
 	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
@@ -1077,6 +1089,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		DBName:      show.DBName,
 		Table:       show.Table,
 		Column:      show.Column,
+		IndexName:   show.IndexName,
 		Flag:        show.Flag,
 		Full:        show.Full,
 		User:        show.User,
@@ -2139,6 +2152,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		return buildShowEventsSchema()
 	case ast.ShowWarnings, ast.ShowErrors:
 		return buildShowWarningsSchema()
+	case ast.ShowRegions:
+		return buildTableRegionsSchema()
 	case ast.ShowEngines:
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
 	case ast.ShowDatabases:

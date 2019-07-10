@@ -363,7 +363,8 @@ type Show struct {
 	DBName      string
 	Table       *ast.TableName  // Used for showing columns.
 	Column      *ast.ColumnName // Used for `desc table column`.
-	Flag        int             // Some flag parsed from sql, such as FULL.
+	IndexName   model.CIStr
+	Flag        int // Some flag parsed from sql, such as FULL.
 	Full        bool
 	User        *auth.UserIdentity   // Used for show grants.
 	Roles       []*auth.RoleIdentity // Used for show grants.
@@ -528,6 +529,14 @@ type SplitRegion struct {
 	Upper      []types.Datum
 	Num        int
 	ValueLists [][]types.Datum
+}
+
+// SplitRegionStatus represents a split regions status plan.
+type SplitRegionStatus struct {
+	baseSchemaProducer
+
+	Table     table.Table
+	IndexInfo *model.IndexInfo
 }
 
 // DDL represents a DDL statement plan.
