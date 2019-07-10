@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -418,14 +418,16 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
-	// recover table lock config.
-	originValue := atomic.LoadUint32(&tableLockEnabled)
-	defer func() {
-		atomic.StoreUint32(&tableLockEnabled, originValue)
-	}()
 
 	// Test for enable table lock config.
-	atomic.StoreUint32(&tableLockEnabled, 0)
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.EnableTableLock = false
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(cfg)
+	}()
+
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 }
