@@ -220,12 +220,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		})
 	}
 
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdResolveLock,
-		ResolveLock: &kvrpcpb.ResolveLockRequest{
-			TxnInfos: listTxnInfos,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, &kvrpcpb.ResolveLockRequest{TxnInfos: listTxnInfos})
 	startTime = time.Now()
 	resp, err := lr.store.SendReq(bo, req, loc, readTimeoutShort)
 	if err != nil {
@@ -341,13 +336,10 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	tikvLockResolverCountWithQueryTxnStatus.Inc()
 
 	var status TxnStatus
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdCleanup,
-		Cleanup: &kvrpcpb.CleanupRequest{
-			Key:          primary,
-			StartVersion: txnID,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdCleanup, &kvrpcpb.CleanupRequest{
+		Key:          primary,
+		StartVersion: txnID,
+	})
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
 		if err != nil {
@@ -399,21 +391,19 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		if _, ok := cleanRegions[loc.Region]; ok {
 			return nil
 		}
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdResolveLock,
-			ResolveLock: &kvrpcpb.ResolveLockRequest{
-				StartVersion: l.TxnID,
-			},
+		lreq := &kvrpcpb.ResolveLockRequest{
+			StartVersion: l.TxnID,
 		}
 		if status.IsCommitted() {
-			req.ResolveLock.CommitVersion = status.CommitTS()
+			lreq.CommitVersion = status.CommitTS()
 		}
 		if l.TxnSize < bigTxnThreshold {
 			// Only resolve specified keys when it is a small transaction,
 			// prevent from scanning the whole region in this case.
 			tikvLockResolverCountWithResolveLockLite.Inc()
-			req.ResolveLock.Keys = [][]byte{l.Key}
+			lreq.Keys = [][]byte{l.Key}
 		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
