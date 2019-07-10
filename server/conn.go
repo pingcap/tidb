@@ -1042,7 +1042,7 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 	var err error
 	var reachLimit bool
 	for {
-		prevData, reachLimit, err = loadDataInfo.InsertData(prevData, curData)
+		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
 		if err != nil {
 			return nil, err
 		}
