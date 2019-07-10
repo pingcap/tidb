@@ -50,16 +50,10 @@ type SplitIndexRegionExec struct {
 	valueLists [][]types.Datum
 }
 
-type splitableStore interface {
-	SplitRegionAndScatter(splitKey kv.Key) (uint64, error)
-	WaitScatterRegionFinish(regionID uint64) error
-	CheckRegionInScattering(regionID uint64) (bool, error)
-}
-
 // Next implements the Executor Next interface.
 func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	store := e.ctx.GetStore()
-	s, ok := store.(splitableStore)
+	s, ok := store.(kv.SplitableStore)
 	if !ok {
 		return nil
 	}
@@ -72,7 +66,7 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	defer cancel()
 	regionIDs := make([]uint64, 0, len(splitIdxKeys))
 	for _, idxKey := range splitIdxKeys {
-		regionID, err := s.SplitRegionAndScatter(idxKey)
+		regionID, err := s.SplitRegion(idxKey, true)
 		if err != nil {
 			logutil.BgLogger().Warn("split table index region failed",
 				zap.String("table", e.tableInfo.Name.L),
@@ -236,7 +230,7 @@ type SplitTableRegionExec struct {
 // Next implements the Executor Next interface.
 func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	store := e.ctx.GetStore()
-	s, ok := store.(splitableStore)
+	s, ok := store.(kv.SplitableStore)
 	if !ok {
 		return nil
 	}
@@ -250,7 +244,7 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	regionIDs := make([]uint64, 0, len(splitKeys))
 	for _, key := range splitKeys {
-		regionID, err := s.SplitRegionAndScatter(key)
+		regionID, err := s.SplitRegion(key, true)
 		if err != nil {
 			logutil.BgLogger().Warn("split table region failed",
 				zap.String("table", e.tableInfo.Name.L),
@@ -368,7 +362,7 @@ type regionMeta struct {
 	scattering bool
 }
 
-func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore tikv.Storage, s splitableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore tikv.Storage, s kv.SplitableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
@@ -411,7 +405,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	return regions, nil
 }
 
-func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore tikv.Storage, s splitableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore tikv.Storage, s kv.SplitableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
@@ -436,7 +430,7 @@ func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, 
 	return indexRegions, nil
 }
 
-func checkRegionsStatus(store splitableStore, regions []regionMeta) error {
+func checkRegionsStatus(store kv.SplitableStore, regions []regionMeta) error {
 	for i := range regions {
 		scattering, err := store.CheckRegionInScattering(regions[i].region.Id)
 		if err != nil {
