@@ -394,6 +394,9 @@ func roundIntStr(numNextDot byte, intStr string) string {
 // strconv.ParseInt, we can't parse float first then convert it to string because precision will
 // be lost. For example, the string value "18446744073709551615" which is the max number of unsigned
 // int will cause some precision to lose. intStr[0] may be a positive and negative sign like '+' or '-'.
+//
+// This func will find serious overflow such as the len of intStr > 20 (without prefix `+/-`)
+// however, it will not check whether the intStr overflow BIGINT.
 func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
@@ -445,10 +448,11 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	}
 	intCnt += exp
 	// intCnt will < 0 when overflow
-	if intCnt < 0 || intCnt > 20 {
-		// MaxInt64's has 19 decimal digit.
+	if intCnt < 0 || intCnt > 21 {
+		// MaxInt64 has 19 decimal digits.
+		// MaxUint64 has 20 decimal digits.
 		// And the intCnt may contain the len of `+/-`,
-		// so I use 20 here as the early detection.
+		// so I use 21 here as the early detection.
 		sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
 		return validFloat[:eIdx], nil
 	}
@@ -479,35 +483,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		extraZeroCount := intCnt - len(digits)
 		intStr = string(digits) + strings.Repeat("0", extraZeroCount)
 	}
-	if isOverflowInt64(intStr) {
-		return validFloat[:eIdx], errors.Errorf("BIGINT overflow")
-	}
 	return intStr, nil
-}
-
-// Check whether overflow i64,
-// the intStr must be a str contain valid integer(so the len of it must >0).
-func isOverflowInt64(intStr string) bool {
-	var ns string
-	if intStr[0] == '+' || intStr[0] == '-' {
-		ns = intStr[1:]
-	} else {
-		ns = intStr
-	}
-	if len(ns) > 19 {
-		return true
-	} else if len(ns) == 19 {
-		for i := 0; i < 18; i++ {
-			// 1<<63 == 9223372036854775808
-			if ns[i] > "922337203685477580"[i] {
-				return true
-			}
-		}
-		if intStr[0] == '-' && ns[18] > '8' || intStr[0] != '-' && ns[18] > '7' {
-			return true
-		}
-	}
-	return false
 }
 
 // StrToFloat converts a string to a float64 at the best-effort.
