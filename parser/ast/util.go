@@ -27,7 +27,9 @@ func IsReadOnly(node Node) bool {
 
 		node.Accept(&checker)
 		return checker.readOnly
-	case *ExplainStmt, *DoStmt:
+	case *ExplainStmt:
+		return !st.Analyze || IsReadOnly(st.Stmt)
+	case *DoStmt:
 		return true
 	default:
 		return false
