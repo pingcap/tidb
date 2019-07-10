@@ -113,6 +113,9 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeLockTables(x)
 	case *ast.UnlockTablesStmt:
 		err = e.executeUnlockTables(x)
+	case *ast.CleanupTableLockStmt:
+		err = e.executeCleanupTableLock(x)
+
 	}
 	if err != nil {
 		return e.toErr(err)
@@ -451,4 +454,9 @@ func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
 	}
 	lockedTables := e.ctx.GetAllTableLocks()
 	return domain.GetDomain(e.ctx).DDL().UnlockTables(e.ctx, lockedTables)
+}
+
+func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)
+	return err
 }
