@@ -89,6 +89,9 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 		expr.GetArgs()[i] = foldedArg
 		isDeferredConst = isDeferredConst || isDeferred
 		if _, isConst := foldedArg.(*Constant); isConst {
+			// If the condition is const and true, and the previous conditions
+			// has no expr, then the folded execution body is returned, otherwise
+			// the arguments of the casewhen are folded and replaced.
 			condition, isNull, err := args[i].EvalInt(expr.GetCtx(), chunk.Row{})
 			if err != nil {
 				return expr, false
@@ -105,6 +108,9 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 	}
 
 	if l%2 == 1 && isFirstCondition {
+		// If the number of arguments in casewhen is odd, and the previous conditions
+		// is const and false, then the folded else execution body is returned. otherwise
+		// the execution body of the else are folded and replaced.
 		return retProcess(args[l-1], expr.GetType(), isDeferredConst)
 	} else if l%2 == 1 {
 		foldedArg, isDeferred := foldConstant(args[l-1])
