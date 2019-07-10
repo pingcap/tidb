@@ -14,6 +14,8 @@
 package core
 
 import (
+	"fmt"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 )
@@ -42,14 +44,14 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 	outerPlan := p.children[1^innerChildIdx]
 	innerPlan := p.children[innerChildIdx]
 	// outer join elimination with duplicate agnostic aggregate functions
-	matched, err := o.isAggColsAllFromOuterTable(outerPlan, aggCols)
-	if err != nil || matched {
-		return outerPlan, err
+	matched := o.isAggColsAllFromOuterTable(outerPlan, aggCols)
+	if matched {
+		return outerPlan, nil
 	}
 	// outer join elimination without duplicate agnostic aggregate functions
-	matched, err = o.isParentColsAllFromOuterTable(outerPlan, parentSchema)
-	if err != nil || !matched {
-		return p, err
+	matched = o.isParentColsAllFromOuterTable(outerPlan, parentSchema)
+	if !matched {
+		return p, nil
 	}
 	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
 	contain, err := o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys)
@@ -73,33 +75,45 @@ func (o *outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChild
 	return expression.NewSchema(joinKeys...)
 }
 
-func (o *outerJoinEliminator) isAggColsAllFromOuterTable(outerPlan LogicalPlan, aggCols []*expression.Column) (bool, error) {
+func (o *outerJoinEliminator) isAggColsAllFromOuterTable(outerPlan LogicalPlan, aggCols []*expression.Column) bool {
 	if len(aggCols) == 0 {
-		return false, nil
+		return false
 	}
-	for _, col := range aggCols {
-		columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-		c, err := outerPlan.Schema().FindColumn(columnName)
-		if err != nil || c == nil {
-			return false, err
+	for _, aggCol := range aggCols {
+		fmt.Println("aggCol", *aggCol)
+		isAggColInOuterSchema := false
+		for _, outerCol := range outerPlan.Schema().Columns {
+			if aggCol.DBName == outerCol.DBName && aggCol.TblName == outerCol.TblName && aggCol.OrigColName == outerCol.OrigColName {
+				isAggColInOuterSchema = true
+				break
+			}
+		}
+		if !isAggColInOuterSchema {
+			return false
 		}
 	}
-	return true, nil
+	return true
 }
 
 // check whether schema cols of join's parent plan are all from outer join table
-func (o *outerJoinEliminator) isParentColsAllFromOuterTable(outerPlan LogicalPlan, parentSchema *expression.Schema) (bool, error) {
+func (o *outerJoinEliminator) isParentColsAllFromOuterTable(outerPlan LogicalPlan, parentSchema *expression.Schema) bool {
 	if parentSchema == nil {
-		return false, nil
+		return false
 	}
-	for _, col := range parentSchema.Columns {
-		columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-		c, err := outerPlan.Schema().FindColumn(columnName)
-		if err != nil || c == nil {
-			return false, err
+	for _, parentCol := range parentSchema.Columns {
+		fmt.Println("parentCol", *parentCol)
+		isParentColInOuterSchema := false
+		for _, outerCol := range outerPlan.Schema().Columns {
+			if parentCol.DBName == outerCol.DBName && parentCol.TblName == outerCol.TblName && parentCol.OrigColName == outerCol.OrigColName {
+				isParentColInOuterSchema = true
+				break
+			}
+		}
+		if !isParentColInOuterSchema {
+			return false
 		}
 	}
-	return true, nil
+	return true
 }
 
 // check whether one of unique keys sets is contained by inner join keys
@@ -173,11 +187,8 @@ func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (_ bool, col
 			return false, nil
 		}
 		for _, expr := range aggDesc.Args {
-			if col, ok := expr.(*expression.Column); ok {
-				cols = append(cols, col)
-			} else {
-				return false, nil
-			}
+			// ExtractColumns will trans the expr to cols.
+			cols = append(cols, expression.ExtractColumns(expr)...)
 		}
 	}
 	return true, cols
@@ -187,6 +198,8 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 	// check the duplicate agnostic aggregate functions
 	if ok, newCols := o.isDuplicateAgnosticAgg(p); ok {
 		aggCols = newCols
+	} else if len(aggCols) > 0 {
+		aggCols = append(aggCols, p.Schema().Columns...)
 	}
 
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
@@ -202,6 +215,7 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 	if !isJoin {
 		return p, nil
 	}
+	aggCols = aggCols[:len(aggCols)-len(p.Schema().Columns)]
 	return o.tryToEliminateOuterJoin(join, aggCols, parentSchema)
 }
 
