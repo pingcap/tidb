@@ -350,6 +350,17 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("set tidb_wait_split_region_finish = 0")
 	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
 
+	// test for tidb_scatter_region
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_scatter_region = 1")
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_scatter_region = 0")
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("0"))
+	_, err = tk.Exec("set session tidb_scatter_region = 0")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`select @@session.tidb_scatter_region;`)
+	c.Assert(err, NotNil)
+
 	// test for tidb_wait_split_region_timeout
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitSplitRegionTimeout)))
 	tk.MustExec("set tidb_wait_split_region_timeout = 1")
