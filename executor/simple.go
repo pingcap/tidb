@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -230,7 +231,64 @@ func (e *SimpleExec) setDefaultRoleAll(s *ast.SetDefaultRoleStmt) error {
 	return nil
 }
 
+func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (err error) {
+	sqlExecutor := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	user, sql := s.UserList[0], ""
+	if user.Hostname == "" {
+		user.Hostname = "%"
+	}
+	switch s.SetRoleOpt {
+	case ast.SetRoleNone:
+		sql = fmt.Sprintf("DELETE IGNORE FROM mysql.default_roles WHERE USER='%s' AND HOST='%s';", user.Username, user.Hostname)
+	case ast.SetRoleAll:
+		sql = fmt.Sprintf("INSERT IGNORE INTO mysql.default_roles(HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER) "+
+			"SELECT TO_HOST,TO_USER,FROM_HOST,FROM_USER FROM mysql.role_edges WHERE TO_HOST='%s' AND TO_USER='%s';", user.Hostname, user.Username)
+	case ast.SetRoleRegular:
+		sql = "INSERT IGNORE INTO mysql.default_roles values"
+		for i, role := range s.RoleList {
+			ok := checker.FindEdge(e.ctx, role, user)
+			if !ok {
+				return ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
+			}
+			sql += fmt.Sprintf("('%s', '%s', '%s', '%s')", user.Hostname, user.Username, role.Hostname, role.Username)
+			if i != len(s.RoleList)-1 {
+				sql += ","
+			}
+		}
+	}
+	deleteSQL := fmt.Sprintf("DELETE IGNORE FROM mysql.default_roles WHERE USER='%s' AND HOST='%s';", user.Username, user.Hostname)
+	_, _, err = sqlExecutor.ExecRestrictedSQL(e.ctx, deleteSQL)
+	if err != nil {
+		return
+	}
+	_, _, err = sqlExecutor.ExecRestrictedSQL(e.ctx, sql)
+	return
+}
+
 func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) (err error) {
+	sessionVars := e.ctx.GetSessionVars()
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+
+	if len(s.UserList) == 1 {
+		u, h := s.UserList[0].Username, s.UserList[0].Hostname
+		if u == sessionVars.User.Username && h == sessionVars.User.AuthHostname {
+			err = e.setDefaultRoleForCurrentUser(s)
+			domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+			return
+		}
+	}
+
+	activeRoles := sessionVars.ActiveRoles
+	if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.DefaultRoleTable, "", mysql.UpdatePriv) {
+		if !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+			return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+		}
+	}
+
 	switch s.SetRoleOpt {
 	case ast.SetRoleAll:
 		err = e.setDefaultRoleAll(s)
