@@ -1263,22 +1263,24 @@ func (s *session) isTxnRetryable() bool {
 	}
 
 	// If retry limit is 0, the transaction could not retry.
-	couldRetry := sessVars.RetryLimit != 0
+	if sessVars.RetryLimit == 0 {
+		return false
+	}
 
 	// If the session is not InTxn, it is an auto-committed transaction.
-	// The auto-committed transaction could always retry, except the retry limit is 0.
+	// The auto-committed transaction could always retry.
 	if !sessVars.InTxn() {
-		return couldRetry
+		return true
 	}
 
-	// The internal transaction could always retry, except the retry limit is 0.
+	// The internal transaction could always retry.
 	if sessVars.InRestrictedSQL {
-		return couldRetry
+		return true
 	}
 
-	// If the retry is enabled, the transaction could retry, except the retry limit is 0.
+	// If the retry is enabled, the transaction could retry.
 	if !sessVars.DisableTxnAutoRetry {
-		return couldRetry
+		return true
 	}
 
 	return false
