@@ -62,7 +62,7 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	defer cancel()
 	regionIDs := make([]uint64, 0, len(splitIdxKeys))
 	for _, idxKey := range splitIdxKeys {
-		regionID, err := s.SplitRegion(idxKey, e.ctx.GetSessionVars().WaitSplitRegionFinish)
+		regionID, err := s.SplitRegion(idxKey, true)
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("split table index region failed",
 				zap.String("table", e.tableInfo.Name.L),
@@ -240,7 +240,7 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	regionIDs := make([]uint64, 0, len(splitKeys))
 	for _, key := range splitKeys {
-		regionID, err := s.SplitRegion(key, e.ctx.GetSessionVars().WaitSplitRegionFinish)
+		regionID, err := s.SplitRegion(key, true)
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("split table region failed",
 				zap.String("table", e.tableInfo.Name.L),
