@@ -1258,6 +1258,33 @@ func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
 	return bin, err
 }
 
+// ToBinSize returns pre-calculated size for decimal.
+func (d *MyDecimal) ToBinSize(precision, frac int) int {
+	if precision > digitsPerWord*maxWordBufLen || precision < 0 || frac > mysql.MaxDecimalScale || frac < 0 {
+		return 0
+	}
+	digitsInt := precision - frac
+	wordsInt := digitsInt / digitsPerWord
+	leadingDigits := digitsInt - wordsInt*digitsPerWord
+	wordsFrac := frac / digitsPerWord
+	trailingDigits := frac - wordsFrac*digitsPerWord
+
+	intSize := wordsInt*wordSize + dig2bytes[leadingDigits]
+	fracSize := wordsFrac*wordSize + dig2bytes[trailingDigits]
+	return intSize + fracSize
+}
+
+// ToHashKeySize returns pre-calculated size for decimal hash key.
+func (d *MyDecimal) ToHashKeySize() int {
+	_, digitsInt := d.removeLeadingZeros()
+	_, digitsFrac := d.removeTrailingZeros()
+	prec := digitsInt + digitsFrac
+	if prec == 0 { // zeroDecimal
+		prec = 1
+	}
+	return d.ToBinSize(prec, digitsFrac)
+}
+
 // ToHashKey removes the leading and trailing zeros and generates a hash key.
 // Two Decimals dec0 and dec1 with different fraction will generate the same hash keys if dec0.Compare(dec1) == 0.
 func (d *MyDecimal) ToHashKey() ([]byte, error) {
