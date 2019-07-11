@@ -57,14 +57,15 @@ type batchConn struct {
 	pendingRequests prometheus.Gauge
 }
 
-func newBatchConn(a *connArray, cfg config.TiKVClient) (*batchConn, error) {
+func newBatchConn(a *connArray, cfg config.TiKVClient, idleNotify chan<- string) (*batchConn, error) {
 	bconn := &batchConn{
 		target:               a.target,
 		batchCommandsCh:      make(chan *batchCommandsEntry, cfg.MaxBatchSize),
 		batchCommandsClients: make([]*batchCommandsClient, 0, len(a.v)),
 
-		idleNotify: a.idleNotify,
-		idleDetect: time.NewTimer(idleTimeout),
+		idleNotify:      idleNotify,
+		idleDetect:      time.NewTimer(idleTimeout),
+		pendingRequests: metrics.TiKVPendingBatchRequests.WithLabelValues(a.target),
 	}
 	for i := 0; i < len(a.v); i++ {
 		tikvClient := tikvpb.NewTikvClient(a.v[i])
@@ -424,9 +425,37 @@ func sendBatchRequest(
 	ctx context.Context,
 	addr string,
 	batchConn *batchConn,
+	entry *batchCommandsEntry,
+) error {
+	batchConn.RLock()
+	defer batchConn.RUnlock()
+	if batchConn.isStopped() {
+		logutil.BgLogger().Warn("send to closed transport", zap.String("to", addr))
+		return errors.New("send to closed transport")
+	}
+	select {
+	case batchConn.batchCommandsCh <- entry:
+	case <-ctx.Done():
+		logutil.BgLogger().Warn(
+			"send request is cancelled",
+			zap.String("to", addr),
+			zap.String("cause", ctx.Err().Error()),
+		)
+		return errors.Trace(ctx.Err())
+	}
+	return nil
+}
+
+func doRPCForBatchRequest(
+	ctx context.Context,
+	addr string,
+	batchConn *batchConn,
 	req *tikvpb.BatchCommandsRequest_Request,
 	timeout time.Duration,
 ) (*tikvrpc.Response, error) {
+	ctx1, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	entry := &batchCommandsEntry{
 		req:      req,
 		res:      make(chan *tikvpb.BatchCommandsResponse_Response, 1),
@@ -434,18 +463,8 @@ func sendBatchRequest(
 		err:      nil,
 	}
 
-	ctx1, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	batchConn.RLock()
-	select {
-	case batchConn.batchCommandsCh <- entry:
-		batchConn.RUnlock()
-	case <-ctx1.Done():
-		batchConn.RUnlock()
-		logutil.BgLogger().Warn("send request is cancelled",
-			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
-		return nil, errors.Trace(ctx1.Err())
+	if err := sendBatchRequest(ctx1, addr, batchConn, entry); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	select {

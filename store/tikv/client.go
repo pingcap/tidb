@@ -139,7 +139,7 @@ func (a *connArray) Init(cfg config.TiKVClient, addr string, security config.Sec
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
 
 	if cfg.MaxBatchSize > 0 {
-		bconn, err := newBatchConn(a, cfg)
+		bconn, err := newBatchConn(a, cfg, idleNotify)
 		if err != nil {
 			a.Close()
 			return nil
@@ -281,7 +281,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	if c.cfg.MaxBatchSize > 0 {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
-			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
+			return doRPCForBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
 		}
 	}
 
