@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
@@ -76,7 +77,7 @@ type connArray struct {
 	*batchConn
 }
 
-func newConnArray(maxSize uint, addr string, security config.Security, idleNotify *uint32) (*connArray, error) {
+func newConnArray(maxSize uint, addr string, security config.Security, idleNotify chan<- string) (*connArray, error) {
 	a := &connArray{
 		index:         0,
 		v:             make([]*grpc.ClientConn, maxSize),
@@ -88,7 +89,7 @@ func newConnArray(maxSize uint, addr string, security config.Security, idleNotif
 	return a, nil
 }
 
-func (a *connArray) Init(addr string, security config.Security, idleNotify *uint32) error {
+func (a *connArray) Init(addr string, security config.Security, idleNotify chan<- string) error {
 	a.target = addr
 
 	opt := grpc.WithInsecure()
@@ -203,15 +204,35 @@ type rpcClient struct {
 	security config.Security
 
 	// Implement background cleanup.
-	// Periodically check whether there is any connection that is idle and then close and remove these idle connections.
-	idleNotify uint32
+	// Check whether there is any connection that is idle and then close and remove these idle connections.
+	idleNotify           chan string
+	idleCollectorCloseCh chan struct{}
 }
 
 func newRPCClient(security config.Security) *rpcClient {
-	return &rpcClient{
-		conns:    make(map[string]*connArray),
-		security: security,
+	client := &rpcClient{
+		conns:                make(map[string]*connArray),
+		security:             security,
+		idleNotify:           make(chan string, 16),
+		idleCollectorCloseCh: make(chan struct{}, 1),
 	}
+	go func() {
+		select {
+		case addr := <-client.idleNotify:
+			client.Lock()
+			conn, ok := client.conns[addr]
+			delete(client.conns, addr)
+			client.Unlock()
+			if ok {
+				conn.Close()
+				logutil.BgLogger().Info("recycle idle connection",
+					zap.String("target", addr))
+			}
+		case <-client.idleCollectorCloseCh:
+			return
+		}
+	}()
+	return client
 }
 
 // NewTestRPCClient is for some external tests.
@@ -244,7 +265,7 @@ func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 	if !ok {
 		var err error
 		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify)
+		array, err = newConnArray(connCount, addr, c.security, c.idleNotify)
 		if err != nil {
 			return nil, err
 		}
@@ -273,10 +294,6 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	defer func() {
 		metrics.TiKVSendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds())
 	}()
-
-	if atomic.CompareAndSwapUint32(&c.idleNotify, 1, 0) {
-		c.recycleIdleConnArray()
-	}
 
 	connArray, err := c.getConnArray(addr)
 	if err != nil {

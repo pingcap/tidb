@@ -32,6 +32,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+const idleTimeout = 3 * time.Minute
+
 type batchConn struct {
 	index uint32
 	// batchCommandsCh used for batch commands.
@@ -40,15 +42,14 @@ type batchConn struct {
 	tikvTransportLayerLoad uint64
 	closed                 chan struct{}
 
-	// Notify rpcClient to check the idle flag
-	idleNotify *uint32
-	idle       bool
+	// Notify rpcClient to recycle idle connections.
+	idleNotify chan<- string
 	idleDetect *time.Timer
 
 	pendingRequests prometheus.Gauge
 }
 
-func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
+func newBatchConn(connCount, maxBatchSize uint, idleNotify chan<- string) *batchConn {
 	return &batchConn{
 		batchCommandsCh:        make(chan *batchCommandsEntry, maxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, connCount),
@@ -76,9 +77,8 @@ func (a *batchConn) fetchAllPendingRequests(
 		a.idleDetect.Reset(idleTimeout)
 	case <-a.idleDetect.C:
 		a.idleDetect.Reset(idleTimeout)
-		a.idle = true
-		atomic.CompareAndSwapUint32(a.idleNotify, 0, 1)
-		// This batchConn to be recycled
+		// TODO: use real target: a.idleNotify <- a.target
+		a.idleNotify <- "FIXME"
 		return
 	case <-a.closed:
 		return
@@ -309,8 +309,6 @@ func (b *batchCommandsEntry) isCanceled() bool {
 	return atomic.LoadInt32(&b.canceled) == 1
 }
 
-const idleTimeout = 3 * time.Minute
-
 func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -443,30 +441,5 @@ func sendBatchRequest(
 		logutil.BgLogger().Warn("wait response is cancelled",
 			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
 		return nil, errors.Trace(ctx1.Err())
-	}
-}
-
-func (c *rpcClient) recycleIdleConnArray() {
-	var addrs []string
-	c.RLock()
-	for _, conn := range c.conns {
-		if conn.idle {
-			addrs = append(addrs, conn.target)
-		}
-	}
-	c.RUnlock()
-
-	for _, addr := range addrs {
-		c.Lock()
-		conn, ok := c.conns[addr]
-		if ok {
-			delete(c.conns, addr)
-			logutil.BgLogger().Info("recycle idle connection",
-				zap.String("target", addr))
-		}
-		c.Unlock()
-		if conn != nil {
-			conn.Close()
-		}
 	}
 }
