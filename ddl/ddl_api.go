@@ -2565,6 +2565,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
+	if isColumnWithIndex(originalColName.L, t.Meta().Indices) {
+
+	}
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn); err != nil {
 		return nil, errors.Trace(err)
@@ -2578,6 +2581,27 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp},
 	}
 	return job, nil
+}
+
+// checkColumnWithIndexConstraint uses to check the related index constrain of the modified column.
+// index has a max prefix length constrain. eg: a varchar(100), index idx(a), then if modify column a to a varchar(4000),
+// that will cause index idx break the max prefix length constrain.
+func checkColumnWithIndexConstraint(colName string, indices []*model.IndexInfo) error {
+	for _, indexInfo := range indices {
+		var idxCol *model.IndexColumn
+		for _, col := range indexInfo.Columns {
+			if col.Name.L == colName {
+				idxCol = col
+			}
+		}
+		if idxCol == nil {
+			continue
+		}
+		if idxCol.Length != types.UnspecifiedLength {
+			continue
+		}
+	}
+
 }
 
 // ChangeColumn renames an existing column and modifies the column's definition,
