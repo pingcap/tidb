@@ -291,17 +291,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
-	// If the executor doesn't return any result to the client, we execute it without delay.
-	if e.Schema().Len() == 0 {
-		if isPessimistic {
-			return nil, a.handlePessimisticDML(ctx, e)
-		}
-		return a.handleNoDelayExecutor(ctx, e)
-	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
-		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
-		// the Projection has two expressions and two columns in the schema, but we should
-		// not return the result of the two expressions.
-		return a.handleNoDelayExecutor(ctx, e)
+	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled {
+		return result, err
 	}
 
 	var txnStartTS uint64
@@ -317,6 +308,32 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (bool, sqlexec.RecordSet, error) {
+	toCheck := e
+	if explain, ok := e.(*ExplainExec); ok {
+		if explain.analyzeExec != nil {
+			toCheck = explain.analyzeExec
+		}
+	}
+
+	// If the executor doesn't return any result to the client, we execute it without delay.
+	if toCheck.Schema().Len() == 0 {
+		if isPessimistic {
+			return true, nil, a.handlePessimisticDML(ctx, e)
+		}
+		r, err := a.handleNoDelayExecutor(ctx, e)
+		return true, r, err
+	} else if proj, ok := toCheck.(*ProjectionExec); ok && proj.calculateNoDelay {
+		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
+		// the Projection has two expressions and two columns in the schema, but we should
+		// not return the result of the two expressions.
+		r, err := a.handleNoDelayExecutor(ctx, e)
+		return true, r, err
+	}
+
+	return false, nil, nil
 }
 
 // getMaxExecutionTime get the max execution timeout value.
