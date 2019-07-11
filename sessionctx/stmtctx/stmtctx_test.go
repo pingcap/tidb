@@ -11,17 +11,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stmtctx
+package stmtctx_test
 
 import (
 	"fmt"
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
+	. "github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
 )
 
-func TestCopTasksDetails(t *testing.T) {
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+type Suit struct{}
+
+func (s *Suit) TestCopTasksDetails(c *C) {
 	ctx := new(StatementContext)
 	for i := 0; i < 100; i++ {
 		d := &execdetails.ExecDetails{
@@ -31,25 +39,25 @@ func TestCopTasksDetails(t *testing.T) {
 		}
 		ctx.MergeExecDetails(d, nil)
 	}
-	c := ctx.CopTasksDetails()
-	if c.NumCopTasks != 100 ||
-		c.AvgProcessTime != time.Second*101/2 ||
-		c.P90ProcessTime != time.Second*91 ||
-		c.MaxProcessTime != time.Second*100 ||
-		c.MaxProcessAddress != "100" ||
-		c.AvgWaitTime != time.Millisecond*101/2 ||
-		c.P90WaitTime != time.Millisecond*91 ||
-		c.MaxWaitTime != time.Millisecond*100 ||
-		c.MaxWaitAddress != "100" {
-		t.Fatal(c)
+	d := ctx.CopTasksDetails()
+	if d.NumCopTasks != 100 ||
+		d.AvgProcessTime != time.Second*101/2 ||
+		d.P90ProcessTime != time.Second*91 ||
+		d.MaxProcessTime != time.Second*100 ||
+		d.MaxProcessAddress != "100" ||
+		d.AvgWaitTime != time.Millisecond*101/2 ||
+		d.P90WaitTime != time.Millisecond*91 ||
+		d.MaxWaitTime != time.Millisecond*100 ||
+		d.MaxWaitAddress != "100" {
+		c.Fatal(d)
 	}
-	fields := c.ToZapFields()
+	fields := d.ToZapFields()
 	if len(fields) != 9 {
-		t.Fatal(c)
+		c.Fatal(d)
 	}
 }
 
-func TestStatementContextPushDownFLags(t *testing.T) {
+func (s *Suit) TestStatementContextPushDownFLags(c *C) {
 	testCases := []struct {
 		in  *StatementContext
 		out uint64
@@ -72,7 +80,7 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 	for _, tt := range testCases {
 		got := tt.in.PushDownFlags()
 		if got != tt.out {
-			t.Errorf("get %v, want %v\n", got, tt.out)
+			c.Errorf("get %v, want %v\n", got, tt.out)
 		}
 	}
 }
