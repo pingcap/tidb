@@ -1244,19 +1244,44 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
-
-		// If the session is already in transaction, enable retry or internal SQL could retry.
-		// If not, the transaction could always retry, because it should be auto committed transaction.
-		// Anyway the retry limit is 0, the transaction could not retry.
-		if s.sessionVars.InTxn() {
-			if !s.sessionVars.DisableTxnAutoRetry || s.sessionVars.InRestrictedSQL {
-				s.sessionVars.TxnCtx.CouldRetry = s.sessionVars.RetryLimit != 0
-			}
-		} else {
-			s.sessionVars.TxnCtx.CouldRetry = s.sessionVars.RetryLimit != 0
-		}
+		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 	}
 	return &s.txn, nil
+}
+
+// isTxnRetryable (if returns true) means the transaction could retry.
+// If the transaction is in pessimistic mode, do not retry.
+// If the session is already in transaction, enable retry or internal SQL could retry.
+// If not, the transaction could always retry, because it should be auto committed transaction.
+// Anyway the retry limit is 0, the transaction could not retry.
+func (s *session) isTxnRetryable() bool {
+	sessVars := s.sessionVars
+
+	// The pessimistic transaction no need to retry.
+	if sessVars.TxnCtx.IsPessimistic {
+		return false
+	}
+
+	// If retry limit is 0, the transaction could not retry.
+	couldRetry := sessVars.RetryLimit != 0
+
+	// If the session is not InTxn, it is an auto-committed transaction.
+	// The auto-committed transaction could always retry, except the retry limit is 0.
+	if !sessVars.InTxn() {
+		return couldRetry
+	}
+
+	// The internal transaction could always retry, except the retry limit is 0.
+	if sessVars.InRestrictedSQL {
+		return couldRetry
+	}
+
+	// If the retry is enabled, the transaction could retry, except the retry limit is 0.
+	if !sessVars.DisableTxnAutoRetry {
+		return couldRetry
+	}
+
+	return false
 }
 
 func (s *session) NewTxn(ctx context.Context) error {
