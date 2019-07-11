@@ -222,40 +222,40 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		return nil, err
 	}
 	rs, err = s.Exec(ctx)
-	if !se.txn.pending() {
-		sessVars := se.GetSessionVars()
-		sessVars.TxnCtx.StatementCount++
-		if !s.IsReadOnly(sessVars) {
-			// All the history should be added here.
-			if err == nil && sessVars.TxnCtx.CouldRetry {
-				GetHistory(sctx).Add(s, sessVars.StmtCtx)
-			}
-
-			// Handle the stmt commit/rollback.
-			if txn, err1 := sctx.Txn(false); err1 == nil {
-				if txn.Valid() {
-					if err != nil {
-						sctx.StmtRollback()
-					} else {
-						err = sctx.StmtCommit()
-					}
-				}
-			} else {
-				logutil.BgLogger().Error("get txn error", zap.Error(err1))
-			}
+	sessVars := se.GetSessionVars()
+	sessVars.TxnCtx.StatementCount++
+	if !s.IsReadOnly(sessVars) {
+		// All the history should be added here.
+		if err == nil && sessVars.TxnCtx.CouldRetry {
+			GetHistory(sctx).Add(s, sessVars.StmtCtx)
 		}
-		return rs, finishStmt(ctx, sctx, se, sessVars, err)
-	}
 
-	// After run statement finish, txn state is still pending means the
-	// statement never need a Txn(), such as:
-	//
-	// set @@tidb_general_log = 1
-	// set @@autocommit = 0
-	// select 1
-	//
-	// Reset txn state to invalid to dispose the pending start ts.
-	se.txn.changeToInvalid()
+		// Handle the stmt commit/rollback.
+		if txn, err1 := sctx.Txn(false); err1 == nil {
+			if txn.Valid() {
+				if err != nil {
+					sctx.StmtRollback()
+				} else {
+					err = sctx.StmtCommit()
+				}
+			}
+		} else {
+			logutil.BgLogger().Error("get txn error", zap.Error(err1))
+		}
+	}
+	err = finishStmt(ctx, sctx, se, sessVars, err)
+
+	if se.txn.pending() {
+		// After run statement finish, txn state is still pending means the
+		// statement never need a Txn(), such as:
+		//
+		// set @@tidb_general_log = 1
+		// set @@autocommit = 0
+		// select 1
+		//
+		// Reset txn state to invalid to dispose the pending start ts.
+		se.txn.changeToInvalid()
+	}
 	return rs, err
 }
 
