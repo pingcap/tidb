@@ -545,7 +545,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	c.Assert(err, IsNil)
 	stmt, _ := session.Compile(context.TODO(), tk.Se, stmtNode)
 	executor.ResetContextOfStmt(tk.Se, stmtNode)
-	history.Add(0, stmt, tk.Se.GetSessionVars().StmtCtx)
+	history.Add(stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
 	txn, err := tk.Se.Txn(false)
@@ -559,6 +559,7 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	tk.MustExec("create table history (a int)")
 	tk.MustExec("insert history values (1), (2), (3)")
 	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustQuery("select * from history")
 	history := session.GetHistory(tk.Se)
 	c.Assert(history.Count(), Equals, 0)
@@ -570,6 +571,76 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	tk.MustQuery("select * from history")
 	history = session.GetHistory(tk.Se)
 	c.Assert(history.Count(), Equals, 0)
+}
+
+func (s *testSessionSuite) TestNoHistoryWhenDisableRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("set @@autocommit = 0")
+
+	// retry_limit = 0 will not add history.
+	tk.MustExec("set @@tidb_retry_limit = 0")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
+
+	// Disable auto_retry will add history for auto committed only
+	tk.MustExec("set @@autocommit = 1")
+	tk.MustExec("set @@tidb_retry_limit = 10")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `1*return(true)->return(false)`), IsNil)
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
+	tk.MustExec("commit")
+
+	// Enable auto_retry will add history for both.
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `1*return(true)->return(false)`), IsNil)
+	tk.MustExec("insert history values (1)")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 2)
+	tk.MustExec("commit")
+}
+
+func (s *testSessionSuite) TestNoRetryForCurrentTxn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("insert history values (1)")
+
+	// Firstly, disable retry.
+	tk.MustExec("set tidb_disable_txn_auto_retry = 1")
+	tk.MustExec("begin")
+	tk.MustExec("update history set a = 2")
+	// Enable retry now
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+
+	tk1.MustExec("update history set a = 3")
+	c.Assert(tk.ExecToErr("commit"), NotNil)
+}
+
+func (s *testSessionSuite) TestRetryForCurrentTxn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("insert history values (1)")
+
+	// Firstly, disable retry.
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin")
+	tk.MustExec("update history set a = 2")
+	// Enable retry now
+	tk.MustExec("set tidb_disable_txn_auto_retry = 1")
+
+	tk1.MustExec("update history set a = 3")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from history").Check(testkit.Rows("2"))
 }
 
 // TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
@@ -990,6 +1061,7 @@ func (s *testSessionSuite) TestBinaryReadOnly(c *C) {
 	id2, _, _, err := tk.Se.PrepareStmt("insert into t values (?)")
 	c.Assert(err, IsNil)
 	tk.MustExec("set autocommit = 0")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id, []types.Datum{types.NewDatum(1)})
 	c.Assert(err, IsNil)
 	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
@@ -2177,6 +2249,7 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 	defer func() {
 		config.GetGlobalConfig().Performance.StmtCountLimit = saved
 	}()
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin")
 	tk.MustExec("insert into stmt_count_limit values (1)")
 	tk.MustExec("insert into stmt_count_limit values (2)")
@@ -2195,6 +2268,7 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 func (s *testSessionSuite) TestBatchCommit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_batch_commit = 1")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("create table t (id int)")
 	saved := config.GetGlobalConfig().Performance
 	config.GetGlobalConfig().Performance.StmtCountLimit = 3
@@ -2440,7 +2514,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	// session 1 starts a transaction early.
 	// execute a select statement to clear retry history.
 	tk1.MustExec("select 1")
-	tk1.Se.NewTxn(context.Background())
+	tk1.Se.PrepareTxnCtx(context.Background())
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
 	// AutoCommit update will retry, so it would not fail.
