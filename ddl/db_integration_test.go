@@ -775,8 +775,7 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
 
-	errCodeStr1 := "[ddl:210]" // unsupported modify collate from utf8mb4_bin to utf8mb4_general_ci"
-	errCodeStr2 := "[ddl:203]" // unsupported modify column with references
+	errMsg := "[ddl:203]" // unsupported modify column with references
 	assertErrCode := func(sql string, errCodeStr string) {
 		_, err := tk.Exec(sql)
 		c.Assert(err, NotNil)
@@ -785,7 +784,7 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (b char(1) default null) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_general_ci")
-	assertErrCode("alter table t1 modify column b char(1) character set utf8mb4 collate utf8mb4_general_ci", errCodeStr1)
+	tk.MustExec("alter table t1 modify column b char(1) character set utf8mb4 collate utf8mb4_general_ci")
 
 	tk.MustExec("drop table t1")
 	tk.MustExec("create table t1 (b char(1) collate utf8mb4_general_ci)")
@@ -795,7 +794,7 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (b int, c int)")
-	assertErrCode("alter table t2 modify column c int references t1(a)", errCodeStr2)
+	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
 }
 
 func (s *testIntegrationSuite2) TestCaseInsensitiveCharsetAndCollate(c *C) {
