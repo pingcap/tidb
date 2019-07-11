@@ -1042,7 +1042,7 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 	var err error
 	var reachLimit bool
 	for {
-		prevData, reachLimit, err = loadDataInfo.InsertData(prevData, curData)
+		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
 		if err != nil {
 			return nil, err
 		}
@@ -1176,9 +1176,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 	status := atomic.LoadInt32(&cc.status)
-	if status == connStatusShutdown || status == connStatusWaitShutdown {
+	if rs != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
 		killConn(cc)
-		return errors.New("killed by another connection")
+		return executor.ErrQueryInterrupted
 	}
 	if rs != nil {
 		if len(rs) == 1 {
@@ -1457,7 +1457,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			connInfo := cc.ctx.GetSessionVars().ConnectionInfo
-			err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: connInfo.Host}, plugin.ChangeUser, connInfo)
+			err = authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
 			if err != nil {
 				return err
 			}
