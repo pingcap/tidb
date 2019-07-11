@@ -76,7 +76,7 @@ func NewRawKVClient(pdAddrs []string, security config.Security) (*RawKVClient, e
 		clusterID:   pdCli.GetClusterID(context.TODO()),
 		regionCache: NewRegionCache(pdCli),
 		pdClient:    pdCli,
-		rpcClient:   newRPCClient(security),
+		rpcClient:   newRPCClient(config.GetGlobalConfig().TiKVClient, security),
 	}, nil
 }
 

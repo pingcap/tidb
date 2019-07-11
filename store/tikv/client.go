@@ -77,19 +77,19 @@ type connArray struct {
 	*batchConn
 }
 
-func newConnArray(maxSize uint, addr string, security config.Security, idleNotify chan<- string) (*connArray, error) {
+func newConnArray(cfg config.TiKVClient, addr string, security config.Security, idleNotify chan<- string) (*connArray, error) {
 	a := &connArray{
 		index:         0,
-		v:             make([]*grpc.ClientConn, maxSize),
+		v:             make([]*grpc.ClientConn, cfg.GrpcConnectionCount),
 		streamTimeout: make(chan *tikvrpc.Lease, 1024),
 	}
-	if err := a.Init(addr, security, idleNotify); err != nil {
+	if err := a.Init(cfg, addr, security, idleNotify); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-func (a *connArray) Init(addr string, security config.Security, idleNotify chan<- string) error {
+func (a *connArray) Init(cfg config.TiKVClient, addr string, security config.Security, idleNotify chan<- string) error {
 	a.target = addr
 
 	opt := grpc.WithInsecure()
@@ -101,18 +101,15 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify chan<
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
-	cfg := config.GetGlobalConfig()
 	var (
 		unaryInterceptor  grpc.UnaryClientInterceptor
 		streamInterceptor grpc.StreamClientInterceptor
 	)
-	if cfg.OpenTracing.Enable {
+	if config.GetGlobalConfig().OpenTracing.Enable {
 		unaryInterceptor = grpc_opentracing.UnaryClientInterceptor()
 		streamInterceptor = grpc_opentracing.StreamClientInterceptor()
 	}
 
-	keepAlive := cfg.TiKVClient.GrpcKeepAliveTime
-	keepAliveTimeout := cfg.TiKVClient.GrpcKeepAliveTimeout
 	for i := range a.v {
 		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 		conn, err := grpc.DialContext(
@@ -126,8 +123,8 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify chan<
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxRecvMsgSize)),
 			grpc.WithBackoffMaxDelay(time.Second*3),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                time.Duration(keepAlive) * time.Second,
-				Timeout:             time.Duration(keepAliveTimeout) * time.Second,
+				Time:                time.Duration(cfg.GrpcKeepAliveTime) * time.Second,
+				Timeout:             time.Duration(cfg.GrpcKeepAliveTimeout) * time.Second,
 				PermitWithoutStream: true,
 			}),
 		)
@@ -141,8 +138,8 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify chan<
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
 
-	if cfg.TiKVClient.MaxBatchSize > 0 {
-		bconn, err := newBatchConn(a, cfg.TiKVClient)
+	if cfg.MaxBatchSize > 0 {
+		bconn, err := newBatchConn(a, cfg)
 		if err != nil {
 			a.Close()
 			return nil
@@ -179,6 +176,7 @@ func (a *connArray) Close() {
 // that there are too many concurrent requests which overload the service of TiKV.
 type rpcClient struct {
 	sync.RWMutex
+	cfg      config.TiKVClient
 	isClosed bool
 	conns    map[string]*connArray
 	security config.Security
@@ -189,8 +187,9 @@ type rpcClient struct {
 	idleCollectorCloseCh chan struct{}
 }
 
-func newRPCClient(security config.Security) *rpcClient {
+func newRPCClient(tikvclient config.TiKVClient, security config.Security) *rpcClient {
 	client := &rpcClient{
+		cfg:                  tikvclient,
 		conns:                make(map[string]*connArray),
 		security:             security,
 		idleNotify:           make(chan string, 16),
@@ -217,7 +216,8 @@ func newRPCClient(security config.Security) *rpcClient {
 
 // NewTestRPCClient is for some external tests.
 func NewTestRPCClient() Client {
-	return newRPCClient(config.Security{})
+	clientConfig := config.GetGlobalConfig().TiKVClient
+	return newRPCClient(clientConfig, config.Security{})
 }
 
 func (c *rpcClient) getConnArray(addr string) (*connArray, error) {
@@ -244,8 +244,7 @@ func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 	array, ok := c.conns[addr]
 	if !ok {
 		var err error
-		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-		array, err = newConnArray(connCount, addr, c.security, c.idleNotify)
+		array, err = newConnArray(c.cfg, addr, c.security, c.idleNotify)
 		if err != nil {
 			return nil, err
 		}
@@ -280,7 +279,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.Trace(err)
 	}
 
-	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 {
+	if c.cfg.MaxBatchSize > 0 {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
 		}

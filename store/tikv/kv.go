@@ -101,7 +101,8 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC)
+	kvclient := newRPCClient(config.GetGlobalConfig().TiKVClient, security)
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, kvclient, !disableGC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

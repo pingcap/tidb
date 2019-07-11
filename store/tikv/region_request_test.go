@@ -338,7 +338,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 		wg.Done()
 	}()
 
-	client := newRPCClient(config.Security{})
+	client := newRPCClient(config.GetGlobalConfig().TiKVClient, config.Security{})
 	sender := NewRegionRequestSender(s.cache, client)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
@@ -358,7 +358,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 
 	// Just for covering error code = codes.Canceled.
 	client1 := &cancelContextClient{
-		Client:       newRPCClient(config.Security{}),
+		Client:       newRPCClient(config.GetGlobalConfig().TiKVClient, config.Security{}),
 		redirectAddr: addr,
 	}
 	sender = NewRegionRequestSender(s.cache, client1)

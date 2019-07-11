@@ -39,10 +39,9 @@ func setMaxBatchSize(size uint) {
 }
 
 func (s *testClientSuite) TestConn(c *C) {
-	maxBatchSize := config.GetGlobalConfig().TiKVClient.MaxBatchSize
-	setMaxBatchSize(0)
-
-	client := newRPCClient(config.Security{})
+	cfg := config.GetGlobalConfig().TiKVClient
+	cfg.MaxBatchSize = 0
+	client := newRPCClient(cfg, config.Security{})
 
 	addr := "127.0.0.1:6379"
 	conn1, err := client.getConnArray(addr)
@@ -56,7 +55,6 @@ func (s *testClientSuite) TestConn(c *C) {
 	conn3, err := client.getConnArray(addr)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
-	setMaxBatchSize(maxBatchSize)
 }
 
 func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
