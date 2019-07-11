@@ -30,59 +30,66 @@ func splitPartitionTableRegion(store kv.SplitableStore, pi *model.PartitionInfo,
 		regionIDs = append(regionIDs, splitRecordRegion(store, def.ID, scatter))
 	}
 	if scatter {
-		waitScatterRegionFinish(store, regionIDs)
+		waitScatterRegionFinish(store, regionIDs...)
 	}
 }
 
 func splitTableRegion(store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
-	regionIDs := make([]uint64, 0, len(tbInfo.Indices)+1)
 	if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-		// Example:
-		// ShardRowIDBits = 5
-		// PreSplitRegions = 3
-		//
-		// then will pre-split 2^(3-1) = 4 regions.
-		//
-		// in this code:
-		// max   = 1 << (tblInfo.ShardRowIDBits - 1) = 1 << (5-1) = 16
-		// step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions)) = 1 << (5-3) = 4;
-		//
-		// then split regionID is below:
-		// 4  << 59 = 2305843009213693952
-		// 8  << 59 = 4611686018427387904
-		// 12 << 59 = 6917529027641081856
-		//
-		// The 4 pre-split regions range is below:
-		// 0                   ~ 2305843009213693952
-		// 2305843009213693952 ~ 4611686018427387904
-		// 4611686018427387904 ~ 6917529027641081856
-		// 6917529027641081856 ~ 9223372036854775807 ( (1 << 63) - 1 )
-		//
-		// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
-
-		// Split table region.
-		step := int64(1 << (tbInfo.ShardRowIDBits - tbInfo.PreSplitRegions))
-		// The highest bit is the symbol bit,and alloc _tidb_rowid will always be positive number.
-		// So we only need to split the region for the positive number.
-		max := int64(1 << (tbInfo.ShardRowIDBits - 1))
-		for p := int64(step); p < max; p += step {
-			recordID := p << (64 - tbInfo.ShardRowIDBits)
-			recordPrefix := tablecodec.GenTableRecordPrefix(tbInfo.ID)
-			key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
-			regionID, err := store.SplitRegion(key, scatter)
-			if err != nil {
-				logutil.Logger(context.Background()).Warn("[ddl] pre split table region failed", zap.Int64("recordID", recordID),
-					zap.Error(err))
-			} else {
-				regionIDs = append(regionIDs, regionID)
-			}
-		}
+		splitPreSplitedTable(store, tbInfo, scatter)
 	} else {
-		regionIDs = append(regionIDs, splitRecordRegion(store, tbInfo.ID, scatter))
+		regionID := splitRecordRegion(store, tbInfo.ID, scatter)
+		if scatter {
+			waitScatterRegionFinish(store, regionID)
+		}
+	}
+}
+
+func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
+	// Example:
+	// ShardRowIDBits = 5
+	// PreSplitRegions = 3
+	//
+	// then will pre-split 2^(3-1) = 4 regions.
+	//
+	// in this code:
+	// max   = 1 << (tblInfo.ShardRowIDBits - 1) = 1 << (5-1) = 16
+	// step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions)) = 1 << (5-3) = 4;
+	//
+	// then split regionID is below:
+	// 4  << 59 = 2305843009213693952
+	// 8  << 59 = 4611686018427387904
+	// 12 << 59 = 6917529027641081856
+	//
+	// The 4 pre-split regions range is below:
+	// 0                   ~ 2305843009213693952
+	// 2305843009213693952 ~ 4611686018427387904
+	// 4611686018427387904 ~ 6917529027641081856
+	// 6917529027641081856 ~ 9223372036854775807 ( (1 << 63) - 1 )
+	//
+	// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
+
+	// Split table region.
+	regionIDs := make([]uint64, 0, 1<<(tbInfo.PreSplitRegions-1)+len(tbInfo.Indices))
+	step := int64(1 << (tbInfo.ShardRowIDBits - tbInfo.PreSplitRegions))
+	// The highest bit is the symbol bit,and alloc _tidb_rowid will always be positive number.
+	// So we only need to split the region for the positive number.
+	max := int64(1 << (tbInfo.ShardRowIDBits - 1))
+	for p := int64(step); p < max; p += step {
+		recordID := p << (64 - tbInfo.ShardRowIDBits)
+		recordPrefix := tablecodec.GenTableRecordPrefix(tbInfo.ID)
+		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
+		regionID, err := store.SplitRegion(key, scatter)
+		if err != nil {
+			logutil.Logger(context.Background()).Warn("[ddl] pre split table region failed", zap.Int64("recordID", recordID),
+				zap.Error(err))
+		} else {
+			regionIDs = append(regionIDs, regionID)
+		}
 	}
 	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter)...)
 	if scatter {
-		waitScatterRegionFinish(store, regionIDs)
+		waitScatterRegionFinish(store, regionIDs...)
 	}
 }
 
@@ -112,7 +119,7 @@ func splitIndexRegion(store kv.SplitableStore, tblInfo *model.TableInfo, scatter
 	return regionIDs
 }
 
-func waitScatterRegionFinish(store kv.SplitableStore, regionIDs []uint64) {
+func waitScatterRegionFinish(store kv.SplitableStore, regionIDs ...uint64) {
 	for _, regionID := range regionIDs {
 		err := store.WaitScatterRegionFinish(regionID)
 		if err != nil {
