@@ -1853,6 +1853,9 @@ func (s *testSuite) TestTableDual(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("Select 1 from dual where 1")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustQuery("select t1.* from t t1, t t2 where t1.a=t2.a and 1=0").Check(testkit.Rows())
 }
 
 func (s *testSuite) TestTableScan(c *C) {
