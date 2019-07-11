@@ -1804,7 +1804,7 @@ func (s *testSuite4) TestLoadData(c *C) {
 	// data1 = nil, data2 = nil, fields and lines is default
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-	_, reachLimit, err := ld.InsertData(nil, nil)
+	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
 	r := tk.MustQuery(selectSQL)
@@ -2054,7 +2054,7 @@ func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 
-	_, _, err := ld.InsertData(nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
+	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	c.Assert(err, IsNil)
 	ld.SetMessage()
 	err = ctx.StmtCommit()

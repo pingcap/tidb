@@ -95,9 +95,28 @@ type Config struct {
 // Plugin presents a TiDB plugin.
 type Plugin struct {
 	*Manifest
-	library *gplugin.Plugin
-	State   State
-	Path    string
+	library  *gplugin.Plugin
+	State    State
+	Path     string
+	Disabled uint32
+}
+
+// StateValue returns readable state string.
+func (p *Plugin) StateValue() string {
+	flag := "enable"
+	if atomic.LoadUint32(&p.Disabled) == 1 {
+		flag = "disable"
+	}
+	return p.State.String() + "-" + flag
+}
+
+// DisableFlag changes the disable flag of plugin.
+func (p *Plugin) DisableFlag(disable bool) {
+	if disable {
+		atomic.StoreUint32(&p.Disabled, 1)
+	} else {
+		atomic.StoreUint32(&p.Disabled, 0)
+	}
 }
 
 func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins) error {
@@ -225,6 +244,7 @@ func Init(ctx context.Context, cfg Config) (err error) {
 					path:     pluginWatchPrefix + tiPlugins.plugins[kind][i].Name,
 					etcd:     cfg.EtcdClient,
 					manifest: tiPlugins.plugins[kind][i].Manifest,
+					plugin:   &tiPlugins.plugins[kind][i],
 				}
 				tiPlugins.plugins[kind][i].flushWatcher = watcher
 				go util.WithRecovery(watcher.watchLoop, nil)
@@ -241,6 +261,7 @@ type flushWatcher struct {
 	path     string
 	etcd     *clientv3.Client
 	manifest *Manifest
+	plugin   *Plugin
 }
 
 func (w *flushWatcher) watchLoop() {
@@ -250,12 +271,35 @@ func (w *flushWatcher) watchLoop() {
 		case <-w.ctx.Done():
 			return
 		case <-watchChan:
-			err := w.manifest.OnFlush(w.ctx, w.manifest)
+			disabled, err := w.getPluginDisabledFlag()
+			if err != nil {
+				logutil.BgLogger().Error("get plugin disabled flag failure", zap.String("plugin", w.manifest.Name), zap.Error(err))
+			}
+			if disabled {
+				atomic.StoreUint32(&w.manifest.flushWatcher.plugin.Disabled, 1)
+			} else {
+				atomic.StoreUint32(&w.manifest.flushWatcher.plugin.Disabled, 0)
+			}
+			err = w.manifest.OnFlush(w.ctx, w.manifest)
 			if err != nil {
 				logutil.BgLogger().Error("notify plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
 			}
 		}
 	}
+}
+
+func (w *flushWatcher) getPluginDisabledFlag() (bool, error) {
+	if w == nil || w.etcd == nil {
+		return true, errors.New("etcd is need to get plugin enable status")
+	}
+	resp, err := w.etcd.Get(context.Background(), w.manifest.flushWatcher.path)
+	if err != nil {
+		return true, errors.Trace(err)
+	}
+	if len(resp.Kvs) == 0 {
+		return false, nil
+	}
+	return string(resp.Kvs[0].Value) == "1", nil
 }
 
 type loadFn func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error)
@@ -366,6 +410,9 @@ func ForeachPlugin(kind Kind, fn func(plugin *Plugin) error) error {
 		if p.State != Ready {
 			continue
 		}
+		if atomic.LoadUint32(&p.Disabled) == 1 {
+			continue
+		}
 		err := fn(p)
 		if err != nil {
 			return err
@@ -382,7 +429,7 @@ func IsEnable(kind Kind) bool {
 	}
 	for i := range plugins.plugins[kind] {
 		p := &plugins.plugins[kind][i]
-		if p.State == Ready {
+		if p.State == Ready && atomic.LoadUint32(&p.Disabled) != 1 {
 			return true
 		}
 	}
@@ -404,7 +451,25 @@ func NotifyFlush(dom *domain.Domain, pluginName string) error {
 	if p == nil || p.Manifest.flushWatcher == nil || p.State != Ready {
 		return errors.Errorf("plugin %s doesn't exists or unsupported flush or doesn't start with PD", pluginName)
 	}
-	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, "")
+	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, strconv.Itoa(int(p.Disabled)))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// ChangeDisableFlagAndFlush changes plugin disable flag and notify other nodes to do same change.
+func ChangeDisableFlagAndFlush(dom *domain.Domain, pluginName string, disable bool) error {
+	p := getByName(pluginName)
+	if p == nil || p.Manifest.flushWatcher == nil || p.State != Ready {
+		return errors.Errorf("plugin %s doesn't exists or unsupported flush or doesn't start with PD", pluginName)
+	}
+	disableInt := uint32(0)
+	if disable {
+		disableInt = 1
+	}
+	atomic.StoreUint32(&p.Disabled, disableInt)
+	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, strconv.Itoa(int(disableInt)))
 	if err != nil {
 		return err
 	}
