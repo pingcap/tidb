@@ -70,13 +70,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if EnableSplitTableRegion {
-			// TODO: Add restrictions to this operation.
-			sp, ok := d.store.(kv.SplitableStore)
-			if ok {
-				go splitTableRegion(sp, tbInfo, false)
-			}
-		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
