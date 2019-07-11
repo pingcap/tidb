@@ -155,21 +155,19 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 
 	}
 
-	length := 0
-	if length, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
-		length += length
-	} else {
+	length, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]
+	if !ok {
 		return length, errUnknownTypeLength.GenWithStackByArgs(col.FieldType.Tp)
 	}
 
 	// Special case for time fraction.
 	if types.IsTypeFractionable(col.FieldType.Tp) &&
 		col.FieldType.Decimal != types.UnspecifiedLength {
-		if length, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
-			length += length
-		} else {
+		decimalLength, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]
+		if !ok {
 			return length, errUnknownFractionLength.GenWithStackByArgs(col.FieldType.Tp, col.FieldType.Decimal)
 		}
+		length += decimalLength
 	}
 	return length, nil
 }
