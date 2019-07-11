@@ -563,6 +563,7 @@ var tableTiDBHotRegionsCols = []columnInfo{
 	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"INDEX_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"MAX_HOT_DEGREE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
@@ -685,18 +686,18 @@ func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, er
 			row[0].SetInt64(regionStat.ID)
 			row[1].SetInt64(peer.ID)
 			row[2].SetInt64(peer.StoreID)
-			if peer.ID == regionStat.Leader.ID {
+			if peer.IsLearner {
 				row[3].SetInt64(1)
 			} else {
 				row[3].SetInt64(0)
 			}
-			if peer.IsLearner {
+			if peer.ID == regionStat.Leader.ID {
 				row[4].SetInt64(1)
 			} else {
-				row[4].SetInt64(0)
+				row[3].SetInt64(0)
 			}
 			if pendingPeerIDSet.Exist(peer.ID) {
-				row[5].SetString(pendingPeer)
+				row[4].SetString(pendingPeer)
 			} else if downSec, ok := downPeerMap[peer.ID]; ok {
 				row[5].SetString(downPeer)
 				row[6].SetInt64(downSec)
@@ -1663,9 +1664,9 @@ func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err
 	return records, nil
 }
 
-func dataForHotRegionByMetrics(metrics map[helper.TblIndex]helper.RegionMetric, tp string) [][]types.Datum {
+func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(metrics))
-	for tblIndex, regionMetric := range metrics {
+	for _, tblIndex := range metrics {
 		row := make([]types.Datum, len(tableTiDBHotRegionsCols))
 		if tblIndex.IndexName != "" {
 			row[1].SetInt64(tblIndex.IndexID)
@@ -1677,10 +1678,16 @@ func dataForHotRegionByMetrics(metrics map[helper.TblIndex]helper.RegionMetric, 
 		row[0].SetInt64(tblIndex.TableID)
 		row[2].SetString(tblIndex.DbName)
 		row[3].SetString(tblIndex.TableName)
-		row[5].SetString(tp)
-		row[6].SetInt64(int64(regionMetric.MaxHotDegree))
-		row[7].SetInt64(int64(regionMetric.Count))
-		row[8].SetUint64(regionMetric.FlowBytes)
+		row[5].SetUint64(tblIndex.RegionID)
+		row[6].SetString(tp)
+		if tblIndex.RegionMetric == nil {
+			row[7].SetNull()
+			row[8].SetNull()
+		} else {
+			row[7].SetInt64(int64(tblIndex.RegionMetric.MaxHotDegree))
+			row[8].SetInt64(int64(tblIndex.RegionMetric.Count))
+		}
+		row[9].SetUint64(tblIndex.RegionMetric.FlowBytes)
 		rows = append(rows, row)
 	}
 	return rows
