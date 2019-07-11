@@ -40,11 +40,15 @@ type batchConn struct {
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
 	tikvTransportLayerLoad uint64
-	closed                 chan struct{}
 
 	// Notify rpcClient to recycle idle connections.
 	idleNotify chan<- string
 	idleDetect *time.Timer
+
+	// If it's closed, `batchCommandsCh` will be unavailable.
+	closed int
+	// To protect `closed`.
+	sync.RWMutex
 
 	pendingRequests prometheus.Gauge
 }
@@ -54,7 +58,6 @@ func newBatchConn(connCount, maxBatchSize uint, idleNotify chan<- string) *batch
 		batchCommandsCh:        make(chan *batchCommandsEntry, maxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, connCount),
 		tikvTransportLayerLoad: 0,
-		closed:                 make(chan struct{}),
 
 		idleNotify: idleNotify,
 		idleDetect: time.NewTimer(idleTimeout),
@@ -79,8 +82,6 @@ func (a *batchConn) fetchAllPendingRequests(
 		a.idleDetect.Reset(idleTimeout)
 		// TODO: use real target: a.idleNotify <- a.target
 		a.idleNotify <- "FIXME"
-		return
-	case <-a.closed:
 		return
 	}
 	if headEntry == nil {
@@ -379,15 +380,14 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 }
 
 func (a *batchConn) Close() {
+	a.Lock()
+	defer a.Unlock()
 	// Close all batchRecvLoop.
 	for _, c := range a.batchCommandsClients {
 		// After connections are closed, `batchRecvLoop`s will check the flag.
 		atomic.StoreInt32(&c.closed, 1)
 	}
-	// Don't close(batchCommandsCh) because when Close() is called, someone maybe
-	// calling SendRequest and writing batchCommandsCh, if we close it here the
-	// writing goroutine will panic.
-	close(a.closed)
+	close(a.batchCommandsCh)
 }
 
 // removeCanceledRequests removes canceled requests before sending.
@@ -420,11 +420,16 @@ func sendBatchRequest(
 		canceled: 0,
 		err:      nil,
 	}
+
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	batchConn.RLock()
 	select {
 	case batchConn.batchCommandsCh <- entry:
+		batchConn.RUnlock()
 	case <-ctx1.Done():
+		batchConn.RUnlock()
 		logutil.BgLogger().Warn("send request is cancelled",
 			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
 		return nil, errors.Trace(ctx1.Err())
