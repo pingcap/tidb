@@ -440,7 +440,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
-		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
+		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
 		if tt.restData == nil {
@@ -3664,6 +3664,13 @@ func (s *testSuite3) TestSelectPartition(c *C) {
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p4' in table 'th'")
 	err = tk.ExecToErr("select b from tr partition (r1,r4)")
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'r4' in table 'tr'")
+
+	// test select partition table in transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into th values (10,10),(11,11)")
+	tk.MustQuery("select a, b from th where b>10").Check(testkit.Rows("11 11"))
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from th where b>10").Check(testkit.Rows("11 11"))
 }
 
 func (s *testSuite) TestSelectView(c *C) {
