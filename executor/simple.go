@@ -273,7 +273,7 @@ func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) (err error
 		return errors.New("miss privilege checker")
 	}
 
-	if len(s.UserList) == 1 {
+	if len(s.UserList) == 1 && sessionVars.User != nil {
 		u, h := s.UserList[0].Username, s.UserList[0].Hostname
 		if u == sessionVars.User.Username && h == sessionVars.User.AuthHostname {
 			err = e.setDefaultRoleForCurrentUser(s)
