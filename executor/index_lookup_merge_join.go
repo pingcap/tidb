@@ -368,7 +368,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 	if task.outerResult.NumRows() == 0 {
 		return nil, nil
 	}
-	if omw.outerMergeCtx.needOuterSort == false {
+	if !omw.outerMergeCtx.needOuterSort {
 		c := newFirstChunk(omw.executor)
 		var rows []chunk.Row
 		for i := 0; i < task.outerResult.NumRows(); i++ {
@@ -464,7 +464,7 @@ func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMe
 	if task.innerResult.Len() == 0 {
 		for task.cursor < task.outerResult.NumRows() {
 			imw.joiner.onMissMatch(false, task.outerResult.GetRow(task.cursor), chk)
-			if chk.NumRows() >= imw.maxChunkSize {
+			if chk.IsFull() {
 				select {
 				case task.results <- chk:
 				case <-ctx.Done():
@@ -524,7 +524,7 @@ func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMe
 					task.hasMatch = false
 					task.hasNull = false
 
-					if chk.NumRows() >= imw.maxChunkSize {
+					if chk.IsFull() {
 						select {
 						case task.results <- chk:
 						case <-ctx.Done():
@@ -546,7 +546,7 @@ func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMe
 			task.hasMatch = task.hasMatch || matched
 			task.hasNull = task.hasNull || isNull
 
-			if chk.NumRows() >= imw.maxChunkSize {
+			if chk.IsFull() {
 				select {
 				case task.results <- chk:
 				case <-ctx.Done():
@@ -566,7 +566,7 @@ func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMe
 			task.hasNull = false
 		}
 
-		if chk.NumRows() >= imw.maxChunkSize {
+		if chk.IsFull() {
 			select {
 			case task.results <- chk:
 			case <-ctx.Done():

@@ -319,6 +319,67 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 	return keyOff2IdxOff
 }
 
+// If the inner join keys are the prefix set of the index, then we should check propItems.
+// If propItems are the prefix set of the outer join keys or the outer join keys are prefix
+// set of propItems, then we can inject the flag of index lookup merge jon.
+func injectIndexMergeJoinFlag(propItems []property.Item, join *PhysicalIndexJoin) {
+	innerPlan := join.Children()[1-join.OuterIndex]
+	var isIndexScan bool
+	var is *PhysicalIndexScan
+	if ir, ok := innerPlan.(*PhysicalIndexReader); ok {
+		is, isIndexScan = ir.IndexPlans[0].(*PhysicalIndexScan)
+	}
+	if ilr, ok := innerPlan.(*PhysicalIndexLookUpReader); ok {
+		is, isIndexScan = ilr.IndexPlans[0].(*PhysicalIndexScan)
+	}
+	if isIndexScan {
+		idx := is.Index.Columns
+		isInnerKeysPrefix := true
+		for i, innerKey := range join.InnerJoinKeys {
+			if innerKey.ColName != idx[i].Name {
+				isInnerKeysPrefix = false
+				break
+			}
+		}
+		if isInnerKeysPrefix {
+			// needOuterSort means whether the outer join keys are the prefix of the prop items.
+			needOuterSort := len(propItems) > 0 && len(join.OuterJoinKeys) <= len(propItems)
+			compareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
+			outerCompareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
+			for i := range join.OuterJoinKeys {
+				if !needOuterSort {
+					break
+				}
+				if propItems[i].Col.ColName != join.OuterJoinKeys[i].ColName {
+					needOuterSort = false
+				}
+				compareFuncs = append(compareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
+				outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.OuterJoinKeys[i]))
+			}
+			// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
+			canKeepOuterOrder := len(propItems) <= len(join.OuterJoinKeys)
+			for i := range propItems {
+				if !canKeepOuterOrder {
+					break
+				}
+				if propItems[i].Col.ColName != join.OuterJoinKeys[i].ColName {
+					canKeepOuterOrder = false
+				}
+			}
+			// If the prop items are NOT the prefix of the outer join keys,
+			// or the outer join keys are NOT the prefix of the prop items,
+			// then we can't execute merge join.
+			if canKeepOuterOrder || needOuterSort {
+				is.KeepOrder = true
+				join.IsMergeJoin = true
+				join.NeedOuterSort = needOuterSort
+				join.CompareFuncs = compareFuncs
+				join.OuterCompareFuncs = outerCompareFuncs
+			}
+		}
+	}
+}
+
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
 func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, outerIdx int, innerPlan PhysicalPlan,
@@ -373,9 +434,9 @@ func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, outerI
 		innerPlan:       innerPlan,
 		KeyOff2IdxOff:   newKeyOff,
 		Ranges:          ranges,
-		PropItems:       prop.Items,
 		CompareFilters:  compareFilters,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	injectIndexMergeJoinFlag(prop.Items, join)
 	join.SetSchema(p.schema)
 	return []PhysicalPlan{join}
 }

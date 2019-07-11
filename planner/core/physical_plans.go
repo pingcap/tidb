@@ -232,8 +232,14 @@ type PhysicalIndexJoin struct {
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
-	// PropItems save the physical property items.
-	PropItems []property.Item
+
+	// IsMergejoin represents whether the index join is index merge join. NeedOuterSort, CompareFuncs and OuterCompareFuncs are
+	// the properties of index merge join.
+	IsMergeJoin       bool
+	NeedOuterSort     bool
+	CompareFuncs      []expression.CompareFunc
+	OuterCompareFuncs []expression.CompareFunc
+
 	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
 	// e.g. select * from t where t.a = t1.a and t.b > t1.b and t.b < t1.b+10
 	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b=10
