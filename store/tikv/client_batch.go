@@ -35,10 +35,14 @@ import (
 const idleTimeout = 3 * time.Minute
 
 type batchConn struct {
-	index uint32
+	target string
+	index  uint32
+
 	// batchCommandsCh used for batch commands.
-	batchCommandsCh        chan *batchCommandsEntry
-	batchCommandsClients   []*batchCommandsClient
+	batchCommandsCh      chan *batchCommandsEntry
+	batchCommandsClients []*batchCommandsClient
+
+	// Shared in all `batchRecvLoop`s and `batchSendLoop`s.
 	tikvTransportLayerLoad uint64
 
 	// Notify rpcClient to recycle idle connections.
@@ -46,22 +50,44 @@ type batchConn struct {
 	idleDetect *time.Timer
 
 	// If it's closed, `batchCommandsCh` will be unavailable.
-	closed int
-	// To protect `closed`.
+	closed int32
+	// To protect `closed` and `batchCommandsCh`.
 	sync.RWMutex
 
 	pendingRequests prometheus.Gauge
 }
 
-func newBatchConn(connCount, maxBatchSize uint, idleNotify chan<- string) *batchConn {
-	return &batchConn{
-		batchCommandsCh:        make(chan *batchCommandsEntry, maxBatchSize),
-		batchCommandsClients:   make([]*batchCommandsClient, 0, connCount),
-		tikvTransportLayerLoad: 0,
+func newBatchConn(a *connArray, cfg config.TiKVClient) (*batchConn, error) {
+	bconn := &batchConn{
+		target:               a.target,
+		batchCommandsCh:      make(chan *batchCommandsEntry, cfg.MaxBatchSize),
+		batchCommandsClients: make([]*batchCommandsClient, 0, len(a.v)),
 
-		idleNotify: idleNotify,
+		idleNotify: a.idleNotify,
 		idleDetect: time.NewTimer(idleTimeout),
 	}
+	for i := 0; i < len(a.v); i++ {
+		tikvClient := tikvpb.NewTikvClient(a.v[i])
+		streamClient, err := tikvClient.BatchCommands(context.TODO())
+		if err != nil {
+			bconn.Close()
+			return nil, errors.Trace(err)
+		}
+		batchClient := &batchCommandsClient{
+			batchConn: bconn,
+			conn:      a.v[i],
+			client:    streamClient,
+			batched:   sync.Map{},
+		}
+		bconn.batchCommandsClients = append(bconn.batchCommandsClients, batchClient)
+		go batchClient.batchRecvLoop(cfg)
+	}
+	go bconn.batchSendLoop(cfg)
+	return bconn, nil
+}
+
+func (a *batchConn) isStopped() bool {
+	return atomic.LoadInt32(&a.closed) != 0
 }
 
 // fetchAllPendingRequests fetches all pending requests from the channel.
@@ -80,8 +106,7 @@ func (a *batchConn) fetchAllPendingRequests(
 		a.idleDetect.Reset(idleTimeout)
 	case <-a.idleDetect.C:
 		a.idleDetect.Reset(idleTimeout)
-		// TODO: use real target: a.idleNotify <- a.target
-		a.idleNotify <- "FIXME"
+		a.idleNotify <- a.target
 		return
 	}
 	if headEntry == nil {
@@ -152,23 +177,15 @@ func fetchMorePendingRequests(
 }
 
 type batchCommandsClient struct {
-	// The target host.
-	target string
+	*batchConn
+	conn *grpc.ClientConn
 
-	conn                   *grpc.ClientConn
-	client                 tikvpb.Tikv_BatchCommandsClient
-	batched                sync.Map
-	idAlloc                uint64
-	tikvTransportLayerLoad *uint64
+	client  tikvpb.Tikv_BatchCommandsClient
+	batched sync.Map
+	idAlloc uint64
 
-	// closed indicates the batch client is closed explicitly or not.
-	closed int32
-	// clientLock protects client when re-create the streaming.
+	// clientLock protects `client` and `batched` when re-create the streaming.
 	clientLock sync.Mutex
-}
-
-func (c *batchCommandsClient) isStopped() bool {
-	return atomic.LoadInt32(&c.closed) != 0
 }
 
 func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries []*batchCommandsEntry) {
@@ -292,7 +309,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 		tikvTransportLayerLoad := resp.GetTransportLayerLoad()
 		if tikvTransportLayerLoad > 0.0 && cfg.MaxBatchWaitTime > 0 {
 			// We need to consider TiKV load only if batch-wait strategy is enabled.
-			atomic.StoreUint64(c.tikvTransportLayerLoad, tikvTransportLayerLoad)
+			atomic.StoreUint64(&c.tikvTransportLayerLoad, tikvTransportLayerLoad)
 		}
 	}
 }
@@ -340,7 +357,7 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests)
 
 		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
-			tikvTransportLayerLoad := atomic.LoadUint64(batchCommandsClient.tikvTransportLayerLoad)
+			tikvTransportLayerLoad := atomic.LoadUint64(&batchCommandsClient.tikvTransportLayerLoad)
 			// If the target TiKV is overload, wait a while to collect more requests.
 			if uint(tikvTransportLayerLoad) >= cfg.OverloadThreshold {
 				fetchMorePendingRequests(
@@ -382,11 +399,7 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 func (a *batchConn) Close() {
 	a.Lock()
 	defer a.Unlock()
-	// Close all batchRecvLoop.
-	for _, c := range a.batchCommandsClients {
-		// After connections are closed, `batchRecvLoop`s will check the flag.
-		atomic.StoreInt32(&c.closed, 1)
-	}
+	atomic.StoreInt32(&a.closed, 1)
 	close(a.batchCommandsCh)
 }
 

@@ -111,11 +111,6 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify chan<
 		streamInterceptor = grpc_opentracing.StreamClientInterceptor()
 	}
 
-	allowBatch := cfg.TiKVClient.MaxBatchSize > 0
-	if allowBatch {
-		a.batchConn = newBatchConn(uint(len(a.v)), cfg.TiKVClient.MaxBatchSize, idleNotify)
-		a.pendingRequests = metrics.TiKVPendingBatchRequests.WithLabelValues(a.target)
-	}
 	keepAlive := cfg.TiKVClient.GrpcKeepAliveTime
 	keepAliveTimeout := cfg.TiKVClient.GrpcKeepAliveTimeout
 	for i := range a.v {
@@ -143,31 +138,16 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify chan<
 			return errors.Trace(err)
 		}
 		a.v[i] = conn
-
-		if allowBatch {
-			// Initialize batch streaming clients.
-			tikvClient := tikvpb.NewTikvClient(conn)
-			streamClient, err := tikvClient.BatchCommands(context.TODO())
-			if err != nil {
-				a.Close()
-				return errors.Trace(err)
-			}
-			batchClient := &batchCommandsClient{
-				target:                 a.target,
-				conn:                   conn,
-				client:                 streamClient,
-				batched:                sync.Map{},
-				idAlloc:                0,
-				tikvTransportLayerLoad: &a.tikvTransportLayerLoad,
-				closed:                 0,
-			}
-			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
-			go batchClient.batchRecvLoop(cfg.TiKVClient)
-		}
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
-	if allowBatch {
-		go a.batchSendLoop(cfg.TiKVClient)
+
+	if cfg.TiKVClient.MaxBatchSize > 0 {
+		bconn, err := newBatchConn(a, cfg.TiKVClient)
+		if err != nil {
+			a.Close()
+			return nil
+		}
+		a.batchConn = bconn
 	}
 
 	return nil
@@ -276,6 +256,7 @@ func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 
 func (c *rpcClient) closeConns() {
 	c.Lock()
+	defer c.Unlock()
 	if !c.isClosed {
 		c.isClosed = true
 		// close all connections
@@ -283,7 +264,6 @@ func (c *rpcClient) closeConns() {
 			array.Close()
 		}
 	}
-	c.Unlock()
 }
 
 // SendRequest sends a Request to server and receives Response.
