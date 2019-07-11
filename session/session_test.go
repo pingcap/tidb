@@ -618,7 +618,7 @@ func (s *testSessionSuite) TestNoRetryForCurrentTxn(c *C) {
 	tk.MustExec("set tidb_disable_txn_auto_retry = 1")
 	tk.MustExec("begin")
 	tk.MustExec("update history set a = 2")
-	// Enable retry now
+	// Enable retry now.
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 
 	tk1.MustExec("update history set a = 3")
@@ -631,11 +631,11 @@ func (s *testSessionSuite) TestRetryForCurrentTxn(c *C) {
 	tk.MustExec("create table history (a int)")
 	tk.MustExec("insert history values (1)")
 
-	// Firstly, disable retry.
+	// Firstly, enable retry.
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin")
 	tk.MustExec("update history set a = 2")
-	// Enable retry now
+	// Disable retry now.
 	tk.MustExec("set tidb_disable_txn_auto_retry = 1")
 
 	tk1.MustExec("update history set a = 3")
