@@ -2562,12 +2562,13 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	if err = checkColumnFieldLength(newCol); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
-	if isColumnWithIndex(originalColName.L, t.Meta().Indices) {
-
+	if err = checkColumnWithIndexConstraint(t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
+		return nil, err
 	}
+
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn); err != nil {
 		return nil, errors.Trace(err)
@@ -2586,22 +2587,38 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 // checkColumnWithIndexConstraint uses to check the related index constrain of the modified column.
 // index has a max prefix length constrain. eg: a varchar(100), index idx(a), then if modify column a to a varchar(4000),
 // that will cause index idx break the max prefix length constrain.
-func checkColumnWithIndexConstraint(colName string, indices []*model.IndexInfo) error {
-	for _, indexInfo := range indices {
-		var idxCol *model.IndexColumn
+func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+	var columns []*model.ColumnInfo
+	for _, indexInfo := range tbInfo.Indices {
+		containColumn := false
 		for _, col := range indexInfo.Columns {
-			if col.Name.L == colName {
-				idxCol = col
+			if col.Name.L == originalCol.Name.L {
+				containColumn = true
+				break
 			}
 		}
-		if idxCol == nil {
+		if containColumn == false {
 			continue
 		}
-		if idxCol.Length != types.UnspecifiedLength {
-			continue
+		if columns == nil {
+			columns = make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
+			columns = append(columns, tbInfo.Columns...)
+			// replace old column with new column.
+			for i, col := range columns {
+				if col.Name.L != originalCol.Name.L {
+					continue
+				}
+				columns[i] = newCol.Clone()
+				columns[i].Name = originalCol.Name
+				break
+			}
+		}
+		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+		if err != nil {
+			return err
 		}
 	}
-
+	return nil
 }
 
 // ChangeColumn renames an existing column and modifies the column's definition,
