@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 )
 
 type simpleRewriter struct {
@@ -460,10 +460,15 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 		return
 	}
 	leftEt := leftFt.EvalType()
+
 	if leftEt == types.ETInt {
 		for i := 0; i < len(elems); i++ {
 			if c, ok := elems[i].(*Constant); ok {
-				elems[i], _ = RefineComparedConstant(sr.ctx, mysql.HasUnsignedFlag(leftFt.Flag), c, opcode.EQ)
+				var isExceptional bool
+				elems[i], isExceptional = RefineComparedConstant(sr.ctx, *leftFt, c, opcode.EQ)
+				if isExceptional {
+					elems[i] = c
+				}
 			}
 		}
 	}
