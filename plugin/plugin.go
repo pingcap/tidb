@@ -282,7 +282,7 @@ func (w *flushWatcher) watchLoop() {
 		case <-watchChan:
 			disabled, err := w.getPluginDisabledFlag()
 			if err != nil {
-				logutil.BgLogger().Error("get plugin disabled flag failure", zap.String("plugin", w.manifest.Name), zap.Error(err))
+				logutil.Logger(context.Background()).Error("get plugin disabled flag failure", zap.String("plugin", w.manifest.Name), zap.Error(err))
 			}
 			if disabled {
 				atomic.StoreUint32(&w.manifest.flushWatcher.plugin.Disabled, 1)
