@@ -446,8 +446,8 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	if err != nil {
 		return validFloat, errors.Trace(err)
 	}
-	tmp := int64(intCnt) + int64(exp)
-	if exp >= 0 && (tmp > 21 || tmp < 0) {
+	intCnt += exp
+	if exp >= 0 && (intCnt > 21 || intCnt < 0) {
 		// MaxInt64 has 19 decimal digits.
 		// MaxUint64 has 20 decimal digits.
 		// And the intCnt may contain the len of `+/-`,
@@ -455,7 +455,6 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
 		return validFloat[:eIdx], nil
 	}
-	intCnt += exp
 	if intCnt <= 0 {
 		intStr = "0"
 		if intCnt == 0 && len(digits) > 0 {
