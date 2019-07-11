@@ -509,5 +509,20 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 		tk.MustExec(tt.insert)
 		tk.MustQuery(tt.query).Check(tt.result)
 	}
+  
+}
+
+func (s *testSuite3) TestPartitionInsertOnDuplicate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int,b int,primary key(a,b)) partition by range(a) (partition p0 values less than (100),partition p1 values less than (1000))`)
+	tk.MustExec(`insert into t1 set a=1, b=1`)
+	tk.MustExec(`insert into t1 set a=1,b=1 on duplicate key update a=1,b=1`)
+	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`create table t2 (a int,b int,primary key(a,b)) partition by hash(a) partitions 4`)
+	tk.MustExec(`insert into t2 set a=1,b=1;`)
+	tk.MustExec(`insert into t2 set a=1,b=1 on duplicate key update a=1,b=1`)
+	tk.MustQuery(`select * from t2`).Check(testkit.Rows("1 1"))
 
 }
