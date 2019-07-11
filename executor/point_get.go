@@ -221,19 +221,13 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 		firstPos := schemaPoses[0]
 		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(e.schema.Columns[firstPos].RetType.Flag) {
 			chk.AppendInt64(firstPos, e.handle)
-			// Fill other positions.
-			for i := 1; i < len(schemaPoses); i++ {
-				chk.MakeRef(firstPos, schemaPoses[i])
-			}
 			continue
 		}
-		// ExtraHandleID is added when building plan, we can make sure that there's only one column's ID is this.
 		if id == model.ExtraHandleID {
 			chk.AppendInt64(firstPos, e.handle)
 			continue
 		}
 		if len(decodedVals[decodedPos]) == 0 {
-			// This branch only entered for updating and deleting. It won't have one column in multiple positions.
 			colInfo := getColInfoByID(e.tblInfo, id)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
@@ -246,7 +240,10 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 		if err != nil {
 			return err
 		}
-		// Fill other positions.
+	}
+	// Fill other positions.
+	for _, schemaPoses := range decodedPos2SchemaPos {
+		firstPos := schemaPoses[0]
 		for i := 1; i < len(schemaPoses); i++ {
 			chk.MakeRef(firstPos, schemaPoses[i])
 		}
