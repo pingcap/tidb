@@ -488,7 +488,10 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		recordID = getAutoRecordID(d, &c.FieldType)
+		recordID, err = getAutoRecordID(d, &c.FieldType)
+		if err != nil {
+			return types.Datum{}, err
+		}
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
@@ -525,7 +528,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	return casted, nil
 }
 
-func getAutoRecordID(d types.Datum, target *types.FieldType) int64 {
+func getAutoRecordID(d types.Datum, target *types.FieldType) (int64, error) {
 	var recordID int64
 
 	switch target.Tp {
@@ -535,10 +538,10 @@ func getAutoRecordID(d types.Datum, target *types.FieldType) int64 {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		recordID = d.GetInt64()
 	default:
-		panic("should never happen")
+		return 0, errors.Errorf("unexpected field type [%v]", target.Tp)
 	}
 
-	return recordID
+	return recordID, nil
 }
 
 func (e *InsertValues) handleWarning(err error) {
