@@ -19,7 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	. "github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
 )
 
@@ -27,10 +27,12 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-type Suit struct{}
+type stmtctxSuit struct{}
 
-func (s *Suit) TestCopTasksDetails(c *C) {
-	ctx := new(StatementContext)
+var _ = Suite(&stmtctxSuit{})
+
+func (s *stmtctxSuit) TestCopTasksDetails(c *C) {
+	ctx := new(stmtctx.StatementContext)
 	for i := 0; i < 100; i++ {
 		d := &execdetails.ExecDetails{
 			CalleeAddress: fmt.Sprintf("%v", i+1),
@@ -40,47 +42,41 @@ func (s *Suit) TestCopTasksDetails(c *C) {
 		ctx.MergeExecDetails(d, nil)
 	}
 	d := ctx.CopTasksDetails()
-	if d.NumCopTasks != 100 ||
-		d.AvgProcessTime != time.Second*101/2 ||
-		d.P90ProcessTime != time.Second*91 ||
-		d.MaxProcessTime != time.Second*100 ||
-		d.MaxProcessAddress != "100" ||
-		d.AvgWaitTime != time.Millisecond*101/2 ||
-		d.P90WaitTime != time.Millisecond*91 ||
-		d.MaxWaitTime != time.Millisecond*100 ||
-		d.MaxWaitAddress != "100" {
-		c.Fatal(d)
-	}
+	c.Assert(d.NumCopTasks, Equals, 100)
+	c.Assert(d.AvgProcessTime, Equals, time.Second*101/2)
+	c.Assert(d.P90ProcessTime, Equals, time.Second*91)
+	c.Assert(d.MaxProcessTime, Equals, time.Second*100)
+	c.Assert(d.MaxProcessAddress, Equals, "100")
+	c.Assert(d.AvgWaitTime, Equals, time.Millisecond*101/2)
+	c.Assert(d.P90WaitTime, Equals, time.Millisecond*91)
+	c.Assert(d.MaxWaitTime, Equals, time.Millisecond*100)
+	c.Assert(d.MaxWaitAddress, Equals, "100")
 	fields := d.ToZapFields()
-	if len(fields) != 9 {
-		c.Fatal(d)
-	}
+	c.Assert(len(fields), Equals, 9)
 }
 
-func (s *Suit) TestStatementContextPushDownFLags(c *C) {
+func (s *stmtctxSuit) TestStatementContextPushDownFLags(c *C) {
 	testCases := []struct {
-		in  *StatementContext
+		in  *stmtctx.StatementContext
 		out uint64
 	}{
-		{&StatementContext{InInsertStmt: true}, 8},
-		{&StatementContext{InUpdateStmt: true}, 16},
-		{&StatementContext{InDeleteStmt: true}, 16},
-		{&StatementContext{InSelectStmt: true}, 32},
-		{&StatementContext{IgnoreTruncate: true}, 1},
-		{&StatementContext{TruncateAsWarning: true}, 2},
-		{&StatementContext{OverflowAsWarning: true}, 64},
-		{&StatementContext{IgnoreZeroInDate: true}, 128},
-		{&StatementContext{DividedByZeroAsWarning: true}, 256},
-		{&StatementContext{PadCharToFullLength: true}, 4},
-		{&StatementContext{InLoadDataStmt: true}, 1024},
-		{&StatementContext{InSelectStmt: true, TruncateAsWarning: true}, 34},
-		{&StatementContext{DividedByZeroAsWarning: true, IgnoreTruncate: true}, 257},
-		{&StatementContext{InUpdateStmt: true, IgnoreZeroInDate: true, InLoadDataStmt: true}, 1168},
+		{&stmtctx.StatementContext{InInsertStmt: true}, 8},
+		{&stmtctx.StatementContext{InUpdateStmt: true}, 16},
+		{&stmtctx.StatementContext{InDeleteStmt: true}, 16},
+		{&stmtctx.StatementContext{InSelectStmt: true}, 32},
+		{&stmtctx.StatementContext{IgnoreTruncate: true}, 1},
+		{&stmtctx.StatementContext{TruncateAsWarning: true}, 2},
+		{&stmtctx.StatementContext{OverflowAsWarning: true}, 64},
+		{&stmtctx.StatementContext{IgnoreZeroInDate: true}, 128},
+		{&stmtctx.StatementContext{DividedByZeroAsWarning: true}, 256},
+		{&stmtctx.StatementContext{PadCharToFullLength: true}, 4},
+		{&stmtctx.StatementContext{InLoadDataStmt: true}, 1024},
+		{&stmtctx.StatementContext{InSelectStmt: true, TruncateAsWarning: true}, 34},
+		{&stmtctx.StatementContext{DividedByZeroAsWarning: true, IgnoreTruncate: true}, 257},
+		{&stmtctx.StatementContext{InUpdateStmt: true, IgnoreZeroInDate: true, InLoadDataStmt: true}, 1168},
 	}
 	for _, tt := range testCases {
 		got := tt.in.PushDownFlags()
-		if got != tt.out {
-			c.Errorf("get %v, want %v\n", got, tt.out)
-		}
+		c.Assert(got, Equals, tt.out, Commentf("get %v, want %v", got, tt.out))
 	}
 }
