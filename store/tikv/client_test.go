@@ -36,13 +36,7 @@ type testClientSuite struct {
 
 var _ = Suite(&testClientSuite{})
 
-func setMaxBatchSize(size uint) {
-	newConf := config.NewConfig()
-	newConf.TiKVClient.MaxBatchSize = size
-	config.StoreGlobalConfig(newConf)
-}
-
-func (s *testClientSuite) TestConn(c *C) {
+func (s *testClientSuite) TestConnWithoutBatch(c *C) {
 	cfg := config.GetGlobalConfig().TiKVClient
 	cfg.MaxBatchSize = 0
 	client := newRPCClient(cfg, config.Security{})
@@ -83,6 +77,18 @@ func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
 	c.Assert(len(requests), Equals, 2)
 	newEntryPtr := &entries[0]
 	c.Assert(entryPtr, Equals, newEntryPtr)
+}
+
+func (s *testClientSuite) TestConnectToNone(c *C) {
+	cfg := config.GetGlobalConfig().TiKVClient
+	cfg.GrpcConnectionCount = 1
+	fmt.Printf("cfg: %v\n", cfg)
+	rpcClient := newRPCClient(cfg, config.Security{})
+
+	addr := fmt.Sprintf("%s:%d", "127.0.0.1", 44444)
+	conn, err := rpcClient.getConnArray(addr)
+	c.Assert(err, NotNil)
+	c.Assert(conn, IsNil)
 }
 
 func (s *testClientSuite) TestSendAfterClose(c *C) {

@@ -142,7 +142,7 @@ func (a *connArray) Init(cfg config.TiKVClient, addr string, security config.Sec
 		bconn, err := newBatchConn(a, cfg, idleNotify)
 		if err != nil {
 			a.Close()
-			return nil
+			return err
 		}
 		a.batchConn = bconn
 	}
