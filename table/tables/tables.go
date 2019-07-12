@@ -377,7 +377,7 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			if err != nil {
 				return err
 			}
-			if err := t.buildIndexForRow(ctx, rm, h, newVs, idx); err != nil {
+			if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn); err != nil {
 				return err
 			}
 			break
@@ -599,7 +599,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opt); err != nil {
+		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupKeyErr
 			}
@@ -814,8 +814,8 @@ func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
-	if _, err := idx.Create(ctx, rm, vals, h); err != nil {
+func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
+	if _, err := idx.Create(ctx, rm, vals, h, table.WithAssertion(txn)); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)
@@ -924,11 +924,6 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	}
 
 	return colVal, nil
-}
-
-// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
-func (t *tableCommon) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
-	return t.Allocator(ctx).Alloc(t.tableID)
 }
 
 // AllocHandle implements table.Table AllocHandle interface.

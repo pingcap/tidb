@@ -186,13 +186,18 @@ func (s *testSuite2) TestShow2(c *C) {
 					c_nchar national char(1) charset ascii collate ascii_bin,
 					c_binary binary,
 					c_varchar varchar(1) charset ascii collate ascii_bin,
+					c_varchar_default varchar(20) charset ascii collate ascii_bin default 'cUrrent_tImestamp',
 					c_nvarchar national varchar(1) charset ascii collate ascii_bin,
 					c_varbinary varbinary(1),
 					c_year year,
 					c_date date,
 					c_time time,
 					c_datetime datetime,
+					c_datetime_default datetime default current_timestamp,
+					c_datetime_default_2 datetime(2) default current_timestamp(2),
 					c_timestamp timestamp,
+					c_timestamp_default timestamp default current_timestamp,
+					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
 					c_blob blob,
 					c_tinyblob tinyblob,
 					c_mediumblob mediumblob,
@@ -216,13 +221,18 @@ func (s *testSuite2) TestShow2(c *C) {
 			"[c_nchar char(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
 			"[c_binary binary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_varchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_varchar_default varchar(20) ascii_bin YES  cUrrent_tImestamp  select,insert,update,references ]\n" +
 			"[c_nvarchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
 			"[c_varbinary varbinary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_year year(4) <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_date date <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_time time <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_datetime datetime <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_datetime_default datetime <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
+			"[c_datetime_default_2 datetime(2) <nil> YES  CURRENT_TIMESTAMP(2)  select,insert,update,references ]\n" +
 			"[c_timestamp timestamp <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
+			"[c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ]\n" +
 			"[c_blob blob <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ]\n" +
@@ -268,7 +278,7 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
 }
 
-func (s *testSuite2) TestShow3(c *C) {
+func (s *testSuite2) TestShowCreateUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`)
@@ -286,6 +296,27 @@ func (s *testSuite2) TestShow3(c *C) {
 	// Case: a user that doesn't exist
 	err = tk.QueryToErr("show create user 'aaa'@'localhost';")
 	c.Assert(err.Error(), Equals, executor.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'aaa'@'localhost'").Error())
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, nil)
+	rows := tk.MustQuery("show create user current_user")
+	rows.Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+
+	rows = tk.MustQuery("show create user current_user()")
+	rows.Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+
+	tk.MustExec("create user 'check_priv'")
+
+	// "show create user" for other user requires the SELECT privilege on mysql database.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use mysql")
+	succ := tk1.Se.Auth(&auth.UserIdentity{Username: "check_priv", Hostname: "127.0.0.1", AuthUsername: "test_show", AuthHostname: "asdf"}, nil, nil)
+	c.Assert(succ, IsTrue)
+	err = tk1.QueryToErr("show create user 'root'@'%'")
+	c.Assert(err, NotNil)
+
+	// "show create user" for current user doesn't check privileges.
+	rows = tk1.MustQuery("show create user current_user")
+	rows.Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 }
 
 func (s *testSuite2) TestUnprivilegedShow(c *C) {
@@ -450,6 +481,25 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 			"  `ch2` varbinary(10) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table `t` (\n" +
+		"`a` timestamp not null default current_timestamp,\n" +
+		"`b` timestamp(3) default current_timestamp(3),\n" +
+		"`c` datetime default current_timestamp,\n" +
+		"`d` datetime(4) default current_timestamp(4),\n" +
+		"`e` varchar(20) default 'cUrrent_tImestamp')")
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"+
+			"  `b` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3),\n"+
+			"  `c` datetime DEFAULT CURRENT_TIMESTAMP,\n"+
+			"  `d` datetime(4) DEFAULT CURRENT_TIMESTAMP(4),\n"+
+			"  `e` varchar(20) DEFAULT 'cUrrent_tImestamp'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t (a int, b int) shard_row_id_bits = 4 pre_split_regions=3;")
 	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -1803,7 +1804,7 @@ func (s *testSuite4) TestLoadData(c *C) {
 	// data1 = nil, data2 = nil, fields and lines is default
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-	_, reachLimit, err := ld.InsertData(nil, nil)
+	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
 	r := tk.MustQuery(selectSQL)
@@ -2053,7 +2054,7 @@ func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 
-	_, _, err := ld.InsertData(nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
+	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	c.Assert(err, IsNil)
 	ld.SetMessage()
 	err = ctx.StmtCommit()
@@ -2355,7 +2356,7 @@ func (s *testSuite4) TestReplaceLog(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1, table.WithAssertion(txn))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -2449,5 +2450,48 @@ func (s *testSuite4) TestIssue11059(c *C) {
 	tk.MustExec("insert into t values (2, 11, 215)")
 	tk.MustExec("insert into t values (3, 7, 2111)")
 	_, err := tk.Exec("update t set pk = 2 where uk = 7")
+	c.Assert(err, NotNil)
+}
+
+func (s *testSuite4) TestSetWithRefGenCol(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (i int, j int as (i+1) not null);`)
+	tk.MustExec(`insert into t set i = j + 1;`)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustExec(`insert into t set i = j + 100;`)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "100 101"))
+
+	tk.MustExec(`create table te (i int)`)
+	tk.MustExec(`insert into te set i = i + 10;`)
+	tk.MustQuery("select * from te").Check(testkit.Rows("<nil>"))
+	tk.MustExec(`insert into te set i = i;`)
+	tk.MustQuery("select * from te").Check(testkit.Rows("<nil>", "<nil>"))
+
+	tk.MustExec(`create table tn (i int not null)`)
+	tk.MustExec(`insert into tn set i = i;`)
+	tk.MustQuery("select * from tn").Check(testkit.Rows("0"))
+	tk.MustExec(`insert into tn set i = i + 10;`)
+	tk.MustQuery("select * from tn").Check(testkit.Rows("0", "10"))
+
+	//
+	tk.MustExec(`create table t1 (j int(11) GENERATED ALWAYS AS (i + 1) stored, i int(11) DEFAULT '10');`)
+	tk.MustExec(`insert into t1 values()`)
+	tk.MustQuery("select * from t1").Check(testkit.Rows("11 10"))
+	tk.MustExec(`insert into t1 values()`)
+	tk.MustQuery("select * from t1").Check(testkit.Rows("11 10", "11 10"))
+
+	tk.MustExec(`create table t2 (j int(11) GENERATED ALWAYS AS (i + 1) stored not null, i int(11) DEFAULT '5');`)
+	tk.MustExec(`insert into t2 set i = j + 9`)
+	tk.MustQuery("select * from t2").Check(testkit.Rows("10 9"))
+	_, err := tk.Exec(`insert into t2 set j = i + 1`)
+	c.Assert(err, NotNil)
+	tk.MustExec(`insert into t2 set i = j + 100`)
+	tk.MustQuery("select * from t2").Check(testkit.Rows("10 9", "101 100"))
+
+	tk.MustExec(`create table t3(j int(11) GENERATED ALWAYS AS (i + 1) stored, i int(11) DEFAULT '5');`)
+	tk.MustExec(`insert into t3 set i = j + 100`)
+	tk.MustQuery("select * from t3").Check(testkit.Rows("<nil> <nil>"))
+	_, err = tk.Exec(`insert into t3 set j = i + 1`)
 	c.Assert(err, NotNil)
 }
