@@ -845,6 +845,18 @@ func buildShowDDLJobsFields() *expression.Schema {
 	return schema
 }
 
+func buildTableRegionsSchema() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema.Append(buildColumn("", "REGION_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "START_KEY", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_Key", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "LEADER_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "LEADER_STORE_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "PEERS", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCATTERING", mysql.TypeTiny, 1))
+	return schema
+}
+
 func buildShowDDLJobQueriesFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
 	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
@@ -932,6 +944,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		DBName:      show.DBName,
 		Table:       show.Table,
 		Column:      show.Column,
+		IndexName:   show.IndexName,
 		Flag:        show.Flag,
 		Full:        show.Full,
 		User:        show.User,
@@ -946,6 +959,8 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		p.SetSchema(buildShowEventsSchema())
 	case ast.ShowWarnings, ast.ShowErrors:
 		p.SetSchema(buildShowWarningsSchema())
+	case ast.ShowRegions:
+		p.SetSchema(buildTableRegionsSchema())
 	default:
 		switch showTp {
 		case ast.ShowTables, ast.ShowTableStatus:
