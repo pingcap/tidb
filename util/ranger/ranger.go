@@ -263,10 +263,10 @@ func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.Stat
 	}
 	if colLen != types.UnspecifiedLength {
 		for _, ran := range ranges {
-			if FixPrefixColDatum(&ran.LowVal[0], colLen, tp) {
+			if CutDatumByPrefixLen(&ran.LowVal[0], colLen, tp) {
 				ran.LowExclude = false
 			}
-			if FixPrefixColDatum(&ran.HighVal[0], colLen, tp) {
+			if CutDatumByPrefixLen(&ran.HighVal[0], colLen, tp) {
 				ran.HighExclude = false
 			}
 		}
@@ -425,17 +425,17 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
 		for i := 0; i < lowTail; i++ {
-			FixPrefixColDatum(&ran.LowVal[i], lengths[i], tp[i])
+			CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i])
 		}
-		lowCut := FixPrefixColDatum(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
+		lowCut := CutDatumByPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
 		if lowCut {
 			ran.LowExclude = false
 		}
 		highTail := len(ran.HighVal) - 1
 		for i := 0; i < highTail; i++ {
-			FixPrefixColDatum(&ran.HighVal[i], lengths[i], tp[i])
+			CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i])
 		}
-		highCut := FixPrefixColDatum(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
+		highCut := CutDatumByPrefixLen(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
 		if highCut {
 			ran.HighExclude = false
 		}
@@ -444,9 +444,9 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 	return hasCut
 }
 
-// FixPrefixColDatum cuts the datum according to the prefix length.
+// CutDatumByPrefixLen cuts the datum according to the prefix length.
 // If it's UTF8 encoded, we will cut it by characters rather than bytes.
-func FixPrefixColDatum(v *types.Datum, length int, tp *types.FieldType) bool {
+func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
 		colCharset := tp.Charset
 		colValue := v.GetBytes()

@@ -157,7 +157,6 @@ func (s *testSuite2) TestIssue11061(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(c varchar(30), index ix_c(c(10)))")
-	tk.MustExec("create table t2(d varchar(10))")
 	tk.MustExec("insert into t1 (c) values('7_chars'), ('13_characters')")
 	tk.MustExec("insert into t2 (d) values('13'), ('13'), ('7'), ('7')")
 	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1) */ SUM(LENGTH(c)) FROM t1 WHERE c IN (SELECT t1.c FROM t1)").Check(testkit.Rows("20"))

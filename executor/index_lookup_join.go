@@ -475,10 +475,6 @@ func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) err
 func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoinLookUpContent, error) {
 	lookUpContents := make([]*indexJoinLookUpContent, 0, task.outerResult.NumRows())
 	keyBuf := make([]byte, 0, 64)
-	keyTypes := make([]*types.FieldType, 0, len(iw.keyCols))
-	for _, pos := range iw.keyCols {
-		keyTypes = append(keyTypes, iw.rowTypes[pos])
-	}
 	for i := 0; i < task.outerResult.NumRows(); i++ {
 		dLookUpKey, err := iw.constructDatumLookupKey(task, i)
 		if err != nil {
@@ -500,7 +496,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			for i := range iw.outerCtx.keyCols {
 				// If it's a prefix column. Try to fix it.
 				if iw.colLens[i] != types.UnspecifiedLength {
-					ranger.FixPrefixColDatum(&dLookUpKey[i], iw.colLens[i], keyTypes[i])
+					ranger.CutDatumByPrefixLen(&dLookUpKey[i], iw.colLens[i], iw.rowTypes[iw.keyCols[i]])
 				}
 			}
 			// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
