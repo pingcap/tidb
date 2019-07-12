@@ -134,10 +134,8 @@ var (
 )
 
 type stmtRecord struct {
-	stmtID  uint32
 	st      sqlexec.Statement
 	stmtCtx *stmtctx.StatementContext
-	params  []interface{}
 }
 
 // StmtHistory holds all histories of statements in a txn.
@@ -146,12 +144,10 @@ type StmtHistory struct {
 }
 
 // Add appends a stmt to history list.
-func (h *StmtHistory) Add(stmtID uint32, st sqlexec.Statement, stmtCtx *stmtctx.StatementContext, params ...interface{}) {
+func (h *StmtHistory) Add(st sqlexec.Statement, stmtCtx *stmtctx.StatementContext) {
 	s := &stmtRecord{
-		stmtID:  stmtID,
 		st:      st,
 		stmtCtx: stmtCtx,
-		params:  append(([]interface{})(nil), params...),
 	}
 	h.history = append(h.history, s)
 }
@@ -451,14 +447,8 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	err := s.doCommit(ctx)
 	if err != nil {
 		commitRetryLimit := s.sessionVars.RetryLimit
-		if s.sessionVars.DisableTxnAutoRetry && !s.sessionVars.InRestrictedSQL {
-			// Do not retry non-autocommit transactions.
-			// For autocommit single statement transactions, the history count is always 1.
-			// For explicit transactions, the statement count is more than 1.
-			history := GetHistory(s)
-			if history.Count() > 1 {
-				commitRetryLimit = 0
-			}
+		if !s.sessionVars.TxnCtx.CouldRetry {
+			commitRetryLimit = 0
 		}
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
@@ -517,6 +507,13 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
+
+	failpoint.Inject("keepHistory", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(err)
+		}
+	})
+
 	s.sessionVars.TxnCtx.Cleanup()
 	s.recordTransactionCounter(err)
 	return err
@@ -1247,8 +1244,46 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
+		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 	}
 	return &s.txn, nil
+}
+
+// isTxnRetryable (if returns true) means the transaction could retry.
+// If the transaction is in pessimistic mode, do not retry.
+// If the session is already in transaction, enable retry or internal SQL could retry.
+// If not, the transaction could always retry, because it should be auto committed transaction.
+// Anyway the retry limit is 0, the transaction could not retry.
+func (s *session) isTxnRetryable() bool {
+	sessVars := s.sessionVars
+
+	// The pessimistic transaction no need to retry.
+	if sessVars.TxnCtx.IsPessimistic {
+		return false
+	}
+
+	// If retry limit is 0, the transaction could not retry.
+	if sessVars.RetryLimit == 0 {
+		return false
+	}
+
+	// If the session is not InTxn, it is an auto-committed transaction.
+	// The auto-committed transaction could always retry.
+	if !sessVars.InTxn() {
+		return true
+	}
+
+	// The internal transaction could always retry.
+	if sessVars.InRestrictedSQL {
+		return true
+	}
+
+	// If the retry is enabled, the transaction could retry.
+	if !sessVars.DisableTxnAutoRetry {
+		return true
+	}
+
+	return false
 }
 
 func (s *session) NewTxn(ctx context.Context) error {

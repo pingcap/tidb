@@ -176,13 +176,14 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 		return se.CommitTxn(ctx)
 	}
 
-	return checkStmtLimit(ctx, sctx, se, sessVars)
+	return checkStmtLimit(ctx, sctx, se)
 }
 
-func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars) error {
+func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session) error {
 	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 	// So we limit the statement count in a transaction here.
 	var err error
+	sessVars := se.GetSessionVars()
 	history := GetHistory(sctx)
 	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 		if !sessVars.BatchCommit {
@@ -195,7 +196,7 @@ func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, s
 		// The last history could not be "commit"/"rollback" statement.
 		// It means it is impossible to start a new transaction at the end of the transaction.
 		// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
-		se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+		sessVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 	}
 	return err
 }
@@ -222,12 +223,14 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	}
 	rs, err = s.Exec(ctx)
 	sessVars := se.GetSessionVars()
-	// All the history should be added here.
 	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly(sessVars) {
-		if err == nil && !sessVars.TxnCtx.IsPessimistic {
-			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
+		// All the history should be added here.
+		if err == nil && sessVars.TxnCtx.CouldRetry {
+			GetHistory(sctx).Add(s, sessVars.StmtCtx)
 		}
+
+		// Handle the stmt commit/rollback.
 		if txn, err1 := sctx.Txn(false); err1 == nil {
 			if txn.Valid() {
 				if err != nil {
@@ -240,8 +243,8 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			logutil.BgLogger().Error("get txn error", zap.Error(err1))
 		}
 	}
-
 	err = finishStmt(ctx, sctx, se, sessVars, err)
+
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
