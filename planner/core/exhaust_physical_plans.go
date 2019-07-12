@@ -323,7 +323,7 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 // If propItems are the prefix set of the outer join keys or the outer join keys are prefix
 // set of propItems, then we can inject the flag of index lookup merge jon.
 func injectIndexMergeJoinFlag(propItems []property.Item, join *PhysicalIndexJoin) {
-	innerPlan := join.Children()[1-join.OuterIndex]
+	innerPlan := join.innerPlan
 	var isIndexScan bool
 	var is *PhysicalIndexScan
 	if ir, ok := innerPlan.(*PhysicalIndexReader); ok {
@@ -347,10 +347,7 @@ func injectIndexMergeJoinFlag(propItems []property.Item, join *PhysicalIndexJoin
 			compareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
 			outerCompareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
 			for i := range join.OuterJoinKeys {
-				if !needOuterSort {
-					break
-				}
-				if propItems[i].Col.ColName != join.OuterJoinKeys[i].ColName {
+				if needOuterSort && propItems[i].Col.ColName != join.OuterJoinKeys[i].ColName {
 					needOuterSort = false
 				}
 				compareFuncs = append(compareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
