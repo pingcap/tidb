@@ -196,16 +196,10 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 }
 
 func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {
-	//  One column could be filled for multi-times in the schema. e.g. select b, b, c, c from t where a = 1.
-	// We need to set the positions in the schema for the same column.
 	colID2DecodedPos := make(map[int64]int, e.schema.Len())
-	decodedPos2SchemaPos := make([][]int, 0, e.schema.Len())
-	for schemaPos, col := range e.schema.Columns {
-		if decodedPos, ok := colID2DecodedPos[col.ID]; !ok {
+	for _, col := range e.schema.Columns {
+		if _, ok := colID2DecodedPos[col.ID]; !ok {
 			colID2DecodedPos[col.ID] = len(colID2DecodedPos)
-			decodedPos2SchemaPos = append(decodedPos2SchemaPos, []int{schemaPos})
-		} else {
-			decodedPos2SchemaPos[decodedPos] = append(decodedPos2SchemaPos[decodedPos], schemaPos)
 		}
 	}
 	decodedVals, err := tablecodec.CutRowNew(rowVal, colID2DecodedPos)
@@ -216,36 +210,28 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 		decodedVals = make([][]byte, len(colID2DecodedPos))
 	}
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
-	for id, decodedPos := range colID2DecodedPos {
-		schemaPoses := decodedPos2SchemaPos[decodedPos]
-		firstPos := schemaPoses[0]
-		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(e.schema.Columns[firstPos].RetType.Flag) {
-			chk.AppendInt64(firstPos, e.handle)
+	for i, col := range e.schema.Columns {
+		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+			chk.AppendInt64(i, e.handle)
 			continue
 		}
-		if id == model.ExtraHandleID {
-			chk.AppendInt64(firstPos, e.handle)
+		if col.ID == model.ExtraHandleID {
+			chk.AppendInt64(i, e.handle)
 			continue
 		}
+		decodedPos := colID2DecodedPos[col.ID]
 		if len(decodedVals[decodedPos]) == 0 {
-			colInfo := getColInfoByID(e.tblInfo, id)
+			colInfo := getColInfoByID(e.tblInfo, col.ID)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
 				return err1
 			}
-			chk.AppendDatum(firstPos, &d)
+			chk.AppendDatum(i, &d)
 			continue
 		}
-		_, err = decoder.DecodeOne(decodedVals[decodedPos], firstPos, e.schema.Columns[firstPos].RetType)
+		_, err = decoder.DecodeOne(decodedVals[decodedPos], i, col.RetType)
 		if err != nil {
 			return err
-		}
-	}
-	// Fill other positions.
-	for _, schemaPoses := range decodedPos2SchemaPos {
-		firstPos := schemaPoses[0]
-		for i := 1; i < len(schemaPoses); i++ {
-			chk.MakeRef(firstPos, schemaPoses[i])
 		}
 	}
 	return nil
