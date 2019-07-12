@@ -75,6 +75,7 @@ func (s *testClientSuite) TestSendThenClose(c *C) {
 		// Sleep a while to ensure the request has been already sent out.
 		time.Sleep(100 * time.Millisecond)
 		conn.Close()
+		time.Sleep(100 * time.Millisecond)
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/betweenBatchRpcSendAndRecv"), IsNil)
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/batchSendLoop"), IsNil)
 	}()
@@ -86,9 +87,18 @@ func (s *testClientSuite) TestSendThenClose(c *C) {
 	batchReq := req.ToBatchCommandsRequest()
 	c.Assert(batchReq, NotNil)
 
-	// `doRPCForBatchRequest` shouldn't be blocked 100s, it need to return immediately.
-	_, err = doRPCForBatchRequest(context.Background(), addr, conn.batchConn, batchReq, 100*time.Second)
-	c.Assert(err.Error() == "EOF", IsTrue)
+	ch := make(chan error, 1)
+	go func() {
+		_, err = doRPCForBatchRequest(context.Background(), addr, conn.batchConn, batchReq, 100*time.Second)
+		ch <- err
+	}()
+
+	select {
+	case err := <-ch:
+		c.Assert(err.Error() == "EOF", IsTrue)
+	case <-time.NewTimer(1 * time.Second).C:
+		panic("doRPCForBatchRequest should retrun immediately")
+	}
 
 	server.Stop()
 }
@@ -111,4 +121,6 @@ func (s *testClientSuite) TestRecycle(c *C) {
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(len(rpcClient.conns) == 0, IsTrue)
 	server.Stop()
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/batchSendLoopIdleTimeout"), IsNil)
 }

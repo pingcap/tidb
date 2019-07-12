@@ -112,9 +112,18 @@ func (s *testClientSuite) TestSendAfterClose(c *C) {
 	batchReq := req.ToBatchCommandsRequest()
 	c.Assert(batchReq, NotNil)
 
-	doRPCForBatchRequest(context.Background(), addr, conn.batchConn, batchReq, time.Second)
-	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second)
-	c.Assert(err.Error() == "send to closed transport", IsTrue)
+	ch := make(chan error, 1)
+	go func() {
+		_, err = doRPCForBatchRequest(context.Background(), addr, conn.batchConn, batchReq, 100*time.Second)
+		ch <- err
+	}()
+
+	select {
+	case err := <-ch:
+		c.Assert(err.Error() == "send to closed transport", IsTrue)
+	case <-time.NewTimer(3 * time.Second).C:
+		panic("doRPCForBatchRequest should retrun immediately")
+	}
 
 	server.Stop()
 }
