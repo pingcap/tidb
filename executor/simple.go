@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/planner/core"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -609,6 +610,23 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 }
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
+	// Check `CREATE USER` privilege.
+	if !config.GetGlobalConfig().Security.SkipGrantTable {
+		checker := privilege.GetPrivilegeManager(e.ctx)
+		if checker == nil {
+			return errors.New("miss privilege checker")
+		}
+		activeRoles := e.ctx.GetSessionVars().ActiveRoles
+		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.InsertPriv) {
+			if s.IsCreateRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateRolePriv) {
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
+			}
+			if !s.IsCreateRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE User")
+			}
+		}
+	}
+
 	users := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
 		exists, err1 := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
@@ -639,7 +657,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if s.IsCreateRole {
 		sql = fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password, Account_locked) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
 	}
-	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	if err != nil {
 		return err
 	}
