@@ -268,13 +268,38 @@ func (s *testIntegrationSuite2) TestIssue6101(c *C) {
 	tk.MustExec("drop table t1")
 }
 
+func (s *testIntegrationSuite1) TestIndexLength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table idx_len(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0))")
+	tk.MustExec("create index idx on idx_len(a)")
+	tk.MustExec("alter table idx_len add index idxa(a)")
+	tk.MustExec("create index idx1 on idx_len(b)")
+	tk.MustExec("alter table idx_len add index idxb(b)")
+	tk.MustExec("create index idx2 on idx_len(c)")
+	tk.MustExec("alter table idx_len add index idxc(c)")
+	tk.MustExec("create index idx3 on idx_len(d)")
+	tk.MustExec("alter table idx_len add index idxd(d)")
+	tk.MustExec("create index idx4 on idx_len(f)")
+	tk.MustExec("alter table idx_len add index idxf(f)")
+	tk.MustExec("create index idx5 on idx_len(g)")
+	tk.MustExec("alter table idx_len add index idxg(g)")
+	tk.MustExec("create table idx_len1(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0), index(a), index(b), index(c), index(d), index(f), index(g))")
+}
+
 func (s *testIntegrationSuite3) TestIssue3833(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table issue3833 (b char(0))")
+	tk.MustExec("create table issue3833 (b char(0), c binary(0), d  varchar(0))")
 	assertErrorCode(c, tk, "create index idx on issue3833 (b)", tmysql.ErrWrongKeyColumn)
 	assertErrorCode(c, tk, "alter table issue3833 add index idx (b)", tmysql.ErrWrongKeyColumn)
-	assertErrorCode(c, tk, "create table issue3833_2 (b char(0), index (b))", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create table issue3833_2 (b char(0), c binary(0), d varchar(0), index(b))", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create index idx on issue3833 (c)", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "alter table issue3833 add index idx (c)", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create table issue3833_2 (b char(0), c binary(0), d varchar(0), index(c))", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create index idx on issue3833 (d)", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "alter table issue3833 add index idx (d)", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create table issue3833_2 (b char(0), c binary(0), d varchar(0), index(d))", tmysql.ErrWrongKeyColumn)
 }
 
 func (s *testIntegrationSuite1) TestIssue2858And2717(c *C) {
@@ -743,6 +768,33 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
+}
+
+func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	errMsg := "[ddl:203]" // unsupported modify column with references
+	assertErrCode := func(sql string, errCodeStr string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error()[:len(errCodeStr)], Equals, errCodeStr)
+	}
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (b char(1) default null) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_general_ci")
+	tk.MustExec("alter table t1 modify column b char(1) character set utf8mb4 collate utf8mb4_general_ci")
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (b char(1) collate utf8mb4_general_ci)")
+	tk.MustExec("alter table t1 modify b char(1) character set utf8mb4 collate utf8mb4_general_ci")
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (b int, c int)")
+	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
 }
 
 func (s *testIntegrationSuite2) TestCaseInsensitiveCharsetAndCollate(c *C) {

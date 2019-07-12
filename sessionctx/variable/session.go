@@ -104,6 +104,7 @@ type TransactionContext struct {
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
+	CouldRetry    bool
 	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
@@ -135,7 +136,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
-	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
+	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
 	tc.DirtyDB = nil
 	tc.Binlog = nil
 	tc.History = nil
@@ -338,6 +339,9 @@ type SessionVars struct {
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
+	// EnableIndexMerge enables the generation of IndexMergePath.
+	EnableIndexMerge bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -392,6 +396,9 @@ type SessionVars struct {
 
 	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
 	ConnectionInfo *ConnectionInfo
+
+	// use noop funcs or not
+	EnableNoopFuncs bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -444,6 +451,8 @@ func NewSessionVars() *SessionVars {
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
+		EnableIndexMerge:            false,
+		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -818,6 +827,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
+	case TiDBEnableIndexMerge:
+		s.EnableIndexMerge = TiDBOptOn(val)
+	case TiDBEnableNoopFuncs:
+		s.EnableNoopFuncs = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
