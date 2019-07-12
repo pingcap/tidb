@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 )
 
 var (
@@ -96,8 +97,8 @@ type InfoSchema interface {
 
 // Information Schema Name.
 const (
-	Name      = "INFORMATION_SCHEMA"
-	LowerName = "information_schema"
+	Name      = util.InformationSchemaName
+	LowerName = util.InformationSchemaLowerName
 )
 
 type sortedTables []table.Table
@@ -301,6 +302,11 @@ func (h *Handle) Get() InfoSchema {
 	v := h.value.Load()
 	schema, _ := v.(InfoSchema)
 	return schema
+}
+
+// IsValid uses to check whether handle value is valid.
+func (h *Handle) IsValid() bool {
+	return h.value.Load() != nil
 }
 
 // EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.

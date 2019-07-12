@@ -41,6 +41,8 @@ func (s *testMemoryLeak) SetUpSuite(c *C) {
 }
 
 func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
+	c.Skip("too slow")
+
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "create database test_mem")
@@ -72,7 +74,7 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	c.Assert(err, IsNil)
 	record := records[0]
 	rowCnt := 0
-	chk := record.NewRecordBatch()
+	chk := record.NewChunk()
 	for {
 		c.Assert(record.Next(context.Background(), chk), IsNil)
 		rowCnt += chk.NumRows()

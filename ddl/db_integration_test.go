@@ -78,7 +78,7 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
@@ -268,13 +268,38 @@ func (s *testIntegrationSuite2) TestIssue6101(c *C) {
 	tk.MustExec("drop table t1")
 }
 
+func (s *testIntegrationSuite1) TestIndexLength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table idx_len(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0))")
+	tk.MustExec("create index idx on idx_len(a)")
+	tk.MustExec("alter table idx_len add index idxa(a)")
+	tk.MustExec("create index idx1 on idx_len(b)")
+	tk.MustExec("alter table idx_len add index idxb(b)")
+	tk.MustExec("create index idx2 on idx_len(c)")
+	tk.MustExec("alter table idx_len add index idxc(c)")
+	tk.MustExec("create index idx3 on idx_len(d)")
+	tk.MustExec("alter table idx_len add index idxd(d)")
+	tk.MustExec("create index idx4 on idx_len(f)")
+	tk.MustExec("alter table idx_len add index idxf(f)")
+	tk.MustExec("create index idx5 on idx_len(g)")
+	tk.MustExec("alter table idx_len add index idxg(g)")
+	tk.MustExec("create table idx_len1(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0), index(a), index(b), index(c), index(d), index(f), index(g))")
+}
+
 func (s *testIntegrationSuite3) TestIssue3833(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table issue3833 (b char(0))")
+	tk.MustExec("create table issue3833 (b char(0), c binary(0), d  varchar(0))")
 	assertErrorCode(c, tk, "create index idx on issue3833 (b)", tmysql.ErrWrongKeyColumn)
 	assertErrorCode(c, tk, "alter table issue3833 add index idx (b)", tmysql.ErrWrongKeyColumn)
-	assertErrorCode(c, tk, "create table issue3833_2 (b char(0), index (b))", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create table issue3833_2 (b char(0), c binary(0), d varchar(0), index(b))", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create index idx on issue3833 (c)", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "alter table issue3833 add index idx (c)", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create table issue3833_2 (b char(0), c binary(0), d varchar(0), index(c))", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create index idx on issue3833 (d)", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "alter table issue3833 add index idx (d)", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create table issue3833_2 (b char(0), c binary(0), d varchar(0), index(d))", tmysql.ErrWrongKeyColumn)
 }
 
 func (s *testIntegrationSuite1) TestIssue2858And2717(c *C) {
@@ -656,17 +681,17 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(a varchar(10)) charset utf8")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset := func() {
+	checkCharset := func(chs, coll string) {
 		tbl := testGetTableByName(c, s.ctx, "test", "t")
 		c.Assert(tbl, NotNil)
-		c.Assert(tbl.Meta().Charset, Equals, charset.CharsetUTF8MB4)
-		c.Assert(tbl.Meta().Collate, Equals, charset.CollationUTF8MB4)
+		c.Assert(tbl.Meta().Charset, Equals, chs)
+		c.Assert(tbl.Meta().Collate, Equals, coll)
 		for _, col := range tbl.Meta().Columns {
-			c.Assert(col.Charset, Equals, charset.CharsetUTF8MB4)
-			c.Assert(col.Collate, Equals, charset.CollationUTF8MB4)
+			c.Assert(col.Charset, Equals, chs)
+			c.Assert(col.Collate, Equals, coll)
 		}
 	}
-	checkCharset()
+	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	// Test when column charset can not convert to the target charset.
 	tk.MustExec("drop table t;")
@@ -675,11 +700,16 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from ascii to utf8mb4")
 
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a varchar(10) character set utf8) charset utf8")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci;")
+	checkCharset(charset.CharsetUTF8, "utf8_general_ci")
+
 	// Test when table charset is equal to target charset but column charset is not equal.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(a varchar(10) character set utf8) charset utf8mb4")
-	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset()
+	tk.MustExec("alter table t convert to charset utf8mb4 collate utf8mb4_general_ci;")
+	checkCharset(charset.CharsetUTF8MB4, "utf8mb4_general_ci")
 
 	// Mock table info with charset is "". Old TiDB maybe create table with charset is "".
 	db, ok := domain.GetDomain(s.ctx).InfoSchema().SchemaByName(model.NewCIStr("test"))
@@ -712,7 +742,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	c.Assert(tbl.Meta().Collate, Equals, "")
 	// Test when table charset is "", this for compatibility.
 	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset()
+	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	// Test when column charset is "".
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
@@ -727,7 +757,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	c.Assert(tbl.Meta().Columns[0].Charset, Equals, "")
 	c.Assert(tbl.Meta().Columns[0].Collate, Equals, "")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset()
+	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (a blob) character set utf8;")
@@ -738,6 +768,33 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
+}
+
+func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	errMsg := "[ddl:203]" // unsupported modify column with references
+	assertErrCode := func(sql string, errCodeStr string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error()[:len(errCodeStr)], Equals, errCodeStr)
+	}
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (b char(1) default null) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_general_ci")
+	tk.MustExec("alter table t1 modify column b char(1) character set utf8mb4 collate utf8mb4_general_ci")
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (b char(1) collate utf8mb4_general_ci)")
+	tk.MustExec("alter table t1 modify b char(1) character set utf8mb4 collate utf8mb4_general_ci")
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (b int, c int)")
+	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
 }
 
 func (s *testIntegrationSuite2) TestCaseInsensitiveCharsetAndCollate(c *C) {
@@ -1737,10 +1794,12 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 	for _, fc := range failedCases {
 		c.Assert(tk.ExecToErr(fc.stmt).Error(), Equals, fc.errMsg, Commentf("%v", fc.stmt))
 	}
+	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8' COLLATE = 'utf8_unicode_ci'")
+	verifyDBCharsetAndCollate("alterdb2", "utf8", "utf8_unicode_ci")
 
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_bin")
 
-	err := tk.ExecToErr("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify collate from utf8mb4_bin to utf8mb4_general_ci")
+	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
+	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
 }

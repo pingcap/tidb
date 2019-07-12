@@ -52,7 +52,7 @@ type SimpleExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SimpleExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
+func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
@@ -812,6 +812,13 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 			return errors.New("FLUSH TABLES WITH READ LOCK is not supported.  Please use @@tidb_snapshot")
 		}
 	case ast.FlushPrivileges:
+		// If skip-grant-table is configured, do not flush privileges.
+		// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
+		// Call dom.PrivilegeHandle().Update would panic.
+		if config.GetGlobalConfig().Security.SkipGrantTable {
+			return nil
+		}
+
 		dom := domain.GetDomain(e.ctx)
 		sysSessionPool := dom.SysSessionPool()
 		ctx, err := sysSessionPool.Get()

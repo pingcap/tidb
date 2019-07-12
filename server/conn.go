@@ -50,6 +50,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -262,6 +263,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
+	failpoint.Inject("FakeClientConn", func() {
+		if cc.pkt == nil {
+			failpoint.Return(nil)
+		}
+	})
 	return cc.pkt.writePacket(data)
 }
 
@@ -845,7 +851,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastCmd = string(hack.String(data))
 	token := cc.server.getToken()
 	defer func() {
-		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
+		// if handleChangeUser failed, cc.ctx may be nil
+		if cc.ctx != nil {
+			cc.ctx.SetProcessInfo("", t, mysql.ComSleep, 0)
+		}
+
 		cc.server.releaseToken(token)
 		span.Finish()
 	}()
@@ -860,9 +870,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
-		cc.ctx.SetProcessInfo("", t, cmd)
+		cc.ctx.SetProcessInfo("", t, cmd, 0)
 	case mysql.ComInitDB:
-		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd)
+		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd, 0)
 	}
 
 	switch cmd {
@@ -925,6 +935,11 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 }
 
 func (cc *clientConn) flush() error {
+	failpoint.Inject("FakeClientConn", func() {
+		if cc.pkt == nil {
+			failpoint.Return(nil)
+		}
+	})
 	return cc.pkt.flush()
 }
 
@@ -1027,12 +1042,16 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 	var err error
 	var reachLimit bool
 	for {
-		prevData, reachLimit, err = loadDataInfo.InsertData(prevData, curData)
+		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
 		if err != nil {
 			return nil, err
 		}
 		if !reachLimit {
 			break
+		}
+		err := loadDataInfo.CheckAndInsertOneBatch()
+		if err != nil {
+			return nil, err
 		}
 		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
 			return nil, err
@@ -1098,7 +1117,10 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if err != nil {
 		loadDataInfo.Ctx.StmtRollback()
 	} else {
-		err = loadDataInfo.Ctx.StmtCommit()
+		err = loadDataInfo.CheckAndInsertOneBatch()
+		if err == nil {
+			err = loadDataInfo.Ctx.StmtCommit()
+		}
 	}
 
 	var txn kv.Transaction
@@ -1161,9 +1183,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 	status := atomic.LoadInt32(&cc.status)
-	if status == connStatusShutdown || status == connStatusWaitShutdown {
+	if rs != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
 		killConn(cc)
-		return errors.New("killed by another connection")
+		return executor.ErrQueryInterrupted
 	}
 	if rs != nil {
 		if len(rs) == 1 {
@@ -1255,6 +1277,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	if err != nil {
 		return err
 	}
+
 	return cc.flush()
 }
 
@@ -1279,7 +1302,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 // serverStatus, a flag bit represents server information
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	gotColumnInfo := false
 	for {
 		// Here server.tidbResultSet implements Next method.
@@ -1327,7 +1350,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	fetchedRows := rs.GetFetchedRows()
 
 	// if fetchedRows is not enough, getting data from recordSet.
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	for len(fetchedRows) < fetchSize {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
@@ -1342,7 +1365,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		for i := 0; i < rowCount; i++ {
 			fetchedRows = append(fetchedRows, req.GetRow(i))
 		}
-		req.Chunk = chunk.Renew(req.Chunk, cc.ctx.GetSessionVars().MaxChunkSize)
+		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
@@ -1428,17 +1451,20 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		logutil.Logger(ctx).Debug("close old context error", zap.Error(err))
 	}
-
 	err = cc.openSessionAndDoAuth(pass)
 	if err != nil {
 		return err
 	}
 
+	if plugin.IsEnable(plugin.Audit) {
+		cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	}
+
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			connInfo := cc.connectInfo()
-			err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: connInfo.Host}, plugin.ChangeUser, connInfo)
+			connInfo := cc.ctx.GetSessionVars().ConnectionInfo
+			err = authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
 			if err != nil {
 				return err
 			}
