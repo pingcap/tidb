@@ -16,7 +16,7 @@ require (
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/go-ole/go-ole v1.2.1 // indirect
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
-	github.com/gogo/protobuf v1.2.0 // indirect
+	github.com/gogo/protobuf v1.2.0
 	github.com/golang/protobuf v1.2.0
 	github.com/golang/snappy v0.0.1 // indirect
 	github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c
@@ -78,3 +78,5 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+replace github.com/pingcap/parser => github.com/crazycs520/parser v0.0.0-20190712073844-6bf3fd954633
