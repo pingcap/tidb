@@ -2440,9 +2440,14 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			for _, colName := range findColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
+		case ast.ColumnOptionCollate:
+			col.Collate = opt.StrValue
+		case ast.ColumnOptionReference:
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("with references"))
+		case ast.ColumnOptionFulltext:
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("with full text"))
 		default:
-			// TODO: Support other types.
-			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs(opt.Tp))
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("unknown column option type: %d", opt.Tp)))
 		}
 	}
 
@@ -2524,11 +2529,12 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = modifiable(&col.FieldType, &newCol.FieldType)
-	if err != nil {
+
+	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
+
+	if err = modifiable(&col.FieldType, &newCol.FieldType); err != nil {
 		return nil, errors.Trace(err)
 	}
 
