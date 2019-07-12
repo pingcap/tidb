@@ -20,7 +20,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/types"
 )
 
 type columnPruner struct {
@@ -117,6 +119,21 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
 	}
+	if len(la.AggFuncs) == 0 {
+		// If all the aggregate functions are pruned, we should add an aggregate function to keep the correctness.
+		one, err := aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.One}, false)
+		if err != nil {
+			return err
+		}
+		la.AggFuncs = []*aggregation.AggFuncDesc{one}
+		col := &expression.Column{
+			ColName:  model.NewCIStr("dummy_agg"),
+			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+		}
+		la.schema.Columns = []*expression.Column{col}
+	}
+
 	if len(la.GroupByItems) > 0 {
 		for i := len(la.GroupByItems) - 1; i >= 0; i-- {
 			cols := expression.ExtractColumns(la.GroupByItems[i])
@@ -145,6 +162,8 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 				continue
 			}
 			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
+		} else if ls.ByItems[i].Expr.GetType().Tp == mysql.TypeNull {
+			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
 		} else {
 			parentUsedCols = append(parentUsedCols, cols...)
 		}
@@ -166,6 +185,13 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 	if !hasBeenUsed {
 		parentUsedCols = make([]*expression.Column, len(p.schema.Columns))
 		copy(parentUsedCols, p.schema.Columns)
+	} else {
+		// Issue 10341: p.schema.Columns might contain table name (AsName), but p.Children()0].Schema().Columns does not.
+		for i := len(used) - 1; i >= 0; i-- {
+			if !used[i] {
+				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			}
+		}
 	}
 	for _, child := range p.Children() {
 		err := child.PruneColumns(parentUsedCols)
@@ -173,7 +199,6 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 			return err
 		}
 	}
-	p.schema.Columns = p.children[0].Schema().Columns
 	return nil
 }
 
@@ -237,8 +262,15 @@ func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) err
 		}
 	}
 	for k, cols := range p.schema.TblID2Handle {
-		if p.schema.ColumnIndex(cols[0]) == -1 {
+		for i := len(cols) - 1; i >= 0; i-- {
+			if p.schema.ColumnIndex(cols[i]) == -1 {
+				cols = append(cols[:i], cols[i+1:]...)
+			}
+		}
+		if len(cols) == 0 {
 			delete(p.schema.TblID2Handle, k)
+		} else {
+			p.schema.TblID2Handle[k] = cols
 		}
 	}
 	return nil
@@ -339,10 +371,17 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error {
-	windowColumn := p.GetWindowResultColumn()
+	windowColumns := p.GetWindowResultColumns()
 	len := 0
 	for _, col := range parentUsedCols {
-		if !windowColumn.Equal(nil, col) {
+		used := false
+		for _, windowColumn := range windowColumns {
+			if windowColumn.Equal(nil, col) {
+				used = true
+				break
+			}
+		}
+		if !used {
 			parentUsedCols[len] = col
 			len++
 		}
@@ -355,13 +394,15 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error 
 	}
 
 	p.SetSchema(p.children[0].Schema().Clone())
-	p.Schema().Append(windowColumn)
+	p.Schema().Append(windowColumns...)
 	return nil
 }
 
 func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*expression.Column {
-	for _, arg := range p.WindowFuncDesc.Args {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(arg)...)
+	for _, desc := range p.WindowFuncDescs {
+		for _, arg := range desc.Args {
+			parentUsedCols = append(parentUsedCols, expression.ExtractColumns(arg)...)
+		}
 	}
 	for _, by := range p.PartitionBy {
 		parentUsedCols = append(parentUsedCols, by.Col)

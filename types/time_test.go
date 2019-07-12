@@ -18,7 +18,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -1105,6 +1107,141 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 	}
 }
 
+func (s *testTimeSuite) TestExtractDurationValue(c *C) {
+	tests := []struct {
+		unit   string
+		format string
+		ans    string
+		failed bool
+	}{
+		{
+			unit:   "MICROSECOND",
+			format: "50",
+			ans:    "00:00:00.000050",
+		},
+		{
+			unit:   "SECOND",
+			format: "50",
+			ans:    "00:00:50",
+		},
+		{
+			unit:   "MINUTE",
+			format: "10",
+			ans:    "00:10:00",
+		},
+		{
+			unit:   "HOUR",
+			format: "10",
+			ans:    "10:00:00",
+		},
+		{
+			unit:   "DAY",
+			format: "1",
+			ans:    "24:00:00",
+		},
+		{
+			unit:   "WEEK",
+			format: "2",
+			ans:    "336:00:00",
+		},
+		{
+			unit:   "SECOND_MICROSECOND",
+			format: "61.01",
+			ans:    "00:01:01.010000",
+		},
+		{
+			unit:   "MINUTE_MICROSECOND",
+			format: "01:61.01",
+			ans:    "00:02:01.010000",
+		},
+		{
+			unit:   "MINUTE_SECOND",
+			format: "61:61",
+			ans:    "01:02:01.000000",
+		},
+		{
+			unit:   "HOUR_MICROSECOND",
+			format: "01:61:01.01",
+			ans:    "02:01:01.010000",
+		},
+		{
+			unit:   "HOUR_SECOND",
+			format: "01:61:01",
+			ans:    "02:01:01.000000",
+		},
+		{
+			unit:   "HOUr_MINUTE",
+			format: "2:2",
+			ans:    "02:02:00",
+		},
+		{
+			unit:   "DAY_MICRoSECOND",
+			format: "1 1:1:1.02",
+			ans:    "25:01:01.020000",
+		},
+		{
+			unit:   "DAY_SeCOND",
+			format: "1 02:03:04",
+			ans:    "26:03:04.000000",
+		},
+		{
+			unit:   "DAY_MINUTE",
+			format: "1 1:2",
+			ans:    "25:02:00",
+		},
+		{
+			unit:   "DAY_HOUr",
+			format: "1 1",
+			ans:    "25:00:00",
+		},
+		{
+			unit:   "DAY",
+			format: "-35",
+			failed: true,
+		},
+		{
+			unit:   "day",
+			format: "34",
+			ans:    "816:00:00",
+		},
+		{
+			unit:   "SECOND",
+			format: "-3020400",
+			failed: true,
+		},
+		{
+			unit:   "MONTH",
+			format: "1",
+			ans:    "720:00:00",
+		},
+		{
+			unit:   "MONTH",
+			format: "-2",
+			failed: true,
+		},
+		{
+			unit:   "DAY_second",
+			format: "34 23:59:59",
+			failed: true,
+		},
+		{
+			unit:   "DAY_hOUR",
+			format: "-34 23",
+			failed: true,
+		},
+	}
+	failedComment := "failed at case %d, unit: %s, format: %s"
+	for i, tt := range tests {
+		dur, err := types.ExtractDurationValue(tt.unit, tt.format)
+		if tt.failed {
+			c.Assert(err, NotNil, Commentf(failedComment+", dur: %v", i, tt.unit, tt.format, dur.String()))
+		} else {
+			c.Assert(err, IsNil, Commentf(failedComment+", error stack", i, tt.unit, tt.format, errors.ErrorStack(err)))
+			c.Assert(dur.String(), Equals, tt.ans, Commentf(failedComment, i, tt.unit, tt.format))
+		}
+	}
+}
+
 func (s *testTimeSuite) TestCurrentTime(c *C) {
 	res := types.CurrentTime(mysql.TypeTimestamp)
 	c.Assert(res.Time, NotNil)
@@ -1245,51 +1382,59 @@ func (s *testTimeSuite) TestExtractDurationNum(c *C) {
 	c.Assert(err, ErrorMatches, "invalid unit.*")
 }
 
-func (s *testTimeSuite) TestExtractTimeValue(c *C) {
+func (s *testTimeSuite) TestParseDurationValue(c *C) {
 	tbl := []struct {
 		format string
 		unit   string
 		res1   int64
 		res2   int64
 		res3   int64
-		res4   float64
+		res4   int64
+		err    *terror.Error
 	}{
-		{"52", "WEEK", 0, 0, 52 * 7, 0},
-		{"12", "DAY", 0, 0, 12, 0},
-		{"04", "MONTH", 0, 04, 0, 0},
-		{"1", "QUARTER", 0, 1 * 3, 0, 0},
-		{"2019", "YEAR", 2019, 0, 0, 0},
-		{"10567890", "SECOND_MICROSECOND", 0, 0, 0, 1.056789e+10},
-		{"10.567890", "SECOND_MICROSECOND", 0, 0, 0, 1.056789e+10},
-		{"-10.567890", "SECOND_MICROSECOND", 0, 0, 0, -1.056789e+10},
-		{"35:10567890", "MINUTE_SECOND", 0, 0, 0, 1.056999e+16},
-		{"3510567890", "MINUTE_SECOND", 0, 0, 0, 3.51056789e+18},
-		{"11:35:10.567890", "HOUR_MICROSECOND", 0, 0, 0, 4.171056789e+13},
-		{"567890", "HOUR_MICROSECOND", 0, 0, 0, 5.6789e+08},
-		{"14:00", "HOUR_MINUTE", 0, 0, 0, 5.04e+13},
-		{"14", "HOUR_MINUTE", 0, 0, 0, 8.4e+11},
-		{"12 14:00:00.345", "DAY_MICROSECOND", 0, 0, 12, 5.0400345e+13},
-		{"12 14:00:00", "DAY_SECOND", 0, 0, 12, 5.04e+13},
-		{"12 14:00", "DAY_MINUTE", 0, 0, 12, 5.04e+13},
-		{"12 14", "DAY_HOUR", 0, 0, 12, 5.04e+13},
-		{"1:1", "DAY_HOUR", 0, 0, 1, 3.6e+12},
-		{"aa1bb1", "DAY_HOUR", 0, 0, 1, 3.6e+12},
-		{"-1:1", "DAY_HOUR", 0, 0, -1, -3.6e+12},
-		{"-aa1bb1", "DAY_HOUR", 0, 0, -1, -3.6e+12},
-		{"2019-12", "YEAR_MONTH", 2019, 12, 0, 0},
-		{"1 1", "YEAR_MONTH", 1, 1, 0, 0},
-		{"aa1bb1", "YEAR_MONTH", 1, 1, 0, 0},
-		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0},
-		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0},
-		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0},
+		{"52", "WEEK", 0, 0, 52 * 7, 0, nil},
+		{"12", "DAY", 0, 0, 12, 0, nil},
+		{"04", "MONTH", 0, 04, 0, 0, nil},
+		{"1", "QUARTER", 0, 1 * 3, 0, 0, nil},
+		{"2019", "YEAR", 2019, 0, 0, 0, nil},
+		{"10567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, nil},
+		{"10.567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, nil},
+		{"-10.567890", "SECOND_MICROSECOND", 0, 0, 0, -10567890000, nil},
+		{"35:10567890", "MINUTE_SECOND", 0, 0, 122, 29190000000000, nil},      // 122 * 3600 * 24 + 29190 = 35 * 60 + 10567890
+		{"3510567890", "MINUTE_SECOND", 0, 0, 40631, 49490000000000, nil},     // 40631 * 3600 * 24 + 49490 = 3510567890
+		{"11:35:10.567890", "HOUR_MICROSECOND", 0, 0, 0, 41710567890000, nil}, // = (11 * 3600 + 35 * 60) * 1000000000 + 10567890000
+		{"567890", "HOUR_MICROSECOND", 0, 0, 0, 567890000, nil},
+		{"14:00", "HOUR_MINUTE", 0, 0, 0, 50400000000000, nil},
+		{"14", "HOUR_MINUTE", 0, 0, 0, 840000000000, nil},
+		{"12 14:00:00.345", "DAY_MICROSECOND", 0, 0, 12, 50400345000000, nil},
+		{"12 14:00:00", "DAY_SECOND", 0, 0, 12, 50400000000000, nil},
+		{"12 14:00", "DAY_MINUTE", 0, 0, 12, 50400000000000, nil},
+		{"12 14", "DAY_HOUR", 0, 0, 12, 50400000000000, nil},
+		{"1:1", "DAY_HOUR", 0, 0, 1, 3600000000000, nil},
+		{"aa1bb1", "DAY_HOUR", 0, 0, 1, 3600000000000, nil},
+		{"-1:1", "DAY_HOUR", 0, 0, -1, -3600000000000, nil},
+		{"-aa1bb1", "DAY_HOUR", 0, 0, -1, -3600000000000, nil},
+		{"2019-12", "YEAR_MONTH", 2019, 12, 0, 0, nil},
+		{"1 1", "YEAR_MONTH", 1, 1, 0, 0, nil},
+		{"aa1bb1", "YEAR_MONTH", 1, 1, 0, 0, nil},
+		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0, nil},
+		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0, nil},
+		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0, nil},
+		{"1.111", "MICROSECOND", 0, 0, 0, 1000, types.ErrTruncatedWrongValue},
+		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongValue},
 	}
 	for _, col := range tbl {
-		res1, res2, res3, res4, err := types.ExtractTimeValue(col.unit, col.format)
-		c.Assert(res1, Equals, col.res1)
-		c.Assert(res2, Equals, col.res2)
-		c.Assert(res3, Equals, col.res3)
-		c.Assert(res4, Equals, col.res4)
-		c.Assert(err, IsNil)
+		comment := Commentf("Extract %v Unit %v", col.format, col.unit)
+		res1, res2, res3, res4, err := types.ParseDurationValue(col.unit, col.format)
+		c.Assert(res1, Equals, col.res1, comment)
+		c.Assert(res2, Equals, col.res2, comment)
+		c.Assert(res3, Equals, col.res3, comment)
+		c.Assert(res4, Equals, col.res4, comment)
+		if col.err == nil {
+			c.Assert(err, IsNil, comment)
+		} else {
+			c.Assert(col.err.Equal(err), IsTrue)
+		}
 	}
 
 }
@@ -1453,5 +1598,45 @@ func (s *testTimeSuite) TestTimeSub(c *C) {
 		c.Assert(err, IsNil)
 		rec := v1.Sub(sc, &v2)
 		c.Assert(rec, Equals, dur)
+	}
+}
+
+func (s *testTimeSuite) TestCheckMonthDay(c *C) {
+	dates := []struct {
+		date        types.MysqlTime
+		isValidDate bool
+	}{
+		{types.FromDate(1900, 2, 29, 0, 0, 0, 0), false},
+		{types.FromDate(1900, 2, 28, 0, 0, 0, 0), true},
+		{types.FromDate(2000, 2, 29, 0, 0, 0, 0), true},
+		{types.FromDate(2000, 1, 1, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 1, 1, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 1, 31, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 4, 1, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 4, 31, 0, 0, 0, 0), false},
+		{types.FromDate(1900, 4, 30, 0, 0, 0, 0), true},
+		{types.FromDate(2000, 2, 30, 0, 0, 0, 0), false},
+		{types.FromDate(2000, 13, 1, 0, 0, 0, 0), false},
+		{types.FromDate(4000, 2, 29, 0, 0, 0, 0), true},
+		{types.FromDate(3200, 2, 29, 0, 0, 0, 0), true},
+	}
+
+	sc := &stmtctx.StatementContext{
+		TimeZone:         time.UTC,
+		AllowInvalidDate: false,
+	}
+
+	for _, t := range dates {
+		tt := types.Time{
+			Time: t.date,
+			Type: mysql.TypeDate,
+			Fsp:  types.DefaultFsp,
+		}
+		err := tt.Check(sc)
+		if t.isValidDate {
+			c.Check(err, IsNil)
+		} else {
+			c.Check(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+		}
 	}
 }

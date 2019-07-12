@@ -44,7 +44,7 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, "highlight", "", logutil.EmptyFileLogConfig, false))
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
 	testleak.BeforeTest()
 	TestingT(t)
 	testleak.AfterTestT(t)()
@@ -110,7 +110,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Make sure that the table's data has not been deleted.
 	rs, err := s.se.Execute(context.Background(), "select count(*) from t")
 	c.Assert(err, IsNil)
-	req := rs[0].NewRecordBatch()
+	req := rs[0].NewChunk()
 	err = rs[0].Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -146,7 +146,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Make sure that the table's data has not been deleted.
 	rs, err = s.se.Execute(context.Background(), "select count(*) from tx")
 	c.Assert(err, IsNil)
-	req = rs[0].NewRecordBatch()
+	req = rs[0].NewChunk()
 	err = rs[0].Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -385,4 +385,18 @@ LOOP:
 	c.Assert(checkNum, Greater, 5)
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
+}
+
+// TestRunDDLJobPanic tests recover panic when run ddl job panic.
+func (s *testFailDBSuite) TestRunDDLJobPanic(c *C) {
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`), IsNil)
+	_, err := tk.Exec("create table t(c1 int, c2 int)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 }

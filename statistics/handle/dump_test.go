@@ -35,12 +35,12 @@ func (s *testStatsSuite) TestConversion(c *C) {
 	tk.MustExec("insert into t(a,b) values (1, 1),(3, 1),(5, 10)")
 	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-	h.DumpStatsDeltaToKV(handle.DumpAll)
-	h.Update(is)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta())
+	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
 	c.Assert(err, IsNil)
 	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
 	c.Assert(err, IsNil)
@@ -73,12 +73,12 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t")
 	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
-	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo)
+	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo, nil)
 	c.Assert(err, IsNil)
 	pi := tableInfo.GetPartitionInfo()
 	originTables := make([]*statistics.Table, 0, len(pi.Definitions))
@@ -105,15 +105,15 @@ func (s *testStatsSuite) TestDumpAlteredTable(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	h := s.do.StatsHandle()
-	oriLease := h.Lease
-	h.Lease = 1
-	defer func() { h.Lease = oriLease }()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() { h.SetLease(oriLease) }()
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("analyze table t")
 	tk.MustExec("alter table t drop column a")
 	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	_, err = h.DumpStatsToJSON("test", table.Meta())
+	_, err = h.DumpStatsToJSON("test", table.Meta(), nil)
 	c.Assert(err, IsNil)
 }
 
@@ -131,7 +131,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := s.do.StatsHandle()
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 
 	// Insert 30 fake data
 	fakeData := make([][]byte, 0, 30)
@@ -150,7 +150,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	c.Assert(cmsFromStore, NotNil)
 	c.Check(cms.Equal(cmsFromStore), IsTrue)
 
-	jsonTable, err := h.DumpStatsToJSON("test", tableInfo)
+	jsonTable, err := h.DumpStatsToJSON("test", tableInfo, nil)
 	c.Check(err, IsNil)
 	err = h.LoadStatsFromJSON(is, jsonTable)
 	c.Check(err, IsNil)

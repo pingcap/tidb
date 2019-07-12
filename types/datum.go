@@ -14,7 +14,6 @@
 package types
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -911,11 +910,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 			val, err = ConvertIntToUint(sc, ival, upperBound, tp)
 		}
 	case KindMysqlDecimal:
-		fval, err1 := d.GetMysqlDecimal().ToFloat64()
-		val, err = ConvertFloatToUint(sc, fval, upperBound, tp)
-		if err == nil {
-			err = err1
-		}
+		val, err = ConvertDecimalToUint(sc, d.GetMysqlDecimal(), upperBound, tp)
 	case KindMysqlEnum:
 		val, err = ConvertFloatToUint(sc, d.GetMysqlEnum().ToNumber(), upperBound, tp)
 	case KindMysqlSet:
@@ -1249,7 +1244,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
-		logutil.Logger(context.Background()).Error("convert to MySQL enum failed", zap.Error(err))
+		logutil.BgLogger().Error("convert to MySQL enum failed", zap.Error(err))
 		err = errors.Trace(ErrTruncated)
 	}
 	ret.SetValue(e)
@@ -1835,14 +1830,14 @@ func DatumsToStrNoErr(datums []Datum) string {
 	return str
 }
 
-// CopyDatum returns a new copy of the datum.
+// CloneDatum returns a new copy of the datum.
 // TODO: Abandon this function.
-func CopyDatum(datum Datum) Datum {
+func CloneDatum(datum Datum) Datum {
 	return *datum.Copy()
 }
 
-// CopyRow deep copies a Datum slice.
-func CopyRow(dr []Datum) []Datum {
+// CloneRow deep copies a Datum slice.
+func CloneRow(dr []Datum) []Datum {
 	c := make([]Datum, len(dr))
 	for i, d := range dr {
 		c[i] = *d.Copy()

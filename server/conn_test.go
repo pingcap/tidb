@@ -18,13 +18,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
+	"io"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 type ConnTestSuite struct {
@@ -32,9 +40,24 @@ type ConnTestSuite struct {
 	store kv.Storage
 }
 
-var _ = Suite(ConnTestSuite{})
+var _ = Suite(&ConnTestSuite{})
 
-func (ts ConnTestSuite) TestMalformHandshakeHeader(c *C) {
+func (ts *ConnTestSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	ts.dom, err = session.BootstrapSession(ts.store)
+	c.Assert(err, IsNil)
+}
+
+func (ts *ConnTestSuite) TearDownSuite(c *C) {
+	ts.dom.Close()
+	ts.store.Close()
+	testleak.AfterTest(c)()
+}
+
+func (ts *ConnTestSuite) TestMalformHandshakeHeader(c *C) {
 	c.Parallel()
 	data := []byte{0x00}
 	var p handshakeResponse41
@@ -42,7 +65,7 @@ func (ts ConnTestSuite) TestMalformHandshakeHeader(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (ts ConnTestSuite) TestParseHandshakeResponse(c *C) {
+func (ts *ConnTestSuite) TestParseHandshakeResponse(c *C) {
 	c.Parallel()
 	// test data from http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse41
 	data := []byte{
@@ -110,7 +133,7 @@ func (ts ConnTestSuite) TestParseHandshakeResponse(c *C) {
 	c.Assert(p.User, Equals, "root")
 }
 
-func (ts ConnTestSuite) TestIssue1768(c *C) {
+func (ts *ConnTestSuite) TestIssue1768(c *C) {
 	c.Parallel()
 	// this data is from captured handshake packet, using mysql client.
 	// TiDB should handle authorization correctly, even mysql client set
@@ -137,7 +160,7 @@ func (ts ConnTestSuite) TestIssue1768(c *C) {
 	c.Assert(len(p.Auth) > 0, IsTrue)
 }
 
-func (ts ConnTestSuite) TestInitialHandshake(c *C) {
+func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Parallel()
 	var outBuffer bytes.Buffer
 	cc := &clientConn{
@@ -171,13 +194,157 @@ func (ts ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
 }
 
-func (ts ConnTestSuite) testGetSessionVarsWaitTimeout(c *C) {
+func (ts *ConnTestSuite) TestDispatch(c *C) {
+	userData := append([]byte("root"), 0x0, 0x0)
+	userData = append(userData, []byte("test")...)
+	userData = append(userData, 0x0)
+
+	inputs := []struct {
+		com byte
+		in  []byte
+		err error
+		out []byte
+	}{
+		{
+			com: mysql.ComSleep,
+			in:  nil,
+			err: nil,
+			out: nil,
+		},
+		{
+			com: mysql.ComQuit,
+			in:  nil,
+			err: io.EOF,
+			out: nil,
+		},
+		{
+			com: mysql.ComQuery,
+			in:  []byte("do 1"),
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x0, 0x0, 0x00, 0x0},
+		},
+		{
+			com: mysql.ComInitDB,
+			in:  []byte("test"),
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComPing,
+			in:  nil,
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComStmtPrepare,
+			in:  []byte("select 1"),
+			err: nil,
+			out: []byte{
+				0xc, 0x0, 0x0, 0x3, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x18,
+				0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x1, 0x31, 0xc, 0x3f,
+				0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x80, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x5, 0xfe,
+			},
+		},
+		{
+			com: mysql.ComStmtExecute,
+			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x1, 0x0},
+			err: nil,
+			out: []byte{
+				0x1, 0x0, 0x0, 0x6, 0x1, 0x18, 0x0, 0x0, 0x7, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
+				0x1, 0x31, 0x1, 0x31, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x80, 0x0, 0x0, 0x0,
+				0x0, 0x1, 0x0, 0x0, 0x8, 0xfe,
+			},
+		},
+		{
+			com: mysql.ComStmtFetch,
+			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x1, 0x0, 0x0, 0x9, 0xfe},
+		},
+		{
+			com: mysql.ComStmtReset,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0xa, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComSetOption,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x1, 0x0, 0x0, 0xb, 0xfe},
+		},
+		{
+			com: mysql.ComStmtClose,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{},
+		},
+		{
+			com: mysql.ComFieldList,
+			in:  []byte("t"),
+			err: nil,
+			out: []byte{
+				0x26, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
+				0x1, 0x74, 0x1, 0x61, 0x1, 0x61, 0xc, 0x3f, 0x0, 0xb, 0x0, 0x0, 0x0, 0x3, 0x0, 0x0,
+				0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0xd, 0xfe,
+			},
+		},
+		{
+			com: mysql.ComChangeUser,
+			in:  userData,
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0xe, 0x0, 0x0, 0x0},
+		},
+	}
+
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+	tc := &TiDBContext{
+		session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	_, err = se.Execute(context.Background(), "create table test.t(a int)")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "insert into test.t values (1)")
+	c.Assert(err, IsNil)
+
+	var outBuffer bytes.Buffer
+	tidbdrv := NewTiDBDriver(ts.store)
+	cfg := config.NewConfig()
+	cfg.Port = 4005
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	c.Assert(err, IsNil)
+
+	cc := &clientConn{
+		connectionID: 1,
+		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
+		server:       server,
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(&outBuffer),
+		},
+		collation: mysql.DefaultCollationID,
+		peerHost:  "localhost",
+		alloc:     arena.NewAllocator(512),
+		ctx:       tc,
+	}
+	for _, cs := range inputs {
+		inBytes := append([]byte{cs.com}, cs.in...)
+		err := cc.dispatch(context.Background(), inBytes)
+		c.Assert(err, Equals, cs.err)
+		if err == nil {
+			err = cc.flush()
+			c.Assert(err, IsNil)
+			c.Assert(outBuffer.Bytes(), DeepEquals, cs.out)
+		} else {
+			_ = cc.flush()
+		}
+		outBuffer.Reset()
+	}
+}
+
+func (ts *ConnTestSuite) testGetSessionVarsWaitTimeout(c *C) {
 	c.Parallel()
-	var err error
-	ts.store, err = mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	ts.dom, err = session.BootstrapSession(ts.store)
-	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 	tc := &TiDBContext{
@@ -206,4 +373,91 @@ func mapBelong(m1, m2 map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
+	//There is no underlying netCon, use failpoint to avoid panic
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
+
+	c.Parallel()
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+
+	connID := 1
+	se.SetConnectionID(uint64(connID))
+	tc := &TiDBContext{
+		session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: uint32(connID),
+		server: &Server{
+			capability: defaultCapability,
+		},
+		ctx:   tc,
+		alloc: arena.NewAllocator(32 * 1024),
+	}
+	srv := &Server{
+		clients: map[uint32]*clientConn{
+			uint32(connID): cc,
+		},
+	}
+	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
+	go handle.Run()
+
+	_, err = se.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
+	c.Assert(err, IsNil)
+	for i := 0; i < 10; i++ {
+		str := fmt.Sprintf("insert into testTable2 values(%d, %d)", i, i%80)
+		_, err = se.Execute(context.Background(), str)
+		c.Assert(err, IsNil)
+	}
+
+	_, err = se.Execute(context.Background(), "select SLEEP(1);")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 500;")
+	c.Assert(err, IsNil)
+
+	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
+	c.Assert(err, IsNil)
+
+	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
+	c.Assert(err, IsNil)
+
+	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
+}
+
+type mockTiDBCtx struct {
+	TiDBContext
+	rs  []ResultSet
+	err error
+}
+
+func (c *mockTiDBCtx) Execute(ctx context.Context, sql string) ([]ResultSet, error) {
+	return c.rs, c.err
+}
+
+func (c *mockTiDBCtx) GetSessionVars() *variable.SessionVars {
+	return &variable.SessionVars{}
+}
+
+func (ts *ConnTestSuite) TestShutDown(c *C) {
+	cc := &clientConn{}
+
+	// mock delay response
+	cc.ctx = &mockTiDBCtx{rs: []ResultSet{&tidbResultSet{}}, err: nil}
+	// set killed flag
+	cc.status = connStatusShutdown
+	// assert ErrQueryInterrupted
+	err := cc.handleQuery(context.Background(), "dummy")
+	c.Assert(err, Equals, executor.ErrQueryInterrupted)
 }

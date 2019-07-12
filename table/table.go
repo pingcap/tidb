@@ -18,6 +18,9 @@
 package table
 
 import (
+	"context"
+
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -79,11 +82,12 @@ var (
 	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "incorrect value")
 	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
 	ErrTruncatedWrongValueForField = terror.ClassTable.New(codeTruncateWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
-
 	// ErrUnknownPartition returns unknown partition error.
 	ErrUnknownPartition = terror.ClassTable.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
 	// ErrNoPartitionForGivenValue returns table has no partition for value.
 	ErrNoPartitionForGivenValue = terror.ClassTable.New(codeNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
+	// ErrLockOrActiveTransaction returns when execute unsupported statement in a lock session or an active transaction.
+	ErrLockOrActiveTransaction = terror.ClassTable.New(codeLockOrActiveTransaction, mysql.MySQLErrName[mysql.ErrLockOrActiveTransaction])
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -93,6 +97,26 @@ type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool,
 type AddRecordOpt struct {
 	CreateIdxOpt
 	IsUpdate bool
+}
+
+// AddRecordOption is defined for the AddRecord() method of the Table interface.
+type AddRecordOption interface {
+	ApplyOn(*AddRecordOpt)
+}
+
+// ApplyOn implements the AddRecordOption interface, so any CreateIdxOptFunc
+// can be passed as the optional argument to the table.AddRecord method.
+func (f CreateIdxOptFunc) ApplyOn(opt *AddRecordOpt) {
+	f(&opt.CreateIdxOpt)
+}
+
+// IsUpdate is a defined value for AddRecordOptFunc.
+var IsUpdate AddRecordOption = isUpdate{}
+
+type isUpdate struct{}
+
+func (i isUpdate) ApplyOn(opt *AddRecordOpt) {
+	opt.IsUpdate = true
 }
 
 // Table is used to retrieve and modify rows in table.
@@ -135,7 +159,7 @@ type Table interface {
 	RecordKey(h int64) kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*AddRecordOpt) (recordID int64, err error)
+	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID int64, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
 	UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error
@@ -143,8 +167,8 @@ type Table interface {
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error
 
-	// AllocAutoID allocates an auto_increment ID for a new row.
-	AllocAutoID(ctx sessionctx.Context) (int64, error)
+	// AllocHandle allocates a handle for a new row.
+	AllocHandle(ctx sessionctx.Context) (int64, error)
 
 	// Allocator returns Allocator.
 	Allocator(ctx sessionctx.Context) autoid.Allocator
@@ -162,6 +186,15 @@ type Table interface {
 
 	// Type returns the type of table
 	Type() Type
+}
+
+// AllocAutoIncrementValue allocates an auto_increment value for a new row.
+func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context) (int64, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("table.AllocAutoIncrementValue", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+	return t.Allocator(sctx).Alloc(t.Meta().ID)
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
@@ -209,6 +242,7 @@ const (
 
 	codeUnknownPartition         = mysql.ErrUnknownPartition
 	codeNoPartitionForGivenValue = mysql.ErrNoPartitionForGivenValue
+	codeLockOrActiveTransaction  = mysql.ErrLockOrActiveTransaction
 )
 
 // Slice is used for table sorting.
@@ -231,6 +265,7 @@ func init() {
 		codeTruncateWrongValue:       mysql.ErrTruncatedWrongValueForField,
 		codeUnknownPartition:         mysql.ErrUnknownPartition,
 		codeNoPartitionForGivenValue: mysql.ErrNoPartitionForGivenValue,
+		codeLockOrActiveTransaction:  mysql.ErrLockOrActiveTransaction,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }

@@ -33,7 +33,7 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, "highlight", "", logutil.EmptyFileLogConfig, false))
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -75,6 +75,7 @@ func (s *testSuite) TestFailNewSession(c *C) {
 			if cli != nil {
 				cli.Close()
 			}
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/owner/closeClient"), IsNil)
 		}()
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`), IsNil)
 		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
@@ -92,6 +93,7 @@ func (s *testSuite) TestFailNewSession(c *C) {
 			if cli != nil {
 				cli.Close()
 			}
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/owner/closeGrpc"), IsNil)
 		}()
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`), IsNil)
 		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)

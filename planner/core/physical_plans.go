@@ -187,11 +187,9 @@ type PhysicalTopN struct {
 
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
-	physicalSchemaProducer
+	PhysicalHashJoin
 
-	PhysicalJoin *PhysicalHashJoin
-	OuterSchema  []*expression.CorrelatedColumn
-
+	OuterSchema   []*expression.CorrelatedColumn
 	rightChOffset int
 }
 
@@ -380,16 +378,20 @@ type PhysicalTableDual struct {
 	physicalSchemaProducer
 
 	RowCount int
+	// placeHolder indicates if this dual plan is a place holder in query optimization
+	// for data sources like `Show`, if true, the dual plan would be substituted by
+	// `Show` in the final plan.
+	placeHolder bool
 }
 
 // PhysicalWindow is the physical operator of window function.
 type PhysicalWindow struct {
 	physicalSchemaProducer
 
-	WindowFuncDesc *aggregation.WindowFuncDesc
-	PartitionBy    []property.Item
-	OrderBy        []property.Item
-	Frame          *WindowFrame
+	WindowFuncDescs []*aggregation.WindowFuncDesc
+	PartitionBy     []property.Item
+	OrderBy         []property.Item
+	Frame           *WindowFrame
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

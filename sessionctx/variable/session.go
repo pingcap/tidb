@@ -100,16 +100,19 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
 	ForUpdate     bool
+	forUpdateTS   uint64
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
+	CouldRetry    bool
 	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
+	IsPessimistic bool
 
-	// For metrics.
+	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
 }
@@ -133,7 +136,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
-	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
+	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
 	tc.DirtyDB = nil
 	tc.Binlog = nil
 	tc.History = nil
@@ -143,6 +146,21 @@ func (tc *TransactionContext) Cleanup() {
 // ClearDelta clears the delta map.
 func (tc *TransactionContext) ClearDelta() {
 	tc.TableDeltaMap = nil
+}
+
+// GetForUpdateTS returns the ts for update.
+func (tc *TransactionContext) GetForUpdateTS() uint64 {
+	if tc.forUpdateTS > tc.StartTS {
+		return tc.forUpdateTS
+	}
+	return tc.StartTS
+}
+
+// SetForUpdateTS sets the ts for update.
+func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
+	if forUpdateTS > tc.forUpdateTS {
+		tc.forUpdateTS = forUpdateTS
+	}
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
@@ -188,15 +206,14 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
-	// params for prepared statements
+	// PreparedParams params for prepared statements
 	PreparedParams []types.Datum
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
 
-	// retry information
 	RetryInfo *RetryInfo
-	// Should be reset on transaction finished.
+	//  TxnCtx Should be reset on transaction finished.
 	TxnCtx *TransactionContext
 
 	// KVVars is the variables for KV storage.
@@ -204,9 +221,9 @@ type SessionVars struct {
 
 	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
 	TxnIsolationLevelOneShot struct {
-		// state 0 means default
-		// state 1 means it's set in current transaction.
-		// state 2 means it should be used in current transaction.
+		// State 0 means default
+		// State 1 means it's set in current transaction.
+		// State 2 means it should be used in current transaction.
 		State int
 		Value string
 	}
@@ -322,11 +339,17 @@ type SessionVars struct {
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
+	// EnableIndexMerge enables the generation of IndexMergePath.
+	EnableIndexMerge bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
-	// WaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
-	WaitTableSplitFinish bool
+	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
+	WaitSplitRegionFinish bool
+
+	// WaitSplitRegionTimeout defines the split region timeout.
+	WaitSplitRegionTimeout uint64
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -347,7 +370,7 @@ type SessionVars struct {
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
 
-	// TIDBOptJoinOrderAlgoThreshold defines the minimal number of join nodes
+	// TiDBOptJoinReorderThreshold defines the minimal number of join nodes
 	// to use the greedy join reorder algorithm.
 	TiDBOptJoinReorderThreshold int
 
@@ -356,6 +379,26 @@ type SessionVars struct {
 
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
+
+	// TxnMode indicates should be pessimistic or optimistic.
+	TxnMode string
+
+	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
+	LowResolutionTSO bool
+
+	// MaxExecutionTime is the timeout for select statement, in milliseconds.
+	// If the value is 0, timeouts are not enabled.
+	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
+	MaxExecutionTime uint64
+
+	// Killed is a flag to indicate that this query is killed.
+	Killed uint32
+
+	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
+	ConnectionInfo *ConnectionInfo
+
+	// use noop funcs or not
+	EnableNoopFuncs bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -406,6 +449,10 @@ func NewSessionVars() *SessionVars {
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
+		EnableIndexMerge:            false,
+		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -448,6 +495,11 @@ func NewSessionVars() *SessionVars {
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
 func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 	return &s.writeStmtBufs
+}
+
+// GetSplitRegionTimeout gets split region timeout.
+func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
+	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
 }
 
 // CleanBuffers cleans the temporary bufs
@@ -551,15 +603,6 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	return val, ok
 }
 
-// deleteSystemVar deletes a system variable.
-func (s *SessionVars) deleteSystemVar(name string) error {
-	if name != CharacterSetResults {
-		return ErrCantSetToNull
-	}
-	delete(s.systems, name)
-	return nil
-}
-
 func (s *SessionVars) setDDLReorgPriority(val string) {
 	val = strings.ToLower(val)
 	switch val {
@@ -659,12 +702,15 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if err != nil {
 			return err
 		}
-	case AutocommitVar:
+	case AutoCommit:
 		isAutocommit := TiDBOptOn(val)
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
+	case MaxExecutionTime:
+		timeoutMS := tidbOptPositiveInt32(val, 0)
+		s.MaxExecutionTime = uint64(timeoutMS)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
@@ -676,7 +722,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptCorrelationThreshold:
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 	case TiDBOptCorrelationExpFactor:
-		s.CorrelationExpFactor = tidbOptPositiveInt32(val, DefOptCorrelationExpFactor)
+		s.CorrelationExpFactor = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
@@ -699,6 +745,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBBackoffLockFast:
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
+	case TiDBBackOffWeight:
+		s.KVVars.BackOffWeight = tidbOptPositiveInt32(val, kv.DefBackOffWeight)
 	case TiDBConstraintCheckInPlace:
 		s.ConstraintCheckInPlace = TiDBOptOn(val)
 	case TiDBBatchInsert:
@@ -767,10 +815,38 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SlowQueryFile = val
 	case TiDBEnableFastAnalyze:
 		s.EnableFastAnalyze = TiDBOptOn(val)
-	case TiDBWaitTableSplitFinish:
-		s.WaitTableSplitFinish = TiDBOptOn(val)
+	case TiDBWaitSplitRegionFinish:
+		s.WaitSplitRegionFinish = TiDBOptOn(val)
+	case TiDBWaitSplitRegionTimeout:
+		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeout))
+	case TiDBExpensiveQueryTimeThreshold:
+		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
+	case TiDBTxnMode:
+		if err := s.setTxnMode(val); err != nil {
+			return err
+		}
+	case TiDBLowResolutionTSO:
+		s.LowResolutionTSO = TiDBOptOn(val)
+	case TiDBEnableIndexMerge:
+		s.EnableIndexMerge = TiDBOptOn(val)
+	case TiDBEnableNoopFuncs:
+		s.EnableNoopFuncs = TiDBOptOn(val)
 	}
 	s.systems[name] = val
+	return nil
+}
+
+func (s *SessionVars) setTxnMode(val string) error {
+	switch strings.ToUpper(val) {
+	case ast.Pessimistic:
+		s.TxnMode = ast.Pessimistic
+	case ast.Optimistic:
+		s.TxnMode = ast.Optimistic
+	case "":
+		s.TxnMode = ""
+	default:
+		return ErrWrongValueForVar.FastGenByArgs(TiDBTxnMode, val)
+	}
 	return nil
 }
 
@@ -789,13 +865,13 @@ func SetLocalSystemVar(name string, val string) {
 // special session variables.
 const (
 	SQLModeVar           = "sql_mode"
-	AutocommitVar        = "autocommit"
 	CharacterSetResults  = "character_set_results"
 	MaxAllowedPacket     = "max_allowed_packet"
 	TimeZone             = "time_zone"
 	TxnIsolation         = "tx_isolation"
 	TransactionIsolation = "transaction_isolation"
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
+	MaxExecutionTime     = "max_execution_time"
 )
 
 // these variables are useless for TiDB, but still need to validate their values for some compatible issues.
@@ -842,7 +918,7 @@ type Concurrency struct {
 	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
 	HashAggPartialConcurrency int
 
-	// HashAggPartialConcurrency is the number of concurrent hash aggregation final worker.
+	// HashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
 	HashAggFinalConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
@@ -905,6 +981,8 @@ const (
 	SlowLogTxnStartTSStr = "Txn_start_ts"
 	// SlowLogUserStr is slow log field name.
 	SlowLogUserStr = "User"
+	// SlowLogHostStr only for slow_query table usage.
+	SlowLogHostStr = "Host"
 	// SlowLogConnIDStr is slow log field name.
 	SlowLogConnIDStr = "Conn_ID"
 	// SlowLogQueryTimeStr is slow log field name.

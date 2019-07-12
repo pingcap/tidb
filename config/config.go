@@ -15,7 +15,6 @@ package config
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -35,7 +34,13 @@ import (
 
 // Config number limitations
 const (
-	MaxLogFileSize = 4096 // MB
+	MaxLogFileSize    = 4096 // MB
+	MinPessimisticTTL = time.Second * 15
+	MaxPessimisticTTL = time.Second * 60
+	// DefTxnEntryCountLimit is the default value of TxnEntryCountLimit.
+	DefTxnEntryCountLimit = 300 * 1000
+	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
+	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Valid config maps
@@ -82,10 +87,15 @@ type Config struct {
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
+	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	// EnableTableLock indicate whether enable table lock.
+	// TODO: remove this after table lock features stable.
+	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
+	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 }
 
 // Log is the log section of config.
@@ -186,6 +196,9 @@ type Performance struct {
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
+	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnEntryCountLimit  uint64  `toml:"txn-entry-count-limit" json:"txn-entry-count-limit"`
+	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -291,6 +304,18 @@ type Plugin struct {
 	Load string `toml:"load" json:"load"`
 }
 
+// PessimisticTxn is the config for pessimistic transaction.
+type PessimisticTxn struct {
+	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
+	Enable bool `toml:"enable" json:"enable"`
+	// Starts a pessimistic transaction by default when Enable is true.
+	Default bool `toml:"default" json:"default"`
+	// The max count of retry for a single statement in a pessimistic transaction.
+	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+	// The pessimistic lock ttl.
+	TTL string `toml:"ttl" json:"ttl"`
+}
+
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -307,6 +332,8 @@ var defaultConf = Config{
 	EnableStreaming:              false,
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,
+	EnableTableLock:              false,
+	DelayCleanTableLock:          0,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 2048000,
@@ -339,6 +366,9 @@ var defaultConf = Config{
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
+		BindInfoLease:       "3s",
+		TxnEntryCountLimit:  DefTxnEntryCountLimit,
+		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -374,6 +404,12 @@ var defaultConf = Config{
 		WriteTimeout: "15s",
 		Strategy:     "range",
 	},
+	PessimisticTxn: PessimisticTxn{
+		Enable:        false,
+		Default:       false,
+		MaxRetryCount: 256,
+		TTL:           "30s",
+	},
 }
 
 var (
@@ -407,6 +443,11 @@ func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...st
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
 	return globalConf.Load().(*Config)
+}
+
+// StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
+func StoreGlobalConfig(config *Config) {
+	globalConf.Store(config)
 }
 
 // ReloadGlobalConfig reloads global configuration for this server.
@@ -444,7 +485,7 @@ func ReloadGlobalConfig() error {
 
 	confReloader(nc, c)
 	globalConf.Store(nc)
-	logutil.Logger(context.Background()).Info("reload config changes" + formattedDiff.String())
+	logutil.BgLogger().Info("reload config changes" + formattedDiff.String())
 	return nil
 }
 
@@ -518,6 +559,9 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
 	}
 	c.OOMAction = strings.ToLower(c.OOMAction)
+	if c.OOMAction != OOMActionLog && c.OOMAction != OOMActionCancel {
+		return fmt.Errorf("unsupported OOMAction %v, TiDB only supports [%v, %v]", c.OOMAction, OOMActionLog, OOMActionCancel)
+	}
 
 	// lower_case_table_names is allowed to be 0, 1, 2
 	if c.LowerCaseTableNames < 0 || c.LowerCaseTableNames > 2 {
@@ -535,11 +579,31 @@ func (c *Config) Valid() error {
 	if c.TiKVClient.MaxTxnTimeUse == 0 {
 		return fmt.Errorf("max-txn-time-use should be greater than 0")
 	}
+	if c.PessimisticTxn.TTL != "" {
+		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)
+		if err != nil {
+			return err
+		}
+		if dur < MinPessimisticTTL || dur > MaxPessimisticTTL {
+			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]",
+				dur, MinPessimisticTTL, MaxPessimisticTTL)
+		}
+	}
 	return nil
 }
 
 func hasRootPrivilege() bool {
 	return os.Geteuid() == 0
+}
+
+// TableLockEnabled uses to check whether enabled the table lock feature.
+func TableLockEnabled() bool {
+	return GetGlobalConfig().EnableTableLock
+}
+
+// TableLockDelayClean uses to get the time of delay clean table lock.
+var TableLockDelayClean = func() uint64 {
+	return GetGlobalConfig().DelayCleanTableLock
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

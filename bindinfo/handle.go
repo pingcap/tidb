@@ -72,6 +72,9 @@ type BindHandle struct {
 	lastUpdateTime types.Time
 }
 
+// Lease influences the duration of loading bind info and handling invalid bind.
+var Lease = 3 * time.Second
+
 type invalidBindRecordMap struct {
 	bindRecord  *BindRecord
 	droppedTime time.Time
@@ -116,7 +119,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 			h.lastUpdateTime = meta.UpdateTime
 		}
 		if err != nil {
-			logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
+			logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 			continue
 		}
 
@@ -243,7 +246,7 @@ func (h *BindHandle) DropInvalidBindRecord() {
 		if invalidBindRecord.droppedTime.IsZero() {
 			err := h.DropBindRecord(invalidBindRecord.bindRecord)
 			if err != nil {
-				logutil.Logger(context.Background()).Error("DropInvalidBindRecord failed", zap.Error(err))
+				logutil.BgLogger().Error("DropInvalidBindRecord failed", zap.Error(err))
 			}
 			invalidBindRecord.droppedTime = time.Now()
 			continue
@@ -284,8 +287,8 @@ func (h *BindHandle) Size() int {
 }
 
 // GetBindRecord return the bindMeta of the (normdOrigSQL,db) if bindMeta exist.
-func (h *BindHandle) GetBindRecord(normdOrigSQL, db string) *BindMeta {
-	return h.bindInfo.Load().(cache).getBindRecord(normdOrigSQL, db)
+func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindMeta {
+	return h.bindInfo.Load().(cache).getBindRecord(hash, normdOrigSQL, db)
 }
 
 // GetAllBindRecord return all bind record in cache.
@@ -387,8 +390,7 @@ func copyInvalidBindRecordMap(oldMap map[string]*invalidBindRecordMap) map[strin
 	return newMap
 }
 
-func (c cache) getBindRecord(normdOrigSQL, db string) *BindMeta {
-	hash := parser.DigestHash(normdOrigSQL)
+func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindMeta {
 	bindRecords := c[hash]
 	if bindRecords != nil {
 		for _, bindRecord := range bindRecords {

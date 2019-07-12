@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 	"golang.org/x/tools/container/intsets"
 )
 
@@ -68,7 +69,10 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, 
 	if !prop.IsEmpty() {
 		return invalidTask, nil
 	}
-	dual := PhysicalTableDual{RowCount: p.RowCount}.Init(p.ctx, p.stats)
+	dual := PhysicalTableDual{
+		RowCount:    p.RowCount,
+		placeHolder: p.placeHolder,
+	}.Init(p.ctx, p.stats)
 	dual.SetSchema(p.schema)
 	return &rootTask{p: dual}, nil
 }
@@ -528,7 +532,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	}
 	// prop.IsEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
-	is.addPushedDownSelection(cop, ds, prop.ExpectedCnt, path)
+	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
+	is.addPushedDownSelection(cop, ds, path, finalStats)
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -569,16 +574,16 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64, path *accessPath) {
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *accessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
 		copTask.cst += copTask.count() * cpuFactor
-		count := path.countAfterAccess
-		if count >= 1.0 {
-			selectivity := path.countAfterIndex / path.countAfterAccess
-			count = is.stats.RowCount * selectivity
+		var selectivity float64
+		if path.countAfterAccess > 0 {
+			selectivity = path.countAfterIndex / path.countAfterAccess
 		}
+		count := is.stats.RowCount * selectivity
 		stats := &property.StatsInfo{RowCount: count}
 		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats)
 		indexSel.SetChildren(is)
@@ -587,7 +592,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	if tableConds != nil {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * cpuFactor
-		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, p.stats.ScaleByExpectCnt(expectedCnt))
+		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats)
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
@@ -619,33 +624,35 @@ func splitIndexFilterConditions(conditions []expression.Expression, indexColumns
 }
 
 // getMostCorrColFromExprs checks if column in the condition is correlated enough with handle. If the condition
-// contains multiple columns, choose the most correlated one, and compute an overall correlation factor by multiplying
-// single factors.
+// contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
 func getMostCorrColFromExprs(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
 	var cols []*expression.Column
 	cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	compCorr := 1.0
+	colSet := set.NewInt64Set()
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		hist, ok := histColl.Columns[col.ID]
-		if !ok {
-			return nil, 0
-		}
-		curCorr := math.Abs(hist.Correlation)
-		compCorr *= curCorr
-		if curCorr < threshold {
+		if colSet.Exist(col.UniqueID) {
 			continue
 		}
+		colSet.Insert(col.UniqueID)
+		hist, ok := histColl.Columns[col.ID]
+		if !ok {
+			continue
+		}
+		curCorr := math.Abs(hist.Correlation)
 		if corrCol == nil || corr < curCorr {
 			corrCol = col
 			corr = curCorr
 		}
 	}
-	return corrCol, compCorr
+	if len(colSet) == 1 && corr >= threshold {
+		return corrCol, corr
+	}
+	return nil, corr
 }
 
 // getColumnRangeCounts estimates row count for each range respectively.
@@ -804,6 +811,13 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if prop.ExpectedCnt < ds.stats.RowCount {
 		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, candidate.isMatchProp && prop.Items[0].Desc)
 		if ok {
+			// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
+			// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
+			// for one region now, so even if it is `limit 1`, we have to scan at least one region in table scan.
+			// Currently, we can use `tikvrpc.CmdDebugGetRegionProperties` interface as `getSampRegionsRowCount()` does
+			// to get the row count in a region, but that result contains MVCC old version rows, so it is not that accurate.
+			// Considering that when this scenario happens, the execution time is close between IndexScan and TableScan,
+			// we do not add this check temporarily.
 			rowCount = count
 		} else if corr < 1 {
 			correlationFactor := math.Pow(1-corr, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))

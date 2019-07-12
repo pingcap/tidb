@@ -28,6 +28,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -100,7 +101,7 @@ func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt str
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
@@ -133,15 +134,17 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		return ErrPrepareMulti
 	}
 	stmt := stmts[0]
-	if _, ok := stmt.(ast.DDLNode); ok {
-		return ErrPrepareDDL
-	}
 	err = ResetContextOfStmt(e.ctx, stmt)
 	if err != nil {
 		return err
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
+
+	// DDL Statements can not accept parameters
+	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
+		return ErrPrepareDDL
+	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
 	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
@@ -199,23 +202,24 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 type ExecuteExec struct {
 	baseExecutor
 
-	is        infoschema.InfoSchema
-	name      string
-	usingVars []expression.Expression
-	id        uint32
-	stmtExec  Executor
-	stmt      ast.StmtNode
-	plan      plannercore.Plan
+	is            infoschema.InfoSchema
+	name          string
+	usingVars     []expression.Expression
+	id            uint32
+	stmtExec      Executor
+	stmt          ast.StmtNode
+	plan          plannercore.Plan
+	lowerPriority bool
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *ExecuteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
-func (e *ExecuteExec) Build() error {
+func (e *ExecuteExec) Build(b *executorBuilder) error {
 	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
 	if err != nil {
 		return err
@@ -226,7 +230,6 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return err
 	}
-	b := newExecutorBuilder(e.ctx, e.is)
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))
@@ -234,7 +237,7 @@ func (e *ExecuteExec) Build() error {
 	}
 	e.stmtExec = stmtExec
 	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
-	logExpensiveQuery(e.stmt, e.plan)
+	e.lowerPriority = needLowerPriority(e.plan)
 	return nil
 }
 
@@ -246,7 +249,7 @@ type DeallocateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
@@ -263,15 +266,12 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...interface{}) (sqlexec.Statement, error) {
+func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args []types.Datum) (sqlexec.Statement, error) {
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	if err := ResetContextOfStmt(ctx, execStmt); err != nil {
 		return nil, err
 	}
-	execStmt.UsingVars = make([]ast.ExprNode, len(args))
-	for i, val := range args {
-		execStmt.UsingVars[i] = ast.NewValueExpr(val)
-	}
+	execStmt.BinaryArgs = args
 	is := GetInfoSchema(ctx)
 	execPlan, err := planner.Optimize(ctx, execStmt, is)
 	if err != nil {

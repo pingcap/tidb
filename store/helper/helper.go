@@ -58,7 +58,7 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 	}
 	kvResp, err := h.Store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
 	if err != nil {
-		logutil.Logger(context.Background()).Info("get MVCC by encoded key failed",
+		logutil.BgLogger().Info("get MVCC by encoded key failed",
 			zap.Binary("encodeKey", encodedKey),
 			zap.Reflect("region", keyLocation.Region),
 			zap.Binary("startKey", keyLocation.StartKey),
@@ -99,7 +99,7 @@ type RegionMetric struct {
 }
 
 // ScrapeHotInfo gets the needed hot region information by the url given.
-func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) (map[TblIndex]RegionMetric, error) {
+func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
 	regionMetrics, err := h.FetchHotRegion(rw)
 	if err != nil {
 		return nil, err
@@ -121,16 +121,14 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	timeout, cancelFunc := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
-	cancelFunc()
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
 		}
 	}()
 	var regionResp StoreHotRegionInfos
@@ -175,13 +173,25 @@ type RegionFrameRange struct {
 	region *tikv.KeyLocation // the region
 }
 
-// FetchRegionTableIndex constructs a map that maps a table to its hot region information by the given raw hot region metrics.
-func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) (map[TblIndex]RegionMetric, error) {
-	idxMetrics := make(map[TblIndex]RegionMetric)
+// HotTableIndex contains region and its table/index info.
+type HotTableIndex struct {
+	RegionID     uint64        `json:"region_id"`
+	RegionMetric *RegionMetric `json:"region_metric"`
+	DbName       string        `json:"db_name"`
+	TableName    string        `json:"table_name"`
+	TableID      int64         `json:"table_id"`
+	IndexName    string        `json:"index_name"`
+	IndexID      int64         `json:"index_id"`
+}
+
+// FetchRegionTableIndex constructs a map that maps a table to its hot region information by the given raw hot RegionMetric metrics.
+func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
+	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
+		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("locate region failed", zap.Error(err))
+			logutil.BgLogger().Error("locate region failed", zap.Error(err))
 			continue
 		}
 
@@ -189,32 +199,18 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 		if err != nil {
 			return nil, err
 		}
-
 		f := h.FindTableIndexOfRegion(allSchemas, hotRange)
 		if f != nil {
-			idx := TblIndex{
-				DbName:    f.DBName,
-				TableName: f.TableName,
-				TableID:   f.TableID,
-				IndexName: f.IndexName,
-				IndexID:   f.IndexID,
-			}
-			metric, exists := idxMetrics[idx]
-			if !exists {
-				metric = regionMetric
-				metric.Count++
-				idxMetrics[idx] = metric
-			} else {
-				metric.FlowBytes += regionMetric.FlowBytes
-				if metric.MaxHotDegree < regionMetric.MaxHotDegree {
-					metric.MaxHotDegree = regionMetric.MaxHotDegree
-				}
-				metric.Count++
-			}
+			t.DbName = f.DBName
+			t.TableName = f.TableName
+			t.TableID = f.TableID
+			t.IndexName = f.IndexName
+			t.IndexID = f.IndexID
 		}
+		hotTables = append(hotTables, t)
 	}
 
-	return idxMetrics, nil
+	return hotTables, nil
 }
 
 // FindTableIndexOfRegion finds what table is involved in this hot region. And constructs the new frame item for future use.
@@ -284,7 +280,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
-		logutil.Logger(context.Background()).Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
+		logutil.BgLogger().Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
 		// Ignore decode errors.
 		err = nil
 		return
@@ -431,7 +427,7 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
 		}
 	}()
 	var regionsInfo RegionsInfo
@@ -510,7 +506,7 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
 		}
 	}()
 	var storesStat StoresStat

@@ -23,7 +23,6 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -31,6 +30,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
@@ -72,6 +72,7 @@ const (
 	pColumnFlag = "colFlag"
 	pColumnLen  = "colLen"
 	pRowBin     = "rowBin"
+	pSnapshot   = "snapshot"
 )
 
 // For query string
@@ -95,7 +96,7 @@ func writeData(w http.ResponseWriter, data interface{}) {
 		writeError(w, err)
 		return
 	}
-	logutil.Logger(context.Background()).Info(string(js))
+	logutil.BgLogger().Info(string(js))
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
@@ -146,7 +147,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 	for {
 		curRegion, err := t.RegionCache.LocateKey(bo, startKey)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS), zap.Binary("startKey", startKey), zap.Error(err))
+			logutil.BgLogger().Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS), zap.Binary("startKey", startKey), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 
@@ -159,7 +160,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := t.Store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
+			logutil.BgLogger().Error("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
 				zap.Binary("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
@@ -171,7 +172,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		}
 		data := kvResp.MvccGetByStartTS
 		if err := data.GetRegionError(); err != nil {
-			logutil.Logger(context.Background()).Warn("get MVCC by startTS failed",
+			logutil.BgLogger().Warn("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
 				zap.Binary("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
@@ -183,7 +184,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		}
 
 		if len(data.GetError()) > 0 {
-			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
+			logutil.BgLogger().Error("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
 				zap.Binary("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
@@ -517,6 +518,16 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 		meta, leader, err := t.RegionCache.PDClient().GetRegionByID(context.TODO(), regionID)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+
+		failpoint.Inject("errGetRegionByIDEmpty", func(val failpoint.Value) {
+			if val.(bool) {
+				meta = nil
+			}
+		})
+
+		if meta == nil {
+			return nil, errors.Errorf("region not found for regionID %q", regionID)
 		}
 		regions[i] = RegionMeta{
 			ID:          regionID,
@@ -1056,17 +1067,9 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeError(w, err)
 				return
 			}
-			asSortedEntry := func(metric map[helper.TblIndex]helper.RegionMetric) hotRegions {
-				hs := make(hotRegions, 0, len(metric))
-				for key, value := range metric {
-					hs = append(hs, hotRegion{key, value})
-				}
-				sort.Sort(hs)
-				return hs
-			}
 			writeData(w, map[string]interface{}{
-				"write": asSortedEntry(hotWrite),
-				"read":  asSortedEntry(hotRead),
+				"write": hotWrite,
+				"read":  hotRead,
 			})
 			return
 		}

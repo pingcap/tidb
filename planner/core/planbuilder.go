@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -184,7 +185,7 @@ type PlanBuilder struct {
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
 
-	windowSpecs map[string]ast.WindowSpec
+	windowSpecs map[string]*ast.WindowSpec
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -279,6 +280,8 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildDropBindPlan(x)
 	case *ast.ChangeStmt:
 		return b.buildChange(x)
+	case *ast.SplitRegionStmt:
+		return b.buildSplitRegion(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -300,6 +303,9 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
 		vars = append(vars, newExpr)
 	}
 	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID}
+	if v.BinaryArgs != nil {
+		exe.PrepareParams = v.BinaryArgs.([]types.Datum)
+	}
 	return exe, nil
 }
 
@@ -420,6 +426,13 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 	for _, f := range sel.Fields.Fields {
 		if ast.HasWindowFlag(f.Expr) {
 			return true
+		}
+	}
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			if ast.HasWindowFlag(item.Expr) {
+				return true
+			}
 		}
 	}
 	return false
@@ -658,6 +671,12 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ShowSlow{ShowSlow: as.ShowSlow}
 		p.SetSchema(buildShowSlowSchema())
 		ret = p
+	case ast.AdminReloadExprPushdownBlacklist:
+		return &ReloadExprPushdownBlacklist{}, nil
+	case ast.AdminPluginEnable:
+		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
+	case ast.AdminPluginDisable:
+		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -745,6 +764,10 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
 	for _, col := range tbl.Columns {
+		// The virtual column will not store any data in TiKV, so it should be ignored when collect statistics
+		if col.IsGenerated() && !col.GeneratedStored {
+			continue
+		}
 		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			pkCol = col
 		} else {
@@ -967,6 +990,18 @@ func buildShowDDLJobsFields() *expression.Schema {
 	return schema
 }
 
+func buildTableRegionsSchema() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema.Append(buildColumn("", "REGION_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "START_KEY", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_Key", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "LEADER_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "LEADER_STORE_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "PEERS", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCATTERING", mysql.TypeTiny, 1))
+	return schema
+}
+
 func buildShowDDLJobQueriesFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
 	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
@@ -1054,6 +1089,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		DBName:      show.DBName,
 		Table:       show.Table,
 		Column:      show.Column,
+		IndexName:   show.IndexName,
 		Flag:        show.Flag,
 		Full:        show.Full,
 		User:        show.User,
@@ -1061,68 +1097,80 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		IfNotExists: show.IfNotExists,
 		GlobalScope: show.GlobalScope,
 	}.Init(b.ctx)
-	switch showTp := show.Tp; showTp {
-	case ast.ShowProcedureStatus:
-		p.SetSchema(buildShowProcedureSchema())
-	case ast.ShowTriggers:
-		p.SetSchema(buildShowTriggerSchema())
-	case ast.ShowEvents:
-		p.SetSchema(buildShowEventsSchema())
-	case ast.ShowWarnings, ast.ShowErrors:
-		p.SetSchema(buildShowWarningsSchema())
-	default:
-		isView := false
-		switch showTp {
-		case ast.ShowTables, ast.ShowTableStatus:
-			if p.DBName == "" {
-				return nil, ErrNoDB
-			}
-		case ast.ShowCreateTable:
-			user := b.ctx.GetSessionVars().User
-			var err error
-			if user != nil {
-				err = ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
-			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
-			if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
-				isView = table.Meta().IsView()
-			}
-		case ast.ShowCreateView:
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, "", "", "", err)
+	isView := false
+	switch show.Tp {
+	case ast.ShowTables, ast.ShowTableStatus:
+		if p.DBName == "" {
+			return nil, ErrNoDB
 		}
-		p.SetSchema(buildShowSchema(show, isView))
+	case ast.ShowCreateTable:
+		user := b.ctx.GetSessionVars().User
+		var err error
+		if user != nil {
+			err = ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
+		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
+			isView = table.Meta().IsView()
+		}
+	case ast.ShowCreateView:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 	}
+	p.SetSchema(buildShowSchema(show, isView))
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
+	mockTablePlan := LogicalTableDual{placeHolder: true}.Init(b.ctx)
 	mockTablePlan.SetSchema(p.schema)
+	var err error
+	var np LogicalPlan
+	np = mockTablePlan
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
 		}
-		expr, _, err := b.rewrite(show.Pattern, mockTablePlan, nil, false)
+		np, err = b.buildSelection(np, show.Pattern, nil)
 		if err != nil {
 			return nil, err
 		}
-		p.Conditions = append(p.Conditions, expr)
 	}
 	if show.Where != nil {
-		conds := splitWhere(show.Where)
-		for _, cond := range conds {
-			expr, _, err := b.rewrite(cond, mockTablePlan, nil, false)
-			if err != nil {
-				return nil, err
-			}
-			p.Conditions = append(p.Conditions, expr)
-		}
-		err := p.ResolveIndices()
+		np, err = b.buildSelection(np, show.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
+	if np != mockTablePlan {
+		fieldsLen := len(mockTablePlan.schema.Columns)
+		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx)
+		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
+		for _, col := range mockTablePlan.schema.Columns {
+			proj.Exprs = append(proj.Exprs, col)
+			newCol := col.Clone().(*expression.Column)
+			newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+			schema.Append(newCol)
+		}
+		proj.SetSchema(schema)
+		proj.SetChildren(np)
+		physical, err := DoOptimize(b.optFlag|flagEliminateProjection, proj)
+		if err != nil {
+			return nil, err
+		}
+		return substitutePlaceHolderDual(physical, p), nil
+	}
 	return p, nil
+}
+
+func substitutePlaceHolderDual(src PhysicalPlan, dst PhysicalPlan) PhysicalPlan {
+	if dual, ok := src.(*PhysicalTableDual); ok && dual.placeHolder {
+		return dst
+	}
+	for i, child := range src.Children() {
+		newChild := substitutePlaceHolderDual(child, dst)
+		src.SetChild(i, newChild)
+	}
+	return src
 }
 
 func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
@@ -1445,7 +1493,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan 
 	}
 
 	for i, assign := range insert.Setlist {
-		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, checkRefColumn)
+		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
 		}
@@ -1506,7 +1554,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 					RetType: &x.Type,
 				}
 			default:
-				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, true, checkRefColumn)
+				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, nil, true, checkRefColumn)
 			}
 			if err != nil {
 				return err
@@ -1575,6 +1623,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 	p := &LoadData{
 		IsLocal:     ld.IsLocal,
+		OnDuplicate: ld.OnDuplicate,
 		Path:        ld.Path,
 		Table:       ld.Table,
 		Columns:     ld.Columns,
@@ -1605,9 +1654,200 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
+const maxSplitRegionNum = 1000
+
+func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
+	if len(node.IndexName.L) != 0 {
+		return b.buildSplitIndexRegion(node)
+	}
+	return b.buildSplitTableRegion(node)
+}
+
+func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, error) {
+	tblInfo := node.Table.TableInfo
+	indexInfo := tblInfo.FindIndexByName(node.IndexName.L)
+	if indexInfo == nil {
+		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
+	}
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
+	schema := expression.TableInfo2SchemaWithDBName(b.ctx, node.Table.Schema, tblInfo)
+	mockTablePlan.SetSchema(schema)
+
+	p := &SplitRegion{
+		TableInfo: tblInfo,
+		IndexInfo: indexInfo,
+	}
+	// Split index regions by user specified value lists.
+	if len(node.SplitOpt.ValueLists) > 0 {
+		indexValues := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
+		for i, valuesItem := range node.SplitOpt.ValueLists {
+			if len(valuesItem) > len(indexInfo.Columns) {
+				return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
+			}
+			values, err := b.convertValue2ColumnType(valuesItem, mockTablePlan, indexInfo, tblInfo)
+			if err != nil {
+				return nil, err
+			}
+			indexValues = append(indexValues, values)
+		}
+		p.ValueLists = indexValues
+		return p, nil
+	}
+
+	// Split index regions by lower, upper value.
+	checkLowerUpperValue := func(valuesItem []ast.ExprNode, name string) ([]types.Datum, error) {
+		if len(valuesItem) == 0 {
+			return nil, errors.Errorf("Split index `%v` region %s value count should more than 0", indexInfo.Name, name)
+		}
+		if len(valuesItem) > len(indexInfo.Columns) {
+			return nil, errors.Errorf("Split index `%v` region column count doesn't match value count at %v", indexInfo.Name, name)
+		}
+		return b.convertValue2ColumnType(valuesItem, mockTablePlan, indexInfo, tblInfo)
+	}
+	lowerValues, err := checkLowerUpperValue(node.SplitOpt.Lower, "lower")
+	if err != nil {
+		return nil, err
+	}
+	upperValues, err := checkLowerUpperValue(node.SplitOpt.Upper, "upper")
+	if err != nil {
+		return nil, err
+	}
+	p.Lower = lowerValues
+	p.Upper = upperValues
+
+	if node.SplitOpt.Num > maxSplitRegionNum {
+		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
+	} else if node.SplitOpt.Num < 1 {
+		return nil, errors.Errorf("Split index region num should more than 0")
+	}
+	p.Num = int(node.SplitOpt.Num)
+	return p, nil
+}
+
+func (b *PlanBuilder) convertValue2ColumnType(valuesItem []ast.ExprNode, mockTablePlan LogicalPlan, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]types.Datum, error) {
+	values := make([]types.Datum, 0, len(valuesItem))
+	for j, valueItem := range valuesItem {
+		colOffset := indexInfo.Columns[j].Offset
+		value, err := b.convertValue(valueItem, mockTablePlan, tblInfo.Columns[colOffset])
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan LogicalPlan, col *model.ColumnInfo) (d types.Datum, err error) {
+	var expr expression.Expression
+	switch x := valueItem.(type) {
+	case *driver.ValueExpr:
+		expr = &expression.Constant{
+			Value:   x.Datum,
+			RetType: &x.Type,
+		}
+	default:
+		expr, _, err = b.rewrite(valueItem, mockTablePlan, nil, true)
+		if err != nil {
+			return d, err
+		}
+	}
+	constant, ok := expr.(*expression.Constant)
+	if !ok {
+		return d, errors.New("Expect constant values")
+	}
+	value, err := constant.Eval(chunk.Row{})
+	if err != nil {
+		return d, err
+	}
+	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &col.FieldType)
+	if err != nil {
+		if !types.ErrTruncated.Equal(err) {
+			return d, err
+		}
+		valStr, err1 := value.ToString()
+		if err1 != nil {
+			return d, err
+		}
+		return d, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for column '%.192s'", valStr, col.Name.O)
+	}
+	return d, nil
+}
+
+func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, error) {
+	tblInfo := node.Table.TableInfo
+	var pkCol *model.ColumnInfo
+	if tblInfo.PKIsHandle {
+		if col := tblInfo.GetPkColInfo(); col != nil {
+			pkCol = col
+		}
+	}
+	if pkCol == nil {
+		pkCol = model.NewExtraHandleColInfo()
+	}
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
+	schema := expression.TableInfo2SchemaWithDBName(b.ctx, node.Table.Schema, tblInfo)
+	mockTablePlan.SetSchema(schema)
+
+	p := &SplitRegion{
+		TableInfo: tblInfo,
+	}
+	if len(node.SplitOpt.ValueLists) > 0 {
+		values := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
+		for i, valuesItem := range node.SplitOpt.ValueLists {
+			if len(valuesItem) > 1 {
+				return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
+			}
+			value, err := b.convertValue(valuesItem[0], mockTablePlan, pkCol)
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, []types.Datum{value})
+		}
+		p.ValueLists = values
+		return p, nil
+	}
+
+	checkLowerUpperValue := func(valuesItem []ast.ExprNode, name string) (types.Datum, error) {
+		if len(valuesItem) != 1 {
+			return types.Datum{}, errors.Errorf("Split table region %s value count should be 1", name)
+		}
+		return b.convertValue(valuesItem[0], mockTablePlan, pkCol)
+	}
+	lowerValues, err := checkLowerUpperValue(node.SplitOpt.Lower, "lower")
+	if err != nil {
+		return nil, err
+	}
+	upperValue, err := checkLowerUpperValue(node.SplitOpt.Upper, "upper")
+	if err != nil {
+		return nil, err
+	}
+	p.Lower = []types.Datum{lowerValues}
+	p.Upper = []types.Datum{upperValue}
+
+	if node.SplitOpt.Num > maxSplitRegionNum {
+		return nil, errors.Errorf("Split table region num exceeded the limit %v", maxSplitRegionNum)
+	} else if node.SplitOpt.Num < 1 {
+		return nil, errors.Errorf("Split table region num should more than 0")
+	}
+	p.Num = int(node.SplitOpt.Num)
+	return p, nil
+}
+
 func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	var authErr error
 	switch v := node.(type) {
+	case *ast.AlterDatabaseStmt:
+		if v.AlterDefaultDatabase {
+			v.Name = b.ctx.GetSessionVars().CurrentDB
+		}
+		if v.Name == "" {
+			return nil, ErrNoDB
+		}
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrDBaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.Name)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.Name, "", "", authErr)
 	case *ast.AlterTableStmt:
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.Hostname,
@@ -1684,12 +1924,10 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		if v.Cols != nil && len(v.Cols) != schema.Len() {
 			return nil, ddl.ErrViewWrongList
 		}
-		// we use fieldList to store schema.Columns temporary
-		var fieldList = make([]*ast.SelectField, schema.Len())
+		v.SchemaCols = make([]model.CIStr, schema.Len())
 		for i, col := range schema.Columns {
-			fieldList[i] = &ast.SelectField{AsName: col.ColName}
+			v.SchemaCols[i] = col.ColName
 		}
-		v.Select.(*ast.SelectStmt).Fields.Fields = fieldList
 		if _, ok := plan.(LogicalPlan); ok {
 			if b.ctx.GetSessionVars().User != nil {
 				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
@@ -1698,7 +1936,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
 				v.ViewName.Name.L, "", authErr)
 		}
-		if v.Definer.CurrentUser {
+		if v.Definer.CurrentUser && b.ctx.GetSessionVars().User != nil {
 			v.Definer = b.ctx.GetSessionVars().User
 		}
 		if b.ctx.GetSessionVars().User != nil && v.Definer.String() != b.ctx.GetSessionVars().User.String() {
@@ -1767,6 +2005,11 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	case *ast.RecoverTableStmt:
 		// Recover table command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	case *ast.LockTablesStmt, *ast.UnlockTablesStmt:
+		// TODO: add Lock Table privilege check.
+	case *ast.CleanupTableLockStmt:
+		// This command can only be executed by administrator.
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	}
 	p := &DDL{Statement: node}
 	return p, nil
@@ -1776,12 +2019,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
-	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok && trace.Format == "row" {
-		return nil, errors.New("trace only supports select query when format is row")
-	}
-
 	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
-
 	switch trace.Format {
 	case "row":
 		retFields := []string{"operation", "duration", "spanID"}
@@ -1932,6 +2170,16 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 	var names []string
 	var ftypes []byte
 	switch s.Tp {
+	case ast.ShowProcedureStatus:
+		return buildShowProcedureSchema()
+	case ast.ShowTriggers:
+		return buildShowTriggerSchema()
+	case ast.ShowEvents:
+		return buildShowEventsSchema()
+	case ast.ShowWarnings, ast.ShowErrors:
+		return buildShowWarningsSchema()
+	case ast.ShowRegions:
+		return buildTableRegionsSchema()
 	case ast.ShowEngines:
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
 	case ast.ShowDatabases:
@@ -1955,9 +2203,6 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowColumns:
 		names = table.ColDescFieldNames(s.Full)
-	case ast.ShowWarnings, ast.ShowErrors:
-		names = []string{"Level", "Code", "Message"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
 	case ast.ShowCharset:
 		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}

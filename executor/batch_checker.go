@@ -16,12 +16,14 @@ package executor
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type keyValue struct {
@@ -284,7 +286,8 @@ func (b *batchChecker) deleteDupKeys(ctx sessionctx.Context, t table.Table, rows
 
 // getOldRow gets the table record row from storage for batch check.
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
-func (b *batchChecker) getOldRow(ctx sessionctx.Context, t table.Table, handle int64) ([]types.Datum, error) {
+func (b *batchChecker) getOldRow(ctx sessionctx.Context, t table.Table, handle int64,
+	genExprs []expression.Expression) ([]types.Datum, error) {
 	oldValue, ok := b.dupOldRowValues[string(t.RecordKey(handle))]
 	if !ok {
 		return nil, errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", handle)
@@ -295,6 +298,7 @@ func (b *batchChecker) getOldRow(ctx sessionctx.Context, t table.Table, handle i
 		return nil, err
 	}
 	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
+	gIdx := 0
 	for _, col := range cols {
 		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
 			_, found := oldRowMap[col.ID]
@@ -304,6 +308,20 @@ func (b *batchChecker) getOldRow(ctx sessionctx.Context, t table.Table, handle i
 					return nil, err
 				}
 			}
+		}
+		if col.IsGenerated() {
+			// only the virtual column needs fill back.
+			if !col.GeneratedStored {
+				val, err := genExprs[gIdx].Eval(chunk.MutRowFromDatums(oldRow).ToRow())
+				if err != nil {
+					return nil, err
+				}
+				oldRow[col.Offset], err = table.CastValue(ctx, val, col.ToInfo())
+				if err != nil {
+					return nil, err
+				}
+			}
+			gIdx++
 		}
 	}
 	return oldRow, nil

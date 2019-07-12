@@ -15,18 +15,22 @@ package executor_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/planner/core"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite3) TestCharsetDatabase(c *C) {
@@ -158,6 +162,14 @@ func (s *testSuite3) TestRole(c *C) {
 	result.Check(nil)
 	dropRoleSQL = `DROP ROLE 'test'@'localhost', r_1, r_2;`
 	tk.MustExec(dropRoleSQL)
+
+	ctx := tk.Se.(sessionctx.Context)
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
+	c.Assert(tk.ExecToErr("SET ROLE role1, role2"), NotNil)
+	tk.MustExec("SET ROLE ALL")
+	tk.MustExec("SET ROLE ALL EXCEPT role1, role2")
+	tk.MustExec("SET ROLE DEFAULT")
+	tk.MustExec("SET ROLE NONE")
 }
 
 func (s *testSuite3) TestDefaultRole(c *C) {
@@ -276,6 +288,8 @@ func (s *testSuite3) TestUser(c *C) {
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User test2@localhost does not exist."))
+
 	// Test negative cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)
@@ -382,6 +396,36 @@ func (s *testSuite3) TestFlushPrivileges(c *C) {
 	// After flush.
 	_, err = se.Execute(ctx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, IsNil)
+
+}
+
+type testFlushSuite struct{}
+
+func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
+	// Run in a separate suite because this test need to set SkipGrantTable config.
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	mvccStore := mocktikv.MustNewMVCCStore()
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
+	)
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	saveConf := config.GetGlobalConfig()
+	conf := config.NewConfig()
+	conf.Security.SkipGrantTable = true
+	config.StoreGlobalConfig(conf)
+
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("FLUSH PRIVILEGES")
+
+	config.StoreGlobalConfig(saveConf)
 }
 
 func (s *testSuite3) TestDropStats(c *C) {
@@ -400,7 +444,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	testKit.MustExec("drop stats t")
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 
@@ -408,12 +452,12 @@ func (s *testSuite3) TestDropStats(c *C) {
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
-	h.Lease = 1
+	h.SetLease(1)
 	testKit.MustExec("drop stats t")
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
-	h.Lease = 0
+	h.SetLease(0)
 }
 
 func (s *testSuite3) TestFlushTables(c *C) {
@@ -434,4 +478,34 @@ func (s *testSuite3) TestUseDB(c *C) {
 
 	_, err = tk.Exec("USE ``")
 	c.Assert(terror.ErrorEqual(core.ErrNoDB, err), IsTrue, Commentf("err %v", err))
+}
+
+func (s *testSuite3) TestStmtAutoNewTxn(c *C) {
+	// Some statements are like DDL, they commit the previous txn automically.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// Fix issue https://github.com/pingcap/tidb/issues/10705
+	tk.MustExec("begin")
+	tk.MustExec("create user 'xxx'@'%';")
+	tk.MustExec("grant all privileges on *.* to 'xxx'@'%';")
+
+	tk.MustExec("create table auto_new (id int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into auto_new values (1)")
+	tk.MustExec("revoke all privileges on *.* from 'xxx'@'%'")
+	tk.MustExec("rollback") // insert statement has already committed
+	tk.MustQuery("select * from auto_new").Check(testkit.Rows("1"))
+
+	// Test the behavior when autocommit is false.
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("insert into auto_new values (2)")
+	tk.MustExec("create user 'yyy'@'%'")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from auto_new").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop user 'yyy'@'%'")
+	tk.MustExec("insert into auto_new values (3)")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from auto_new").Check(testkit.Rows("1", "2"))
 }

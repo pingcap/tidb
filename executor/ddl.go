@@ -61,7 +61,7 @@ func (e *DDLExec) toErr(err error) error {
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
 	txn, err1 := e.ctx.Txn(true)
 	if err1 != nil {
-		logutil.Logger(context.Background()).Error("active txn failed", zap.Error(err))
+		logutil.BgLogger().Error("active txn failed", zap.Error(err))
 		return err1
 	}
 	schemaInfoErr := checker.Check(txn.StartTS())
@@ -72,7 +72,7 @@ func (e *DDLExec) toErr(err error) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
+func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
@@ -85,28 +85,37 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	switch x := e.stmt.(type) {
-	case *ast.TruncateTableStmt:
-		err = e.executeTruncateTable(x)
+	case *ast.AlterDatabaseStmt:
+		err = e.executeAlterDatabase(x)
+	case *ast.AlterTableStmt:
+		err = e.executeAlterTable(x)
+	case *ast.CreateIndexStmt:
+		err = e.executeCreateIndex(x)
 	case *ast.CreateDatabaseStmt:
 		err = e.executeCreateDatabase(x)
 	case *ast.CreateTableStmt:
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(x)
-	case *ast.CreateIndexStmt:
-		err = e.executeCreateIndex(x)
+	case *ast.DropIndexStmt:
+		err = e.executeDropIndex(x)
 	case *ast.DropDatabaseStmt:
 		err = e.executeDropDatabase(x)
 	case *ast.DropTableStmt:
 		err = e.executeDropTableOrView(x)
-	case *ast.DropIndexStmt:
-		err = e.executeDropIndex(x)
-	case *ast.AlterTableStmt:
-		err = e.executeAlterTable(x)
-	case *ast.RenameTableStmt:
-		err = e.executeRenameTable(x)
 	case *ast.RecoverTableStmt:
 		err = e.executeRecoverTable(x)
+	case *ast.RenameTableStmt:
+		err = e.executeRenameTable(x)
+	case *ast.TruncateTableStmt:
+		err = e.executeTruncateTable(x)
+	case *ast.LockTablesStmt:
+		err = e.executeLockTables(x)
+	case *ast.UnlockTablesStmt:
+		err = e.executeUnlockTables(x)
+	case *ast.CleanupTableLockStmt:
+		err = e.executeCleanupTableLock(x)
+
 	}
 	if err != nil {
 		return e.toErr(err)
@@ -163,6 +172,11 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	return err
 }
 
+func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().AlterSchema(e.ctx, s)
+	return err
+}
+
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
 	return err
@@ -175,7 +189,8 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.Unique, model.NewCIStr(s.IndexName), s.IndexColNames, s.IndexOption)
+	err := domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.Unique, model.NewCIStr(s.IndexName),
+		s.IndexColNames, s.IndexOption, s.IfNotExists)
 	return err
 }
 
@@ -255,7 +270,7 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 		}
 
 		if config.CheckTableBeforeDrop {
-			logutil.Logger(context.Background()).Warn("admin check table before drop",
+			logutil.BgLogger().Warn("admin check table before drop",
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),
 			)
@@ -285,7 +300,7 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName))
+	err := domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName), s.IfExists)
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && s.IfExists {
 		err = nil
 	}
@@ -425,4 +440,24 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 		return nil, nil, errors.Errorf("Can't found drop table: %v in ddl history jobs", s.Table.Name)
 	}
 	return job, tblInfo, nil
+}
+
+func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
+}
+
+func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	lockedTables := e.ctx.GetAllTableLocks()
+	return domain.GetDomain(e.ctx).DDL().UnlockTables(e.ctx, lockedTables)
+}
+
+func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)
+	return err
 }

@@ -54,20 +54,18 @@ func (builder *RequestBuilder) SetMemTracker(sctx sessionctx.Context, label fmt.
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
 // to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
-	if builder.err != nil {
-		return builder
+	if builder.err == nil {
+		builder.Request.KeyRanges = TableRangesToKVRanges(tid, tableRanges, fb)
 	}
-	builder.Request.KeyRanges = TableRangesToKVRanges(tid, tableRanges, fb)
 	return builder
 }
 
 // SetIndexRanges sets "KeyRanges" for "kv.Request" by converting index range
 // "ranges" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range) *RequestBuilder {
-	if builder.err != nil {
-		return builder
+	if builder.err == nil {
+		builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(sc, tid, idxID, ranges, nil)
 	}
-	builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(sc, tid, idxID, ranges, nil)
 	return builder
 }
 
@@ -80,41 +78,38 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []int64) *Requ
 
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
-	if builder.err != nil {
-		return builder
+	if builder.err == nil {
+		builder.Request.Tp = kv.ReqTypeDAG
+		builder.Request.StartTs = dag.StartTs
+		builder.Request.Data, builder.err = dag.Marshal()
 	}
 
-	builder.Request.Tp = kv.ReqTypeDAG
-	builder.Request.StartTs = dag.StartTs
-	builder.Request.Data, builder.err = dag.Marshal()
 	return builder
 }
 
 // SetAnalyzeRequest sets the request type to "ReqTypeAnalyze" and cosntruct request data.
 func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestBuilder {
-	if builder.err != nil {
-		return builder
+	if builder.err == nil {
+		builder.Request.Tp = kv.ReqTypeAnalyze
+		builder.Request.StartTs = ana.StartTs
+		builder.Request.Data, builder.err = ana.Marshal()
+		builder.Request.NotFillCache = true
+		builder.Request.IsolationLevel = kv.RC
+		builder.Request.Priority = kv.PriorityLow
 	}
 
-	builder.Request.Tp = kv.ReqTypeAnalyze
-	builder.Request.StartTs = ana.StartTs
-	builder.Request.Data, builder.err = ana.Marshal()
-	builder.Request.NotFillCache = true
-	builder.Request.IsolationLevel = kv.RC
-	builder.Request.Priority = kv.PriorityLow
 	return builder
 }
 
 // SetChecksumRequest sets the request type to "ReqTypeChecksum" and construct request data.
 func (builder *RequestBuilder) SetChecksumRequest(checksum *tipb.ChecksumRequest) *RequestBuilder {
-	if builder.err != nil {
-		return builder
+	if builder.err == nil {
+		builder.Request.Tp = kv.ReqTypeChecksum
+		builder.Request.StartTs = checksum.StartTs
+		builder.Request.Data, builder.err = checksum.Marshal()
+		builder.Request.NotFillCache = true
 	}
 
-	builder.Request.Tp = kv.ReqTypeChecksum
-	builder.Request.StartTs = checksum.StartTs
-	builder.Request.Data, builder.err = checksum.Marshal()
-	builder.Request.NotFillCache = true
 	return builder
 }
 
@@ -269,7 +264,10 @@ func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, range
 		feedbackRanges = append(feedbackRanges, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
 	}
-	feedbackRanges = fb.Hist.SplitRange(sc, feedbackRanges, true)
+	feedbackRanges, ok := fb.Hist.SplitRange(sc, feedbackRanges, true)
+	if !ok {
+		fb.Invalidate()
+	}
 	krs := make([]kv.KeyRange, 0, len(feedbackRanges))
 	for _, ran := range feedbackRanges {
 		low, high := ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()

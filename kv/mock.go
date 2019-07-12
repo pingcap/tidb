@@ -27,7 +27,7 @@ type mockTxn struct {
 
 // Commit always returns a retryable error.
 func (t *mockTxn) Commit(ctx context.Context) error {
-	return ErrRetryable
+	return ErrTxnRetryable
 }
 
 func (t *mockTxn) Rollback() error {
@@ -39,7 +39,7 @@ func (t *mockTxn) String() string {
 	return ""
 }
 
-func (t *mockTxn) LockKeys(keys ...Key) error {
+func (t *mockTxn) LockKeys(_ context.Context, _ uint64, _ ...Key) error {
 	return nil
 }
 
@@ -114,6 +114,7 @@ func (t *mockTxn) SetVars(vars *Variables) {
 }
 
 func (t *mockTxn) SetAssertion(key Key, assertion AssertionType) {}
+func (t *mockTxn) ConfirmAssertions(succ bool)                   {}
 
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
@@ -128,11 +129,11 @@ type mockStorage struct {
 }
 
 func (s *mockStorage) Begin() (Transaction, error) {
-	tx := &mockTxn{
-		opts:  make(map[Option]interface{}),
-		valid: true,
-	}
-	return tx, nil
+	return NewMockTxn(), nil
+}
+
+func (*mockTxn) IsPessimistic() bool {
+	return false
 }
 
 // BeginWithStartTS begins a transaction with startTS.

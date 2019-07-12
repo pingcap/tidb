@@ -25,7 +25,7 @@ var (
 			Subsystem: "statistics",
 			Name:      "auto_analyze_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of auto analyze.",
-			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20), // 10ms ~ 3hours
 		})
 
 	AutoAnalyzeCounter = prometheus.NewCounterVec(
@@ -84,4 +84,13 @@ var (
 			Name:      "high_error_rate_feedback_total",
 			Help:      "Counter of query feedback whose actual count is much different than calculated by current statistics",
 		})
+
+	FastAnalyzeHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "fast_analyze_status",
+			Help:      "Bucketed histogram of some stats in fast analyze.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
+		}, []string{LblSQLType, LblType})
 )

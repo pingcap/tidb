@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -127,6 +128,28 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
+// ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
+type ReloadExprPushdownBlacklist struct {
+	baseSchemaProducer
+}
+
+// AdminPluginsAction indicate action will be taken on plugins.
+type AdminPluginsAction int
+
+const (
+	// Enable indicates enable plugins.
+	Enable AdminPluginsAction = iota + 1
+	// Disable indicates disable plugins.
+	Disable
+)
+
+// AdminPlugins administrates tidb plugins.
+type AdminPlugins struct {
+	baseSchemaProducer
+	Action  AdminPluginsAction
+	Plugins []string
+}
+
 // Change represents a change plan.
 type Change struct {
 	baseSchemaProducer
@@ -145,11 +168,12 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name      string
-	UsingVars []expression.Expression
-	ExecID    uint32
-	Stmt      ast.StmtNode
-	Plan      Plan
+	Name          string
+	UsingVars     []expression.Expression
+	PrepareParams []types.Datum
+	ExecID        uint32
+	Stmt          ast.StmtNode
+	Plan          Plan
 }
 
 // OptimizePreparedPlan optimizes the prepared statement.
@@ -163,20 +187,36 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		return errors.Trace(ErrStmtNotFound)
 	}
 
-	if len(prepared.Params) != len(e.UsingVars) {
-		return errors.Trace(ErrWrongParamCount)
+	paramLen := len(e.PrepareParams)
+	if paramLen > 0 {
+		// for binary protocol execute, argument is placed in vars.PrepareParams
+		if len(prepared.Params) != paramLen {
+			return errors.Trace(ErrWrongParamCount)
+		}
+		vars.PreparedParams = e.PrepareParams
+		for i, val := range vars.PreparedParams {
+			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			param.Datum = val
+			param.InExecute = true
+		}
+	} else {
+		// for `execute stmt using @a, @b, @c`, using value in e.UsingVars
+		if len(prepared.Params) != len(e.UsingVars) {
+			return errors.Trace(ErrWrongParamCount)
+		}
+
+		for i, usingVar := range e.UsingVars {
+			val, err := usingVar.Eval(chunk.Row{})
+			if err != nil {
+				return err
+			}
+			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			param.Datum = val
+			param.InExecute = true
+			vars.PreparedParams = append(vars.PreparedParams, val)
+		}
 	}
 
-	for i, usingVar := range e.UsingVars {
-		val, err := usingVar.Eval(chunk.Row{})
-		if err != nil {
-			return err
-		}
-		param := prepared.Params[i].(*driver.ParamMarkerExpr)
-		param.Datum = val
-		param.InExecute = true
-		vars.PreparedParams = append(vars.PreparedParams, val)
-	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
@@ -219,7 +259,8 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 	if err != nil {
 		return nil, err
 	}
-	if prepared.UseCache {
+	_, isTableDual := p.(*PhysicalTableDual)
+	if !isTableDual && prepared.UseCache {
 		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
@@ -316,19 +357,18 @@ type Deallocate struct {
 
 // Show represents a show plan.
 type Show struct {
-	baseSchemaProducer
+	physicalSchemaProducer
 
 	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName      string
 	Table       *ast.TableName  // Used for showing columns.
 	Column      *ast.ColumnName // Used for `desc table column`.
-	Flag        int             // Some flag parsed from sql, such as FULL.
+	IndexName   model.CIStr
+	Flag        int // Some flag parsed from sql, such as FULL.
 	Full        bool
 	User        *auth.UserIdentity   // Used for show grants.
 	Roles       []*auth.RoleIdentity // Used for show grants.
 	IfNotExists bool                 // Used for `show create database if not exists`
-
-	Conditions []expression.Expression
 
 	GlobalScope bool // Used by show variables
 }
@@ -459,6 +499,7 @@ type LoadData struct {
 	baseSchemaProducer
 
 	IsLocal     bool
+	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
 	Table       *ast.TableName
 	Columns     []*ast.ColumnName
@@ -474,6 +515,26 @@ type LoadStats struct {
 	baseSchemaProducer
 
 	Path string
+}
+
+// SplitRegion represents a split regions plan.
+type SplitRegion struct {
+	baseSchemaProducer
+
+	TableInfo  *model.TableInfo
+	IndexInfo  *model.IndexInfo
+	Lower      []types.Datum
+	Upper      []types.Datum
+	Num        int
+	ValueLists [][]types.Datum
+}
+
+// SplitRegionStatus represents a split regions status plan.
+type SplitRegionStatus struct {
+	baseSchemaProducer
+
+	Table     table.Table
+	IndexInfo *model.IndexInfo
 }
 
 // DDL represents a DDL statement plan.
