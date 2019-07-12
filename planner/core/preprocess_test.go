@@ -219,7 +219,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	ctx := se.(sessionctx.Context)
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	for _, tt := range tests {
 		stmts, err1 := session.Parse(ctx, tt.sql)
 		c.Assert(err1, IsNil)
