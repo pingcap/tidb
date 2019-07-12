@@ -553,6 +553,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		DBName:       model.NewCIStr(v.DBName),
 		Table:        v.Table,
 		Column:       v.Column,
+		IndexName:    v.IndexName,
 		User:         v.User,
 		Roles:        v.Roles,
 		IfNotExists:  v.IfNotExists,
@@ -575,14 +576,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 			b.err = err
 		}
 	}
-	if len(v.Conditions) == 0 {
-		return e
-	}
-	sel := &SelectionExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), e),
-		filters:      v.Conditions,
-	}
-	return sel
+	return e
 }
 
 func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
