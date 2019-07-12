@@ -2437,8 +2437,8 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 	tests := []struct {
 		t       interface{}
-		fromTz  string
-		toTz    string
+		fromTz  interface{}
+		toTz    interface{}
 		Success bool
 		expect  string
 	}{
@@ -2450,11 +2450,20 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 		{"2004-01-01 12:00:00", "-00:00", "+13:00", true, "2004-01-02 01:00:00"},
 		{"2004-01-01 12:00:00", "-00:00", "-13:00", true, ""},
 		{"2004-01-01 12:00:00", "-00:00", "-12:88", true, ""},
-		{"2004-01-01 12:00:00", "+10:82", "GMT", false, ""},
+		{"2004-01-01 12:00:00", "+10:82", "GMT", true, ""},
 		{"2004-01-01 12:00:00", "+00:00", "GMT", true, ""},
 		{"2004-01-01 12:00:00", "GMT", "+00:00", true, ""},
 		{20040101, "+00:00", "+10:32", true, "2004-01-01 10:32:00"},
 		{3.14159, "+00:00", "+10:32", true, ""},
+		{"2004-01-01 12:00:00", "", "GMT", true, ""},
+		{"2004-01-01 12:00:00", "GMT", "", true, ""},
+		{"2004-01-01 12:00:00", "a", "GMT", true, ""},
+		{"2004-01-01 12:00:00", "0", "GMT", true, ""},
+		{"2004-01-01 12:00:00", "GMT", "a", true, ""},
+		{"2004-01-01 12:00:00", "GMT", "0", true, ""},
+		{nil, "GMT", "+00:00", true, ""},
+		{"2004-01-01 12:00:00", nil, "+00:00", true, ""},
+		{"2004-01-01 12:00:00", "GMT", nil, true, ""},
 	}
 	fc := funcs[ast.ConvertTz]
 	for _, test := range tests {
@@ -2462,8 +2471,8 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 			s.datumsToConstants(
 				[]types.Datum{
 					types.NewDatum(test.t),
-					types.NewStringDatum(test.fromTz),
-					types.NewStringDatum(test.toTz)}))
+					types.NewDatum(test.fromTz),
+					types.NewDatum(test.toTz)}))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		if test.Success {
