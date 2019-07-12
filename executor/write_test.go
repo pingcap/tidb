@@ -1794,7 +1794,7 @@ func (s *testSuite4) TestLoadDataMissingColumn(c *C) {
 
 	deleteSQL := "delete from load_data_missing"
 	selectSQL := "select * from load_data_missing;"
-	_, reachLimit, err := ld.InsertData(nil, nil)
+	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
 	r := tk.MustQuery(selectSQL)
