@@ -61,7 +61,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			return nil, errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Column.Name)
 		}
 
-		if col.Flen == 0 {
+		if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
 			return nil, errors.Trace(errWrongKeyColumn.GenWithStackByArgs(ic.Column.Name))
 		}
 
@@ -808,7 +808,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, table.WithAssertion(txn))
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
 					// Index already exists, skip it.

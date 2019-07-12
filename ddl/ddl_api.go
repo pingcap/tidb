@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -1323,25 +1325,29 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
-		var preSplitAndScatter func()
 		// do pre-split and scatter.
-		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-			preSplitAndScatter = func() {
-				preSplitTableShardRowIDBitsRegion(d.store, tbInfo, ctx.GetSessionVars().WaitSplitRegionFinish)
+		sp, ok := d.store.(kv.SplitableStore)
+		if ok && atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
+			var (
+				preSplit      func()
+				scatterRegion bool
+			)
+			val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
+			} else {
+				scatterRegion = variable.TiDBOptOn(val)
 			}
-		} else if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			pi := tbInfo.GetPartitionInfo()
 			if pi != nil {
-				preSplitAndScatter = func() { splitPartitionTableRegion(d.store, pi) }
+				preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
 			} else {
-				preSplitAndScatter = func() { splitTableRegion(d.store, tbInfo.ID) }
+				preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
 			}
-		}
-		if preSplitAndScatter != nil {
-			if ctx.GetSessionVars().WaitSplitRegionFinish {
-				preSplitAndScatter()
+			if scatterRegion {
+				preSplit()
 			} else {
-				go preSplitAndScatter()
+				go preSplit()
 			}
 		}
 
@@ -2343,8 +2349,10 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
 		return ErrUnknownCharacterSet.GenWithStack("Unknown character set: '%s', collation: '%s'", toCharset, toCollate)
 	}
-	if toCharset == charset.CharsetUTF8MB4 && origCharset == charset.CharsetUTF8 {
-		// TiDB only allow utf8 to be changed to utf8mb4.
+	if (origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
+		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) {
+		// TiDB only allow utf8 to be changed to utf8mb4, or changing the collation when the charset is utf8/utf8mb4.
 		return nil
 	}
 
@@ -2512,9 +2520,14 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			for _, colName := range findColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
+		case ast.ColumnOptionCollate:
+			col.Collate = opt.StrValue
+		case ast.ColumnOptionReference:
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("with references"))
+		case ast.ColumnOptionFulltext:
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("with full text"))
 		default:
-			// TODO: Support other types.
-			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs(opt.Tp))
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("unknown column option type: %d", opt.Tp)))
 		}
 	}
 
@@ -2596,11 +2609,12 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = modifiable(&col.FieldType, &newCol.FieldType)
-	if err != nil {
+
+	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
+
+	if err = modifiable(&col.FieldType, &newCol.FieldType); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -3006,7 +3020,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		// The session will release all table locks it holds, if we don't add the new locking table id here,
 		// the session may forget to release the new locked table id when this ddl job was executed successfully
 		// but the session was killed before return.
-		ctx.AddTableLock(([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}}))
+		ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}})
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -3379,16 +3393,12 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		SessionID: ctx.GetSessionVars().ConnectionID,
 	}
 	uniqueTableID := make(map[int64]struct{})
-	// Check whether the table was already locked by other.
+	// Check whether the table was already locked by another.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
-		// TODO: replace const string "performance_schema" with xxx.LowerName.
-		// Currently use perfschema.LowerName will have import cycle problem.
-		if tb.Schema.L == infoschema.LowerName || tb.Schema.L == "performance_schema" || tb.Schema.L == mysql.SystemDB {
-			if ctx.GetSessionVars().User != nil {
-				return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
-			}
-			return infoschema.ErrAccessDenied
+		err := throwErrIfInMemOrSysDB(ctx, tb.Schema.L)
+		if err != nil {
+			return err
 		}
 		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
 		if err != nil {
@@ -3460,10 +3470,75 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	return errors.Trace(err)
 }
 
+func throwErrIfInMemOrSysDB(ctx sessionctx.Context, dbLowerName string) error {
+	if util.IsMemOrSysDB(dbLowerName) {
+		if ctx.GetSessionVars().User != nil {
+			return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
+		}
+		return infoschema.ErrAccessDenied.GenWithStackByArgs("", "")
+	}
+	return nil
+}
+
+func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
+	uniqueTableID := make(map[int64]struct{})
+	cleanupTables := make([]model.TableLockTpInfo, 0, len(tables))
+	unlockedTablesNum := 0
+	// Check whether the table was already locked by another.
+	for _, tb := range tables {
+		err := throwErrIfInMemOrSysDB(ctx, tb.Schema.L)
+		if err != nil {
+			return err
+		}
+		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if t.Meta().IsView() {
+			return table.ErrUnsupportedOp
+		}
+		// Maybe the table t was not locked, but still try to unlock this table.
+		// If we skip unlock the table here, the job maybe not consistent with the job.Query.
+		// eg: unlock tables t1,t2;  If t2 is not locked and skip here, then the job will only unlock table t1,
+		// and this behaviour is not consistent with the sql query.
+		if !t.Meta().IsLocked() {
+			unlockedTablesNum++
+		}
+		if _, ok := uniqueTableID[t.Meta().ID]; ok {
+			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
+		}
+		uniqueTableID[t.Meta().ID] = struct{}{}
+		cleanupTables = append(cleanupTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID})
+	}
+	// If the num of cleanupTables is 0, or all cleanupTables is unlocked, just return here.
+	if len(cleanupTables) == 0 || len(cleanupTables) == unlockedTablesNum {
+		return nil
+	}
+
+	arg := &lockTablesArg{
+		UnlockTables: cleanupTables,
+		IsCleanup:    true,
+	}
+	job := &model.Job{
+		SchemaID:   cleanupTables[0].SchemaID,
+		TableID:    cleanupTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseTableLocks(cleanupTables)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 type lockTablesArg struct {
 	LockTables    []model.TableLockTpInfo
 	IndexOfLock   int
 	UnlockTables  []model.TableLockTpInfo
 	IndexOfUnlock int
 	SessionInfo   model.SessionInfo
+	IsCleanup     bool
 }

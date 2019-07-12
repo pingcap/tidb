@@ -263,10 +263,10 @@ func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.Stat
 	}
 	if colLen != types.UnspecifiedLength {
 		for _, ran := range ranges {
-			if fixRangeDatum(&ran.LowVal[0], colLen, tp) {
+			if CutDatumByPrefixLen(&ran.LowVal[0], colLen, tp) {
 				ran.LowExclude = false
 			}
-			if fixRangeDatum(&ran.HighVal[0], colLen, tp) {
+			if CutDatumByPrefixLen(&ran.HighVal[0], colLen, tp) {
 				ran.HighExclude = false
 			}
 		}
@@ -425,17 +425,17 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
 		for i := 0; i < lowTail; i++ {
-			fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
+			CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i])
 		}
-		lowCut := fixRangeDatum(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
+		lowCut := CutDatumByPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
 		if lowCut {
 			ran.LowExclude = false
 		}
 		highTail := len(ran.HighVal) - 1
 		for i := 0; i < highTail; i++ {
-			fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
+			CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i])
 		}
-		highCut := fixRangeDatum(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
+		highCut := CutDatumByPrefixLen(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
 		if highCut {
 			ran.HighExclude = false
 		}
@@ -444,9 +444,9 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 	return hasCut
 }
 
-func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) bool {
-	// If this column is prefix and the prefix length is smaller than the range, cut it.
-	// In case of UTF8, prefix should be cut by characters rather than bytes
+// CutDatumByPrefixLen cuts the datum according to the prefix length.
+// If it's UTF8 encoded, we will cut it by characters rather than bytes.
+func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
 		colCharset := tp.Charset
 		colValue := v.GetBytes()

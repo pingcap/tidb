@@ -480,17 +480,6 @@ func (p *Insert) ResolveIndices() (err error) {
 	return
 }
 
-// ResolveIndices implements Plan interface.
-func (p *Show) ResolveIndices() (err error) {
-	for i, expr := range p.Conditions {
-		p.Conditions[i], err = expr.ResolveIndices(p.schema)
-		if err != nil {
-			return err
-		}
-	}
-	return err
-}
-
 func (p *physicalSchemaProducer) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {
