@@ -299,16 +299,18 @@ func (b *builtinConcatSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
 	var s []byte
+	var targetLength int
 	for _, a := range b.getArgs() {
 		d, isNull, err = a.EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return d, isNull, err
 		}
+		targetLength += len(d)
+		if uint64(targetLength) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
+			return "", true, nil
+		}
 		s = append(s, []byte(d)...)
-	}
-	if uint64(len(s)) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
-		return "", true, nil
 	}
 	return string(s), false, nil
 }
@@ -378,6 +380,7 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 	args := b.getArgs()
 	strs := make([]string, 0, len(args))
 	var sep string
+	var targetLength int
 	for i, arg := range args {
 		val, isNull, err := arg.EvalString(b.ctx, row)
 		if err != nil {
@@ -398,16 +401,19 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 			sep = val
 			continue
 		}
+		targetLength += len(val)
+		if i > 1 {
+			targetLength += len(sep)
+		}
+		if uint64(targetLength) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
+			return "", true, nil
+		}
 		strs = append(strs, val)
 	}
 
-	result := strings.Join(strs, sep)
-	if uint64(len(result)) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
-		return "", true, nil
-	}
 	// TODO: check whether the length of result is larger than Flen
-	return result, false, nil
+	return strings.Join(strs, sep), false, nil
 }
 
 type leftFunctionClass struct {
