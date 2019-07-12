@@ -16,7 +16,6 @@ package core
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
@@ -33,7 +32,7 @@ type testIndexMergeSuite struct {
 }
 
 func (s *testIndexMergeSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable(), MockView()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})
 	s.ctx = MockContext()
 	s.Parser = parser.New()
 }
@@ -108,11 +107,7 @@ func (s *testIndexMergeSuite) TestIndexMergePathGenerateion(c *C) {
 		stmt, err := s.ParseOneStmt(tc.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		p, err := builder.Build(stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tc.idxMergeDigest, comment)

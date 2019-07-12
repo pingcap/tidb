@@ -271,3 +271,19 @@ func (s *testMyTimeSuite) TestAddDate(c *C) {
 		c.Assert(res.Year(), Equals, t.year+t.ot.Year())
 	}
 }
+
+func (s *testMyTimeSuite) TestWeekday(c *C) {
+	tests := []struct {
+		Input  MysqlTime
+		Expect string
+	}{
+		{MysqlTime{2019, 01, 01, 0, 0, 0, 0}, "Tuesday"},
+		{MysqlTime{2019, 02, 31, 0, 0, 0, 0}, "Sunday"},
+		{MysqlTime{2019, 04, 31, 0, 0, 0, 0}, "Wednesday"},
+	}
+
+	for _, tt := range tests {
+		weekday := tt.Input.Weekday()
+		c.Check(weekday.String(), Equals, tt.Expect)
+	}
+}
