@@ -21,7 +21,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -1714,11 +1713,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			ctx:       MockContext(),
-			is:        s.is,
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
 		_, err = builder.Build(stmt)
 		c.Assert(err, IsNil, comment)
@@ -1832,11 +1827,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		plan, err := builder.Build(stmt)
 		if tt.err {
 			c.Assert(err, NotNil)
@@ -1964,11 +1955,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		p, err := builder.Build(stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
@@ -2075,11 +2062,7 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		p, err := builder.Build(stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
@@ -2106,11 +2089,7 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		p, err := builder.Build(stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
@@ -2333,11 +2312,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		p, err := builder.Build(stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
@@ -2418,11 +2393,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		p, err := builder.Build(stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
