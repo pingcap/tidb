@@ -104,6 +104,7 @@ type TransactionContext struct {
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
+	CouldRetry    bool
 	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
@@ -135,7 +136,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
-	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
+	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
 	tc.DirtyDB = nil
 	tc.Binlog = nil
 	tc.History = nil
