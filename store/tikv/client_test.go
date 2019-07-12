@@ -118,3 +118,24 @@ func (s *testClientSuite) TestSendAfterClose(c *C) {
 
 	server.Stop()
 }
+
+func (s *testClientSuite) TestDoubleClose(c *C) {
+	server, port := startMockTikvService()
+	c.Assert(port > 0, IsTrue)
+
+	cfg := config.GetGlobalConfig().TiKVClient
+	cfg.GrpcConnectionCount = 1
+	fmt.Printf("cfg: %v\n", cfg)
+	rpcClient := newRPCClient(cfg, config.Security{})
+
+	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
+	conn, err := rpcClient.getConnArray(addr)
+	c.Assert(err, IsNil)
+	c.Assert(conn, NotNil)
+
+	conn.Close()
+	conn.Close()
+	rpcClient.Close()
+	rpcClient.Close()
+	server.Stop()
+}

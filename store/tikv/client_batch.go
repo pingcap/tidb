@@ -407,8 +407,9 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 func (a *batchConn) Close() {
 	a.Lock()
 	defer a.Unlock()
-	atomic.StoreInt32(&a.closed, 1)
-	close(a.batchCommandsCh)
+	if atomic.CompareAndSwapInt32(&a.closed, 0, 1) {
+		close(a.batchCommandsCh)
+	}
 }
 
 // removeCanceledRequests removes canceled requests before sending.

@@ -75,6 +75,8 @@ type connArray struct {
 	streamTimeout chan *tikvrpc.Lease
 	// batchConn is not null when batch is enabled.
 	*batchConn
+
+	closed int32
 }
 
 func newConnArray(cfg config.TiKVClient, addr string, security config.Security, idleNotify chan<- string) (*connArray, error) {
@@ -156,18 +158,19 @@ func (a *connArray) Get() *grpc.ClientConn {
 }
 
 func (a *connArray) Close() {
-	if a.batchConn != nil {
-		a.batchConn.Close()
-	}
-
-	for i, c := range a.v {
-		if c != nil {
-			err := c.Close()
-			terror.Log(errors.Trace(err))
-			a.v[i] = nil
+	if atomic.CompareAndSwapInt32(&a.closed, 0, 1) {
+		if a.batchConn != nil {
+			a.batchConn.Close()
 		}
+		for i, c := range a.v {
+			if c != nil {
+				err := c.Close()
+				terror.Log(errors.Trace(err))
+				a.v[i] = nil
+			}
+		}
+		close(a.streamTimeout)
 	}
-	close(a.streamTimeout)
 }
 
 // rpcClient is RPC client struct.
@@ -254,15 +257,6 @@ func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 }
 
 func (c *rpcClient) closeConns() {
-	c.Lock()
-	defer c.Unlock()
-	if !c.isClosed {
-		c.isClosed = true
-		// close all connections
-		for _, array := range c.conns {
-			array.Close()
-		}
-	}
 }
 
 // SendRequest sends a Request to server and receives Response.
@@ -331,6 +325,15 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 }
 
 func (c *rpcClient) Close() error {
-	c.closeConns()
+	c.Lock()
+	defer c.Unlock()
+	if !c.isClosed {
+		c.isClosed = true
+		// close all connections
+		for _, array := range c.conns {
+			array.Close()
+		}
+		close(c.idleCollectorCloseCh)
+	}
 	return nil
 }
