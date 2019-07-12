@@ -39,7 +39,7 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockTableT(), core.MockTableT2()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	s.Parser = parser.New()
 	s.Parser.EnableWindowFunc(true)
 }

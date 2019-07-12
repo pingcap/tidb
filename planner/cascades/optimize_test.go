@@ -42,7 +42,7 @@ type testCascadesSuite struct {
 
 func (s *testCascadesSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockTableT()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	s.sctx = plannercore.MockContext()
 	s.Parser = parser.New()
 }

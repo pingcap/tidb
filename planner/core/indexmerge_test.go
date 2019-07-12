@@ -32,7 +32,7 @@ type testIndexMergeSuite struct {
 }
 
 func (s *testIndexMergeSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTableT(), MockView()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})
 	s.ctx = MockContext()
 	s.Parser = parser.New()
 }

@@ -39,8 +39,8 @@ func newDateType() types.FieldType {
 	return *ft
 }
 
-// MockTableT is only used for plan related tests.
-func MockTableT() *model.TableInfo {
+// MockSignedTable is only used for plan related tests.
+func MockSignedTable() *model.TableInfo {
 	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
 	// PK: a
 	// indeices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
@@ -263,11 +263,11 @@ func MockTableT() *model.TableInfo {
 	return table
 }
 
-// MockTableT2 is only used for plan related tests.
-func MockTableT2() *model.TableInfo {
-	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
+// MockUnsignedTable is only used for plan related tests.
+func MockUnsignedTable() *model.TableInfo {
+	// column: a, b
 	// PK: a
-	// indeices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
+	// indeices: b
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("b"),
@@ -353,7 +353,7 @@ func MockContext() sessionctx.Context {
 
 // MockPartitionInfoSchema mocks an info schema for partition table.
 func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
-	tableInfo := MockTableT()
+	tableInfo := MockSignedTable()
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
 	cols = append(cols, tableInfo.Columns...)
 	last := tableInfo.Columns[len(tableInfo.Columns)-1]

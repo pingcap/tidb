@@ -46,7 +46,7 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTableT(), MockTableT2(), MockView()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView()})
 	s.ctx = MockContext()
 	s.Parser = parser.New()
 }
