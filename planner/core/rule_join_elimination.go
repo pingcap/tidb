@@ -14,8 +14,6 @@
 package core
 
 import (
-	"fmt"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 )
@@ -31,13 +29,6 @@ type outerJoinEliminator struct {
 //    If the parent only use the columns from left table with 'distinct' label. The left outer join can
 //    be eliminated.
 func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []*expression.Column, parentCols []*expression.Column) (LogicalPlan, bool, error) {
-	for _, col := range aggCols {
-		fmt.Println("aggCols", *col)
-	}
-	for _, col := range parentCols {
-		fmt.Println("parentCols", *col)
-	}
-
 	var innerChildIdx int
 	switch p.JoinType {
 	case LeftOuterJoin:
@@ -50,16 +41,16 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 
 	outerPlan := p.children[1^innerChildIdx]
 	innerPlan := p.children[innerChildIdx]
+	matched := o.isParentColsAllFromOuterTable(outerPlan, parentCols)
+	if !matched {
+		return p, false, nil
+	}
 	// outer join elimination with duplicate agnostic aggregate functions
-	matched := o.isAggColsAllFromOuterTable(outerPlan, aggCols)
+	matched = o.isAggColsAllFromOuterTable(outerPlan, aggCols)
 	if matched {
 		return outerPlan, true, nil
 	}
 	// outer join elimination without duplicate agnostic aggregate functions
-	matched = o.isParentColsAllFromOuterTable(outerPlan, parentCols)
-	if !matched {
-		return p, false, nil
-	}
 	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
 	contain, err := o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys)
 	if err != nil || contain {
@@ -109,7 +100,7 @@ func (o *outerJoinEliminator) isParentColsAllFromOuterTable(outerPlan LogicalPla
 	for _, parentCol := range parentCols {
 		isParentColInOuterSchema := false
 		for _, outerCol := range outerPlan.Schema().Columns {
-			if parentCol.DBName == outerCol.DBName && parentCol.TblName == outerCol.TblName && parentCol.OrigColName == outerCol.OrigColName {
+			if parentCol.UniqueID == outerCol.UniqueID {
 				isParentColInOuterSchema = true
 				break
 			}
@@ -238,8 +229,6 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 	// check the duplicate agnostic aggregate functions
 	if ok, newCols := o.isDuplicateAgnosticAgg(p); ok {
 		aggCols = newCols
-	} else if len(aggCols) > 0 {
-		aggCols = append(aggCols, colsInSchema...)
 	}
 
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
