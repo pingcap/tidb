@@ -97,6 +97,11 @@ func (a *batchConn) fetchAllPendingRequests(
 	entries *[]*batchCommandsEntry,
 	requests *[]*tikvpb.BatchCommandsRequest_Request,
 ) {
+	failpoint.Inject("batchSendLoopIdleTimeout", func(_ failpoint.Value) {
+		a.idleNotify <- a.target
+		return
+	})
+
 	// Block on the first element.
 	var headEntry *batchCommandsEntry
 	select {

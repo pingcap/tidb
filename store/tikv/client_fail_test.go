@@ -92,3 +92,23 @@ func (s *testClientSuite) TestSendThenClose(c *C) {
 
 	server.Stop()
 }
+
+func (s *testClientSuite) TestRecycle(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/batchSendLoopIdleTimeout", `return("0")`), IsNil)
+
+	server, port := startMockTikvService()
+	c.Assert(port > 0, IsTrue)
+
+	cfg := config.GetGlobalConfig().TiKVClient
+	cfg.GrpcConnectionCount = 1
+	rpcClient := newRPCClient(cfg, config.Security{})
+
+	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
+	_, err := rpcClient.getConnArray(addr)
+	c.Assert(err, IsNil)
+
+	// After 100ms, the connection should be recycled.
+	time.Sleep(100 * time.Millisecond)
+	c.Assert(len(rpcClient.conns) == 0, IsTrue)
+	server.Stop()
+}
