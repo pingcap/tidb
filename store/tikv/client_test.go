@@ -53,8 +53,6 @@ func (s *testClientSuite) TestConn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(conn2.Get(), Not(Equals), conn1.Get())
 
-	client.recycleIdleConnArray()
-
 	client.Close()
 	conn3, err := client.getConnArray(addr)
 	c.Assert(err, NotNil)
@@ -88,7 +86,7 @@ func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
 
 func (s *testClientSuite) TestCancelTimeoutRetErr(c *C) {
 	req := new(tikvpb.BatchCommandsRequest_Request)
-	a := &connArray{batchCommandsCh: make(chan *batchCommandsEntry, 1)}
+	a := newBatchConn(1, 1, nil)
 
 	ctx, cancel := context.WithCancel(context.TODO())
 	cancel()
