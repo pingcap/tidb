@@ -2074,7 +2074,7 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		},
 		{
 			sql:  "select t1.a, t1.b from t t1 left join t t2 on t1.a = t2.a order by t2.a",
-			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)->Sort->Projection",
+			best: "DataScan(t1)->Aggr(max(test.t1.a),min(test.t1.b))->Projection",
 		},
 		// For issue 11167
 		{
