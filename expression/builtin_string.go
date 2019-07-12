@@ -3270,14 +3270,10 @@ func (b *builtinInsertBinarySig) evalString(row chunk.Row) (string, bool, error)
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	strLength := int64(len(str))
 
 	pos, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
-	}
-	if pos < 1 || pos > strLength {
-		return str, false, nil
 	}
 
 	length, isNull, err := b.args[2].EvalInt(b.ctx, row)
@@ -3290,6 +3286,10 @@ func (b *builtinInsertBinarySig) evalString(row chunk.Row) (string, bool, error)
 		return "", true, errors.Trace(err)
 	}
 
+	strLength := int64(len(str))
+	if pos < 1 || pos > strLength {
+		return str, false, nil
+	}
 	if length > strLength-pos+1 || length < 0 {
 		length = strLength - pos + 1
 	}
@@ -3321,15 +3321,10 @@ func (b *builtinInsertSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	runes := []rune(str)
-	runeLength := int64(len(runes))
 
 	pos, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
-	}
-	if pos < 1 || pos > runeLength {
-		return str, false, nil
 	}
 
 	length, isNull, err := b.args[2].EvalInt(b.ctx, row)
@@ -3342,6 +3337,11 @@ func (b *builtinInsertSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 
+	runes := []rune(str)
+	runeLength := int64(len(runes))
+	if pos < 1 || pos > runeLength {
+		return str, false, nil
+	}
 	if length > runeLength-pos+1 || length < 0 {
 		length = runeLength - pos + 1
 	}
