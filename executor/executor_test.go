@@ -443,6 +443,8 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
+		err1 = ld.CheckAndInsertOneBatch()
+		c.Assert(err1, IsNil)
 		if tt.restData == nil {
 			c.Assert(data, HasLen, 0,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
@@ -1941,6 +1943,9 @@ func (s *testSuite) TestTableDual(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("Select 1 from dual where 1")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustQuery("select t1.* from t t1, t t2 where t1.a=t2.a and 1=0").Check(testkit.Rows())
 }
 
 func (s *testSuite) TestTableScan(c *C) {
@@ -3664,6 +3669,13 @@ func (s *testSuite3) TestSelectPartition(c *C) {
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p4' in table 'th'")
 	err = tk.ExecToErr("select b from tr partition (r1,r4)")
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'r4' in table 'tr'")
+
+	// test select partition table in transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into th values (10,10),(11,11)")
+	tk.MustQuery("select a, b from th where b>10").Check(testkit.Rows("11 11"))
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from th where b>10").Check(testkit.Rows("11 11"))
 }
 
 func (s *testSuite) TestSelectView(c *C) {

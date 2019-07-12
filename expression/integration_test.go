@@ -4442,3 +4442,17 @@ func (s *testIntegrationSuite) TestInvalidEndingStatement(c *C) {
 	assertParseErr(`drop table if exists t'`)
 	assertParseErr(`drop table if exists t"`)
 }
+
+func (s *testIntegrationSuite) TestIssue10675(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a int);`)
+	tk.MustExec(`insert into t values(1);`)
+	tk.MustQuery(`select * from t where a < -184467440737095516167.1;`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a > -184467440737095516167.1;`).Check(
+		testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a < 184467440737095516167.1;`).Check(
+		testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a > 184467440737095516167.1;`).Check(testkit.Rows())
+}
