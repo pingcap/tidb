@@ -346,6 +346,8 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 
 	var bestBatchWaitSize = cfg.BatchWaitSize
 	for {
+		failpoint.Inject("batchSendLoop", nil)
+
 		// Choose a connection by round-robbin.
 		next := atomic.AddUint32(&a.index, 1) % uint32(len(a.batchCommandsClients))
 		batchCommandsClient := a.batchCommandsClients[next]
@@ -466,6 +468,8 @@ func doRPCForBatchRequest(
 	if err := sendBatchRequest(ctx1, addr, batchConn, entry); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	failpoint.Inject("betweenBatchRpcSendAndRecv", nil)
 
 	select {
 	case res, ok := <-entry.res:

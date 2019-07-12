@@ -54,3 +54,41 @@ func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
 	c.Assert(err, IsNil)
 	server.Stop()
 }
+
+func (s *testClientSuite) TestSendThenClose(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/betweenBatchRpcSendAndRecv", "pause"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/batchSendLoop", "pause"), IsNil)
+
+	server, port := startMockTikvService()
+	c.Assert(port > 0, IsTrue)
+
+	cfg := config.GetGlobalConfig().TiKVClient
+	cfg.GrpcConnectionCount = 1
+	rpcClient := newRPCClient(cfg, config.Security{})
+
+	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
+	conn, err := rpcClient.getConnArray(addr)
+	c.Assert(err, IsNil)
+	c.Assert(conn.batchConn, NotNil)
+
+	go func() {
+		// Sleep a while to ensure the request has been already sent out.
+		time.Sleep(100 * time.Millisecond)
+		conn.Close()
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/betweenBatchRpcSendAndRecv"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/batchSendLoop"), IsNil)
+	}()
+
+	req := &tikvrpc.Request{
+		Type:  tikvrpc.CmdEmpty,
+		Empty: &tikvpb.BatchCommandsEmptyRequest{},
+	}
+	batchReq := req.ToBatchCommandsRequest()
+	c.Assert(batchReq, NotNil)
+
+	// `doRPCForBatchRequest` shouldn't be blocked 100s, it need to return immediately.
+	_, err = doRPCForBatchRequest(context.Background(), addr, conn.batchConn, batchReq, 100*time.Second)
+	c.Assert(err.Error() == "EOF", IsTrue)
+
+	server.Stop()
+}
