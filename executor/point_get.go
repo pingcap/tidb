@@ -196,18 +196,18 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 }
 
 func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {
-	colID2DecodedPos := make(map[int64]int, e.schema.Len())
+	colID2CutPos := make(map[int64]int, e.schema.Len())
 	for _, col := range e.schema.Columns {
-		if _, ok := colID2DecodedPos[col.ID]; !ok {
-			colID2DecodedPos[col.ID] = len(colID2DecodedPos)
+		if _, ok := colID2CutPos[col.ID]; !ok {
+			colID2CutPos[col.ID] = len(colID2CutPos)
 		}
 	}
-	decodedVals, err := tablecodec.CutRowNew(rowVal, colID2DecodedPos)
+	cutVals, err := tablecodec.CutRowNew(rowVal, colID2CutPos)
 	if err != nil {
 		return err
 	}
-	if decodedVals == nil {
-		decodedVals = make([][]byte, len(colID2DecodedPos))
+	if cutVals == nil {
+		cutVals = make([][]byte, len(colID2CutPos))
 	}
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for i, col := range e.schema.Columns {
@@ -219,8 +219,8 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 			chk.AppendInt64(i, e.handle)
 			continue
 		}
-		decodedPos := colID2DecodedPos[col.ID]
-		if len(decodedVals[decodedPos]) == 0 {
+		cutPos := colID2CutPos[col.ID]
+		if len(cutVals[cutPos]) == 0 {
 			colInfo := getColInfoByID(e.tblInfo, col.ID)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
@@ -229,7 +229,7 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 			chk.AppendDatum(i, &d)
 			continue
 		}
-		_, err = decoder.DecodeOne(decodedVals[decodedPos], i, col.RetType)
+		_, err = decoder.DecodeOne(cutVals[cutPos], i, col.RetType)
 		if err != nil {
 			return err
 		}
