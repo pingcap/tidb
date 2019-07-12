@@ -464,10 +464,8 @@ func doRPCForBatchRequest(
 	defer cancel()
 
 	entry := &batchCommandsEntry{
-		req:      req,
-		res:      make(chan *tikvpb.BatchCommandsResponse_Response, 1),
-		canceled: 0,
-		err:      nil,
+		req: req,
+		res: make(chan *tikvpb.BatchCommandsResponse_Response, 1),
 	}
 
 	if err := sendBatchRequest(ctx1, addr, batchConn, entry); err != nil {
