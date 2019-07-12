@@ -919,6 +919,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		val, err = d.GetBinaryLiteral().ToInt(sc)
 		if err == nil && val > upperBound {
 			err = overflow(val, tp)
+			val = upperBound
 		}
 	case KindMysqlJSON:
 		var i64 int64
@@ -1484,6 +1485,7 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 		val := int64(uval)
 		if err == nil && val > upperBound {
 			err = overflow(val, tp)
+			val = upperBound
 		}
 		return val, errors.Trace(err)
 	default:
