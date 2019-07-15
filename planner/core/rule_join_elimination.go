@@ -41,12 +41,16 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 
 	outerPlan := p.children[1^innerChildIdx]
 	innerPlan := p.children[innerChildIdx]
-	matched := o.isColsAllFromOuterTable(outerPlan, parentCols)
+	outerUniqueIDs := make(map[int64]interface{})
+	for _, outerCol := range outerPlan.Schema().Columns {
+		outerUniqueIDs[outerCol.UniqueID] = true
+	}
+	matched := o.isColsAllFromOuterTable(outerPlan, parentCols, outerUniqueIDs)
 	if !matched {
 		return p, false, nil
 	}
 	// outer join elimination with duplicate agnostic aggregate functions
-	matched = o.isColsAllFromOuterTable(outerPlan, aggCols)
+	matched = o.isColsAllFromOuterTable(outerPlan, aggCols, outerUniqueIDs)
 	if matched {
 		return outerPlan, true, nil
 	}
@@ -74,19 +78,12 @@ func (o *outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChild
 }
 
 // check whether the cols all from outer plan
-func (o *outerJoinEliminator) isColsAllFromOuterTable(outerPlan LogicalPlan, cols []*expression.Column) bool {
+func (o *outerJoinEliminator) isColsAllFromOuterTable(outerPlan LogicalPlan, cols []*expression.Column, outerUniqueIDs map[int64]interface{}) bool {
 	if len(cols) == 0 {
 		return false
 	}
 	for _, col := range cols {
-		isColInOuterSchema := false
-		for _, outerCol := range outerPlan.Schema().Columns {
-			if col.UniqueID == outerCol.UniqueID {
-				isColInOuterSchema = true
-				break
-			}
-		}
-		if !isColInOuterSchema {
+		if _, ok := outerUniqueIDs[col.UniqueID]; !ok {
 			return false
 		}
 	}
@@ -188,18 +185,6 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		for _, expr := range x.Exprs {
 			colsInSchema = append(colsInSchema, expression.ExtractColumns(expr)...)
 		}
-		for i := len(aggCols) - 1; i >= 0; i-- {
-			idx := p.Schema().ColumnIndex(aggCols[i])
-			if idx == -1 {
-				aggCols = append(aggCols[:i], aggCols[i+1:]...)
-				continue
-			}
-			if col, ok := x.Exprs[idx].(*expression.Column); ok {
-				aggCols[i] = col
-			} else {
-				aggCols = append(aggCols[:i], aggCols[i+1:]...)
-			}
-		}
 	case *LogicalAggregation:
 		colsInSchema = x.groupByCols
 		for _, aggDesc := range x.AggFuncs {
@@ -216,15 +201,13 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		aggCols = newCols
 	}
 
-	newChildren := make([]LogicalPlan, 0, len(p.Children()))
-	for _, child := range p.Children() {
+	for i, child := range p.Children() {
 		newChild, err := o.doOptimize(child, aggCols, colsInSchema)
 		if err != nil {
 			return nil, err
 		}
-		newChildren = append(newChildren, newChild)
+		p.SetChild(i, newChild)
 	}
-	p.SetChildren(newChildren...)
 	return p, nil
 }
 
