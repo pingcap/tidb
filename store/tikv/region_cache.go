@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -240,6 +241,26 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 		startKey = curRegion.EndKey
 	}
 	return regionIDs, nil
+}
+
+// LoadRegionsInKeyRange lists ids of regions in [start_key,end_key].
+func (c *RegionCache) LoadRegionsInKeyRange(bo *Backoffer, startKey, endKey []byte) (regions []*Region, err error) {
+	for {
+		curRegion, err := c.loadRegion(bo, startKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		c.mu.Lock()
+		c.insertRegionToCache(curRegion)
+		c.mu.Unlock()
+
+		regions = append(regions, curRegion)
+		if curRegion.Contains(endKey) {
+			break
+		}
+		startKey = curRegion.EndKey()
+	}
+	return regions, nil
 }
 
 // DropRegion removes a cached Region.
@@ -568,6 +589,21 @@ type Region struct {
 // GetID returns id.
 func (r *Region) GetID() uint64 {
 	return r.meta.GetId()
+}
+
+// GetMeta returns region meta.
+func (r *Region) GetMeta() *metapb.Region {
+	return proto.Clone(r.meta).(*metapb.Region)
+}
+
+// GetLeaderID returns leader region ID.
+func (r *Region) GetLeaderID() uint64 {
+	return r.peer.Id
+}
+
+// GetLeaderStoreID returns the store ID of the leader region.
+func (r *Region) GetLeaderStoreID() uint64 {
+	return r.peer.StoreId
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.

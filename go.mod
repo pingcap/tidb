@@ -19,7 +19,7 @@ require (
 	github.com/fsnotify/fsnotify v1.4.7 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
-	github.com/gogo/protobuf v1.1.1 // indirect
+	github.com/gogo/protobuf v1.1.1
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b // indirect
 	github.com/golang/groupcache v0.0.0-20181024230925-c65c006176ff // indirect
 	github.com/golang/protobuf v1.1.0
@@ -52,7 +52,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 	github.com/pingcap/kvproto v0.0.0-20190429124202-32a5ba2af0f7
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
-	github.com/pingcap/parser v0.0.0-20190711031004-8190881c7ec9
+	github.com/pingcap/parser v0.0.0-20190715020526-98d0068c4ae8
 	github.com/pingcap/pd v2.1.12+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
 	github.com/pingcap/tipb v0.0.0-20180910045846-371b48b15d93

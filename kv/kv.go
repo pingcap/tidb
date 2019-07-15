@@ -292,4 +292,5 @@ type Iterator interface {
 type SplitableStore interface {
 	SplitRegion(splitKey Key, scatter bool) (regionID uint64, err error)
 	WaitScatterRegionFinish(regionID uint64) error
+	CheckRegionInScattering(regionID uint64) (bool, error)
 }
