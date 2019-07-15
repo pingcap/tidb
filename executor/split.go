@@ -338,11 +338,6 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	remainMillisecond := 0
 	finishScatterNum := 0
 	for _, regionID := range regionIDs {
-		failpoint.Inject("mockScatterRegionTimeout", func(val failpoint.Value) {
-			if val.(bool) {
-				time.Sleep(time.Second*1 + time.Millisecond*10)
-			}
-		})
 		if isCtxDone(ctxWithTimeout) {
 			// Do not break here for checking remain region scatter finished with a very short back off time.
 			// Imagine this situation, we split region 1,2,3, and timeout on wait region 1 scatter,

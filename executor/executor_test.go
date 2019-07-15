@@ -2057,11 +2057,6 @@ func (s *testSuite) TestSplitRegionTimeout(c *C) {
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout"), IsNil)
-
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockScatterRegionTimeout", `return(true)`), IsNil)
-	// result 9 0 means split 9 region and 0 region finish scatter regions before timeout.
-	tk.MustQuery(`split table t between (20000) and (30000) regions 10`).Check(testkit.Rows("9 0"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockScatterRegionTimeout"), IsNil)
 }
 
 func (s *testSuite) TestRow(c *C) {
