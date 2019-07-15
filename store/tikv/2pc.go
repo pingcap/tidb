@@ -473,22 +473,16 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Reque
 			isPessimisticLock[i] = true
 		}
 	}
-	return &tikvrpc.Request{
-		Type: tikvrpc.CmdPrewrite,
-		Prewrite: &pb.PrewriteRequest{
-			Mutations:         mutations,
-			PrimaryLock:       c.primary(),
-			StartVersion:      c.startTS,
-			LockTtl:           c.lockTTL,
-			IsPessimisticLock: isPessimisticLock,
-			ForUpdateTs:       c.forUpdateTS,
-			TxnSize:           uint64(len(batch.keys)),
-		},
-		Context: pb.Context{
-			Priority: c.priority,
-			SyncLog:  c.syncLog,
-		},
+	req := &pb.PrewriteRequest{
+		Mutations:         mutations,
+		PrimaryLock:       c.primary(),
+		StartVersion:      c.startTS,
+		LockTtl:           c.lockTTL,
+		IsPessimisticLock: isPessimisticLock,
+		ForUpdateTs:       c.forUpdateTS,
+		TxnSize:           uint64(len(batch.keys)),
 	}
+	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
 
 func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) error {
@@ -572,21 +566,14 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 		mutations[i] = mut
 	}
 
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdPessimisticLock,
-		PessimisticLock: &pb.PessimisticLockRequest{
-			Mutations:    mutations,
-			PrimaryLock:  c.primary(),
-			StartVersion: c.startTS,
-			ForUpdateTs:  c.forUpdateTS,
-			LockTtl:      PessimisticLockTTL,
-			IsFirstLock:  c.isFirstLock,
-		},
-		Context: pb.Context{
-			Priority: c.priority,
-			SyncLog:  c.syncLog,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticLock, &pb.PessimisticLockRequest{
+		Mutations:    mutations,
+		PrimaryLock:  c.primary(),
+		StartVersion: c.startTS,
+		ForUpdateTs:  c.forUpdateTS,
+		LockTtl:      PessimisticLockTTL,
+		IsFirstLock:  c.isFirstLock,
+	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
@@ -643,14 +630,11 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackSingleBatch(bo *Backoffer, batch batchKeys) error {
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdPessimisticRollback,
-		PessimisticRollback: &pb.PessimisticRollbackRequest{
-			StartVersion: c.startTS,
-			ForUpdateTs:  c.forUpdateTS,
-			Keys:         batch.keys,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticRollback, &pb.PessimisticRollbackRequest{
+		StartVersion: c.startTS,
+		ForUpdateTs:  c.forUpdateTS,
+		Keys:         batch.keys,
+	})
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
@@ -709,19 +693,11 @@ func (c *twoPhaseCommitter) getUndeterminedErr() error {
 }
 
 func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdCommit,
-		Commit: &pb.CommitRequest{
-			StartVersion:  c.startTS,
-			Keys:          batch.keys,
-			CommitVersion: c.commitTS,
-		},
-		Context: pb.Context{
-			Priority: c.priority,
-			SyncLog:  c.syncLog,
-		},
-	}
-	req.Context.Priority = c.priority
+	req := tikvrpc.NewRequest(tikvrpc.CmdCommit, &pb.CommitRequest{
+		StartVersion:  c.startTS,
+		Keys:          batch.keys,
+		CommitVersion: c.commitTS,
+	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 
 	sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
 	resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
@@ -789,17 +765,10 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 }
 
 func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) error {
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdBatchRollback,
-		BatchRollback: &pb.BatchRollbackRequest{
-			Keys:         batch.keys,
-			StartVersion: c.startTS,
-		},
-		Context: pb.Context{
-			Priority: c.priority,
-			SyncLog:  c.syncLog,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdBatchRollback, &pb.BatchRollbackRequest{
+		Keys:         batch.keys,
+		StartVersion: c.startTS,
+	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
