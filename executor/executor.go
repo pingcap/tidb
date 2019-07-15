@@ -465,8 +465,6 @@ type CheckTableExec struct {
 	is      infoschema.InfoSchema
 	exitCh  chan struct{}
 	retCh   chan error
-
-	genExprs map[model.TableColumnID]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -544,7 +542,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if greater == admin.IdxCntGreater {
 			err = e.checkIndexHandle(ctx, idxOffset, e.srcs[idxOffset])
 		} else if greater == admin.TblCntGreater {
-			err = e.checkTableRecord(tbl, e.indices[idxOffset])
+			err = e.checkTableRecord(tbl, idxOffset)
 		}
 		if err != nil && admin.ErrDataInConsistent.Equal(err) {
 			return ErrAdminCheckTable.GenWithStack("%v err:%v", tbl.Meta().Name, err)
@@ -568,20 +566,22 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *CheckTableExec) checkTableRecord(tbl table.Table, idx table.Index) error {
+func (e *CheckTableExec) checkTableRecord(tbl table.Table, idxOffset int) error {
+	idx := e.indices[idxOffset]
+	genExprs := e.srcs[idxOffset].genExprs
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
 	if tbl.Meta().GetPartitionInfo() == nil {
-		return admin.CheckRecordAndIndex(e.ctx, txn, tbl, idx, e.genExprs)
+		return admin.CheckRecordAndIndex(e.ctx, txn, tbl, idx, genExprs)
 	}
 
 	info := tbl.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.(table.PartitionedTable).GetPartition(pid)
-		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, e.genExprs); err != nil {
+		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, genExprs); err != nil {
 			return errors.Trace(err)
 		}
 	}

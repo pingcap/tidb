@@ -78,8 +78,6 @@ type CheckTable struct {
 	TblInfo            *model.TableInfo
 	Indices            []table.Index
 	IndexLookUpReaders []*PhysicalIndexLookUpReader
-
-	GenExprs map[model.TableColumnID]expression.Expression
 }
 
 // RecoverIndex is used for backfilling corrupted index data.

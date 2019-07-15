@@ -25,7 +25,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
-	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -306,8 +305,7 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 		return nil
 	}
 
-	genExprs := make(map[model.TableColumnID]expression.Expression)
-	buildIndexLookUpChecker(b, v.IndexLookUpReader, readerExec, genExprs)
+	buildIndexLookUpChecker(b, v.IndexLookUpReader, readerExec)
 
 	e := &CheckIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -321,7 +319,7 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 }
 
 func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.PhysicalIndexLookUpReader,
-	readerExec *IndexLookUpExecutor, genExprs map[model.TableColumnID]expression.Expression) {
+	readerExec *IndexLookUpExecutor) {
 	readerExec.keepOrder = true
 	is := readerPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	readerExec.dagPB.OutputOffsets = make([]uint32, 0, len(is.Index.Columns))
@@ -333,13 +331,8 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 	for _, col := range is.Columns {
 		tps = append(tps, &col.FieldType)
 	}
-	//	tblTps := make([]*types.FieldType, 0, len(readerExec.columns)+1)
-	//	for _, col := range readerExec.columns {
-	//		tblTps = append(tblTps, &col.FieldType)
-	//	}
 	tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	readerExec.tps = tps
-	// readerExec.tblTps = tblTps
 	readerExec.tbl = readerExec.table
 	readerExec.idxInfo = readerExec.index
 
@@ -354,7 +347,6 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 		b.err = errors.Trace(err)
 		return
 	}
-	// readerExec.genExprs = genExprs
 	readerExec.isCheckOp = true
 	readerExec.ranges = ranger.FullRange()
 }
@@ -367,7 +359,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		buildIndexLookUpChecker(b, readerPlan, readerExec, v.GenExprs)
+		buildIndexLookUpChecker(b, readerPlan, readerExec)
 
 		readerExecs = append(readerExecs, readerExec)
 	}
@@ -381,7 +373,6 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 		srcs:         readerExecs,
 		exitCh:       make(chan struct{}),
 		retCh:        make(chan error, len(v.Indices)),
-		genExprs:     v.GenExprs,
 	}
 	return e
 }
@@ -1962,15 +1953,11 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	}
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
-	log.Warnf(".......................... dag req:%v, output offsets %v, cols %v, exprs %d",
-		indexReq.Executors[0].IdxScan, indexReq.OutputOffsets, is.Index.Columns, len(is.GenExprs))
 	tbl, _ := b.is.TableByID(is.Table.ID)
 
 	for i := 0; i < v.Schema().Len(); i++ {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
-	log.Warnf(".......................... dag req:%v, output offsets %v, cols %v, len %v",
-		tableReq.Executors[0].TblScan, tableReq.OutputOffsets, v.Schema(), len(tableReq.Executors[0].TblScan.Columns))
 
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
@@ -1997,7 +1984,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 	}
-
 	e.genExprs = is.GenExprs
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
