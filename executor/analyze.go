@@ -620,12 +620,9 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		if !ok {
 			return
 		}
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdDebugGetRegionProperties,
-			DebugGetRegionProperties: &debugpb.GetRegionPropertiesRequest{
-				RegionId: loc.Region.GetID(),
-			},
-		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdDebugGetRegionProperties, &debugpb.GetRegionPropertiesRequest{
+			RegionId: loc.Region.GetID(),
+		})
 		var resp *tikvrpc.Response
 		var rpcCtx *tikv.RPCContext
 		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region)
@@ -1002,7 +999,7 @@ func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.Sampl
 			collector.NullCount++
 			continue
 		}
-		bytes, err := tablecodec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, sample.Value)
+		bytes, err := tablecodec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, nil, sample.Value)
 		if err != nil {
 			return nil, nil, err
 		}

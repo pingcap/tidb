@@ -104,14 +104,11 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (Ra
 			endKey = rangeEndKey
 		}
 
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdDeleteRange,
-			DeleteRange: &kvrpcpb.DeleteRangeRequest{
-				StartKey:   startKey,
-				EndKey:     endKey,
-				NotifyOnly: t.notifyOnly,
-			},
-		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdDeleteRange, &kvrpcpb.DeleteRangeRequest{
+			StartKey:   startKey,
+			EndKey:     endKey,
+			NotifyOnly: t.notifyOnly,
+		})
 
 		resp, err := t.store.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
