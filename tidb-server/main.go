@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -443,7 +444,10 @@ func setGlobalVars() {
 	statistics.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
 	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
-	ddl.EnableSplitTableRegion = cfg.SplitTable
+	if cfg.SplitTable {
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	}
+
 	plannercore.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	kv.TxnEntryCountLimit = cfg.Performance.TxnEntryCountLimit

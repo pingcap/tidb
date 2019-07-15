@@ -64,7 +64,7 @@ var (
 	// EnableSplitTableRegion is a flag to decide whether to split a new region for
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
-	EnableSplitTableRegion = false
+	EnableSplitTableRegion = uint32(0)
 
 	// PartitionCountLimit is limit of the number of partitions in a table.
 	// Mysql maximum number of partitions is 8192, our maximum number of partitions is 1024.
