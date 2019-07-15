@@ -113,6 +113,9 @@ type LogicalPlan interface {
 
 	// SetChildren sets the children for the plan.
 	SetChildren(...LogicalPlan)
+
+	// SetChild sets the ith child for the plan.
+	SetChild(i int, child LogicalPlan)
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -296,6 +299,19 @@ func (p *basePhysicalPlan) SetChildren(children ...PhysicalPlan) {
 	p.children = children
 }
 
+<<<<<<< HEAD
+=======
+// SetChild implements LogicalPlan SetChild interface.
+func (p *baseLogicalPlan) SetChild(i int, child LogicalPlan) {
+	p.children[i] = child
+}
+
+// SetChild implements PhysicalPlan SetChild interface.
+func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
+	p.children[i] = child
+}
+
+>>>>>>> address comments
 func (p *basePlan) context() sessionctx.Context {
 	return p.ctx
 }
