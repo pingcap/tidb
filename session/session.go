@@ -116,7 +116,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
-	SetProcessInfo(string, time.Time, byte)
+	SetProcessInfo(string, time.Time, byte, uint64)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -780,6 +780,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, err
 		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		return se, nil
@@ -795,6 +799,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutoCommit, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, err
+		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
@@ -907,7 +915,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
+func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
 	var db interface{}
 	if len(s.sessionVars.CurrentDB) > 0 {
 		db = s.sessionVars.CurrentDB
@@ -918,16 +926,17 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 		info = sql
 	}
 	pi := util.ProcessInfo{
-		ID:            s.sessionVars.ConnectionID,
-		DB:            db,
-		Command:       command,
-		Plan:          s.currentPlan,
-		Time:          t,
-		State:         s.Status(),
-		Info:          info,
-		CurTxnStartTS: s.sessionVars.TxnCtx.StartTS,
-		StmtCtx:       s.sessionVars.StmtCtx,
-		StatsInfo:     plannercore.GetStatsInfo,
+		ID:               s.sessionVars.ConnectionID,
+		DB:               db,
+		Command:          command,
+		Plan:             s.currentPlan,
+		Time:             t,
+		State:            s.Status(),
+		Info:             info,
+		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+		StmtCtx:          s.sessionVars.StmtCtx,
+		StatsInfo:        plannercore.GetStatsInfo,
+		MaxExecutionTime: maxExecutionTime,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
@@ -1632,6 +1641,7 @@ var builtinGlobalVariable = []string{
 	variable.WaitTimeout,
 	variable.InteractiveTimeout,
 	variable.MaxPreparedStmtCount,
+	variable.MaxExecutionTime,
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,

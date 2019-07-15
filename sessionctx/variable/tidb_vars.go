@@ -244,6 +244,9 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// tidb_scatter_region will scatter the regions for DDLs when it is ON.
+	TiDBScatterRegion = "tidb_scatter_region"
+
 	// TiDBWaitSplitRegionFinish defines the split region behaviour is sync or async.
 	TiDBWaitSplitRegionFinish = "tidb_wait_split_region_finish"
 
@@ -336,6 +339,7 @@ const (
 	DefTiDBDDLSlowOprThreshold         = 300
 	DefTiDBUseFastAnalyze              = false
 	DefTiDBSkipIsolationLevelCheck     = false
+	DefTiDBScatterRegion               = false
 	DefTiDBWaitSplitRegionFinish       = true
 	DefTiDBExpensiveQueryTimeThreshold = 60  // 60s
 	DefWaitSplitRegionTimeout          = 300 // 300s
@@ -352,9 +356,10 @@ var (
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold         uint32 = DefTiDBDDLSlowOprThreshold
-	ForcePriority                      = int32(DefTiDBForcePriority)
-	ServerHostname, _                  = os.Hostname()
-	MaxOfMaxAllowedPacket       uint64 = 1073741824
-	ExpensiveQueryTimeThreshold uint64 = DefTiDBExpensiveQueryTimeThreshold
+	DDLSlowOprThreshold            uint32 = DefTiDBDDLSlowOprThreshold
+	ForcePriority                         = int32(DefTiDBForcePriority)
+	ServerHostname, _                     = os.Hostname()
+	MaxOfMaxAllowedPacket          uint64 = 1073741824
+	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
+	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 )
