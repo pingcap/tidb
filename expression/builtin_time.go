@@ -5088,21 +5088,22 @@ func (b *builtinConvertTzSig) Clone() builtinFunc {
 }
 
 // evalTime evals CONVERT_TZ(dt,from_tz,to_tz).
+// `CONVERT_TZ` function returns NULL if the arguments are invalid.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_convert-tz
 func (b *builtinConvertTzSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	dt, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return types.Time{}, true, err
+		return types.Time{}, true, nil
 	}
 
 	fromTzStr, isNull, err := b.args[1].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return types.Time{}, true, err
+	if isNull || err != nil || fromTzStr == "" {
+		return types.Time{}, true, nil
 	}
 
 	toTzStr, isNull, err := b.args[2].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return types.Time{}, true, err
+	if isNull || err != nil || toTzStr == "" {
+		return types.Time{}, true, nil
 	}
 
 	fromTzMatched := b.timezoneRegex.MatchString(fromTzStr)
@@ -5111,17 +5112,17 @@ func (b *builtinConvertTzSig) evalTime(row chunk.Row) (types.Time, bool, error) 
 	if !fromTzMatched && !toTzMatched {
 		fromTz, err := time.LoadLocation(fromTzStr)
 		if err != nil {
-			return types.Time{}, true, err
+			return types.Time{}, true, nil
 		}
 
 		toTz, err := time.LoadLocation(toTzStr)
 		if err != nil {
-			return types.Time{}, true, err
+			return types.Time{}, true, nil
 		}
 
 		t, err := dt.Time.GoTime(fromTz)
 		if err != nil {
-			return types.Time{}, true, err
+			return types.Time{}, true, nil
 		}
 
 		return types.Time{
@@ -5133,7 +5134,7 @@ func (b *builtinConvertTzSig) evalTime(row chunk.Row) (types.Time, bool, error) 
 	if fromTzMatched && toTzMatched {
 		t, err := dt.Time.GoTime(time.Local)
 		if err != nil {
-			return types.Time{}, true, err
+			return types.Time{}, true, nil
 		}
 
 		return types.Time{

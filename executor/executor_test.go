@@ -98,6 +98,7 @@ var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testRecoverTable{})
 var _ = Suite(&testFlushSuite{})
+var _ = Suite(&testShowStatsSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -138,9 +139,15 @@ func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
+func enablePessimisticTxn(enable bool) {
+	newConf := config.NewConfig()
+	newConf.PessimisticTxn.Enable = enable
+	config.StoreGlobalConfig(newConf)
+}
+
 func (s *testSuite) TestPessimisticSelectForUpdate(c *C) {
-	defer func() { config.GetGlobalConfig().PessimisticTxn.Enable = false }()
-	config.GetGlobalConfig().PessimisticTxn.Enable = true
+	defer func() { enablePessimisticTxn(false) }()
+	enablePessimisticTxn(true)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -353,7 +360,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Indices(), HasLen, 1)
-	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), 1)
+	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), 1, table.WithAssertion(txn))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -433,9 +440,11 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
-		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
+		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
+		err1 = ld.CheckAndInsertOneBatch()
+		c.Assert(err1, IsNil)
 		if tt.restData == nil {
 			c.Assert(data, HasLen, 0,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
@@ -1934,6 +1943,9 @@ func (s *testSuite) TestTableDual(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("Select 1 from dual where 1")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustQuery("select t1.* from t t1, t t2 where t1.a=t2.a and 1=0").Check(testkit.Rows())
 }
 
 func (s *testSuite) TestTableScan(c *C) {
@@ -3034,6 +3046,11 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 	num2Str := strconv.FormatUint(num2, 10)
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1", "2", num1Str, num2Str))
 	tk.MustQuery("select * from t where id not in (2)").Check(testkit.Rows(num1Str, num2Str, "1"))
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, index idx(b))")
+	tk.MustExec("insert into t values(9223372036854775808, 1), (1, 1)")
+	tk.MustQuery("select * from t use index(idx) where b = 1 and a < 2").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t use index(idx) where b = 1 order by b, a").Check(testkit.Rows("1 1", "9223372036854775808 1"))
 }
 
 func (s *testSuite) TestIssue5666(c *C) {
@@ -3123,7 +3140,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3, table.WithAssertion(txn))
 	c.Assert(err, IsNil)
 	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
@@ -3138,7 +3155,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4, table.WithAssertion(txn))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -3657,6 +3674,13 @@ func (s *testSuite3) TestSelectPartition(c *C) {
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p4' in table 'th'")
 	err = tk.ExecToErr("select b from tr partition (r1,r4)")
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'r4' in table 'tr'")
+
+	// test select partition table in transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into th values (10,10),(11,11)")
+	tk.MustQuery("select a, b from th where b>10").Check(testkit.Rows("11 11"))
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from th where b>10").Check(testkit.Rows("11 11"))
 }
 
 func (s *testSuite) TestSelectView(c *C) {
@@ -3999,6 +4023,122 @@ func (s *testSuite) TestSplitRegion(c *C) {
 	tk.MustExec(`split table t by (0),(1000),(1000000)`)
 }
 
+func (s *testSuite) TestShowTableRegion(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_regions1, t_regions")
+	tk.MustExec("create table t_regions1 (a int key, b int, index idx(b))")
+	tk.MustExec("create table t_regions (a int key, b int, index idx(b))")
+
+	// Test show table regions.
+	tk.MustExec(`split table t_regions1 by (0)`)
+	tk.MustExec(`split table t_regions between (-10000) and (10000) regions 4;`)
+	re := tk.MustQuery("show table t_regions regions")
+	rows := re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 4)
+	c.Assert(len(rows[0]), Equals, 7)
+	tbl1 := testGetTableByName(c, tk.Se, "test", "t_regions1")
+	tbl := testGetTableByName(c, tk.Se, "test", "t_regions")
+	// Check the region start key.
+	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", tbl1.Meta().ID))
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
+
+	// Test show table index regions.
+	tk.MustExec(`split table t_regions index idx between (-1000) and (1000) regions 4;`)
+	re = tk.MustQuery("show table t_regions index idx regions")
+	rows = re.Rows()
+	// The index `idx` of table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 4)
+	// Check the region start key.
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_i_1_", tbl.Meta().ID))
+	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+
+	re = tk.MustQuery("show table t_regions regions")
+	rows = re.Rows()
+	// The index `idx` of table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 7)
+	// Check the region start key.
+	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
+	c.Assert(rows[4][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+
+	// Test unsigned primary key and wait scatter finish.
+	tk.MustExec("drop table if exists t_regions")
+	tk.MustExec("create table t_regions (a int unsigned key, b int, index idx(b))")
+
+	// Test show table regions.
+	tk.MustExec(`set @@session.tidb_wait_split_region_finish=1;`)
+	tk.MustExec(`split table t_regions between (0) and (10000) regions 4;`)
+	re = tk.MustQuery("show table t_regions regions")
+	rows = re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 4)
+	tbl = testGetTableByName(c, tk.Se, "test", "t_regions")
+	// Check the region start key.
+	c.Assert(rows[0][1], Matches, "t_.*")
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2500", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_7500", tbl.Meta().ID))
+
+	// Test show table index regions.
+	tk.MustExec(`split table t_regions index idx between (0) and (1000) regions 4;`)
+	re = tk.MustQuery("show table t_regions index idx regions")
+	rows = re.Rows()
+	// The index `idx` of table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 4)
+	// Check the region start key.
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_i_1_", tbl.Meta().ID))
+	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+
+	// Test show table regions for partition table when disable split region when create table.
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+	tk.MustExec("drop table if exists partition_t;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
+	re = tk.MustQuery("show table partition_t regions")
+	rows = re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][1], Matches, "t_.*")
+
+	// Test show table regions for partition table when enable split region when create table.
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("drop table if exists partition_t;")
+	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
+	re = tk.MustQuery("show table partition_t regions")
+	rows = re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 3)
+	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
+	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
+	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
+	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+}
+
+func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, IsNil)
+	return tbl
+}
+
 func (s *testSuite) TestIssue10435(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4086,6 +4226,12 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
 }
 
+func setOOMAction(action string) {
+	newConf := config.NewConfig()
+	newConf.OOMAction = action
+	config.StoreGlobalConfig(newConf)
+}
+
 func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4097,7 +4243,11 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	}
 	tk.Se.SetSessionManager(sm)
 	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
-	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
+	orgAction := config.GetGlobalConfig().OOMAction
+	setOOMAction(config.OOMActionCancel)
+	defer func() {
+		setOOMAction(orgAction)
+	}()
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
 	c.Assert(err, NotNil)
