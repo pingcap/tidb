@@ -2010,7 +2010,9 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	}
 	if prec1 <= 0 {
 		/* short-circuit everything: from1 == 0 */
+		resultFrac := to.resultFrac
 		*to = zeroMyDecimal
+		to.resultFrac = resultFrac
 		return nil
 	}
 	prec1 -= countLeadingZeroes((prec1-1)%digitsPerWord, from1.wordBuf[idx1])
