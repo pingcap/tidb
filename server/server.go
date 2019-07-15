@@ -83,12 +83,13 @@ func init() {
 }
 
 var (
-	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
-	errInvalidPayloadLen = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
-	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
-	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
-	errNotAllowedCommand = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
-	errAccessDenied      = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	errUnknownFieldType    = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
+	errInvalidPayloadLen   = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
+	errInvalidSequence     = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
+	errInvalidType         = terror.ClassServer.New(codeInvalidType, "invalid type")
+	errNotAllowedCommand   = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
+	errAccessDenied        = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	errMaxExecTimeExceeded = terror.ClassServer.New(codeMaxExecTimeExceeded, mysql.MySQLErrName[mysql.ErrMaxExecTimeExceeded])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -106,7 +107,7 @@ type Server struct {
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
-	rwlock            *sync.RWMutex
+	rwlock            sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
@@ -198,7 +199,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
-		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
@@ -620,14 +620,16 @@ const (
 	codeInvalidSequence   = 3
 	codeInvalidType       = 4
 
-	codeNotAllowedCommand = 1148
-	codeAccessDenied      = mysql.ErrAccessDenied
+	codeNotAllowedCommand   = 1148
+	codeAccessDenied        = mysql.ErrAccessDenied
+	codeMaxExecTimeExceeded = mysql.ErrMaxExecTimeExceeded
 )
 
 func init() {
 	serverMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeNotAllowedCommand: mysql.ErrNotAllowedCommand,
-		codeAccessDenied:      mysql.ErrAccessDenied,
+		codeNotAllowedCommand:   mysql.ErrNotAllowedCommand,
+		codeAccessDenied:        mysql.ErrAccessDenied,
+		codeMaxExecTimeExceeded: mysql.ErrMaxExecTimeExceeded,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }
