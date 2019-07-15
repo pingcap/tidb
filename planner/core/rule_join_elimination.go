@@ -41,12 +41,12 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 
 	outerPlan := p.children[1^innerChildIdx]
 	innerPlan := p.children[innerChildIdx]
-	matched := o.isParentColsAllFromOuterTable(outerPlan, parentCols)
+	matched := o.isColsAllFromOuterTable(outerPlan, parentCols)
 	if !matched {
 		return p, false, nil
 	}
 	// outer join elimination with duplicate agnostic aggregate functions
-	matched = o.isAggColsAllFromOuterTable(outerPlan, aggCols)
+	matched = o.isColsAllFromOuterTable(outerPlan, aggCols)
 	if matched {
 		return outerPlan, true, nil
 	}
@@ -73,39 +73,20 @@ func (o *outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChild
 	return expression.NewSchema(joinKeys...)
 }
 
-func (o *outerJoinEliminator) isAggColsAllFromOuterTable(outerPlan LogicalPlan, aggCols []*expression.Column) bool {
-	if len(aggCols) == 0 {
+// check whether the cols all from outer plan
+func (o *outerJoinEliminator) isColsAllFromOuterTable(outerPlan LogicalPlan, cols []*expression.Column) bool {
+	if len(cols) == 0 {
 		return false
 	}
-	for _, aggCol := range aggCols {
-		isAggColInOuterSchema := false
+	for _, col := range cols {
+		isColInOuterSchema := false
 		for _, outerCol := range outerPlan.Schema().Columns {
-			if aggCol.UniqueID == outerCol.UniqueID {
-				isAggColInOuterSchema = true
+			if col.UniqueID == outerCol.UniqueID {
+				isColInOuterSchema = true
 				break
 			}
 		}
-		if !isAggColInOuterSchema {
-			return false
-		}
-	}
-	return true
-}
-
-// check whether schema cols of join's parent plan are all from outer join table
-func (o *outerJoinEliminator) isParentColsAllFromOuterTable(outerPlan LogicalPlan, parentCols []*expression.Column) bool {
-	if len(parentCols) == 0 {
-		return false
-	}
-	for _, parentCol := range parentCols {
-		isParentColInOuterSchema := false
-		for _, outerCol := range outerPlan.Schema().Columns {
-			if parentCol.UniqueID == outerCol.UniqueID {
-				isParentColInOuterSchema = true
-				break
-			}
-		}
-		if !isParentColInOuterSchema {
+		if !isColInOuterSchema {
 			return false
 		}
 	}
