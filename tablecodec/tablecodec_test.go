@@ -243,11 +243,11 @@ func (s *testTableCodecSuite) TestCutRow(c *C) {
 
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	data := make([][]byte, 3)
-	data[0], err = EncodeValue(sc, row[0])
+	data[0], err = EncodeValue(sc, nil, row[0])
 	c.Assert(err, IsNil)
-	data[1], err = EncodeValue(sc, row[1])
+	data[1], err = EncodeValue(sc, nil, row[1])
 	c.Assert(err, IsNil)
-	data[2], err = EncodeValue(sc, row[2])
+	data[2], err = EncodeValue(sc, nil, row[2])
 	c.Assert(err, IsNil)
 	// Encode
 	colIDs := make([]int64, 0, 3)
@@ -488,5 +488,26 @@ func BenchmarkHasTablePrefixBuiltin(b *testing.B) {
 	k := kv.Key("foobar")
 	for i := 0; i < b.N; i++ {
 		k.HasPrefix(tablePrefix)
+	}
+}
+
+// Bench result:
+// BenchmarkEncodeValue      5000000           368 ns/op
+func BenchmarkEncodeValue(b *testing.B) {
+	row := make([]types.Datum, 7)
+	row[0] = types.NewIntDatum(100)
+	row[1] = types.NewBytesDatum([]byte("abc"))
+	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
+	row[3] = types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 0})
+	row[4] = types.NewDatum(types.Set{Name: "a", Value: 0})
+	row[5] = types.NewDatum(types.BinaryLiteral{100})
+	row[6] = types.NewFloat32Datum(1.5)
+	b.ResetTimer()
+	encodedCol := make([]byte, 0, 16)
+	for i := 0; i < b.N; i++ {
+		for _, d := range row {
+			encodedCol = encodedCol[:0]
+			EncodeValue(nil, encodedCol, d)
+		}
 	}
 }
