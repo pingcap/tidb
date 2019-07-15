@@ -48,10 +48,34 @@ type SplitIndexRegionExec struct {
 	upper      []types.Datum
 	num        int
 	valueLists [][]types.Datum
+
+	done bool
+	splitRegionResult
+}
+
+type splitRegionResult struct {
+	splitRegions     int
+	finishScatterNum int
+}
+
+// Open implements the Executor Open interface.
+func (e *SplitIndexRegionExec) Open(ctx context.Context) error {
+	return e.splitIndexRegion(ctx)
 }
 
 // Next implements the Executor Next interface.
-func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *SplitIndexRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
+	e.done = true
+	return nil
+}
+
+// splitIndexRegion uses to split index regions.
+func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
 	s, ok := store.(kv.SplitableStore)
 	if !ok {
@@ -66,6 +90,10 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	defer cancel()
 	regionIDs := make([]uint64, 0, len(splitIdxKeys))
 	for _, idxKey := range splitIdxKeys {
+		if isCtxDone(ctxWithTimeout) {
+			break
+		}
+
 		regionID, err := s.SplitRegion(idxKey, true)
 		if err != nil {
 			logutil.BgLogger().Warn("split table index region failed",
@@ -74,28 +102,34 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				zap.Error(err))
 			continue
 		}
+		if regionID == 0 {
+			continue
+		}
 		regionIDs = append(regionIDs, regionID)
 
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("wait split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
-		}
 	}
+	e.splitRegions = len(regionIDs)
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
+	finishScatterNum := 0
 	for _, regionID := range regionIDs {
+		if isCtxDone(ctxWithTimeout) {
+			break
+		}
+
 		err := s.WaitScatterRegionFinish(regionID)
-		if err != nil {
+		if err == nil {
+			finishScatterNum++
+		} else {
 			logutil.BgLogger().Warn("wait scatter region failed",
 				zap.Uint64("regionID", regionID),
 				zap.String("table", e.tableInfo.Name.L),
 				zap.String("index", e.indexInfo.Name.L),
 				zap.Error(err))
 		}
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("wait split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
-		}
 	}
+	e.finishScatterNum = finishScatterNum
 	return nil
 }
 
@@ -225,10 +259,29 @@ type SplitTableRegionExec struct {
 	upper      types.Datum
 	num        int
 	valueLists [][]types.Datum
+
+	done bool
+	splitRegionResult
+}
+
+// Open implements the Executor Open interface.
+func (e *SplitTableRegionExec) Open(ctx context.Context) error {
+	return e.splitTableRegion(ctx)
 }
 
 // Next implements the Executor Next interface.
-func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *SplitTableRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
+	e.done = true
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
 	s, ok := store.(kv.SplitableStore)
 	if !ok {
@@ -244,6 +297,14 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	regionIDs := make([]uint64, 0, len(splitKeys))
 	for _, key := range splitKeys {
+		failpoint.Inject("mockSplitRegionTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				time.Sleep(time.Second*1 + time.Millisecond*10)
+			}
+		})
+		if isCtxDone(ctxWithTimeout) {
+			break
+		}
 		regionID, err := s.SplitRegion(key, true)
 		if err != nil {
 			logutil.BgLogger().Warn("split table region failed",
@@ -251,41 +312,49 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				zap.Error(err))
 			continue
 		}
+		if regionID == 0 {
+			continue
+		}
 		regionIDs = append(regionIDs, regionID)
 
-		failpoint.Inject("mockSplitRegionTimeout", func(val failpoint.Value) {
-			if val.(bool) {
-				time.Sleep(time.Second * 1)
-			}
-		})
-
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
-		}
 	}
+	e.splitRegions = len(regionIDs)
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
+
+	finishScatterNum := 0
 	for _, regionID := range regionIDs {
+		failpoint.Inject("mockScatterRegionTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				time.Sleep(time.Second*1 + time.Millisecond*10)
+			}
+		})
+		if isCtxDone(ctxWithTimeout) {
+			break
+		}
+
 		err := s.WaitScatterRegionFinish(regionID)
-		if err != nil {
+		if err == nil {
+			finishScatterNum++
+		} else {
 			logutil.BgLogger().Warn("wait scatter region failed",
 				zap.Uint64("regionID", regionID),
 				zap.String("table", e.tableInfo.Name.L),
 				zap.Error(err))
 		}
-
-		failpoint.Inject("mockScatterRegionTimeout", func(val failpoint.Value) {
-			if val.(bool) {
-				time.Sleep(time.Second * 1)
-			}
-		})
-
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("wait split region scatter timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
-		}
 	}
+	e.finishScatterNum = finishScatterNum
 	return nil
+}
+
+func appendSplitRegionResultToChunk(chk *chunk.Chunk, totalRegions, finishScatterNum int) {
+	chk.AppendInt64(0, int64(totalRegions))
+	if finishScatterNum > 0 && totalRegions > 0 {
+		chk.AppendFloat64(1, float64(finishScatterNum)/float64(totalRegions))
+	} else {
+		chk.AppendFloat64(1, float64(0))
+	}
 }
 
 func isCtxDone(ctx context.Context) bool {
