@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1170,11 +1172,28 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		// do pre-split and scatter.
-		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-			if ctx.GetSessionVars().WaitSplitRegionFinish {
-				preSplitTableShardRowIDBitsRegion(d.store, tbInfo, true)
+		sp, ok := d.store.(kv.SplitableStore)
+		if ok && EnableSplitTableRegion {
+			var (
+				preSplit      func()
+				scatterRegion bool
+			)
+			val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
+			if err != nil {
+				logutil.Logger(context.Background()).Warn("[ddl] won't scatter region", zap.Error(err))
 			} else {
-				go preSplitTableShardRowIDBitsRegion(d.store, tbInfo, false)
+				scatterRegion = variable.TiDBOptOn(val)
+			}
+			pi := tbInfo.GetPartitionInfo()
+			if pi != nil {
+				preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
+			} else {
+				preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
+			}
+			if scatterRegion {
+				preSplit()
+			} else {
+				go preSplit()
 			}
 		}
 		if tbInfo.AutoIncID > 1 {
