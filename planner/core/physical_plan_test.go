@@ -1543,8 +1543,8 @@ func (s *testPlanSuite) TestIndexJoinHint(c *C) {
 			warning: "",
 		},
 		{
-			sql:     "select /*+ TIDB_INLJ(t1) */ t1.b, t2.b from t t1, t t2 where t1.b = t2.b;",
-			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.b)",
+			sql:     "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
+			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)",
 			warning: "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t1) */ is inapplicable",
 		},
 	}
