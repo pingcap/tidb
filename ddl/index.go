@@ -946,21 +946,21 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 	}
 
 	var orderedCols []int64
-	for colId := range decodeColMap {
-		orderedCols = append(orderedCols, colId)
+	for colID := range decodeColMap {
+		orderedCols = append(orderedCols, colID)
 	}
 	sort.Slice(orderedCols, func(i, j int) bool { return orderedCols[i] < orderedCols[j] })
 
-	for _, colId := range orderedCols {
-		decCol := decodeColMap[colId]
+	for _, colID := range orderedCols {
+		decCol := decodeColMap[colID]
 		if decCol.GenExpr != nil {
 			newGenExpr := substituteGeneratedColumn(decCol.GenExpr, decodeColMap)
-			decodeColMap[colId] = decoder.Column{
+			decodeColMap[colID] = decoder.Column{
 				Col:     decCol.Col,
 				GenExpr: newGenExpr,
 			}
 		} else {
-			decodeColMap[colId] = decoder.Column{
+			decodeColMap[colID] = decoder.Column{
 				Col: decCol.Col,
 			}
 		}
