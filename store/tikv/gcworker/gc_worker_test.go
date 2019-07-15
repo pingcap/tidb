@@ -402,7 +402,7 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 			Type:               tikvrpc.CmdUnsafeDestroyRange,
 			UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeResponse{},
 		}
-		if bytes.Equal(req.UnsafeDestroyRange.GetStartKey(), failKey) && addr == failStore.GetAddress() {
+		if bytes.Equal(req.UnsafeDestroyRange().GetStartKey(), failKey) && addr == failStore.GetAddress() {
 			if failType == failRPCErr {
 				return nil, errors.New("error")
 			} else if failType == failNilResp {
@@ -488,7 +488,7 @@ Loop:
 	}
 
 	sort.Slice(sentReq, func(i, j int) bool {
-		cmp := bytes.Compare(sentReq[i].req.UnsafeDestroyRange.StartKey, sentReq[j].req.UnsafeDestroyRange.StartKey)
+		cmp := bytes.Compare(sentReq[i].req.UnsafeDestroyRange().StartKey, sentReq[j].req.UnsafeDestroyRange().StartKey)
 		return cmp < 0 || (cmp == 0 && sentReq[i].addr < sentReq[j].addr)
 	})
 
@@ -501,8 +501,8 @@ Loop:
 		for storeIndex := range expectedStores {
 			i := rangeIndex*len(expectedStores) + storeIndex
 			c.Assert(sentReq[i].addr, Equals, expectedStores[storeIndex].Address)
-			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetStartKey(), DeepEquals, sortedRanges[rangeIndex].StartKey)
-			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetEndKey(), DeepEquals, sortedRanges[rangeIndex].EndKey)
+			c.Assert(sentReq[i].req.UnsafeDestroyRange().GetStartKey(), DeepEquals, sortedRanges[rangeIndex].StartKey)
+			c.Assert(sentReq[i].req.UnsafeDestroyRange().GetEndKey(), DeepEquals, sortedRanges[rangeIndex].EndKey)
 		}
 	}
 }
