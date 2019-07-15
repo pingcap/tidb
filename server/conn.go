@@ -1042,12 +1042,16 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 	var err error
 	var reachLimit bool
 	for {
-		prevData, reachLimit, err = loadDataInfo.InsertData(prevData, curData)
+		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
 		if err != nil {
 			return nil, err
 		}
 		if !reachLimit {
 			break
+		}
+		err := loadDataInfo.CheckAndInsertOneBatch()
+		if err != nil {
+			return nil, err
 		}
 		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
 			return nil, err
@@ -1113,7 +1117,10 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if err != nil {
 		loadDataInfo.Ctx.StmtRollback()
 	} else {
-		err = loadDataInfo.Ctx.StmtCommit()
+		err = loadDataInfo.CheckAndInsertOneBatch()
+		if err == nil {
+			err = loadDataInfo.Ctx.StmtCommit()
+		}
 	}
 
 	var txn kv.Transaction
@@ -1176,9 +1183,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 	status := atomic.LoadInt32(&cc.status)
-	if status == connStatusShutdown || status == connStatusWaitShutdown {
+	if rs != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
 		killConn(cc)
-		return errors.New("killed by another connection")
+		return executor.ErrQueryInterrupted
 	}
 	if rs != nil {
 		if len(rs) == 1 {
