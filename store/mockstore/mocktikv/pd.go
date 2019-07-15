@@ -33,7 +33,8 @@ var tsMu = struct {
 type pdClient struct {
 	cluster *Cluster
 	// SafePoint set by `UpdateGCSafePoint`. Not to be confused with SafePointKV.
-	gcSafePoint uint64
+	gcSafePoint   uint64
+	gcSafePointMu sync.Mutex
 }
 
 // NewPDClient creates a mock pd.Client that uses local timestamp and meta data
@@ -110,6 +111,9 @@ func (c *pdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) 
 }
 
 func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	c.gcSafePointMu.Lock()
+	defer c.gcSafePointMu.Unlock()
+
 	if safePoint > c.gcSafePoint {
 		c.gcSafePoint = safePoint
 	}

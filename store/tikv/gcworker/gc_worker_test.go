@@ -138,42 +138,43 @@ func (s *testGCWorkerSuite) mustGetSafePointFromPd(c *C) uint64 {
 	return safePoint
 }
 
-// garbage represents a key that contains multiple versions, one of which should be collected.
+// gcProbe represents a key that contains multiple versions, one of which should be collected. Execution of GC with
+// greater ts will be detected, but it may not work properly if there are newer versions of the key.
 // This is not used to check the correctness of GC algorithm, but only for checking whether GC has been executed on the
-// specified key. Create this using `s.createGarbage`.
-type garbage struct {
+// specified key. Create this using `s.createGCProbe`.
+type gcProbe struct {
 	key string
 	// The ts that can see the version that should be deleted.
-	firstTs uint64
+	v1ts uint64
 	// The ts that can see the version that should be kept.
-	secondTs uint64
+	v2ts uint64
 }
 
-// createGarbage creates garbage on specified key.
-func (s *testGCWorkerSuite) createGarbage(c *C, key string) *garbage {
+// createGCProbe creates gcProbe on specified key.
+func (s *testGCWorkerSuite) createGCProbe(c *C, key string) *gcProbe {
 	s.mustPut(c, key, "v1")
 	ts1 := s.mustAllocTs(c)
 	s.mustPut(c, key, "v2")
 	ts2 := s.mustAllocTs(c)
-	g := &garbage{
-		key:      key,
-		firstTs:  ts1,
-		secondTs: ts2,
+	g := &gcProbe{
+		key:  key,
+		v1ts: ts1,
+		v2ts: ts2,
 	}
 	s.checkNotCollected(c, g)
 	return g
 }
 
-// checkCollected asserts the garbage has been correctly collected.
-func (s *testGCWorkerSuite) checkCollected(c *C, g *garbage) {
-	s.mustGetNone(c, g.key, g.firstTs)
-	c.Assert(s.mustGet(c, g.key, g.secondTs), Equals, "v2")
+// checkCollected asserts the gcProbe has been correctly collected.
+func (s *testGCWorkerSuite) checkCollected(c *C, g *gcProbe) {
+	s.mustGetNone(c, g.key, g.v1ts)
+	c.Assert(s.mustGet(c, g.key, g.v2ts), Equals, "v2")
 }
 
-// checkNotCollected asserts the garbage has not been collected.
-func (s *testGCWorkerSuite) checkNotCollected(c *C, g *garbage) {
-	c.Assert(s.mustGet(c, g.key, g.firstTs), Equals, "v1")
-	c.Assert(s.mustGet(c, g.key, g.secondTs), Equals, "v2")
+// checkNotCollected asserts the gcProbe has not been collected.
+func (s *testGCWorkerSuite) checkNotCollected(c *C, g *gcProbe) {
+	c.Assert(s.mustGet(c, g.key, g.v1ts), Equals, "v1")
+	c.Assert(s.mustGet(c, g.key, g.v2ts), Equals, "v2")
 }
 
 func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
@@ -320,7 +321,7 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
 
-	g := s.createGarbage(c, "k1")
+	g := s.createGCProbe(c, "k1")
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, IsNil)
@@ -373,17 +374,17 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 
 	gcSafePointCacheInterval = 1
 
-	g := s.createGarbage(c, "k1")
+	g := s.createGCProbe(c, "k1")
 	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcDefaultConcurrency)
 	c.Assert(err, IsNil)
 	s.checkCollected(c, g)
 
-	g = s.createGarbage(c, "k1")
+	g = s.createGCProbe(c, "k1")
 	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcMinConcurrency)
 	c.Assert(err, IsNil)
 	s.checkCollected(c, g)
 
-	g = s.createGarbage(c, "k1")
+	g = s.createGCProbe(c, "k1")
 	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcMaxConcurrency)
 	c.Assert(err, IsNil)
 	s.checkCollected(c, g)
@@ -606,7 +607,7 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 	// Use central mode to do this test.
 	err := s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	c.Assert(err, IsNil)
-	g := s.createGarbage(c, "k1")
+	g := s.createGCProbe(c, "k1")
 	s.oracle.AddOffset(gcDefaultLifeTime * 2)
 
 	// Skip if GC is running.
@@ -689,7 +690,7 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, IsFalse)
 
-	g := s.createGarbage(c, "k1")
+	g := s.createGCProbe(c, "k1")
 	safePoint = s.mustAllocTs(c)
 	s.gcWorker.runGCJob(context.Background(), safePoint, 1)
 	s.checkCollected(c, g)
@@ -704,7 +705,7 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 func (s *testGCWorkerSuite) TestRunGCJobAPI(c *C) {
 	gcSafePointCacheInterval = 0
 
-	g := s.createGarbage(c, "k1")
+	g := s.createGCProbe(c, "k1")
 	safePoint := s.mustAllocTs(c)
 	err := RunGCJob(context.Background(), s.store, safePoint, "mock", 1)
 	c.Assert(err, IsNil)
