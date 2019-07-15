@@ -74,6 +74,9 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 	return nil
 }
 
+// checkScatterRegionFinishBackOff is the back off that uses to check region scatter finished when split region timeout.
+const checkScatterRegionFinishBackOff = 50
+
 // splitIndexRegion uses to split index regions.
 func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
@@ -117,15 +120,11 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	finishScatterNum := 0
 	for _, regionID := range regionIDs {
 		if isCtxDone(ctxWithTimeout) {
-			break
-		}
-
-		if isCtxDone(ctxWithTimeout) {
 			// Do not break here for checking remain region scatter finished with a very short back off time.
 			// Imagine this situation, we split region 1,2,3, and timeout on wait region 1 scatter,
 			// but region 2 and region 3 is already scatter finish, then we should return result finish scatter region num 2,
 			// instead of finish scatter region num 0.
-			remainMillisecond = 50
+			remainMillisecond = checkScatterRegionFinishBackOff
 		} else {
 			remainMillisecond = int((e.ctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(start).Seconds()) * 1000)
 		}
@@ -339,11 +338,11 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	finishScatterNum := 0
 	for _, regionID := range regionIDs {
 		if isCtxDone(ctxWithTimeout) {
-			// Do not break here for checking remain region scatter finished with a very short back off time.
-			// Imagine this situation, we split region 1,2,3, and timeout on wait region 1 scatter,
-			// but region 2 and region 3 is already scatter finish, then we should return result finish scatter region num 2,
+			// Do not break here for checking remain regions scatter finished with a very short backoff time.
+			// Imagine this situation, we split region 1,2,3, and timeout when wait region 1 scatter finish,
+			// but region 2 and region 3 was already scatter finished, then we should return the result that finish scatter region num 2,
 			// instead of finish scatter region num 0.
-			remainMillisecond = 50
+			remainMillisecond = checkScatterRegionFinishBackOff
 		} else {
 			remainMillisecond = int((e.ctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(start).Seconds()) * 1000)
 		}
