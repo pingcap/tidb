@@ -14,6 +14,7 @@
 package binloginfo
 
 import (
+	"github.com/pingcap/parser/model"
 	"regexp"
 	"strings"
 	"sync"
@@ -131,9 +132,25 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 }
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
-func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, ddlQuery string) {
+func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, job *model.Job, ddlQuery string) {
 	if client == nil {
 		return
+	}
+
+	//append default charset and collate
+	jobID := job.ID
+	ddlQuery = strings.ToLower(ddlQuery)
+	if job.Type == model.ActionCreateTable {
+		// should find last ')'
+		pos := strings.IndexByte(reverseString(ddlQuery), ')')
+		if pos != -1 {
+			pos = len(ddlQuery) - 1 - pos
+			suffix := appendDefaultCharsetAndCollate(ddlQuery[pos:], job.BinlogInfo.TableInfo.Charset, job.BinlogInfo.TableInfo.Collate)
+			ddlQuery = string(append([]rune(ddlQuery[:pos]), []rune(suffix)...))
+		}
+	}
+	if job.Type == model.ActionCreateSchema {
+		ddlQuery = appendDefaultCharsetAndCollate(ddlQuery, job.BinlogInfo.DBInfo.Charset, job.BinlogInfo.DBInfo.Collate)
 	}
 
 	ddlQuery = addSpecialComment(ddlQuery)
@@ -146,6 +163,26 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 		Client: client,
 	}
 	txn.SetOption(kv.BinlogInfo, info)
+}
+
+func reverseString(s string) string {
+	runes := []rune(s)
+	for from, to := 0, len(runes)-1; from < to; from, to = from+1, to-1 {
+		runes[from], runes[to] = runes[to], runes[from]
+	}
+	return string(runes)
+}
+
+func appendDefaultCharsetAndCollate(ddlQuery, charset, collate string) string {
+	if !(strings.Contains(ddlQuery, "charset") || strings.Contains(ddlQuery, "character set")) {
+		ddlQuery = string(append([]rune(ddlQuery), []rune(" default charset ")...))
+		ddlQuery = string(append([]rune(ddlQuery), []rune(charset)...))
+	}
+	if !(strings.Contains(ddlQuery, "collate")) {
+		ddlQuery = string(append([]rune(ddlQuery), []rune(" collate ")...))
+		ddlQuery = string(append([]rune(ddlQuery), []rune(collate)...))
+	}
+	return ddlQuery
 }
 
 const specialPrefix = `/*!90000 `

@@ -130,7 +130,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	pump := s.pump
 	tk.MustExec("drop table if exists local_binlog")
 	ddlQuery := "create table local_binlog (id int unique key, name varchar(10)) shard_row_id_bits=1"
-	binlogDDLQuery := "create table local_binlog (id int unique key, name varchar(10)) /*!90000 shard_row_id_bits=1 */"
+	binlogDDLQuery := "create table local_binlog (id int unique key, name varchar(10)) /*!90000 shard_row_id_bits=1 */ default charset utf8mb4 collate utf8mb4_bin"
 	tk.MustExec(ddlQuery)
 	var matched bool // got matched pre DDL and commit DDL
 	for i := 0; i < 10; i++ {
@@ -146,6 +146,30 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 		time.Sleep(time.Millisecond * 10)
 	}
 	c.Assert(matched, IsTrue)
+
+	tk.MustExec("drop table if exists t1")
+	ddlQuery = "create table t1 (name varchar(10) CHARSET utf8 COLLATE utf8_bin)"
+	binlogDDLQuery = "create table t1 (name varchar(10) charset utf8 collate utf8_bin) default charset utf8mb4 collate utf8mb4_bin"
+	tk.MustExec(ddlQuery)
+	getLatestDDLBinlog(c, pump, binlogDDLQuery)
+
+	tk.MustExec("drop table if exists t1")
+	ddlQuery = "create table t1 (name varchar(10) CHARSET utf8 COLLATE utf8_bin) character set utf8mb4 collate utf8mb4_bin"
+	binlogDDLQuery = "create table t1 (name varchar(10) charset utf8 collate utf8_bin) character set utf8mb4 collate utf8mb4_bin"
+	tk.MustExec(ddlQuery)
+	getLatestDDLBinlog(c, pump, binlogDDLQuery)
+
+	tk.MustExec("drop database if exists d1")
+	ddlQuery = "create database d1"
+	binlogDDLQuery = "create database d1 default charset utf8mb4 collate utf8mb4_bin"
+	tk.MustExec(ddlQuery)
+	getLatestDDLBinlog(c, pump, binlogDDLQuery)
+
+	tk.MustExec("drop database if exists d1")
+	ddlQuery = "create database d1 CHARACTER SET utf8mb4 collate utf8mb4_bin"
+	binlogDDLQuery = "create database d1 character set utf8mb4 collate utf8mb4_bin"
+	tk.MustExec(ddlQuery)
+	getLatestDDLBinlog(c, pump, binlogDDLQuery)
 
 	tk.MustExec("insert local_binlog values (1, 'abc'), (2, 'cde')")
 	prewriteVal := getLatestBinlogPrewriteValue(c, pump)

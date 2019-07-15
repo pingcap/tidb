@@ -419,7 +419,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				return errors.Trace(err)
 			}
 			if job.IsDone() || job.IsRollbackDone() {
-				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
+				binloginfo.SetDDLBinlog(d.binlogCli, txn, job, job.Query)
 			}
 			return nil
 		})
