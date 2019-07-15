@@ -1800,7 +1800,7 @@ func (s *testSuite4) TestLoadData(c *C) {
 	// data1 = nil, data2 = nil, fields and lines is default
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-	_, reachLimit, err := ld.InsertData(nil, nil)
+	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
 	r := tk.MustQuery(selectSQL)
