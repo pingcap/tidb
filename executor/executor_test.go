@@ -87,8 +87,8 @@ func TestT(t *testing.T) {
 	testleak.AfterTestT(t)()
 }
 
-var _ = Suite(&testSuite{&testSuiteChild{}})
-var _ = Suite(&testSuiteP1{&testSuiteChild{}})
+var _ = Suite(&testSuite{&baseTestSuite{}})
+var _ = Suite(&testSuiteP1{&baseTestSuite{}})
 var _ = Suite(&testSuite1{})
 var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
@@ -100,10 +100,10 @@ var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testRecoverTable{})
 var _ = Suite(&testFlushSuite{})
 
-type testSuite struct{ *testSuiteChild }
-type testSuiteP1 struct{ *testSuiteChild }
+type testSuite struct{ *baseTestSuite }
+type testSuiteP1 struct{ *baseTestSuite }
 
-type testSuiteChild struct {
+type baseTestSuite struct {
 	cluster   *mocktikv.Cluster
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
@@ -114,7 +114,7 @@ type testSuiteChild struct {
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
-func (s *testSuiteChild) SetUpSuite(c *C) {
+func (s *baseTestSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -137,7 +137,7 @@ func (s *testSuiteChild) SetUpSuite(c *C) {
 	s.domain = d
 }
 
-func (s *testSuiteChild) TearDownSuite(c *C) {
+func (s *baseTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
 }
@@ -417,7 +417,7 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	c.Assert(historyJobs, DeepEquals, historyJobs2)
 }
 
-func (s *testSuiteChild) fillData(tk *testkit.TestKit, table string) {
+func (s *baseTestSuite) fillData(tk *testkit.TestKit, table string) {
 	tk.MustExec("use test")
 	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
 
