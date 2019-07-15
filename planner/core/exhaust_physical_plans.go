@@ -1030,15 +1030,21 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		}
 
 		if leftJoins != nil && lhsCardinality < rhsCardinality {
-			return leftJoins, hasIndexJoinHint
+			return leftJoins, leftOuter
 		}
 
 		if rightJoins != nil && rhsCardinality < lhsCardinality {
-			return rightJoins, hasIndexJoinHint
+			return rightJoins, rightOuter
 		}
 
+		// At this position, at least one of leftJoins and rightJoins is nil
+		// Unless (leftOuter == rightOuter && lhsCardinality == rhsCardinality)
+		canForceLeft := leftJoins != nil && leftOuter
+		canForceRight := rightJoins != nil && rightOuter
+
 		joins := append(leftJoins, rightJoins...)
-		return joins, hasIndexJoinHint && len(joins) != 0
+		forced = canForceLeft || canForceRight
+		return joins, forced
 	}
 
 	return nil, false

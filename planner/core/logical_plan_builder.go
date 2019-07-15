@@ -312,6 +312,12 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 
 func extractTableAlias(p LogicalPlan) *model.CIStr {
 	if p.Schema().Len() > 0 && p.Schema().Columns[0].TblName.L != "" {
+		tblName := p.Schema().Columns[0].TblName.L
+		for _, column := range p.Schema().Columns {
+			if column.TblName.L != tblName {
+				return nil
+			}
+		}
 		return &(p.Schema().Columns[0].TblName)
 	}
 	return nil
