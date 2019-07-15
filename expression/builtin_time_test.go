@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -926,6 +927,33 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		c.Assert(result, Equals, t.expect)
 	}
 
+	tblWarning := []struct {
+		Input         interface{}
+		InputDuration interface{}
+		warning       *terror.Error
+	}{
+		{"0", "-32073", types.ErrTruncatedWrongVal},
+		{"-32073", "0", types.ErrTruncatedWrongVal},
+		{types.ZeroDuration, "-32073", types.ErrTruncatedWrongVal},
+		{"-32073", types.ZeroDuration, types.ErrTruncatedWrongVal},
+		{types.CurrentTime(mysql.TypeTimestamp), "-32073", types.ErrTruncatedWrongVal},
+		{types.CurrentTime(mysql.TypeDate), "-32073", types.ErrTruncatedWrongVal},
+		{types.CurrentTime(mysql.TypeDatetime), "-32073", types.ErrTruncatedWrongVal},
+	}
+	for i, t := range tblWarning {
+		tmpInput := types.NewDatum(t.Input)
+		tmpInputDuration := types.NewDatum(t.InputDuration)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, "")
+		c.Assert(d.IsNull(), Equals, true)
+		warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, i+1)
+		c.Assert(terror.ErrorEqual(t.warning, warnings[i].Err), IsTrue, Commentf("err %v", warnings[i].Err))
+	}
 }
 
 func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
@@ -990,6 +1018,34 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		c.Assert(err, IsNil)
 		result, _ := d.ToString()
 		c.Assert(result, Equals, t.expect)
+	}
+
+	tblWarning := []struct {
+		Input         interface{}
+		InputDuration interface{}
+		warning       *terror.Error
+	}{
+		{"0", "-32073", types.ErrTruncatedWrongVal},
+		{"-32073", "0", types.ErrTruncatedWrongVal},
+		{types.ZeroDuration, "-32073", types.ErrTruncatedWrongVal},
+		{"-32073", types.ZeroDuration, types.ErrTruncatedWrongVal},
+		{types.CurrentTime(mysql.TypeTimestamp), "-32073", types.ErrTruncatedWrongVal},
+		{types.CurrentTime(mysql.TypeDate), "-32073", types.ErrTruncatedWrongVal},
+		{types.CurrentTime(mysql.TypeDatetime), "-32073", types.ErrTruncatedWrongVal},
+	}
+	for i, t := range tblWarning {
+		tmpInput := types.NewDatum(t.Input)
+		tmpInputDuration := types.NewDatum(t.InputDuration)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, "")
+		c.Assert(d.IsNull(), Equals, true)
+		warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, i+1)
+		c.Assert(terror.ErrorEqual(t.warning, warnings[i].Err), IsTrue, Commentf("err %v", warnings[i].Err))
 	}
 }
 
