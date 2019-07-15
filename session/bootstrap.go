@@ -211,6 +211,11 @@ const (
 		feedback blob NOT NULL,
 		index hist(table_id, is_index, hist_id)
 	);`
+
+	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
+	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
+		name char(100) NOT NULL
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -280,6 +285,7 @@ const (
 	version22 = 22
 	version23 = 23
 	version24 = 24
+	version25 = 25
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -433,6 +439,10 @@ func upgrade(s Session) {
 
 	if ver < version24 {
 		upgradeToVer24(s)
+	}
+
+	if ver < version25 {
+		upgradeToVer25(s)
 	}
 
 	updateBootstrapVer(s)
@@ -694,6 +704,10 @@ func upgradeToVer24(s Session) {
 	writeSystemTZ(s)
 }
 
+func upgradeToVer25(s Session) {
+	doReentrantDDL(s, CreateExprPushdownBlacklist)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -744,6 +758,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGCDeleteRangeDoneTable)
 	// Create stats_feedback table.
 	mustExecute(s, CreateStatsFeedbackTable)
+	// Create expr_pushdown_blacklist table.
+	mustExecute(s, CreateExprPushdownBlacklist)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

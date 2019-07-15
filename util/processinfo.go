@@ -26,11 +26,11 @@ type ProcessInfo struct {
 	ID      uint64
 	User    string
 	Host    string
-	DB      string
+	DB      interface{}
 	Command byte
 	Time    time.Time
 	State   uint16
-	Info    string
+	Info    interface{}
 	StmtCtx *stmtctx.StatementContext
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
@@ -39,11 +39,13 @@ type ProcessInfo struct {
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
 func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
-	var info string
-	if full {
-		info = pi.Info
-	} else {
-		info = fmt.Sprintf("%.100v", pi.Info)
+	var info interface{}
+	if pi.Info != nil {
+		if full {
+			info = pi.Info.(string)
+		} else {
+			info = fmt.Sprintf("%.100v", pi.Info.(string))
+		}
 	}
 	t := uint64(time.Since(pi.Time) / time.Second)
 	return []interface{}{

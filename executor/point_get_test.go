@@ -100,6 +100,8 @@ func (s *testPointGetSuite) TestPointGet(c *C) {
 	tk.MustQuery(`select a, a, b, a, b, c, b, c, c from t where a = 5;`).Check(testkit.Rows(
 		`5 5 6 5 6 7 6 7 7`,
 	))
+	tk.MustQuery(`select b, b from t where a = 1`).Check(testkit.Rows(
+		"<nil> <nil>"))
 }
 
 func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
