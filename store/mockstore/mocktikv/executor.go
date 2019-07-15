@@ -358,7 +358,6 @@ func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 				e.counts[e.cursor]++
 			}
 		}
-		//	log.Errorf("xxxxxxxxxxxx   %v", value)
 		return value, nil
 	}
 

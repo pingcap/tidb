@@ -14,9 +14,6 @@
 package core
 
 import (
-	"fmt"
-
-	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -98,7 +95,6 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		Columns: model.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
-	log.Warnf("tbl scan ------- to pb, len %v", len(columns))
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, err
 }
@@ -122,16 +118,13 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
 	tableColumns := p.Table.Cols()
-	str := ""
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else {
 			columns = append(columns, model.FindColumnInfo(tableColumns, col.ColName.L))
 		}
-		str += fmt.Sprintf("id %d, col %v; ", col.ID, col)
 	}
-	log.Warnf("idx scan ------- to pb, %v", str)
 	idxExec := &tipb.IndexScan{
 		TableId: p.Table.ID,
 		IndexId: p.Index.ID,

@@ -570,45 +570,7 @@ func (b *PlanBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
 	}
 
-	// TODO: Handle generated column.
-	// genExprs := make(map[model.TableColumnID]expression.Expression)
 	return b.buildPhysicalIndexLookUpReader(dbName, tbl, idx, 1)
-	//	id := 1
-	//	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
-	//	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
-	//	for _, idxCol := range idx.Columns {
-	//		for _, col := range tblInfo.Columns {
-	//			if idxCol.Name.L == col.Name.L {
-	//				columns = append(columns, col)
-	//				schema.Append(&expression.Column{
-	//					ColName:  col.Name,
-	//					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-	//					RetType:  &col.FieldType,
-	//				})
-	//			}
-	//		}
-	//	}
-	//	is := PhysicalIndexScan{
-	//		Table:            tblInfo,
-	//		TableAsName:      &tblName.Name,
-	//		DBName:           dbName,
-	//		Columns:          columns,
-	//		Index:            idx,
-	//		dataSourceSchema: schema,
-	//		Ranges:           ranger.FullRange(),
-	//		KeepOrder:        false,
-	//	}.Init(b.ctx)
-	//	is.stats = property.NewSimpleStats(0)
-	//	cop := &copTask{indexPlan: is}
-	//	// It's double read case.
-	//	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.Init(b.ctx)
-	//	ts.SetSchema(is.dataSourceSchema)
-	//	cop.tablePlan = ts
-	//	is.initSchema(id, idx, true)
-	//	t := finishCopTask(b.ctx, cop)
-	//
-	//	rootT := t.(*rootTask)
-	//	return rootT.p, nil
 }
 
 func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {

@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
@@ -405,10 +404,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 varchar(255) default '1', primary key(c1), key(c3), unique key(c2), key(c2, c3))")
-	// tk.MustExec("create table admin_test (c1 int, c2 int, c3 varchar(255) default '1', primary key(c1), key(c3))")
-	// tk.MustExec("create table admin_test (c1 int, c2 int, c3 varchar(255) default '1', primary key(c1), unique key(c2))")
-	// tk.MustExec("insert admin_test (c1, c2, c3) values (1, 11, 'a'), (2, 12, 'b'), (5, 15, 'c'), (10, 20, 'd'), (20, 30, 'e')")
-	tk.MustExec("insert admin_test (c1, c2, c3) values (1, 11, '1'), (2, 12, '2'), (5, 15, '3'), (10, 20, '4'), (20, 30, '5')")
+	tk.MustExec("insert admin_test (c1, c2, c3) values (1, 11, 'a'), (2, 12, 'b'), (5, 15, 'c'), (10, 20, 'd'), (20, 30, 'e')")
 
 	// Make some corrupted index. Build the index information.
 	s.ctx = mock.NewContext()
@@ -419,8 +415,6 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	tbl, err := is.TableByName(dbName, tblName)
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
-	// idxInfo := findIndexByName("c3", tblInfo.Indices)
-	// idxInfo := findIndexByName("c2", tblInfo.Indices)
 	idxInfo := tblInfo.Indices[1]
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	sc := s.ctx.GetSessionVars().StmtCtx
@@ -436,16 +430,13 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	log.Errorf("...................................................................................... 00")
 	_, err = tk.Exec("admin check table admin_test")
 	c.Assert(err.Error(), Equals,
 		"[executor:8003]admin_test err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:1, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:11, b:[]uint8(nil), x:interface {}(nil)}}}")
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 	r := tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 5"))
-	log.Errorf("...................................................................................... 01")
 	tk.MustExec("admin check table admin_test")
-	log.Errorf("...................................................................................... 1")
 
 	// Add one row of index.
 	// Table count < index count.
@@ -454,26 +445,24 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(21), 1)
 	c.Assert(err, IsNil)
-	//	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(13), 2)
-	//	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(13), 2)
+	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
-	c.Assert(err.Error(), Equals, "handle 1, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:21, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:11, b:[]uint8(nil), x:interface {}(nil)}")
-	log.Errorf("...................................................................................... 2")
+	c.Assert(err.Error(), Equals, "handle 2, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:13, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:12, b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Table count = index count.
 	// Two indices have the same handle.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	// err = indexOpr.Delete(sc, txn, types.MakeDatums(13), 2, nil)
-	// c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(13), 2, nil)
+	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(12), 2, nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
-	// c.Assert(err.Error(), Equals, "admin check table admin_test, index c2, at least two indices have the same handle 1 more than one")
 	c.Assert(err.Error(), Equals, "handle 1, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:21, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:11, b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Table count = index count.
@@ -487,7 +476,6 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
-	// c.Assert(err.Error(), Equals, "admin check table admin_test, index c2, at least two indices have the same handle 1 more than one")
 	c.Assert(err.Error(), Equals, "handle 1, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:21, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:11, b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Recover records.

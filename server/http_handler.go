@@ -582,11 +582,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeError(w, err1)
 				return
 			}
-			log.Warnf("-------------- time %v", atomic.LoadUint32(&variable.DDLSlowOprThreshold))
 			if threshold > 0 {
 				atomic.StoreUint32(&variable.DDLSlowOprThreshold, uint32(threshold))
 			}
-			log.Warnf("-------------- time %v", atomic.LoadUint32(&variable.DDLSlowOprThreshold))
 		}
 		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
 			switch checkMb4ValueInUtf8 {

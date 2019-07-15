@@ -58,8 +58,8 @@ func (s *testAdminSuite) TearDownSuite(c *C) {
 func (s *testAdminSuite) TestAdminCheckTable(c *C) {
 	// test NULL value.
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test") //
-	// test index column has pk-handle column//
+	tk.MustExec("use test")
+	// test index column has pk-handle column
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
 	tk.MustExec("insert into t values(1, 1, 1)")

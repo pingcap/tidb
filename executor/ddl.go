@@ -267,7 +267,6 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 		}
 
 		if config.CheckTableBeforeDrop {
-			logutil.BgLogger().Info("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 			logutil.BgLogger().Warn("admin check table before drop",
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),

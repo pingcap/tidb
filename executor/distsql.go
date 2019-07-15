@@ -480,13 +480,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	result.Fetch(ctx)
 	worker := &indexWorker{
-		idxLookup: e,
-		workCh:    workCh,
-		finished:  e.finished,
-		resultCh:  e.resultCh,
-		keepOrder: e.keepOrder,
-		batchSize: initBatchSize,
-		// batchSize:       e.maxChunkSize,
+		idxLookup:       e,
+		workCh:          workCh,
+		finished:        e.finished,
+		resultCh:        e.resultCh,
+		keepOrder:       e.keepOrder,
+		batchSize:       initBatchSize,
 		checkIndexValue: e.checkIndexValue,
 		maxBatchSize:    e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize:    e.maxChunkSize,

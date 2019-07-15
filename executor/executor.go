@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/ngaut/log"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -157,7 +156,6 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 		cols := schema.Columns
 		e.retFieldTypes = make([]*types.FieldType, len(cols))
 		for i := range cols {
-			log.Warnf("------- new executor, id %s, col %v, no. %d", id, cols[i], cols[i].Index)
 			e.retFieldTypes[i] = cols[i].RetType
 		}
 	}
@@ -493,9 +491,7 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *Ind
 	var err error
 	handles := make(map[int64]struct{}, 1024)
 	for {
-		log.Infof("====================== check no.%d idx handle. 0", num)
 		err = src.Next(ctx, chk)
-		log.Infof("====================== check no.%d idx handle. 1", num)
 		if err != nil {
 			break
 		}
@@ -537,7 +533,6 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tblInfo.Name.O, idxNames)
 	if err != nil {
-		log.Warnf("check table %v, greater %v index %s err: %v", e.tblInfo.Name, greater, idxNames[idxOffset], err)
 		tbl := e.srcs[idxOffset].table
 		if greater == admin.IdxCntGreater {
 			err = e.checkIndexHandle(ctx, idxOffset, e.srcs[idxOffset])
@@ -553,7 +548,10 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The number of table rows is equal to the number of index rows.
 	for i := range e.srcs {
 		go func(num int) {
-			e.checkIndexHandle(ctx, num, e.srcs[num])
+			err1 := e.checkIndexHandle(ctx, num, e.srcs[num])
+			if err1 != nil {
+				logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
+			}
 		}(i)
 	}
 
