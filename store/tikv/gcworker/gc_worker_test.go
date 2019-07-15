@@ -145,9 +145,9 @@ func (s *testGCWorkerSuite) mustGetSafePointFromPd(c *C) uint64 {
 type gcProbe struct {
 	key string
 	// The ts that can see the version that should be deleted.
-	v1ts uint64
+	v1Ts uint64
 	// The ts that can see the version that should be kept.
-	v2ts uint64
+	v2Ts uint64
 }
 
 // createGCProbe creates gcProbe on specified key.
@@ -156,25 +156,25 @@ func (s *testGCWorkerSuite) createGCProbe(c *C, key string) *gcProbe {
 	ts1 := s.mustAllocTs(c)
 	s.mustPut(c, key, "v2")
 	ts2 := s.mustAllocTs(c)
-	g := &gcProbe{
+	p := &gcProbe{
 		key:  key,
-		v1ts: ts1,
-		v2ts: ts2,
+		v1Ts: ts1,
+		v2Ts: ts2,
 	}
-	s.checkNotCollected(c, g)
-	return g
+	s.checkNotCollected(c, p)
+	return p
 }
 
 // checkCollected asserts the gcProbe has been correctly collected.
-func (s *testGCWorkerSuite) checkCollected(c *C, g *gcProbe) {
-	s.mustGetNone(c, g.key, g.v1ts)
-	c.Assert(s.mustGet(c, g.key, g.v2ts), Equals, "v2")
+func (s *testGCWorkerSuite) checkCollected(c *C, p *gcProbe) {
+	s.mustGetNone(c, p.key, p.v1Ts)
+	c.Assert(s.mustGet(c, p.key, p.v2Ts), Equals, "v2")
 }
 
 // checkNotCollected asserts the gcProbe has not been collected.
-func (s *testGCWorkerSuite) checkNotCollected(c *C, g *gcProbe) {
-	c.Assert(s.mustGet(c, g.key, g.v1ts), Equals, "v1")
-	c.Assert(s.mustGet(c, g.key, g.v2ts), Equals, "v2")
+func (s *testGCWorkerSuite) checkNotCollected(c *C, p *gcProbe) {
+	c.Assert(s.mustGet(c, p.key, p.v1Ts), Equals, "v1")
+	c.Assert(s.mustGet(c, p.key, p.v2Ts), Equals, "v2")
 }
 
 func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
@@ -321,11 +321,11 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
 
-	g := s.createGCProbe(c, "k1")
+	p := s.createGCProbe(c, "k1")
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, IsNil)
-	s.checkCollected(c, g)
+	s.checkCollected(c, p)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
@@ -374,20 +374,20 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 
 	gcSafePointCacheInterval = 1
 
-	g := s.createGCProbe(c, "k1")
+	p := s.createGCProbe(c, "k1")
 	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcDefaultConcurrency)
 	c.Assert(err, IsNil)
-	s.checkCollected(c, g)
+	s.checkCollected(c, p)
 
-	g = s.createGCProbe(c, "k1")
+	p = s.createGCProbe(c, "k1")
 	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcMinConcurrency)
 	c.Assert(err, IsNil)
-	s.checkCollected(c, g)
+	s.checkCollected(c, p)
 
-	g = s.createGCProbe(c, "k1")
+	p = s.createGCProbe(c, "k1")
 	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcMaxConcurrency)
 	c.Assert(err, IsNil)
-	s.checkCollected(c, g)
+	s.checkCollected(c, p)
 }
 
 func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
@@ -607,14 +607,14 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 	// Use central mode to do this test.
 	err := s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	c.Assert(err, IsNil)
-	g := s.createGCProbe(c, "k1")
+	p := s.createGCProbe(c, "k1")
 	s.oracle.AddOffset(gcDefaultLifeTime * 2)
 
 	// Skip if GC is running.
 	s.gcWorker.gcIsRunning = true
 	err = s.gcWorker.leaderTick(context.Background())
 	c.Assert(err, IsNil)
-	s.checkNotCollected(c, g)
+	s.checkNotCollected(c, p)
 	s.gcWorker.gcIsRunning = false
 	// Reset GC last run time
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
@@ -625,7 +625,7 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 	c.Assert(err, IsNil)
 	err = s.gcWorker.leaderTick(context.Background())
 	c.Assert(err, IsNil)
-	s.checkNotCollected(c, g)
+	s.checkNotCollected(c, p)
 	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
 	c.Assert(err, IsNil)
 	// Reset GC last run time
@@ -636,7 +636,7 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 	s.gcWorker.lastFinish = time.Now()
 	err = s.gcWorker.leaderTick(context.Background())
 	c.Assert(err, IsNil)
-	s.checkNotCollected(c, g)
+	s.checkNotCollected(c, p)
 	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
 	// Reset GC last run time
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
@@ -653,7 +653,7 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
 	c.Assert(err, IsNil)
-	s.checkCollected(c, g)
+	s.checkCollected(c, p)
 }
 
 func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
@@ -690,10 +690,10 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, IsFalse)
 
-	g := s.createGCProbe(c, "k1")
+	p := s.createGCProbe(c, "k1")
 	safePoint = s.mustAllocTs(c)
 	s.gcWorker.runGCJob(context.Background(), safePoint, 1)
-	s.checkCollected(c, g)
+	s.checkCollected(c, p)
 	err = <-s.gcWorker.done
 	c.Assert(err, IsNil)
 
@@ -705,11 +705,11 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 func (s *testGCWorkerSuite) TestRunGCJobAPI(c *C) {
 	gcSafePointCacheInterval = 0
 
-	g := s.createGCProbe(c, "k1")
+	p := s.createGCProbe(c, "k1")
 	safePoint := s.mustAllocTs(c)
 	err := RunGCJob(context.Background(), s.store, safePoint, "mock", 1)
 	c.Assert(err, IsNil)
-	s.checkCollected(c, g)
+	s.checkCollected(c, p)
 	etcdSafePoint := s.loadEtcdSafePoint(c)
 	c.Assert(err, IsNil)
 	c.Assert(etcdSafePoint, Equals, safePoint)
