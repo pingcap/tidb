@@ -154,17 +154,13 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 	pending := batch.keys
 	for {
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdBatchGet,
-			BatchGet: &pb.BatchGetRequest{
-				Keys:    pending,
-				Version: s.version.Ver,
-			},
-			Context: pb.Context{
-				Priority:     s.priority,
-				NotFillCache: s.notFillCache,
-			},
-		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
+			Keys:    pending,
+			Version: s.version.Ver,
+		}, pb.Context{
+			Priority:     s.priority,
+			NotFillCache: s.notFillCache,
+		})
 		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
@@ -236,17 +232,14 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
 
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGet,
-		Get: &pb.GetRequest{
+	req := tikvrpc.NewRequest(tikvrpc.CmdGet,
+		&pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
-		},
-		Context: pb.Context{
+		}, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
-		},
-	}
+		})
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
