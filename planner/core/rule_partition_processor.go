@@ -45,12 +45,11 @@ func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
 
 func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, error) {
 	// Assert there will not be sel -> sel in the ast.
-	switch lp.(type) {
+	switch p := lp.(type) {
 	case *DataSource:
-		return s.prune(lp.(*DataSource))
+		return s.prune(p)
 	case *LogicalUnionScan:
-		us := lp.(*LogicalUnionScan)
-		ds := us.Children()[0]
+		ds := p.Children()[0]
 		ds, err := s.prune(ds.(*DataSource))
 		if err != nil {
 			return nil, err
@@ -60,7 +59,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 			// Union->(UnionScan->DataSource1), (UnionScan->DataSource2)
 			children := make([]LogicalPlan, 0, len(ua.Children()))
 			for _, child := range ua.Children() {
-				us := LogicalUnionScan{}.Init(ua.ctx)
+				us := LogicalUnionScan{conditions: p.conditions}.Init(ua.ctx)
 				us.SetChildren(child)
 				children = append(children, us)
 			}
@@ -68,8 +67,8 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 			return ua, nil
 		}
 		// Only one partition, no union all.
-		us.SetChildren(ds)
-		return us, nil
+		p.SetChildren(ds)
+		return p, nil
 	default:
 		children := lp.Children()
 		for i, child := range children {
