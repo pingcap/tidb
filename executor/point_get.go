@@ -43,7 +43,9 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		idxVals:      p.IndexValues,
 		handle:       p.Handle,
 		startTS:      startTS,
+		lock:         p.Lock,
 	}
+	b.isSelectForUpdate = p.IsForUpdate
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
 	return e
@@ -60,6 +62,7 @@ type PointGetExecutor struct {
 	startTS  uint64
 	snapshot kv.Snapshot
 	done     bool
+	lock     bool
 }
 
 // Open implements the Executor interface.
@@ -79,8 +82,12 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
+	snapshotTS := e.startTS
+	if e.lock {
+		snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	}
 	var err error
-	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
+	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
 	if err != nil {
 		return err
 	}
@@ -95,7 +102,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err1
 		}
 		if len(handleVal) == 0 {
-			return nil
+			return e.lockKeyIfNeeded(ctx, idxKey)
 		}
 		e.handle, err1 = tables.DecodeHandle(handleVal)
 		if err1 != nil {
@@ -122,6 +129,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
 	}
+	err = e.lockKeyIfNeeded(ctx, key)
+	if err != nil {
+		return err
+	}
 	if len(val) == 0 {
 		if e.idxInfo != nil {
 			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
@@ -130,6 +141,17 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	return e.decodeRowValToChunk(val, req)
+}
+
+func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
+	if e.lock {
+		txn, err := e.ctx.Txn(true)
+		if err != nil {
+			return err
+		}
+		return txn.LockKeys(ctx, e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS(), kv.Key(key))
+	}
+	return nil
 }
 
 func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
@@ -174,59 +196,42 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 }
 
 func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {
-	//  One column could be filled for multi-times in the schema. e.g. select b, b, c, c from t where a = 1.
-	// We need to set the positions in the schema for the same column.
-	colID2DecodedPos := make(map[int64]int, e.schema.Len())
-	decodedPos2SchemaPos := make([][]int, 0, e.schema.Len())
-	for schemaPos, col := range e.schema.Columns {
-		if decodedPos, ok := colID2DecodedPos[col.ID]; !ok {
-			colID2DecodedPos[col.ID] = len(colID2DecodedPos)
-			decodedPos2SchemaPos = append(decodedPos2SchemaPos, []int{schemaPos})
-		} else {
-			decodedPos2SchemaPos[decodedPos] = append(decodedPos2SchemaPos[decodedPos], schemaPos)
+	colID2CutPos := make(map[int64]int, e.schema.Len())
+	for _, col := range e.schema.Columns {
+		if _, ok := colID2CutPos[col.ID]; !ok {
+			colID2CutPos[col.ID] = len(colID2CutPos)
 		}
 	}
-	decodedVals, err := tablecodec.CutRowNew(rowVal, colID2DecodedPos)
+	cutVals, err := tablecodec.CutRowNew(rowVal, colID2CutPos)
 	if err != nil {
 		return err
 	}
-	if decodedVals == nil {
-		decodedVals = make([][]byte, len(colID2DecodedPos))
+	if cutVals == nil {
+		cutVals = make([][]byte, len(colID2CutPos))
 	}
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
-	for id, decodedPos := range colID2DecodedPos {
-		schemaPoses := decodedPos2SchemaPos[decodedPos]
-		firstPos := schemaPoses[0]
-		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(e.schema.Columns[firstPos].RetType.Flag) {
-			chk.AppendInt64(firstPos, e.handle)
-			// Fill other positions.
-			for i := 1; i < len(schemaPoses); i++ {
-				chk.MakeRef(firstPos, schemaPoses[i])
-			}
+	for i, col := range e.schema.Columns {
+		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+			chk.AppendInt64(i, e.handle)
 			continue
 		}
-		// ExtraHandleID is added when building plan, we can make sure that there's only one column's ID is this.
-		if id == model.ExtraHandleID {
-			chk.AppendInt64(firstPos, e.handle)
+		if col.ID == model.ExtraHandleID {
+			chk.AppendInt64(i, e.handle)
 			continue
 		}
-		if len(decodedVals[decodedPos]) == 0 {
-			// This branch only entered for updating and deleting. It won't have one column in multiple positions.
-			colInfo := getColInfoByID(e.tblInfo, id)
+		cutPos := colID2CutPos[col.ID]
+		if len(cutVals[cutPos]) == 0 {
+			colInfo := getColInfoByID(e.tblInfo, col.ID)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
 				return err1
 			}
-			chk.AppendDatum(firstPos, &d)
+			chk.AppendDatum(i, &d)
 			continue
 		}
-		_, err = decoder.DecodeOne(decodedVals[decodedPos], firstPos, e.schema.Columns[firstPos].RetType)
+		_, err = decoder.DecodeOne(cutVals[cutPos], i, col.RetType)
 		if err != nil {
 			return err
-		}
-		// Fill other positions.
-		for i := 1; i < len(schemaPoses); i++ {
-			chk.MakeRef(firstPos, schemaPoses[i])
 		}
 	}
 	return nil

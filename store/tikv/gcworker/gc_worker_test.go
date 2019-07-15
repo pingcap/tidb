@@ -236,33 +236,29 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
-	var successRegions int32
-	var failedRegions int32
-	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
-
 	ctx := context.Background()
 	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
@@ -533,8 +529,23 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	c.Assert(err, IsNil)
 	gcWorker.Start()
-	gcWorker.(*GCWorker).runGCJob(context.Background(), 0, 1)
+	useDistributedGC, err := gcWorker.(*GCWorker).checkUseDistributedGC()
+	c.Assert(useDistributedGC, IsTrue)
+	c.Assert(err, IsNil)
+	safePoint := uint64(time.Now().Unix())
+	gcWorker.(*GCWorker).runGCJob(context.Background(), safePoint, 1)
+	getSafePoint, err := loadSafePoint(gcWorker.(*GCWorker).store.GetSafePointKV())
+	c.Assert(err, IsNil)
+	c.Assert(getSafePoint, Equals, safePoint)
 	gcWorker.Close()
+}
+
+func loadSafePoint(kv tikv.SafePointKV) (uint64, error) {
+	val, err := kv.Get(tikv.GcSavedSafePoint)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(val, 10, 64)
 }
 
 func (s *testGCWorkerSuite) TestRunDistGCJob(c *C) {
