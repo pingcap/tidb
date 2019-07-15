@@ -168,13 +168,12 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 }
 
 // Check whether a LogicalPlan is a LogicalAggregation and its all aggregate functions is duplicate agnostic.
-// Also, check all the args are expression.Column.
+// And get the columns in duplicate agnostic aggregate functions.
 func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (_ bool, cols []*expression.Column) {
 	agg, ok := p.(*LogicalAggregation)
 	if !ok {
 		return false, nil
 	}
-	cols = agg.groupByCols
 	for _, aggDesc := range agg.AggFuncs {
 		if !aggDesc.HasDistinct &&
 			aggDesc.Name != ast.AggFuncFirstRow &&
@@ -183,7 +182,6 @@ func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (_ bool, col
 			return false, nil
 		}
 		for _, expr := range aggDesc.Args {
-			// ExtractColumns will trans the expr to cols.
 			cols = append(cols, expression.ExtractColumns(expr)...)
 		}
 	}
@@ -201,7 +199,6 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		if !isEliminated {
 			break
 		}
-		aggCols = aggCols[:0]
 	}
 
 	var colsInSchema []*expression.Column
@@ -226,7 +223,6 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		colsInSchema = x.groupByCols
 		for _, aggDesc := range x.AggFuncs {
 			for _, expr := range aggDesc.Args {
-				// ExtractColumns will trans the expr to colsInSchema.
 				colsInSchema = append(colsInSchema, expression.ExtractColumns(expr)...)
 			}
 		}
