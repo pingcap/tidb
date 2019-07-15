@@ -210,14 +210,13 @@ func DecodeRowKey(key kv.Key) (int64, error) {
 }
 
 // EncodeValue encodes a go value to bytes.
-func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) {
+func EncodeValue(sc *stmtctx.StatementContext, b []byte, raw types.Datum) ([]byte, error) {
 	var v types.Datum
 	err := flatten(sc, raw, &v)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	b, err := codec.EncodeValue(sc, nil, v)
-	return b, errors.Trace(err)
+	return codec.EncodeValue(sc, b, v)
 }
 
 // EncodeRow encode row data and column ids into a slice of byte.
