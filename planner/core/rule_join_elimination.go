@@ -222,6 +222,14 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 				aggCols = append(aggCols[:i], aggCols[i+1:]...)
 			}
 		}
+	case *LogicalAggregation:
+		colsInSchema = x.groupByCols
+		for _, aggDesc := range x.AggFuncs {
+			for _, expr := range aggDesc.Args {
+				// ExtractColumns will trans the expr to colsInSchema.
+				colsInSchema = append(colsInSchema, expression.ExtractColumns(expr)...)
+			}
+		}
 	default:
 		colsInSchema = p.Schema().Columns
 	}
