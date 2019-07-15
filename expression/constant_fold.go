@@ -15,7 +15,6 @@ package expression
 
 import (
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -82,36 +81,40 @@ func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 
 func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 	args, l := expr.GetArgs(), len(expr.GetArgs())
-	isFirstCondition := true
-	isDeferredConst := false
+	isDeferredConst, hasNonConstCondition := false, true
 	for i := 0; i < l-1; i += 2 {
 		foldedArg, isDeferred := foldConstant(args[i])
 		expr.GetArgs()[i] = foldedArg
 		isDeferredConst = isDeferredConst || isDeferred
-		if _, isConst := foldedArg.(*Constant); isConst {
+		if _, isConst := foldedArg.(*Constant); isConst && hasNonConstCondition {
 			// If the condition is const and true, and the previous conditions
 			// has no expr, then the folded execution body is returned, otherwise
 			// the arguments of the casewhen are folded and replaced.
-			condition, isNull, err := args[i].EvalInt(expr.GetCtx(), chunk.Row{})
+			val, isNull, err := args[i].EvalInt(expr.GetCtx(), chunk.Row{})
 			if err != nil {
 				return expr, false
 			}
-			if isFirstCondition && condition != 0 && !isNull {
-				return retProcess(args[i+1], expr.GetType(), isDeferredConst)
+			if val != 0 && !isNull {
+				foldedExpr, isDeferred := foldConstant(args[i+1])
+				foldedExpr.GetType().Decimal = expr.GetType().Decimal
+				isDeferredConst = isDeferredConst || isDeferred
+				return foldedExpr, isDeferredConst
 			}
 		} else {
-			isFirstCondition = false
+			hasNonConstCondition = false
 		}
-		foldedArg1, isDeferred1 := foldConstant(args[i+1])
-		expr.GetArgs()[i+1] = foldedArg1
-		isDeferredConst = isDeferredConst || isDeferred1
+		expr.GetArgs()[i+1], isDeferred = foldConstant(args[i+1])
+		isDeferredConst = isDeferredConst || isDeferred
 	}
 
-	if l%2 == 1 && isFirstCondition {
+	if l%2 == 1 && hasNonConstCondition {
 		// If the number of arguments in casewhen is odd, and the previous conditions
 		// is const and false, then the folded else execution body is returned. otherwise
 		// the execution body of the else are folded and replaced.
-		return retProcess(args[l-1], expr.GetType(), isDeferredConst)
+		foldedExpr, isDeferred := foldConstant(args[l-1])
+		foldedExpr.GetType().Decimal = expr.GetType().Decimal
+		isDeferredConst = isDeferredConst || isDeferred
+		return foldedExpr, isDeferredConst
 	} else if l%2 == 1 {
 		foldedArg, isDeferred := foldConstant(args[l-1])
 		expr.GetArgs()[l-1] = foldedArg
@@ -119,17 +122,6 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 	}
 
 	return expr, isDeferredConst
-}
-
-func retProcess(expr Expression, retType *types.FieldType, isDeferredConst bool) (Expression, bool) {
-	foldedExpr, isDeferred := foldConstant(expr)
-	isDeferredConst = isDeferredConst || isDeferred
-	if fc, isConst := foldedExpr.(*Constant); isConst {
-		fc.RetType = retType
-		return fc, isDeferredConst
-	}
-
-	return foldedExpr, isDeferredConst
 }
 
 func foldConstant(expr Expression) (Expression, bool) {
