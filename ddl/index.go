@@ -16,6 +16,7 @@ package ddl
 import (
 	"context"
 	"math"
+	"sort"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -909,28 +910,85 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
 	cols := t.Cols()
 	decodeColMap := make(map[int64]decoder.Column, len(indexInfo.Columns))
+	pendingCols := make(map[*table.Column]struct{}, len(indexInfo.Columns))
 	for _, v := range indexInfo.Columns {
-		col := cols[v.Offset]
-		tpExpr := decoder.Column{
-			Col: col,
+		pendingCols[cols[v.Offset]] = struct{}{}
+	}
+
+	for len(pendingCols) != 0 {
+		var arbCol *table.Column
+		for c := range pendingCols {
+			arbCol = c
+			delete(pendingCols, arbCol)
+			break
 		}
-		if col.IsGenerated() && !col.GeneratedStored {
+
+		if arbCol.IsGenerated() && !arbCol.GeneratedStored {
+			// Find depended columns.
 			for _, c := range cols {
-				if _, ok := col.Dependences[c.Name.L]; ok {
-					decodeColMap[c.ID] = decoder.Column{
-						Col: c,
-					}
+				if _, ok := arbCol.Dependences[c.Name.L]; ok {
+					pendingCols[c] = struct{}{}
 				}
 			}
-			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta(), &col.FieldType)
+			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, arbCol.GeneratedExprString, t.Meta(), &arbCol.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			tpExpr.GenExpr = e
+			decodeColMap[arbCol.ID] = decoder.Column{
+				Col:     arbCol,
+				GenExpr: e,
+			}
+		} else {
+			decodeColMap[arbCol.ID] = decoder.Column{
+				Col: arbCol,
+			}
 		}
-		decodeColMap[col.ID] = tpExpr
 	}
+
+	var orderedCols []int64
+	for colId := range decodeColMap {
+		orderedCols = append(orderedCols, colId)
+	}
+	sort.Slice(orderedCols, func(i, j int) bool { return orderedCols[i] < orderedCols[j] })
+
+	for _, colId := range orderedCols {
+		decCol := decodeColMap[colId]
+		if decCol.GenExpr != nil {
+			newGenExpr := substituteGeneratedColumn(decCol.GenExpr, decodeColMap)
+			decodeColMap[colId] = decoder.Column{
+				Col:     decCol.Col,
+				GenExpr: newGenExpr,
+			}
+		} else {
+			decodeColMap[colId] = decoder.Column{
+				Col: decCol.Col,
+			}
+		}
+	}
+
 	return decodeColMap, nil
+}
+
+func substituteGeneratedColumn(expr expression.Expression, decodeColMap map[int64]decoder.Column) expression.Expression {
+	switch v := expr.(type) {
+	case *expression.Column:
+		if c, ok := decodeColMap[v.ID]; ok && c.GenExpr != nil {
+			return c.GenExpr
+		}
+		return v
+	case *expression.ScalarFunction:
+		if v.FuncName.L == ast.Cast {
+			newFunc := v.Clone().(*expression.ScalarFunction)
+			newFunc.GetArgs()[0] = substituteGeneratedColumn(newFunc.GetArgs()[0], decodeColMap)
+			return newFunc
+		}
+		newArgs := make([]expression.Expression, 0, len(v.GetArgs()))
+		for _, arg := range v.GetArgs() {
+			newArgs = append(newArgs, substituteGeneratedColumn(arg, decodeColMap))
+		}
+		return expression.NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
+	}
+	return expr
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
