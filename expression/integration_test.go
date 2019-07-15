@@ -1430,13 +1430,46 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 	result = tk.MustQuery("select addtime('2017-01-01', 1), addtime('2017-01-01 01:01:01', 1), addtime(cast('2017-01-01' as date), 1)")
 	result.Check(testkit.Rows("2017-01-01 00:00:01 2017-01-01 01:01:02 00:00:01"))
-
 	result = tk.MustQuery("select subtime(a, e), subtime(b, e), subtime(c, e), subtime(d, e) from t")
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery("select subtime('2017-01-01 01:01:01', 0b1), subtime('2017-01-01', b'1'), subtime('01:01:01', 0b1011)")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 	result = tk.MustQuery("select subtime('2017-01-01', 1), subtime('2017-01-01 01:01:01', 1), subtime(cast('2017-01-01' as date), 1)")
 	result.Check(testkit.Rows("2016-12-31 23:59:59 2017-01-01 01:01:00 -00:00:01"))
+
+	result = tk.MustQuery("select addtime(-32073, 0), addtime(0, -32073);")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
+	result = tk.MustQuery("select addtime(-32073, c), addtime(c, -32073) from t;")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
+	result = tk.MustQuery("select addtime(a, -32073), addtime(b, -32073), addtime(d, -32073) from t;")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
+
+	result = tk.MustQuery("select subtime(-32073, 0), subtime(0, -32073);")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
+	result = tk.MustQuery("select subtime(-32073, c), subtime(c, -32073) from t;")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
+	result = tk.MustQuery("select subtime(a, -32073), subtime(b, -32073), subtime(d, -32073) from t;")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
 
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
