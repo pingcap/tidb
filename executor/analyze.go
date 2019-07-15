@@ -526,6 +526,14 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 	return hists, cms, nil
 }
 
+var (
+	fastAnalyzeHistogramSample        = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "sample")
+	fastAnalyzeHistogramAccessRegions = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "access_regions")
+	fastAnalyzeHistogramRegionError   = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "region_error")
+	fastAnalyzeHistogramSeekKeys      = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "seek_keys")
+	fastAnalyzeHistogramScanKeys      = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "scan_keys")
+)
+
 func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 	hists, cms, err := exec.buildStats()
 	if err != nil {
@@ -612,18 +620,16 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		if !ok {
 			return
 		}
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdDebugGetRegionProperties,
-			DebugGetRegionProperties: &debugpb.GetRegionPropertiesRequest{
-				RegionId: loc.Region.GetID(),
-			},
-		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdDebugGetRegionProperties, &debugpb.GetRegionPropertiesRequest{
+			RegionId: loc.Region.GetID(),
+		})
 		var resp *tikvrpc.Response
 		var rpcCtx *tikv.RPCContext
 		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region)
 		if *err != nil {
 			return
 		}
+
 		ctx := context.Background()
 		resp, *err = client.SendRequest(ctx, rpcCtx.Addr, req, tikv.ReadTimeoutMedium)
 		if *err != nil {
@@ -740,6 +746,7 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 		task.EndOffset = e.rowCount + cnt
 		e.rowCount += cnt
 	}
+	accessRegionsCounter := 0
 	for {
 		// Search for the region which contains the targetKey.
 		loc, err := e.cache.LocateKey(bo, targetKey)
@@ -749,6 +756,8 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 		if bytes.Compare(endKey, loc.StartKey) < 0 {
 			break
 		}
+		accessRegionsCounter++
+
 		// Set the next search key.
 		targetKey = loc.EndKey
 
@@ -767,6 +776,7 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 			break
 		}
 	}
+	fastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
 
 	return false, nil
 }
@@ -881,7 +891,7 @@ func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err 
 	return nil
 }
 
-func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (err error) {
+func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, err error) {
 	hasPKInfo := 0
 	if e.pkInfo != nil {
 		hasPKInfo = 1
@@ -890,6 +900,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (err error) {
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
 		e.rowCount++
+		scanKeysSize++
 		randNum := rander.Int63n(int64(e.rowCount))
 		if randNum > int64(MaxSampleSize) && e.sampCursor == int32(MaxSampleSize) {
 			continue
@@ -903,28 +914,29 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (err error) {
 
 		err = e.updateCollectorSamples(iter.Value(), iter.Key(), p, hasPKInfo)
 		if err != nil {
-			return err
+			return
 		}
 	}
-	return err
+	return
 }
 
-func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) error {
+func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err error) {
 	snapshot, err := e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(t.StartKey, t.EndKey)
 		if err != nil {
-			return err
+			return keysSize, err
 		}
-		err = e.handleScanIter(iter)
+		size, err := e.handleScanIter(iter)
+		keysSize += size
 		if err != nil {
-			return err
+			return keysSize, err
 		}
 	}
-	return nil
+	return keysSize, nil
 }
 
 func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *error) {
@@ -969,6 +981,8 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 				kvMap[string(iter.Key())] = iter.Value()
 			}
 		}
+		fastAnalyzeHistogramSeekKeys.Observe(float64(len(keys)))
+		fastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
 
 		*err = e.handleBatchSeekResponse(kvMap)
 		if *err != nil {
@@ -985,7 +999,7 @@ func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.Sampl
 			collector.NullCount++
 			continue
 		}
-		bytes, err := tablecodec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, sample.Value)
+		bytes, err := tablecodec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, nil, sample.Value)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1060,7 +1074,8 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		}
 	}
 
-	err := e.handleScanTasks(bo)
+	scanKeysSize, err := e.handleScanTasks(bo)
+	fastAnalyzeHistogramScanKeys.Observe(float64(scanKeysSize))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1107,12 +1122,15 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 
 	// Only four rebuilds for sample task are allowed.
 	needRebuild, maxBuildTimes := true, 5
+	regionErrorCounter := 0
 	for counter := maxBuildTimes; needRebuild && counter > 0; counter-- {
+		regionErrorCounter++
 		needRebuild, err = e.buildSampTask()
 		if err != nil {
 			return nil, nil, err
 		}
 	}
+	fastAnalyzeHistogramRegionError.Observe(float64(regionErrorCounter))
 	if needRebuild {
 		errMsg := "build fast analyze task failed, exceed maxBuildTimes: %v"
 		return nil, nil, errors.Errorf(errMsg, maxBuildTimes)

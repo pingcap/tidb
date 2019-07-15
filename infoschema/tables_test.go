@@ -143,22 +143,22 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("3 17 51 3"))
+		testkit.Rows("3 18 54 6"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("4 17 68 4"))
+		testkit.Rows("4 18 72 8"))
 	tk.MustExec("delete from t where c >= 3")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("2 17 34 2"))
+		testkit.Rows("2 18 36 4"))
 	tk.MustExec("delete from t where c=3")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("2 17 34 2"))
+		testkit.Rows("2 18 36 4"))
 }
 
 func (s *testTableSuite) TestCharacterSetCollations(c *C) {
