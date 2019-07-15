@@ -1742,7 +1742,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 	}
 	executorCounterIndexLookUpJoin.Inc()
-  hasPrefixCol := false
+	hasPrefixCol := false
 	for _, l := range v.IdxColLens {
 		if l != types.UnspecifiedLength {
 			hasPrefixCol = true
@@ -1768,8 +1768,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 				joinKeys:      v.InnerJoinKeys,
 				keyCols:       innerKeyCols,
 				compareFuncs:  v.CompareFuncs,
-			  colLens:       v.IdxColLens,
-			  hasPrefixCol:  hasPrefixCol,
+				colLens:       v.IdxColLens,
+				hasPrefixCol:  hasPrefixCol,
 			},
 			workerWg:      new(sync.WaitGroup),
 			isOuterJoin:   v.JoinType.IsOuterJoin(),

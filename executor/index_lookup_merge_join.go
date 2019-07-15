@@ -78,6 +78,8 @@ type innerMergeCtx struct {
 	joinKeys      []*expression.Column
 	keyCols       []int
 	compareFuncs  []expression.CompareFunc
+	colLens       []int
+	hasPrefixCol  bool
 }
 
 type lookUpMergeJoinTask struct {
@@ -641,6 +643,17 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 			continue
 		}
 		dLookUpKeys = append(dLookUpKeys, dLookUpKey)
+
+		if imw.hasPrefixCol {
+			for i := range imw.outerMergeCtx.keyCols {
+				// If it's a prefix column. Try to fix it.
+				if imw.colLens[i] != types.UnspecifiedLength {
+					ranger.CutDatumByPrefixLen(&dLookUpKey.keys[i], imw.colLens[i], imw.rowTypes[imw.keyCols[i]])
+				}
+			}
+			// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
+			// So we don't need to do it here.
+		}
 	}
 
 	return dLookUpKeys, nil
