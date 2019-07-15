@@ -849,3 +849,18 @@ func BenchmarkOptimize(b *testing.B) {
 		})
 	}
 }
+
+func (s *testAnalyzeSuite) TestUpdateProjEliminate(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("explain update t t1, (select distinct b from t) t2 set t1.b = t2.b")
+}
