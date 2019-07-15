@@ -104,10 +104,15 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 }
 
 // WaitScatterRegionFinish implements SplitableStore interface.
-func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
+// backOff is the back off time of the wait scatter region.(Milliseconds)
+// if backOff <= 0, will use the default wait scatter back off time.
+func (s *tikvStore) WaitScatterRegionFinish(regionID uint64, backOff int) error {
 	logutil.BgLogger().Info("wait scatter region",
 		zap.Uint64("regionID", regionID))
-	bo := NewBackoffer(context.Background(), waitScatterRegionFinishBackoff)
+	if backOff <= 0 {
+		backOff = waitScatterRegionFinishBackoff
+	}
+	bo := NewBackoffer(context.Background(), backOff)
 	logFreq := 0
 	for {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
