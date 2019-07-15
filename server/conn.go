@@ -1027,7 +1027,7 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 	var err error
 	var reachLimit bool
 	for {
-		prevData, reachLimit, err = loadDataInfo.InsertData(prevData, curData)
+		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
 		if err != nil {
 			return nil, err
 		}
@@ -1442,7 +1442,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			connInfo := cc.ctx.GetSessionVars().ConnectionInfo
-			err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: connInfo.Host}, plugin.ChangeUser, connInfo)
+			err = authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
 			if err != nil {
 				return err
 			}
