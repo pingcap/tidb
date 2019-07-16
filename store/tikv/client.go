@@ -211,6 +211,7 @@ func newRPCClient(security config.Security) *rpcClient {
 	return &rpcClient{
 		conns:    make(map[string]*connArray),
 		security: security,
+		eventCh:  make(chan *eventMSG),
 	}
 }
 
