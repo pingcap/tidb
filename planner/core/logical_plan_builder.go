@@ -310,6 +310,9 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 	return
 }
 
+// This function will return the table alias of a given logical plan.
+// If there're multiple tables, it will return nil.
+// This function will be further developed in the future.
 func extractTableAlias(p LogicalPlan) *model.CIStr {
 	if p.Schema().Len() > 0 && p.Schema().Columns[0].TblName.L != "" {
 		tblName := p.Schema().Columns[0].TblName.L
