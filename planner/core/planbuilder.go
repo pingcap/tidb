@@ -15,10 +15,10 @@ package core
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"strings"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -819,7 +819,10 @@ func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 }
 
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
+	p := &Analyze{}
+	if err := handleAnalyzeOptions(p, as.AnalyzeOpts); err != nil {
+		return nil, err
+	}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
 			return nil, errors.Errorf("analyze %s is not supported now.", tbl.Name.O)
@@ -855,7 +858,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 }
 
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
+	p := &Analyze{}
+	if err := handleAnalyzeOptions(p, as.AnalyzeOpts); err != nil {
+		return nil, err
+	}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
@@ -883,7 +889,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 }
 
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
+	p := &Analyze{}
+	if err := handleAnalyzeOptions(p, as.AnalyzeOpts); err != nil {
+		return nil, err
+	}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
@@ -907,10 +916,38 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, erro
 	return p, nil
 }
 
-const (
-	defaultMaxNumBuckets = 256
-	numBucketsLimit      = 1024
-)
+const cmSketchSizeLimit = (6 * 1024 * 1024) / binary.MaxVarintLen32
+
+var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    1024,
+	ast.AnalyzeOptNumTopN:       1024,
+	ast.AnalyzeOptCMSketchWidth: cmSketchSizeLimit,
+	ast.AnalyzeOptCMSketchDepth: cmSketchSizeLimit,
+}
+
+var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    256,
+	ast.AnalyzeOptNumTopN:       20,
+	ast.AnalyzeOptCMSketchWidth: 2048,
+	ast.AnalyzeOptCMSketchDepth: 5,
+}
+
+func handleAnalyzeOptions(p *Analyze, opts []ast.AnalyzeOpt) error {
+	p.Opts = make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	for key, val := range analyzeOptionDefault {
+		p.Opts[key] = val
+	}
+	for _, opt := range opts {
+		if opt.Value == 0 || opt.Value > analyzeOptionLimit[opt.Type] {
+			return errors.Errorf("value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
+		}
+		p.Opts[opt.Type] = opt.Value
+	}
+	if p.Opts[ast.AnalyzeOptCMSketchWidth]*p.Opts[ast.AnalyzeOptCMSketchDepth] > cmSketchSizeLimit {
+		return errors.Errorf("cm sketch size(depth * width) should not larger than %d", cmSketchSizeLimit)
+	}
+	return nil
+}
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	// If enable fast analyze, the storage must be tikv.Storage.
@@ -926,11 +963,6 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
-	}
-	if as.MaxNumBuckets == 0 {
-		as.MaxNumBuckets = defaultMaxNumBuckets
-	} else {
-		as.MaxNumBuckets = mathutil.MinUint64(as.MaxNumBuckets, numBucketsLimit)
 	}
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {

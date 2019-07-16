@@ -123,18 +123,31 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
+	tk.MustExec(fmt.Sprintf("insert into t values (19), (19), (19)"))
 
+	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
+	executor.MaxSampleSize = 30
 	tk.MustExec("analyze table t")
 	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.Columns[1].Len(), Equals, 20)
+	col := tbl.Columns[1]
+	c.Assert(col.Len(), Equals, 20)
+	c.Assert(len(col.CMSketch.TopN()), Equals, 20)
+	width, depth := col.CMSketch.GetWidthAndDepth()
+	c.Assert(depth, Equals, int32(5))
+	c.Assert(width, Equals, int32(2048))
 
-	tk.MustExec("analyze table t with 4 buckets")
+	tk.MustExec("analyze table t with 4 buckets, 1 topn, 4 cmsketch width, 4 cmsketch depth")
 	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.Columns[1].Len(), Equals, 4)
+	col = tbl.Columns[1]
+	c.Assert(col.Len(), Equals, 4)
+	c.Assert(len(col.CMSketch.TopN()), Equals, 1)
+	width, depth = col.CMSketch.GetWidthAndDepth()
+	c.Assert(depth, Equals, int32(4))
+	c.Assert(width, Equals, int32(4))
 }
 
 func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
