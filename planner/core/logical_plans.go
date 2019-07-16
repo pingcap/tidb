@@ -308,6 +308,10 @@ type LogicalTableDual struct {
 	logicalSchemaProducer
 
 	RowCount int
+	// placeHolder indicates if this dual plan is a place holder in query optimization
+	// for data sources like `Show`, if true, the dual plan would be substituted by
+	// `Show` in the final plan.
+	placeHolder bool
 }
 
 // LogicalUnionScan is only used in non read-only txn.
@@ -490,7 +494,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.
 	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
 		handleCol := ds.getHandleCol()
-		if handleCol != nil {
+		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
 			path.idxCols = append(path.idxCols, handleCol)
 			path.idxColLens = append(path.idxColLens, types.UnspecifiedLength)
 		}

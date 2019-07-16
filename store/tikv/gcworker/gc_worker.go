@@ -658,13 +658,10 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 		return errors.Trace(err)
 	}
 
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdUnsafeDestroyRange,
-		UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeRequest{
-			StartKey: startKey,
-			EndKey:   endKey,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdUnsafeDestroyRange, &kvrpcpb.UnsafeDestroyRangeRequest{
+		StartKey: startKey,
+		EndKey:   endKey,
+	})
 
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(stores))
@@ -678,10 +675,10 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 
 			resp, err1 := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.UnsafeDestroyRangeTimeout)
 			if err1 == nil {
-				if resp == nil || resp.UnsafeDestroyRange == nil {
+				if resp == nil || resp.Resp == nil {
 					err1 = errors.Errorf("unsafe destroy range returns nil response from store %v", storeID)
 				} else {
-					errStr := resp.UnsafeDestroyRange.Error
+					errStr := (resp.Resp.(*kvrpcpb.UnsafeDestroyRangeResponse)).Error
 					if len(errStr) > 0 {
 						err1 = errors.Errorf("unsafe destroy range failed on store %v: %s", storeID, errStr)
 					}
@@ -821,13 +818,10 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 	// for scan lock request, we must return all locks even if they are generated
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdScanLock,
-		ScanLock: &kvrpcpb.ScanLockRequest{
-			MaxVersion: safePoint,
-			Limit:      gcScanLockLimit,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdScanLock, &kvrpcpb.ScanLockRequest{
+		MaxVersion: safePoint,
+		Limit:      gcScanLockLimit,
+	})
 
 	var stat tikv.RangeTaskStat
 	key := startKey
@@ -840,7 +834,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 
 		bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
 
-		req.ScanLock.StartKey = key
+		req.ScanLock().StartKey = key
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return stat, errors.Trace(err)
@@ -860,10 +854,10 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 			}
 			continue
 		}
-		locksResp := resp.ScanLock
-		if locksResp == nil {
+		if resp.Resp == nil {
 			return stat, errors.Trace(tikv.ErrBodyMissing)
 		}
+		locksResp := resp.Resp.(*kvrpcpb.ScanLockResponse)
 		if locksResp.GetError() != nil {
 			return stat, errors.Errorf("unexpected scanlock error: %s", locksResp)
 		}
@@ -986,12 +980,9 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 // doGCForRegion used for gc for region.
 // these two errors should not return together, for more, see the func 'doGC'
 func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGC,
-		GC: &kvrpcpb.GCRequest{
-			SafePoint: safePoint,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdGC, &kvrpcpb.GCRequest{
+		SafePoint: safePoint,
+	})
 
 	resp, err := w.store.SendReq(bo, req, region, tikv.GCTimeout)
 	if err != nil {
@@ -1005,10 +996,10 @@ func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region ti
 		return regionErr, nil
 	}
 
-	gcResp := resp.GC
-	if gcResp == nil {
+	if resp.Resp == nil {
 		return nil, errors.Trace(tikv.ErrBodyMissing)
 	}
+	gcResp := resp.Resp.(*kvrpcpb.GCResponse)
 	if gcResp.GetError() != nil {
 		return nil, errors.Errorf("unexpected gc error: %s", gcResp.GetError())
 	}
