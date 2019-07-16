@@ -76,6 +76,7 @@ var (
 // get the zero of MyDecimal with the specified result fraction digits
 func zeroMyDecimalWithFrac(frac int8) MyDecimal {
 	zero := MyDecimal{}
+	zero.digitsFrac = frac
 	zero.resultFrac = frac
 	return zero
 }
