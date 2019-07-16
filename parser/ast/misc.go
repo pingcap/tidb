@@ -1381,6 +1381,7 @@ const (
 	AdminShowSlow
 	AdminShowNextRowID
 	AdminReloadExprPushdownBlacklist
+	AdminReloadOptRuleBlacklist
 	AdminPluginDisable
 	AdminPluginEnable
 )
@@ -1554,6 +1555,8 @@ func (n *AdminStmt) Restore(ctx *RestoreCtx) error {
 		}
 	case AdminReloadExprPushdownBlacklist:
 		ctx.WriteKeyWord("RELOAD EXPR_PUSHDOWN_BLACKLIST")
+	case AdminReloadOptRuleBlacklist:
+		ctx.WriteKeyWord("RELOAD OPT_RULE_BLACKLIST")
 	case AdminPluginEnable:
 		ctx.WriteKeyWord("PLUGINS ENABLE")
 		for i, v := range n.Plugins {
