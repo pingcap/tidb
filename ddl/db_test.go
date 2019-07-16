@@ -81,14 +81,6 @@ type testDBSuite struct {
 	autoIDStep int64
 }
 
-var tableLockEnabled uint32 = 0
-
-func init() {
-	config.TableLockEnabled = func() bool {
-		return atomic.LoadUint32(&tableLockEnabled) > 0
-	}
-}
-
 func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
@@ -99,7 +91,10 @@ func setUpSuite(s *testDBSuite, c *C) {
 	s.autoIDStep = autoid.GetStep()
 	ddl.WaitTimeWhenErrorOccured = 0
 	// Test for table lock.
-	atomic.StoreUint32(&tableLockEnabled, 1)
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.EnableTableLock = true
+	config.StoreGlobalConfig(&newCfg)
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -2127,13 +2122,17 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	}
 
 	// Check alter table modify/change generated column.
-	s.tk.MustExec(`alter table test_gv_ddl modify column c bigint as (b+200) stored`)
+	modStoredColErrMsg := "[ddl:3106]'modifying a stored column' is not supported for generated columns."
+	_, err := s.tk.Exec(`alter table test_gv_ddl modify column c bigint as (b+200) stored`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, modStoredColErrMsg)
+
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c bigint(20) YES  <nil> STORED GENERATED`))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
 	s.tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c bigint(20) YES  <nil> STORED GENERATED`))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
 	s.tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
@@ -2470,50 +2469,73 @@ LOOP:
 
 func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test_db")
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "drop table if exists t1")
 	s.mustExec(c, "create table t1 (c1 int, c2 int);")
 
 	tbl := s.testGetTable(c, "t1")
-	var insertErr error
+	getModifyColumn := func() *table.Column {
+		t := s.testGetTable(c, "t1")
+		for _, col := range t.Cols() {
+			if col.Name.L == "c2" {
+				return col
+			}
+		}
+		return nil
+	}
+
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	// Check insert null before job first update.
+	times := 0
 	hook := &ddl.TestDDLCallback{}
+	s.tk.MustExec("delete from t1")
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		if job.State != model.JobStateRunning {
+			return
+		}
+		if times == 0 {
+			tk2.MustExec("insert into t1 values ();")
+		}
+		times++
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	_, err := s.tk.Exec("alter table t1 change c2 c2 int not null;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
+
+	// Check insert error when column has prevent null flag.
+	s.tk.MustExec("delete from t1")
+	hook.OnJobUpdatedExported = nil
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		var c2 *table.Column
-		t := s.testGetTable(c, "t1")
-		for _, col := range t.Cols() {
-			if col.Name.L == "c2" {
-				c2 = col
-			}
+		if job.State != model.JobStateRunning {
+			return
 		}
+		c2 := getModifyColumn()
 		if mysql.HasPreventNullInsertFlag(c2.Flag) {
-			_, insertErr = s.tk.Exec("insert into t1 values ();")
+			_, err := tk2.Exec("insert into t1 values ();")
+			c.Assert(err.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
 		}
 	}
 
-	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	done := make(chan error, 1)
-	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
-	err := <-done
-	c.Assert(err, IsNil)
+	s.tk.MustExec("alter table t1 change c2 c2 bigint not null;")
 
-	var c2 *table.Column
-	t := s.testGetTable(c, "t1")
-	for _, col := range t.Cols() {
-		if col.Name.L == "c2" {
-			c2 = col
-		}
-	}
+	c2 := getModifyColumn()
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
 	c.Assert(mysql.HasPreventNullInsertFlag(c2.Flag), IsFalse)
-	c.Assert(insertErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
-	_, insertErr = s.tk.Exec("insert into t1 values ();")
-	c.Assert(insertErr.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	s.mustExec(c, "drop table t1")
+	_, err = s.tk.Exec("insert into t1 values ();")
+	c.Assert(err.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
 }
 
 func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
@@ -2815,6 +2837,74 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk.MustExec("admin check table gcai_table")
 }
 
+func (s *testDBSuite5) TestModifyGeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test;")
+	tk.MustExec("use test")
+	modIdxColErrMsg := "[ddl:3106]'modifying an indexed column' is not supported for generated columns."
+	modStoredColErrMsg := "[ddl:3106]'modifying a stored column' is not supported for generated columns."
+
+	// Modify column with single-col-index.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(b));")
+	tk.MustExec("insert into t1 set a=1;")
+	_, err := tk.Exec("alter table t1 modify column b int as (a+2);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, modIdxColErrMsg)
+	tk.MustExec("drop index idx on t1;")
+	tk.MustExec("alter table t1 modify b int as (a+2);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 3"))
+
+	// Modify column with multi-col-index.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(a, b));")
+	tk.MustExec("insert into t1 set a=1;")
+	_, err = tk.Exec("alter table t1 modify column b int as (a+2);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, modIdxColErrMsg)
+	tk.MustExec("drop index idx on t1;")
+	tk.MustExec("alter table t1 modify b int as (a+2);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 3"))
+
+	// Modify column with stored status to a different expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	_, err = tk.Exec("alter table t1 modify column b int as (a+2) stored;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, modStoredColErrMsg)
+
+	// Modify column with stored status to the same expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b bigint as (a+1) stored;")
+	tk.MustExec("alter table t1 modify column b bigint as (a + 1) stored;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+
+	// Modify column with index to the same expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(b));")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b bigint as (a+1);")
+	tk.MustExec("alter table t1 modify column b bigint as (a + 1);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+
+	// Modify column from non-generated to stored generated.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int);")
+	_, err = tk.Exec("alter table t1 modify column b bigint as (a+1) stored;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, modStoredColErrMsg)
+
+	// Modify column from stored generated to non-generated.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b int;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+}
+
 func (s *testDBSuite4) TestIssue9100(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
@@ -3008,9 +3098,9 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	// Test lock table by other session in transaction and commit with retry.
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
+	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1")
-	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0")
 	tk2.MustExec("lock tables t1 write")
 	_, err = tk.Exec("commit")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue, Commentf("err: %v\n", err))
@@ -3082,8 +3172,57 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	_, err = tk2.Exec("alter database test charset='utf8mb4'")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
 
+	// Test for admin cleanup table locks.
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock table t1 write, t2 write")
+	_, err = tk2.Exec("lock tables t1 write, t2 read")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk2.MustExec("admin cleanup table lock t1,t2")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
+	// cleanup unlocked table.
+	tk2.MustExec("admin cleanup table lock t1,t2")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
+	tk2.MustExec("lock tables t1 write, t2 read")
+	checkTableLock(c, tk2.Se, "test", "t1", model.TableLockWrite)
+	checkTableLock(c, tk2.Se, "test", "t2", model.TableLockRead)
+
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
+}
+
+func (s *testDBSuite2) TestTablesLockDelayClean(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	defer tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	config.GetGlobalConfig().DelayCleanTableLock = 100
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var startTime time.Time
+	go func() {
+		startTime = time.Now()
+		tk.Se.Close()
+		wg.Done()
+	}()
+	time.Sleep(50)
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	wg.Wait()
+	c.Assert(time.Since(startTime).Seconds() > 0.1, IsTrue)
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	config.GetGlobalConfig().DelayCleanTableLock = 0
 }
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.

@@ -55,9 +55,16 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 //  cap: the limit for the max number of rows.
 //  maxChunkSize: the max limit for the number of rows.
 func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
-	chk := new(Chunk)
-	chk.columns = make([]*column, 0, len(fields))
-	chk.capacity = mathutil.Min(cap, maxChunkSize)
+	chk := &Chunk{
+		columns:  make([]*column, 0, len(fields)),
+		capacity: mathutil.Min(cap, maxChunkSize),
+		// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
+		// like how we judge whether a chunk is full now, then the statement
+		// "chk.NumRows() < maxChunkSize"
+		// equals to "!chk.IsFull()".
+		requiredRows: maxChunkSize,
+	}
+
 	for _, f := range fields {
 		elemLen := getFixedLen(f)
 		if elemLen == varElemLen {
@@ -66,14 +73,7 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, chk.capacity))
 		}
 	}
-	chk.numVirtualRows = 0
 
-	// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
-	// like how we judge whether a chunk is full now, then the statement
-	// "chk.NumRows() < maxChunkSize"
-	// is equal to
-	// "!chk.IsFull()".
-	chk.requiredRows = maxChunkSize
 	return chk
 }
 

@@ -236,33 +236,29 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
-	var successRegions int32
-	var failedRegions int32
-	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
-
 	ctx := context.Background()
 	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
@@ -406,7 +402,7 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 			Type:               tikvrpc.CmdUnsafeDestroyRange,
 			UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeResponse{},
 		}
-		if bytes.Equal(req.UnsafeDestroyRange.GetStartKey(), failKey) && addr == failStore.GetAddress() {
+		if bytes.Equal(req.UnsafeDestroyRange().GetStartKey(), failKey) && addr == failStore.GetAddress() {
 			if failType == failRPCErr {
 				return nil, errors.New("error")
 			} else if failType == failNilResp {
@@ -492,7 +488,7 @@ Loop:
 	}
 
 	sort.Slice(sentReq, func(i, j int) bool {
-		cmp := bytes.Compare(sentReq[i].req.UnsafeDestroyRange.StartKey, sentReq[j].req.UnsafeDestroyRange.StartKey)
+		cmp := bytes.Compare(sentReq[i].req.UnsafeDestroyRange().StartKey, sentReq[j].req.UnsafeDestroyRange().StartKey)
 		return cmp < 0 || (cmp == 0 && sentReq[i].addr < sentReq[j].addr)
 	})
 
@@ -505,8 +501,8 @@ Loop:
 		for storeIndex := range expectedStores {
 			i := rangeIndex*len(expectedStores) + storeIndex
 			c.Assert(sentReq[i].addr, Equals, expectedStores[storeIndex].Address)
-			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetStartKey(), DeepEquals, sortedRanges[rangeIndex].StartKey)
-			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetEndKey(), DeepEquals, sortedRanges[rangeIndex].EndKey)
+			c.Assert(sentReq[i].req.UnsafeDestroyRange().GetStartKey(), DeepEquals, sortedRanges[rangeIndex].StartKey)
+			c.Assert(sentReq[i].req.UnsafeDestroyRange().GetEndKey(), DeepEquals, sortedRanges[rangeIndex].EndKey)
 		}
 	}
 }

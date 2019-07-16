@@ -314,7 +314,9 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	}
 
 	key := t.RecordKey(h)
-	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, nil, nil)
+	sessVars := ctx.GetSessionVars()
+	sc := sessVars.StmtCtx
+	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -338,13 +340,21 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 		}
 	}
 	colSize := make(map[int64]int64)
+	encodedCol := make([]byte, 0, 16)
 	for id, col := range t.Cols() {
-		val := int64(len(newData[id].GetBytes()) - len(oldData[id].GetBytes()))
-		if val != 0 {
-			colSize[col.ID] = val
+		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], newData[id])
+		if err != nil {
+			continue
 		}
+		newLen := len(encodedCol) - 1
+		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], oldData[id])
+		if err != nil {
+			continue
+		}
+		oldLen := len(encodedCol) - 1
+		colSize[col.ID] = int64(newLen - oldLen)
 	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSize)
+	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSize)
 	return nil
 }
 
@@ -377,7 +387,7 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			if err != nil {
 				return err
 			}
-			if err := t.buildIndexForRow(ctx, rm, h, newVs, idx); err != nil {
+			if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn); err != nil {
 				return err
 			}
 			break
@@ -504,7 +514,8 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(recordID)
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
+	sc := sessVars.StmtCtx
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
 	if err != nil {
 		return 0, err
 	}
@@ -532,13 +543,15 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 			return 0, err
 		}
 	}
-	sessVars.StmtCtx.AddAffectedRows(1)
+	sc.AddAffectedRows(1)
 	colSize := make(map[int64]int64)
+	encodedCol := make([]byte, 0, 16)
 	for id, col := range t.Cols() {
-		val := int64(len(r[id].GetBytes()))
-		if val != 0 {
-			colSize[col.ID] = val
+		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], r[id])
+		if err != nil {
+			continue
 		}
+		colSize[col.ID] = int64(len(encodedCol) - 1)
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
 	return recordID, nil
@@ -599,7 +612,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opt); err != nil {
+		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupKeyErr
 			}
@@ -714,11 +727,14 @@ func (t *tableCommon) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Da
 		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
 	}
 	colSize := make(map[int64]int64)
+	encodedCol := make([]byte, 0, 16)
+	sc := ctx.GetSessionVars().StmtCtx
 	for id, col := range t.Cols() {
-		val := -int64(len(r[id].GetBytes()))
-		if val != 0 {
-			colSize[col.ID] = val
+		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], r[id])
+		if err != nil {
+			continue
 		}
+		colSize[col.ID] = -int64(len(encodedCol) - 1)
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.physicalTableID, -1, 1, colSize)
 	return err
@@ -814,8 +830,8 @@ func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
-	if _, err := idx.Create(ctx, rm, vals, h); err != nil {
+func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
+	if _, err := idx.Create(ctx, rm, vals, h, table.WithAssertion(txn)); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)
@@ -924,11 +940,6 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	}
 
 	return colVal, nil
-}
-
-// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
-func (t *tableCommon) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
-	return t.Allocator(ctx).Alloc(t.tableID)
 }
 
 // AllocHandle implements table.Table AllocHandle interface.
@@ -1059,7 +1070,7 @@ var (
 	recordPrefixSep = []byte("_r")
 )
 
-// FindIndexByColName implements table.Table FindIndexByColName interface.
+// FindIndexByColName returns a public table index containing only one column named `name`.
 func FindIndexByColName(t table.Table, name string) table.Index {
 	for _, idx := range t.Indices() {
 		// only public index can be read.

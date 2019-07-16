@@ -23,7 +23,6 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -152,12 +151,9 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 			return nil, errors.Trace(err)
 		}
 
-		tikvReq := &tikvrpc.Request{
-			Type: tikvrpc.CmdMvccGetByStartTs,
-			MvccGetByStartTs: &kvrpcpb.MvccGetByStartTsRequest{
-				StartTs: startTS,
-			},
-		}
+		tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByStartTs, &kvrpcpb.MvccGetByStartTsRequest{
+			StartTs: startTS,
+		})
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := t.Store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
 		if err != nil {
@@ -1068,17 +1064,9 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeError(w, err)
 				return
 			}
-			asSortedEntry := func(metric map[helper.TblIndex]helper.RegionMetric) hotRegions {
-				hs := make(hotRegions, 0, len(metric))
-				for key, value := range metric {
-					hs = append(hs, hotRegion{key, value})
-				}
-				sort.Sort(hs)
-				return hs
-			}
 			writeData(w, map[string]interface{}{
-				"write": asSortedEntry(hotWrite),
-				"read":  asSortedEntry(hotRead),
+				"write": hotWrite,
+				"read":  hotRead,
 			})
 			return
 		}

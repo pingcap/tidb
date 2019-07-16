@@ -103,6 +103,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		c_year year
 	)`
 	testKit.MustExec(sql)
+	testKit.MustExec(`set tidb_enable_noop_functions=1;`)
 
 	var tests []typeInferTestCase
 	tests = append(tests, s.createTestCase4Constants()...)
