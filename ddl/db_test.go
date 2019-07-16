@@ -3045,8 +3045,6 @@ func (s *testDBSuite2) TestTableLock(c *C) {
 	tk.MustExec("CREATE TABLE t2 (a int)")
 	tk.MustExec("lock tables t1 write, t2 write")
 	tk.MustExec("drop table t2,t1")
-
-	tk.MustExec("drop table if exists t1,t2")
 }
 
 // port from mysql
@@ -3072,7 +3070,6 @@ func (s *testDBSuite2) TestTableLocksLostCommit(c *C) {
 	tk2.MustExec("DROP TABLE t1")
 
 	tk.MustExec("unlock tables")
-	tk2.MustExec("DROP TABLE IF EXISTS t1")
 }
 
 // test write local lock
