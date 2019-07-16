@@ -88,13 +88,15 @@ func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
 
 func (s *testClientSuite) TestCancelTimeoutRetErr(c *C) {
 	req := new(tikvpb.BatchCommandsRequest_Request)
-	a := newBatchConn(1, 1, nil)
+	a := newBatchConn(1, 1)
 
+	var cli rpcClient
+	cli.eventCh = make(chan *eventMSG)
 	ctx, cancel := context.WithCancel(context.TODO())
 	cancel()
-	_, err := sendBatchRequest(ctx, "", a, req, 2*time.Second)
+	_, err := sendBatchRequest(ctx, &cli, "", a, req, 2*time.Second)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 
-	_, err = sendBatchRequest(context.Background(), "", a, req, 0)
+	_, err = sendBatchRequest(context.Background(), &cli, "", a, req, 0)
 	c.Assert(errors.Cause(err), Equals, context.DeadlineExceeded)
 }

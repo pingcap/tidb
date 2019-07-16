@@ -41,21 +41,18 @@ type batchConn struct {
 	closed                 chan struct{}
 
 	// Notify rpcClient to check the idle flag
-	idleNotify *uint32
-	idle       bool
 	idleDetect *time.Timer
 
 	pendingRequests prometheus.Gauge
 }
 
-func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
+func newBatchConn(connCount, maxBatchSize uint) *batchConn {
 	return &batchConn{
 		batchCommandsCh:        make(chan *batchCommandsEntry, maxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, connCount),
 		tikvTransportLayerLoad: 0,
 		closed:                 make(chan struct{}),
 
-		idleNotify: idleNotify,
 		idleDetect: time.NewTimer(idleTimeout),
 	}
 }
@@ -65,6 +62,8 @@ func (a *batchConn) fetchAllPendingRequests(
 	maxBatchSize int,
 	entries *[]*batchCommandsEntry,
 	requests *[]*tikvpb.BatchCommandsRequest_Request,
+	addr string,
+	eventCh chan<- *eventMSG,
 ) {
 	// Block on the first element.
 	var headEntry *batchCommandsEntry
@@ -76,10 +75,12 @@ func (a *batchConn) fetchAllPendingRequests(
 		a.idleDetect.Reset(idleTimeout)
 	case <-a.idleDetect.C:
 		a.idleDetect.Reset(idleTimeout)
-		a.idle = true
-		atomic.CompareAndSwapUint32(a.idleNotify, 0, 1)
-		// This batchConn to be recycled
-		return
+		// eventCh signal is handle each time SendRequest is called, it's unlikely
+		// SendRequest is never called and this operation blocks here.
+		eventCh <- &eventMSG{
+			tp:   eventConnIdle,
+			addr: addr,
+		}
 	case <-a.closed:
 		return
 	}
@@ -311,7 +312,7 @@ func (b *batchCommandsEntry) isCanceled() bool {
 
 const idleTimeout = 3 * time.Minute
 
-func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
+func (a *batchConn) batchSendLoop(cfg config.TiKVClient, addr string, eventCh chan<- *eventMSG) {
 	defer func() {
 		if r := recover(); r != nil {
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
@@ -319,7 +320,7 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
 			logutil.BgLogger().Info("restart batchSendLoop")
-			go a.batchSendLoop(cfg)
+			go a.batchSendLoop(cfg, addr, eventCh)
 		}
 	}()
 
@@ -338,7 +339,7 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 		requestIDs = requestIDs[:0]
 
 		a.pendingRequests.Set(float64(len(a.batchCommandsCh)))
-		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests)
+		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests, addr, eventCh)
 
 		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
 			tikvTransportLayerLoad := atomic.LoadUint64(batchCommandsClient.tikvTransportLayerLoad)
@@ -411,6 +412,7 @@ func removeCanceledRequests(
 
 func sendBatchRequest(
 	ctx context.Context,
+	c *rpcClient,
 	addr string,
 	batchConn *batchConn,
 	req *tikvpb.BatchCommandsRequest_Request,
@@ -424,12 +426,16 @@ func sendBatchRequest(
 	}
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+retry:
 	select {
 	case batchConn.batchCommandsCh <- entry:
 	case <-ctx1.Done():
 		logutil.BgLogger().Warn("send request is cancelled",
 			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
 		return nil, errors.Trace(ctx1.Err())
+	case msg := <-c.eventCh:
+		handleEventMSG(c, msg)
+		goto retry
 	}
 
 	select {
@@ -446,27 +452,34 @@ func sendBatchRequest(
 	}
 }
 
-func (c *rpcClient) recycleIdleConnArray() {
-	var addrs []string
-	c.RLock()
-	for _, conn := range c.conns {
-		if conn.idle {
-			addrs = append(addrs, conn.target)
-		}
-	}
-	c.RUnlock()
+type eventMSG struct {
+	addr string
+	tp   eventMSGType
+}
 
-	for _, addr := range addrs {
-		c.Lock()
-		conn, ok := c.conns[addr]
-		if ok {
-			delete(c.conns, addr)
-			logutil.BgLogger().Info("recycle idle connection",
-				zap.String("target", addr))
-		}
-		c.Unlock()
-		if conn != nil {
-			conn.Close()
-		}
+type eventMSGType int
+
+const (
+	eventConnIdle eventMSGType = 1 + iota
+)
+
+func handleEventMSG(c *rpcClient, msg *eventMSG) {
+	switch msg.tp {
+	case eventConnIdle:
+		c.recycleIdleConnArray(msg.addr)
+	}
+}
+
+func (c *rpcClient) recycleIdleConnArray(addr string) {
+	c.Lock()
+	conn, ok := c.conns[addr]
+	if ok {
+		delete(c.conns, addr)
+		logutil.BgLogger().Info("recycle idle connection",
+			zap.String("target", addr))
+	}
+	c.Unlock()
+	if conn != nil {
+		conn.Close()
 	}
 }
