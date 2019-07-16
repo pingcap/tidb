@@ -589,27 +589,37 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 }
 
 func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
-	cols := t.Cols()
-	tblInfo := t.Meta()
-	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
-	for _, v := range decodeCol {
-		col := cols[v.Offset]
-		tpExpr := decoder.Column{
-			Col: col,
-		}
+	decodeColCpy := make([]*table.Column, len(decodeCol))
+	copy(decodeColCpy, decodeCol)
+	decodeColsMap := buildFullDecodeColMap(decodeColCpy, t, genExpr)
+
+	decoder.SubstituteGenColsInDecodeColMap(decodeColsMap)
+	decoder.RemoveUnusedVirtualCols(decodeColsMap, decodeCol)
+	return decoder.NewRowDecoder(t, decodeColsMap)
+}
+
+func buildFullDecodeColMap(pendingCols []*table.Column, t table.Table, genExpr map[model.TableColumnID]expression.Expression) map[int64]decoder.Column {
+	decodeColMap := make(map[int64]decoder.Column, len(pendingCols))
+	for i := 0; i < len(pendingCols); i++ {
+		col := pendingCols[i]
 		if col.IsGenerated() && !col.GeneratedStored {
-			for _, c := range cols {
+			// Find depended columns and put them into pendingCols.
+			for _, c := range t.Cols() {
 				if _, ok := col.Dependences[c.Name.L]; ok {
-					decodeColsMap[c.ID] = decoder.Column{
-						Col: c,
-					}
+					pendingCols = append(pendingCols, c)
 				}
 			}
-			tpExpr.GenExpr = genExpr[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
+			decodeColMap[col.ID] = decoder.Column{
+				Col:     col,
+				GenExpr: genExpr[model.TableColumnID{TableID: t.Meta().ID, ColumnID: col.ID}],
+			}
+		} else {
+			decodeColMap[col.ID] = decoder.Column{
+				Col: col,
+			}
 		}
-		decodeColsMap[col.ID] = tpExpr
 	}
-	return decoder.NewRowDecoder(t, decodeColsMap)
+	return decodeColMap
 }
 
 // genExprs use to calculate generated column value.

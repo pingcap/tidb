@@ -807,12 +807,14 @@ func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk.MustExec("insert into t (a) values (1)")
 	tk.MustExec("create index idx on t (c)")
 	tk.MustQuery("select * from t where c > 1").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int as (a + 1), c int as (b + 1), d int as (c + 1))")
 	tk.MustExec("insert into t (a) values (1)")
 	tk.MustExec("create index idx on t (d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 3 4"))
+	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint, b bigint as (a+1) virtual, c bigint as (b+1) virtual)")
@@ -822,6 +824,7 @@ func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk.MustExec("alter table t add column(d bigint as (c+1) virtual)")
 	tk.MustExec("alter table t add index idx_d(d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 3 4"))
+	tk.MustExec("admin check table t")
 }
 
 func (s *testIntegrationSuite2) TestCaseInsensitiveCharsetAndCollate(c *C) {

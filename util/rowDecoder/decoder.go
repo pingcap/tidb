@@ -14,6 +14,8 @@
 package decoder
 
 import (
+	"github.com/pingcap/parser/ast"
+	"sort"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -133,4 +135,73 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 		row[id] = val
 	}
 	return row, nil
+}
+
+// SubstituteGenColsInDecodeColMap substitutes generated columns in every expression in decodeColMap
+// with non-generated one by looking up decodeColMap.
+func SubstituteGenColsInDecodeColMap(decodeColMap map[int64]Column) {
+	// Sort columns by id in ascending order.
+	var orderedCols []int64
+	for colID := range decodeColMap {
+		orderedCols = append(orderedCols, colID)
+	}
+	sort.Slice(orderedCols, func(i, j int) bool { return orderedCols[i] < orderedCols[j] })
+
+	for _, colID := range orderedCols {
+		decCol := decodeColMap[colID]
+		if decCol.GenExpr != nil {
+			decodeColMap[colID] = Column{
+				Col:     decCol.Col,
+				GenExpr: substituteGeneratedColumn(decCol.GenExpr, decodeColMap),
+			}
+		} else {
+			decodeColMap[colID] = Column{
+				Col: decCol.Col,
+			}
+		}
+	}
+}
+
+// substituteGeneratedColumn substitutes generated columns in an expression with non-generated one by looking up decodeColMap.
+func substituteGeneratedColumn(expr expression.Expression, decodeColMap map[int64]Column) expression.Expression {
+	switch v := expr.(type) {
+	case *expression.Column:
+		if c, ok := decodeColMap[v.ID]; ok && c.GenExpr != nil {
+			return c.GenExpr
+		}
+		return v
+	case *expression.ScalarFunction:
+		if v.FuncName.L == ast.Cast {
+			newFunc := v.Clone().(*expression.ScalarFunction)
+			newFunc.GetArgs()[0] = substituteGeneratedColumn(newFunc.GetArgs()[0], decodeColMap)
+			return newFunc
+		}
+		newArgs := make([]expression.Expression, 0, len(v.GetArgs()))
+		for _, arg := range v.GetArgs() {
+			newArgs = append(newArgs, substituteGeneratedColumn(arg, decodeColMap))
+		}
+		return expression.NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
+	}
+	return expr
+}
+
+// RemoveUnusedVirtualCols removes all virtual columns in decodeColMap that cannot found in indexedCols.
+func RemoveUnusedVirtualCols(decodeColMap map[int64]Column, indexedCols []*table.Column) {
+	for colID, decCol := range decodeColMap {
+		col := decCol.Col
+		if !col.IsGenerated() || col.GeneratedStored {
+			continue
+		}
+
+		found := false
+		for _, v := range indexedCols {
+			if v.Offset == col.Offset {
+				found = true
+			}
+		}
+
+		if !found {
+			delete(decodeColMap, colID)
+		}
+	}
 }

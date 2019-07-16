@@ -16,7 +16,6 @@ package ddl
 import (
 	"context"
 	"math"
-	"sort"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -909,86 +908,50 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
 	cols := t.Cols()
-	decodeColMap := make(map[int64]decoder.Column, len(indexInfo.Columns))
-	pendingCols := make(map[*table.Column]struct{}, len(indexInfo.Columns))
-	for _, v := range indexInfo.Columns {
-		pendingCols[cols[v.Offset]] = struct{}{}
+	indexedCols := make([]*table.Column, len(indexInfo.Columns))
+	for i, v := range indexInfo.Columns {
+		indexedCols[i] = cols[v.Offset]
 	}
 
-	for len(pendingCols) != 0 {
-		var arbCol *table.Column
-		for c := range pendingCols {
-			arbCol = c
-			delete(pendingCols, arbCol)
-			break
-		}
-
-		if arbCol.IsGenerated() && !arbCol.GeneratedStored {
-			// Find depended columns.
-			for _, c := range cols {
-				if _, ok := arbCol.Dependences[c.Name.L]; ok {
-					pendingCols[c] = struct{}{}
-				}
-			}
-			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, arbCol.GeneratedExprString, t.Meta(), &arbCol.FieldType)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			decodeColMap[arbCol.ID] = decoder.Column{
-				Col:     arbCol,
-				GenExpr: e,
-			}
-		} else {
-			decodeColMap[arbCol.ID] = decoder.Column{
-				Col: arbCol,
-			}
-		}
+	indexedColsCpy := make([]*table.Column, len(indexedCols))
+	copy(indexedColsCpy, indexedCols)
+	decodeColMap, err := buildFullDecodeColMap(indexedColsCpy, sessCtx, t)
+	if err != nil {
+		return nil, err
 	}
 
-	var orderedCols []int64
-	for colID := range decodeColMap {
-		orderedCols = append(orderedCols, colID)
-	}
-	sort.Slice(orderedCols, func(i, j int) bool { return orderedCols[i] < orderedCols[j] })
-
-	for _, colID := range orderedCols {
-		decCol := decodeColMap[colID]
-		if decCol.GenExpr != nil {
-			newGenExpr := substituteGeneratedColumn(decCol.GenExpr, decodeColMap)
-			decodeColMap[colID] = decoder.Column{
-				Col:     decCol.Col,
-				GenExpr: newGenExpr,
-			}
-		} else {
-			decodeColMap[colID] = decoder.Column{
-				Col: decCol.Col,
-			}
-		}
-	}
+	decoder.SubstituteGenColsInDecodeColMap(decodeColMap)
+	decoder.RemoveUnusedVirtualCols(decodeColMap, indexedCols)
 
 	return decodeColMap, nil
 }
 
-func substituteGeneratedColumn(expr expression.Expression, decodeColMap map[int64]decoder.Column) expression.Expression {
-	switch v := expr.(type) {
-	case *expression.Column:
-		if c, ok := decodeColMap[v.ID]; ok && c.GenExpr != nil {
-			return c.GenExpr
+func buildFullDecodeColMap(pendingCols []*table.Column, sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
+	decodeColMap := make(map[int64]decoder.Column, len(pendingCols))
+	for i := 0; i < len(pendingCols); i++ {
+		col := pendingCols[i]
+		if col.IsGenerated() && !col.GeneratedStored {
+			// Find depended columns and put them into pendingCols.
+			for _, c := range t.Cols() {
+				if _, ok := col.Dependences[c.Name.L]; ok {
+					pendingCols = append(pendingCols, c)
+				}
+			}
+			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta(), &col.FieldType)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			decodeColMap[col.ID] = decoder.Column{
+				Col:     col,
+				GenExpr: e,
+			}
+		} else {
+			decodeColMap[col.ID] = decoder.Column{
+				Col: col,
+			}
 		}
-		return v
-	case *expression.ScalarFunction:
-		if v.FuncName.L == ast.Cast {
-			newFunc := v.Clone().(*expression.ScalarFunction)
-			newFunc.GetArgs()[0] = substituteGeneratedColumn(newFunc.GetArgs()[0], decodeColMap)
-			return newFunc
-		}
-		newArgs := make([]expression.Expression, 0, len(v.GetArgs()))
-		for _, arg := range v.GetArgs() {
-			newArgs = append(newArgs, substituteGeneratedColumn(arg, decodeColMap))
-		}
-		return expression.NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
 	}
-	return expr
+	return decodeColMap, nil
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
