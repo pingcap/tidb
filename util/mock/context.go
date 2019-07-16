@@ -229,7 +229,8 @@ func NewContext() *Context {
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	// set MaxAllowedPacket always returns nil, assign this error to avoid errcheck warning
-	_ = sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864")
+	err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864")
+	_ = err
 	return sctx
 }
 

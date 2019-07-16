@@ -305,7 +305,8 @@ func MockContext() sessionctx.Context {
 	do.CreateStatsHandle(ctx)
 	domain.BindDomain(ctx, do)
 	// set MaxAllowedPacket always returns nil, assign this error to avoid errcheck warning
-	_ = ctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864")
+	err := ctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864")
+	_ = err
 	return ctx
 }
 
