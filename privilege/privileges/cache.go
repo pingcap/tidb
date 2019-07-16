@@ -858,7 +858,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		sort.Strings(sortedRes)
 		for i, r := range sortedRes {
 			g += r
-			if i != len(sortedRes) - 1 {
+			if i != len(sortedRes)-1 {
 				g += ", "
 			}
 		}
