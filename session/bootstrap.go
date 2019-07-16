@@ -265,10 +265,10 @@ const (
 		name char(100) NOT NULL
 	);`
 
-	// CreateDisabledOptimizeList stores the list of disabled optimizing operations.
-	CreateDisabledOptimizeList = `CREATE TABLE IF NOT EXISTS mysql.disabled_optimize_list (
+	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
+	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
 		name char(100) NOT NULL,
-		type char(20) check(type="expr_push_down" or type="logical_rule") NOT NULL
+		type char(20) check(type="logical_rule") NOT NULL
 	);`
 )
 
@@ -851,7 +851,7 @@ func upgradeToVer33(s Session) {
 }
 
 func upgradeToVer34(s Session) {
-	doReentrantDDL(s, CreateDisabledOptimizeList)
+	doReentrantDDL(s, CreateOptRuleBlacklist)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -914,8 +914,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsTopNTable)
 	// Create expr_pushdown_blacklist table.
 	mustExecute(s, CreateExprPushdownBlacklist)
-	// Create disabled_optimize_list table.
-	mustExecute(s, CreateDisabledOptimizeList)
+	// Create opt_rule_blacklist table.
+	mustExecute(s, CreateOptRuleBlacklist)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

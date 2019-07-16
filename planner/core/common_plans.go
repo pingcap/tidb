@@ -133,8 +133,8 @@ type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer
 }
 
-// ReloadDisabledOptimizeList reloads the data from disabled_optimize_list table.
-type ReloadDisabledOptimizeList struct {
+// ReloadOptRuleBlacklist reloads the data from opt_rule_blacklist table.
+type ReloadOptRuleBlacklist struct {
 	baseSchemaProducer
 }
 

@@ -1491,7 +1491,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	err = executor.LoadDisabledOptimizeList(se)
+	err = executor.LoadOptRuleBlacklist(se)
 	if err != nil {
 		return nil, err
 	}

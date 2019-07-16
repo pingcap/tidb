@@ -17,34 +17,39 @@ import (
 	"context"
 	"strings"
 
-	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/errors"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// ReloadExprPushdownBlacklistExec indicates ReloadExprPushdownBlacklist executor.
-type ReloadExprPushdownBlacklistExec struct {
+// ReloadOptRuleBlacklistExec indicates ReloadOptRuleBlacklist executor.
+type ReloadOptRuleBlacklistExec struct {
 	baseExecutor
 }
 
 // Next implements the Executor Next interface.
-func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	return LoadExprPushdownBlacklist(e.ctx)
+func (e *ReloadOptRuleBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	return LoadOptRuleBlacklist(e.ctx)
 }
 
-// LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
-func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
-	sql := "select HIGH_PRIORITY name from mysql.expr_pushdown_blacklist"
+// LoadOptRuleBlacklist loads the latest data from table mysql.opt_rule_blacklist.
+func LoadOptRuleBlacklist(ctx sessionctx.Context) (err error) {
+	sql := "select HIGH_PRIORITY name, type from mysql.opt_rule_blacklist"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return err
 	}
-	newBlacklist := make(map[string]struct{})
+	newDisabledLogicalRules := make(map[string]struct{})
 	for _, row := range rows {
 		name := strings.ToLower(row.GetString(0))
-		newBlacklist[name] = struct{}{}
+		if row.GetString(1) == "logical_rule" {
+			newDisabledLogicalRules[name] = struct{}{}
+		} else {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("type field of mysql.opt_rule_blacklist can only be \"expr_push_down\" or \"logical_rule\""))
+		}
 	}
-	expression.DefaultExprPushdownBlacklist.Store(newBlacklist)
+	plannercore.DefaultDisabledLogicalRulesList.Store(newDisabledLogicalRules)
 	return nil
 }

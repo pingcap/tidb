@@ -41,6 +41,5 @@ func (s *testSuite2) TestReloadExprPushdownBlacklist(c *C) {
 		"  └─TableScan_6 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name='lt'")
-	tk.MustExec("delete from mysql.disabled_optimize_list where name='lt'")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
