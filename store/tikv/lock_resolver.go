@@ -240,10 +240,10 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, nil
 	}
 
-	cmdResp := resp.ResolveLock
-	if cmdResp == nil {
+	if resp.Resp == nil {
 		return false, errors.Trace(ErrBodyMissing)
 	}
+	cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
 	if keyErr := cmdResp.GetError(); keyErr != nil {
 		return false, errors.Errorf("unexpected resolve err: %s", keyErr)
 	}
@@ -360,10 +360,10 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			}
 			continue
 		}
-		cmdResp := resp.Cleanup
-		if cmdResp == nil {
+		if resp.Resp == nil {
 			return status, errors.Trace(ErrBodyMissing)
 		}
+		cmdResp := resp.Resp.(*kvrpcpb.CleanupResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
 			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
@@ -419,10 +419,10 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			}
 			continue
 		}
-		cmdResp := resp.ResolveLock
-		if cmdResp == nil {
+		if resp.Resp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}
+		cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)
 			logutil.BgLogger().Error("resolveLock error", zap.Error(err))
