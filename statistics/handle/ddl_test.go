@@ -160,7 +160,7 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	c.Check(statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(statsTbl.Count), Equals, 3.0)
+	c.Check(statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(statsTbl.Count, false), Equals, 3.0)
 
 	testKit.MustExec("create index i on t(c2, c1)")
 	testKit.MustExec("analyze table t")
@@ -212,6 +212,6 @@ PARTITION BY RANGE ( a ) (
 	for _, def := range pi.Definitions {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		c.Assert(statsTbl.Pseudo, IsFalse)
-		c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count), Equals, 3.0)
+		c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false), Equals, 3.0)
 	}
 }

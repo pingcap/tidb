@@ -143,22 +143,22 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("3 17 51 3"))
+		testkit.Rows("3 18 54 6"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("4 17 68 4"))
+		testkit.Rows("4 18 72 8"))
 	tk.MustExec("delete from t where c >= 3")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("2 17 34 2"))
+		testkit.Rows("2 18 36 4"))
 	tk.MustExec("delete from t where c=3")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("2 17 34 2"))
+		testkit.Rows("2 18 36 4"))
 }
 
 func (s *testTableSuite) TestCharacterSetCollations(c *C) {
@@ -240,6 +240,42 @@ func (s *testTableSuite) TestCharacterSetCollations(c *C) {
 		"c_year <nil> <nil>",
 	))
 	tk.MustExec("DROP DATABASE charset_collate_test")
+}
+
+func (s *testTableSuite) TestCurrentTimestampAsDefault(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("DROP DATABASE IF EXISTS default_time_test")
+	tk.MustExec("CREATE DATABASE default_time_test; USE default_time_test")
+
+	tk.MustExec(`CREATE TABLE default_time_table(
+					c_datetime datetime,
+					c_datetime_default datetime default current_timestamp,
+					c_datetime_default_2 datetime(2) default current_timestamp(2),
+					c_timestamp timestamp,
+					c_timestamp_default timestamp default current_timestamp,
+					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
+					c_varchar_default varchar(20) default "current_timestamp",
+					c_varchar_default_3 varchar(20) default "current_timestamp(3)",
+					c_varchar_default_with_case varchar(20) default "cUrrent_tImestamp"
+				);`)
+
+	tk.MustQuery(`SELECT column_name, column_default
+					FROM information_schema.COLUMNS
+					WHERE table_schema = "default_time_test" AND table_name = "default_time_table"
+					ORDER BY column_name`,
+	).Check(testkit.Rows(
+		"c_datetime <nil>",
+		"c_datetime_default CURRENT_TIMESTAMP",
+		"c_datetime_default_2 CURRENT_TIMESTAMP(2)",
+		"c_timestamp <nil>",
+		"c_timestamp_default CURRENT_TIMESTAMP",
+		"c_timestamp_default_3 CURRENT_TIMESTAMP(3)",
+		"c_varchar_default current_timestamp",
+		"c_varchar_default_3 current_timestamp(3)",
+		"c_varchar_default_with_case cUrrent_tImestamp",
+	))
+	tk.MustExec("DROP DATABASE default_time_test")
 }
 
 type mockSessionManager struct {
