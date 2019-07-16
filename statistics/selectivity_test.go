@@ -431,9 +431,9 @@ func (s *testStatsSuite) TestPrimaryKeySelectivity(c *C) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	testKit.MustQuery(`explain select * from t where a > "t"`).Check(testkit.Rows(
-		"IndexLookUp_10 3333.33 root ",
-		"├─IndexScan_8 3333.33 cop table:t, index:a, range:(\"t\",+inf], keep order:false, stats:pseudo",
-		"└─TableScan_9 3333.33 cop table:t, keep order:false, stats:pseudo"))
+		"TableReader_7 3333.33 root data:Selection_6",
+		"└─Selection_6 3333.33 cop gt(test.t.a, \"t\")",
+		"  └─TableScan_5 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 
 	testKit.MustExec("drop table t")
 	testKit.MustExec("create table t(a int primary key, b int)")

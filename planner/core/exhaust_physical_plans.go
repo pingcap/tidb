@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -282,6 +281,8 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int)
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
+		LeftJoinKeys:    p.LeftJoinKeys,
+		RightJoinKeys:   p.RightJoinKeys,
 		JoinType:        p.JoinType,
 		Concurrency:     uint(p.ctx.GetSessionVars().HashJoinConcurrency),
 		DefaultValues:   p.DefaultValues,
@@ -324,7 +325,7 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 func (p *LogicalJoin) constructIndexJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
-	innerPlan PhysicalPlan,
+	innerTask task,
 	ranges []*ranger.Range,
 	keyOff2IdxOff []int,
 	lens []int,
@@ -377,7 +378,7 @@ func (p *LogicalJoin) constructIndexJoin(
 		OuterJoinKeys:   newOuterKeys,
 		InnerJoinKeys:   newInnerKeys,
 		DefaultValues:   p.DefaultValues,
-		innerPlan:       innerPlan,
+		innerTask:       innerTask,
 		KeyOff2IdxOff:   newKeyOff,
 		IdxColLens:      lens,
 		Ranges:          ranges,
@@ -435,10 +436,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			keyOff2IdxOff[i] = 0
 		}
 		if pkMatched {
-			innerPlan := p.constructInnerTableScan(ds, pkCol, outerJoinKeys, us)
+			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
-			return p.constructIndexJoin(prop, outerIdx, innerPlan, nil, keyOff2IdxOff, nil, nil)
+			return p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)
 		}
 	}
 	helper := &indexJoinBuildHelper{join: p}
@@ -464,8 +465,8 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 		idxCols, lens := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
 		rangeInfo := helper.buildRangeDecidedByInformation(idxCols, outerJoinKeys)
-		innerPlan := p.constructInnerIndexScan(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
-		return p.constructIndexJoin(prop, outerIdx, innerPlan, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
+		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
+		return p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
 	}
 	return nil
 }
@@ -513,8 +514,8 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 	return buffer.String()
 }
 
-// constructInnerTableScan is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column, us *LogicalUnionScan) PhysicalPlan {
+// constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
+func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column, us *LogicalUnionScan) task {
 	ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -526,22 +527,29 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 		rangeDecidedBy:  outerJoinKeys,
 	}.Init(ds.ctx)
 	ts.SetSchema(ds.schema)
-
-	ts.stats = property.NewSimpleStats(1)
-	ts.stats.StatsVersion = ds.statisticTable.Version
-	if ds.statisticTable.Pseudo {
-		ts.stats.StatsVersion = statistics.PseudoVersion
+	ts.stats = &property.StatsInfo{
+		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
+		RowCount: 1,
+		// Actually this would not be used in cost computation of IndexJoin, set it just to keep consistency.
+		Cardinality:  make([]float64, len(ds.stats.Cardinality)),
+		StatsVersion: ds.stats.StatsVersion,
 	}
-
+	for i := range ds.stats.Cardinality {
+		ds.stats.Cardinality[i] = 1
+	}
+	rowSize := ds.tableStats.HistColl.GetAvgRowSize(ds.tableCols, false)
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
+		cst:               scanFactor * rowSize * 1.0,
+		tableStats:        ds.tableStats,
 	}
 	selStats := ts.stats.Scale(selectionFactor)
 	ts.addPushedDownSelection(copTask, selStats)
-	t := finishCopTask(ds.ctx, copTask)
-	reader := t.plan()
-	return p.constructInnerUnionScan(us, reader)
+	t := finishCopTask(ds.ctx, copTask).(*rootTask)
+	reader := t.p
+	t.p = p.constructInnerUnionScan(us, reader)
+	return t
 }
 
 func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
@@ -555,9 +563,9 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	return physicalUnionScan
 }
 
-// constructInnerIndexScan is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, filterConds []expression.Expression,
-	outerJoinKeys []*expression.Column, us *LogicalUnionScan, rangeInfo string) PhysicalPlan {
+// constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
+func (p *LogicalJoin) constructInnerIndexScanTask(ds *DataSource, idx *model.IndexInfo, filterConds []expression.Expression,
+	outerJoinKeys []*expression.Column, us *LogicalUnionScan, rangeInfo string) task {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
@@ -572,19 +580,24 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 
 	var rowCount float64
 	idxHist, ok := ds.statisticTable.Indices[idx.ID]
+	// TODO: we are assuming that:
+	// - rows are uniformly distributed among the distinct values;
+	// - every outer row can find matches in inner table;
+	// The second assumption is too strong, we'd better analyze histograms
+	// of both sides to compute a factor we should multiply to the current
+	// estimated `rowCount`.
+	// We can improve this after https://github.com/pingcap/tidb/pull/8097
+	// is merged, since it provides some utilities we need.
 	if ok && !ds.statisticTable.Pseudo {
 		rowCount = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 	} else {
 		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
 	}
-	is.stats = property.NewSimpleStats(rowCount)
-	is.stats.StatsVersion = ds.statisticTable.Version
-	if ds.statisticTable.Pseudo {
-		is.stats.StatsVersion = statistics.PseudoVersion
-	}
-
+	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	cop := &copTask{
-		indexPlan: is,
+		indexPlan:  is,
+		tableStats: ds.tableStats,
+		tableCols:  ds.tableCols,
 	}
 	if !isCoveringIndex(ds.schema.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
@@ -592,8 +605,9 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		ts.SetSchema(is.dataSourceSchema)
 		cop.tablePlan = ts
 	}
-
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
+	rowSize := is.indexScanRowSize(idx, ds)
+	cop.cst = rowCount * rowSize * scanFactor
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, idx.Columns, ds.tableInfo)
 	path := &accessPath{
 		indexFilters:     indexConds,
@@ -612,9 +626,10 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	selectivity := ds.stats.RowCount / ds.tableStats.RowCount
 	finalStats := ds.stats.ScaleByExpectCnt(selectivity * rowCount)
 	is.addPushedDownSelection(cop, ds, path, finalStats)
-	t := finishCopTask(ds.ctx, cop)
-	reader := t.plan()
-	return p.constructInnerUnionScan(us, reader)
+	t := finishCopTask(ds.ctx, cop).(*rootTask)
+	reader := t.p
+	t.p = p.constructInnerUnionScan(us, reader)
+	return t
 }
 
 var symmetricOp = map[string]string{

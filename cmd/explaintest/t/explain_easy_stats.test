@@ -10,6 +10,8 @@ create table index_prune(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c tinyint
 load stats 's/explain_easy_stats_index_prune.json';
 set @@session.tidb_opt_agg_push_down = 1;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
+set @@session.tidb_hashagg_partial_concurrency = 1;
+set @@session.tidb_hashagg_final_concurrency = 1;
 
 
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );

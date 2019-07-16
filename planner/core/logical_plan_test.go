@@ -2249,7 +2249,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(avg(a)) over() from t",
-			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Projection",
+			result: "TableReader(Table(t)->HashAgg)->HashAgg->Window(sum(sel_agg_2) over())->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over())",
@@ -2261,7 +2261,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select b from t order by(sum(avg(a)) over())",
-			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Sort->Projection",
+			result: "TableReader(Table(t)->HashAgg)->HashAgg->Window(sum(sel_agg_2) over())->Sort->Projection",
 		},
 		{
 			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
@@ -2373,7 +2373,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max from t group by c",
-			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_3) over(rows between 1 preceding and 1 following))->Projection",
+			result: "TableReader(Table(t))->HashAgg->Window(max(sel_agg_3) over(rows between 1 preceding and 1 following))->Projection",
 		},
 		{
 			sql:    "select nth_value(a, 1.0) over() from t",
@@ -2472,8 +2472,14 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 	}
 
 	s.Parser.EnableWindowFunc(true)
+	sessionVars := s.ctx.GetSessionVars()
+	finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency
+	sessionVars.HashAggFinalConcurrency = 1
+	sessionVars.HashAggPartialConcurrency = 1
 	defer func() {
 		s.Parser.EnableWindowFunc(false)
+		sessionVars.HashAggFinalConcurrency = finalCon
+		sessionVars.HashAggPartialConcurrency = partialCon
 	}()
 	ctx := context.TODO()
 	for i, tt := range tests {

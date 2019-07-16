@@ -3892,21 +3892,21 @@ Union_11	150.00	root
 explain select * from t2 where b > 5;
 id	count	task	operator info
 Union_11	16666.67	root	
-├─IndexLookUp_17	3333.33	root	
-│ ├─IndexScan_15	3333.33	cop	table:t2, partition:p0, index:b, range:(5,+inf], keep order:false, stats:pseudo
-│ └─TableScan_16	3333.33	cop	table:t2, partition:p0, keep order:false, stats:pseudo
-├─IndexLookUp_23	3333.33	root	
-│ ├─IndexScan_21	3333.33	cop	table:t2, partition:p1, index:b, range:(5,+inf], keep order:false, stats:pseudo
-│ └─TableScan_22	3333.33	cop	table:t2, partition:p1, keep order:false, stats:pseudo
-├─IndexLookUp_29	3333.33	root	
-│ ├─IndexScan_27	3333.33	cop	table:t2, partition:p2, index:b, range:(5,+inf], keep order:false, stats:pseudo
-│ └─TableScan_28	3333.33	cop	table:t2, partition:p2, keep order:false, stats:pseudo
-├─IndexLookUp_35	3333.33	root	
-│ ├─IndexScan_33	3333.33	cop	table:t2, partition:p3, index:b, range:(5,+inf], keep order:false, stats:pseudo
-│ └─TableScan_34	3333.33	cop	table:t2, partition:p3, keep order:false, stats:pseudo
-└─IndexLookUp_41	3333.33	root	
-  ├─IndexScan_39	3333.33	cop	table:t2, partition:p4, index:b, range:(5,+inf], keep order:false, stats:pseudo
-  └─TableScan_40	3333.33	cop	table:t2, partition:p4, keep order:false, stats:pseudo
+├─TableReader_14	3333.33	root	data:Selection_13
+│ └─Selection_13	3333.33	cop	gt(test.t2.b, 5)
+│   └─TableScan_12	10000.00	cop	table:t2, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_20	3333.33	root	data:Selection_19
+│ └─Selection_19	3333.33	cop	gt(test.t2.b, 5)
+│   └─TableScan_18	10000.00	cop	table:t2, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_26	3333.33	root	data:Selection_25
+│ └─Selection_25	3333.33	cop	gt(test.t2.b, 5)
+│   └─TableScan_24	10000.00	cop	table:t2, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_32	3333.33	root	data:Selection_31
+│ └─Selection_31	3333.33	cop	gt(test.t2.b, 5)
+│   └─TableScan_30	10000.00	cop	table:t2, partition:p3, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_38	3333.33	root	data:Selection_37
+  └─Selection_37	3333.33	cop	gt(test.t2.b, 5)
+    └─TableScan_36	10000.00	cop	table:t2, partition:p4, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t2 where b > 5 and b < 8;
 id	count	task	operator info
 Union_11	1250.00	root	

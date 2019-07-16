@@ -30,11 +30,6 @@ type StatsInfo struct {
 	StatsVersion uint64
 }
 
-// NewSimpleStats creates a simple StatsInfo with rowCount.
-func NewSimpleStats(rowCount float64) *StatsInfo {
-	return &StatsInfo{RowCount: rowCount}
-}
-
 // String implements fmt.Stringer interface.
 func (s *StatsInfo) String() string {
 	return fmt.Sprintf("count %v, Cardinality %v", s.RowCount, s.Cardinality)
@@ -63,7 +58,7 @@ func (s *StatsInfo) Scale(factor float64) *StatsInfo {
 // smaller than the derived cnt.
 // TODO: try to use a better way to do this.
 func (s *StatsInfo) ScaleByExpectCnt(expectCnt float64) *StatsInfo {
-	if expectCnt > s.RowCount {
+	if expectCnt >= s.RowCount {
 		return s
 	}
 	if s.RowCount > 1.0 { // if s.RowCount is too small, it will cause overflow

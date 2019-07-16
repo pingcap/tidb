@@ -5,6 +5,8 @@ insert into t1 values(1, 1), (1, 1), (1, 1), (1, 1), (1, 1);
 insert into t2 values(1, 1);
 
 analyze table t1, t2;
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
 
 -- Test https://github.com/pingcap/tidb/issues/9577
 -- we expect the following two SQL chose t2 as the outer table

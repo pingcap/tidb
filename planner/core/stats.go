@@ -292,41 +292,38 @@ func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo) (*proper
 	return p.stats, nil
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
-	childProfile := childStats[0]
-	p.stats = &property.StatsInfo{
-		RowCount:    math.Min(float64(p.Count), childProfile.RowCount),
+func deriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *property.StatsInfo {
+	stats := &property.StatsInfo{
+		RowCount:    math.Min(limitCount, childProfile.RowCount),
 		Cardinality: make([]float64, len(childProfile.Cardinality)),
 	}
-	for i := range p.stats.Cardinality {
-		p.stats.Cardinality[i] = math.Min(childProfile.Cardinality[i], p.stats.RowCount)
+	for i := range stats.Cardinality {
+		stats.Cardinality[i] = math.Min(childProfile.Cardinality[i], stats.RowCount)
 	}
+	return stats
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+	p.stats = deriveLimitStats(childStats[0], float64(p.Count))
 	return p.stats, nil
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
-	childProfile := childStats[0]
-	lt.stats = &property.StatsInfo{
-		RowCount:    math.Min(float64(lt.Count), childProfile.RowCount),
-		Cardinality: make([]float64, len(childProfile.Cardinality)),
-	}
-	for i := range lt.stats.Cardinality {
-		lt.stats.Cardinality[i] = math.Min(childProfile.Cardinality[i], lt.stats.RowCount)
-	}
+	lt.stats = deriveLimitStats(childStats[0], float64(lt.Count))
 	return lt.stats, nil
 }
 
 // getCardinality will return the Cardinality of a couple of columns. We simply return the max one, because we cannot know
 // the Cardinality for multi-dimension attributes properly. This is a simple and naive scheme of Cardinality estimation.
 func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
+	cardinality := 1.0
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
 		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
-		return 0
+		return cardinality
 	}
-	var cardinality = 1.0
 	for _, idx := range indices {
 		// It is a very elementary estimation.
 		cardinality = math.Max(cardinality, profile.Cardinality[idx])
@@ -397,16 +394,16 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		p.stats.Cardinality[len(p.stats.Cardinality)-1] = 2.0
 		return p.stats, nil
 	}
-	if 0 == len(p.EqualConditions) {
-		p.stats = &property.StatsInfo{
-			RowCount:    leftProfile.RowCount * rightProfile.RowCount,
-			Cardinality: append(leftProfile.Cardinality, rightProfile.Cardinality...),
-		}
-		return p.stats, nil
+	helper := &fullJoinRowCountHelper{
+		cartesian:     0 == len(p.EqualConditions),
+		leftProfile:   leftProfile,
+		rightProfile:  rightProfile,
+		leftJoinKeys:  p.LeftJoinKeys,
+		rightJoinKeys: p.RightJoinKeys,
+		leftSchema:    p.children[0].Schema(),
+		rightSchema:   p.children[1].Schema(),
 	}
-	leftKeyCardinality := getCardinality(p.LeftJoinKeys, p.children[0].Schema(), leftProfile)
-	rightKeyCardinality := getCardinality(p.RightJoinKeys, p.children[1].Schema(), rightProfile)
-	count := leftProfile.RowCount * rightProfile.RowCount / math.Max(leftKeyCardinality, rightKeyCardinality)
+	count := helper.estimate()
 	if p.JoinType == LeftOuterJoin {
 		count = math.Max(count, leftProfile.RowCount)
 	} else if p.JoinType == RightOuterJoin {
@@ -423,6 +420,26 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		Cardinality: cardinality,
 	}
 	return p.stats, nil
+}
+
+type fullJoinRowCountHelper struct {
+	cartesian     bool
+	leftProfile   *property.StatsInfo
+	rightProfile  *property.StatsInfo
+	leftJoinKeys  []*expression.Column
+	rightJoinKeys []*expression.Column
+	leftSchema    *expression.Schema
+	rightSchema   *expression.Schema
+}
+
+func (h *fullJoinRowCountHelper) estimate() float64 {
+	if h.cartesian {
+		return h.leftProfile.RowCount * h.rightProfile.RowCount
+	}
+	leftKeyCardinality := getCardinality(h.leftJoinKeys, h.leftSchema, h.leftProfile)
+	rightKeyCardinality := getCardinality(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyCardinality, rightKeyCardinality)
+	return count
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.

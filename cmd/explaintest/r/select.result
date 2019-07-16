@@ -6,6 +6,8 @@ c3 int,
 PRIMARY KEY (c1)
 );
 INSERT INTO t VALUES (1,2,3);
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
 SELECT * from t;
 c1	c2	c3
 1	2	3

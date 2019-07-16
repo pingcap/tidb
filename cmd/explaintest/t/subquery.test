@@ -2,6 +2,8 @@ drop table if exists t1;
 drop table if exists t2;
 create table t1(a bigint, b bigint);
 create table t2(a bigint, b bigint);
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
 explain select * from t1 where t1.a in (select t1.b + t2.b from t2);
 
 drop table if exists t;

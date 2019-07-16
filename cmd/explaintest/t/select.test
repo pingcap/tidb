@@ -8,6 +8,8 @@ CREATE TABLE t (
 );
 
 INSERT INTO t VALUES (1,2,3);
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
 
 SELECT * from t;
 SELECT c1, c2, c3 from t;
