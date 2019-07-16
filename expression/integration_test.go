@@ -920,6 +920,10 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("aaa文 ba aaa ba"))
 	result = tk.MustQuery(`select insert("bb", NULL, 1, "aa"), insert("bb", 1, NULL, "aa"), insert(NULL, 1, 1, "aaa"), insert("bb", 1, 1, NULL);`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`SELECT INSERT("bb", 0, 1, NULL), INSERT("bb", 0, NULL, "aaa");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery(`SELECT INSERT("中文", 0, 1, NULL), INSERT("中文", 0, NULL, "aaa");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
 
 	// for export_set
 	result = tk.MustQuery(`select export_set(7, "1", "0", ",", 65);`)
@@ -1798,9 +1802,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for convert_tz
 	result = tk.MustQuery(`select convert_tz("2004-01-01 12:00:00", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00.01", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00.01234567", "+00:00", "+10:32");`)
 	result.Check(testkit.Rows("2004-01-01 22:32:00 2004-01-01 22:32:00.01 2004-01-01 22:32:00.012346"))
-	// TODO: release the following test after fix #4462
-	//result = tk.MustQuery(`select convert_tz(20040101, "+00:00", "+10:32"), convert_tz(20040101.01, "+00:00", "+10:32"), convert_tz(20040101.01234567, "+00:00", "+10:32");`)
-	//result.Check(testkit.Rows("2004-01-01 10:32:00 2004-01-01 10:32:00.00 2004-01-01 10:32:00.000000"))
+	result = tk.MustQuery(`select convert_tz(20040101, "+00:00", "+10:32"), convert_tz(20040101.01, "+00:00", "+10:32"), convert_tz(20040101.01234567, "+00:00", "+10:32");`)
+	result.Check(testkit.Rows("2004-01-01 10:32:00 2004-01-01 10:32:00.00 2004-01-01 10:32:00.000000"))
+	result = tk.MustQuery(`select convert_tz(NULL, "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00", NULL, "+10:32"), convert_tz("2004-01-01 12:00:00", "+00:00", NULL);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery(`select convert_tz("a", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00", "a", "+10:32"), convert_tz("2004-01-01 12:00:00", "+00:00", "a");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery(`select convert_tz("", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00", "", "+10:32"), convert_tz("2004-01-01 12:00:00", "+00:00", "");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery(`select convert_tz("0", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00", "0", "+10:32"), convert_tz("2004-01-01 12:00:00", "+00:00", "0");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 
 	// for from_unixtime
 	tk.MustExec(`set @@session.time_zone = "+08:00"`)
@@ -4119,6 +4130,10 @@ func (s *testIntegrationSuite) TestFuncNameConst(c *C) {
 	r.Check(testkit.Rows("2"))
 	r = tk.MustQuery("SELECT concat('hello', name_const('test_string', 'world')) FROM t;")
 	r.Check(testkit.Rows("helloworld"))
+	r = tk.MustQuery("SELECT NAME_CONST('come', -1);")
+	r.Check(testkit.Rows("-1"))
+	r = tk.MustQuery("SELECT NAME_CONST('come', -1.0);")
+	r.Check(testkit.Rows("-1.0"))
 	err := tk.ExecToErr(`select name_const(a,b) from t;`)
 	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const(a,"hello") from t;`)
