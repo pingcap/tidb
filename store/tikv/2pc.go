@@ -504,10 +504,10 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			err = c.prewriteKeys(bo, batch.keys)
 			return errors.Trace(err)
 		}
-		prewriteResp := resp.Prewrite
-		if prewriteResp == nil {
+		if resp.Resp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}
+		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
 			return nil
@@ -591,10 +591,10 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			err = c.pessimisticLockKeys(bo, batch.keys)
 			return errors.Trace(err)
 		}
-		lockResp := resp.PessimisticLock
-		if lockResp == nil {
+		if resp.Resp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}
+		lockResp := resp.Resp.(*pb.PessimisticLockResponse)
 		keyErrs := lockResp.GetErrors()
 		if len(keyErrs) == 0 {
 			return nil
@@ -728,10 +728,10 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		err = c.commitKeys(bo, batch.keys)
 		return errors.Trace(err)
 	}
-	commitResp := resp.Commit
-	if commitResp == nil {
+	if resp.Resp == nil {
 		return errors.Trace(ErrBodyMissing)
 	}
+	commitResp := resp.Resp.(*pb.CommitResponse)
 	// Here we can make sure tikv has processed the commit primary key request. So
 	// we can clean undetermined error.
 	if isPrimary {
@@ -785,7 +785,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		err = c.cleanupKeys(bo, batch.keys)
 		return errors.Trace(err)
 	}
-	if keyErr := resp.BatchRollback.GetError(); keyErr != nil {
+	if keyErr := resp.Resp.(*pb.BatchRollbackResponse).GetError(); keyErr != nil {
 		err = errors.Errorf("conn%d 2PC cleanup failed: %s", c.connID, keyErr)
 		logutil.BgLogger().Debug("2PC failed cleanup key",
 			zap.Error(err),
