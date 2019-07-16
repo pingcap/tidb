@@ -14,10 +14,10 @@
 package decoder
 
 import (
-	"github.com/pingcap/parser/ast"
 	"sort"
 	"time"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
