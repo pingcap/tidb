@@ -380,26 +380,30 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 	strs := make([]string, 0, len(args))
 	var sep string
 	var targetLength int
-	for i, arg := range args {
-		val, isNull, err := arg.EvalString(b.ctx, row)
+
+	N := len(args)
+	if N > 0 {
+		val, isNull, err := args[0].EvalString(b.ctx, row)
 		if err != nil {
 			return val, isNull, err
 		}
-
+		// If the separator is NULL, the result is NULL.
 		if isNull {
-			// If the separator is NULL, the result is NULL.
-			if i == 0 {
-				return val, isNull, nil
-			}
+			return val, isNull, nil
+		}
+		sep = val
+	}
+	for i := 1; i < N; i++ {
+		val, isNull, err := args[i].EvalString(b.ctx, row)
+		if err != nil {
+			return val, isNull, err
+		}
+		if isNull {
 			// CONCAT_WS() does not skip empty strings. However,
 			// it does skip any NULL values after the separator argument.
 			continue
 		}
 
-		if i == 0 {
-			sep = val
-			continue
-		}
 		targetLength += len(val)
 		if i > 1 {
 			targetLength += len(sep)
