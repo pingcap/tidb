@@ -1738,6 +1738,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
+	hasPrefixCol := false
+	for _, l := range v.IdxColLens {
+		if l != types.UnspecifiedLength {
+			hasPrefixCol = true
+			break
+		}
+	}
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 		outerCtx: outerCtx{
@@ -1747,6 +1754,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
 			rowTypes:      innerTypes,
+			colLens:       v.IdxColLens,
+			hasPrefixCol:  hasPrefixCol,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
