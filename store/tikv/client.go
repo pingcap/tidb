@@ -314,7 +314,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	// Put the lease object to the timeout channel, so it would be checked periodically.
-	copStream := resp.CopStream
+	copStream := resp.Resp.(*tikvrpc.CopStreamResponse)
 	copStream.Timeout = timeout
 	copStream.Lease.Cancel = cancel
 	connArray.streamTimeout <- &copStream.Lease
