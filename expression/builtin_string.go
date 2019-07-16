@@ -300,14 +300,12 @@ func (b *builtinConcatSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
 	var s []byte
-	var targetLength int
 	for _, a := range b.getArgs() {
 		d, isNull, err = a.EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return d, isNull, err
 		}
-		targetLength += len(d)
-		if uint64(targetLength) > b.maxAllowedPacket {
+		if uint64(len(s)+len(d)) > b.maxAllowedPacket {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
 			return "", true, nil
 		}

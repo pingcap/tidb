@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -300,6 +301,7 @@ func MockContext() sessionctx.Context {
 		Client: &mock.Client{},
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
+	ctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864")
 	do := &domain.Domain{}
 	do.CreateStatsHandle(ctx)
 	domain.BindDomain(ctx, do)
