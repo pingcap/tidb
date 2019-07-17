@@ -218,10 +218,10 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			}
 			continue
 		}
-		cmdScanResp := resp.Scan
-		if cmdScanResp == nil {
+		if resp.Resp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}
+		cmdScanResp := resp.Resp.(*pb.ScanResponse)
 
 		err = s.snapshot.store.CheckVisibility(s.startTS())
 		if err != nil {
