@@ -1229,7 +1229,7 @@ Projection_25	100.00	root	tpch.supplier.s_name, 17_col_0
       │ │ ├─HashLeftJoin_92	147918589.81	root	inner join, inner:TableReader_113, equal:[eq(tpch.l1.l_suppkey, tpch.supplier.s_suppkey)]
       │ │ │ ├─IndexJoin_99	147918589.81	root	inner join, inner:IndexLookUp_98, outer key:tpch.orders.o_orderkey, inner key:tpch.l1.l_orderkey
       │ │ │ │ ├─TableReader_108	36517371.00	root	data:Selection_107
-      │ │ │ │ │ └─Selection_107	36517371.00	cop	eq(tpch.orders.o_orderstatus, \"F\")
+      │ │ │ │ │ └─Selection_107	36517371.00	cop	eq(tpch.orders.o_orderstatus, "F")
       │ │ │ │ │   └─TableScan_106	75000000.00	cop	table:orders, range:[-inf,+inf], keep order:false
       │ │ │ │ └─IndexLookUp_98	0.80	root	
       │ │ │ │   ├─IndexScan_95	1.00	cop	table:l1, index:L_ORDERKEY, L_LINENUMBER, range: decided by [tpch.orders.o_orderkey], keep order:false
@@ -1238,7 +1238,7 @@ Projection_25	100.00	root	tpch.supplier.s_name, 17_col_0
       │ │ │ └─TableReader_113	500000.00	root	data:TableScan_112
       │ │ │   └─TableScan_112	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
       │ │ └─TableReader_116	1.00	root	data:Selection_115
-      │ │   └─Selection_115	1.00	cop	eq(tpch.nation.n_name, \"EGYPT\")
+      │ │   └─Selection_115	1.00	cop	eq(tpch.nation.n_name, "EGYPT")
       │ │     └─TableScan_114	25.00	cop	table:nation, range:[-inf,+inf], keep order:false
       │ └─IndexLookUp_80	1.00	root	
       │   ├─IndexScan_78	1.00	cop	table:l2, index:L_ORDERKEY, L_LINENUMBER, range: decided by [tpch.l1.l_orderkey], keep order:false
