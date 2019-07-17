@@ -4396,7 +4396,7 @@ func (s *testIntegrationSuite) TestIssue10675(c *C) {
 	tk.MustQuery(`select * from t where a > 184467440737095516167.1;`).Check(testkit.Rows())
 }
 
-func (s *testIntegrationSuite) TestIssue11257(c *C) {
+func (s *testIntegrationSuite) TestDatetimeMicrosecond(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 SECOND_MICROSECOND);`).Check(
 		testkit.Rows("2007-03-28 22:08:27.800000"))
@@ -4406,4 +4406,14 @@ func (s *testIntegrationSuite) TestIssue11257(c *C) {
 		testkit.Rows("2007-03-28 22:08:27.800000"))
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 DAY_MICROSECOND);`).Check(
 		testkit.Rows("2007-03-28 22:08:27.800000"))
+
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 SECOND_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:25.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MINUTE_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:25.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 HOUR_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:25.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:25.800000"))
+
 }
