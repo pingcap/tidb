@@ -16,7 +16,6 @@ package gcworker
 import (
 	"bytes"
 	"context"
-	"errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"math"
@@ -26,6 +25,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -647,12 +647,43 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 	// Wait for GC finish
 	select {
 	case err = <-s.gcWorker.done:
+		s.gcWorker.gcIsRunning = false
 		break
 	case <-time.After(time.Second * 10):
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
+
+	// Test again to ensure the synchronization between goroutines is correct.
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
+	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
+	p = s.createGCProbe(c, "k1")
+	s.oracle.AddOffset(gcDefaultLifeTime * 2)
+
+	err = s.gcWorker.leaderTick(context.Background())
+	c.Assert(err, IsNil)
+	// Wait for GC finish
+	select {
+	case err = <-s.gcWorker.done:
+		s.gcWorker.gcIsRunning = false
+		break
+	case <-time.After(time.Second * 10):
+		err = errors.New("receive from s.gcWorker.done timeout")
+	}
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
+
+	// No more signals in the channel
+	select {
+	case err = <-s.gcWorker.done:
+		err = errors.Errorf("received signal s.gcWorker.done which shouldn't exist: %v", err)
+		break
+	case <-time.After(time.Second):
+		break
+	}
+	c.Assert(err, IsNil)
 }
 
 func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
@@ -670,7 +701,6 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	c.Assert(pdSafePoint, Equals, safePoint)
 
 	etcdSafePoint := s.loadEtcdSafePoint(c)
-	c.Assert(err, IsNil)
 	c.Assert(etcdSafePoint, Equals, safePoint)
 
 	// Test distributed mode with safePoint regressing (although this is impossible)
@@ -691,7 +721,6 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	s.checkCollected(c, p)
 
 	etcdSafePoint = s.loadEtcdSafePoint(c)
-	c.Assert(err, IsNil)
 	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
