@@ -963,40 +963,6 @@ func (s *testSuite) TestHashJoin(c *C) {
 	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "1")
 	innerExecInfo := row[3][4].(string)
 	c.Assert(innerExecInfo[len(innerExecInfo)-1:], Equals, "0")
-
-	tk.MustExec("insert into t2 select * from t1;")
-	tk.MustExec("delete from t1;")
-	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("0"))
-	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("5"))
-	result = tk.MustQuery("explain analyze select /*+ TIDB_HJ(t1, t2) */ * from t1 where not exists (select a from t2 where t1.a = t2.a);")
-	//  id                    count  task  operator info                                                                 execution info                   |
-	//  Projection_8          4.00   root  test.t1.a, test.t1.b                                                          time:193.08µs, loops:1, rows:0   |
-	//  └─Selection_9         4.00   root  not(6_aux_0)                                                                  time:146.95µs, loops:1, rows:0   |
-	//    └─HashLeftJoin_10   5.00   root  left outer semi join, inner:TableReader_14, equal:[eq(test.t1.a, test.t2.a)]  time:144.293µs, loops:1, rows:0  |
-	//      ├─TableReader_12  5.00   root  data:TableScan_11                                                             time:26.27µs, loops:1, rows:0    |
-	//      │ └─TableScan_11  5.00   cop   table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                                                    |
-	//      └─TableReader_14  5.00   root  data:TableScan_13                                                             time:0s, loops:0, rows:0         |
-	//        └─TableScan_13  5.00   cop   table:t2, range:[-inf,+inf], keep order:false, stats:pseudo                                                    |
-	row = result.Rows()
-	c.Assert(len(row), Equals, 7)
-	outerExecInfo = row[3][4].(string)
-	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "0")
-	innerExecInfo = row[5][4].(string)
-	c.Assert(innerExecInfo[len(innerExecInfo)-1:], LessEqual, "5")
-
-	result = tk.MustQuery("explain analyze select /*+ TIDB_HJ(t1, t2) */ * from t1 left outer join t2 on t1.a = t2.a;")
-	// id	count	task	operator info	execution info
-	// HashLeftJoin_6	12500.00	root	left outer join, inner:TableReader_10, equal:[eq(test.t1.a, test.t2.a)]	time:502.553µs, loops:1, rows:0
-	// ├─TableReader_8	10000.00	root	data:TableScan_7	time:27.302µs, loops:1, rows:0
-	// │ └─TableScan_7	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-	// └─TableReader_10	10000.00	root	data:TableScan_9	time:0s, loops:0, rows:0
-	//   └─TableScan_9	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
-	row = result.Rows()
-	c.Assert(len(row), Equals, 5)
-	outerExecInfo = row[1][4].(string)
-	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "0")
-	innerExecInfo = row[3][4].(string)
-	c.Assert(innerExecInfo[len(innerExecInfo)-1:], LessEqual, "5")
 }
 
 func (s *testSuite) TestJoinDifferentDecimals(c *C) {
