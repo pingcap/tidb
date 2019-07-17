@@ -752,7 +752,6 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	}
 	sc.TruncateAsWarning = false
 	sc.ConvertStrToIntStrict = false
-	warningCount = 0
 	for _, tt := range tests2 {
 		prefix, err := getValidIntPrefix(sc, tt.origin)
 		if tt.warning {
