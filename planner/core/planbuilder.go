@@ -1292,6 +1292,10 @@ func (b *PlanBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 
 		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
 		if err != nil {
+			if ErrSubqueryNo1Row.Equal(err) {
+				igc.OnDupExprErr = err
+				break
+			}
 			return igc, err
 		}
 		expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
@@ -1399,6 +1403,10 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		// Construct the function which calculates the assign value of the column.
 		expr, err1 := b.rewriteInsertOnDuplicateUpdate(assign.Expr, mockTablePlan, insertPlan)
 		if err1 != nil {
+			if ErrSubqueryNo1Row.Equal(err1) {
+				insertPlan.OnDupExprErr = err1
+				break
+			}
 			return nil, err1
 		}
 

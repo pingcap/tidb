@@ -644,6 +644,11 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 	}
+	if v.OnDupExprErr != nil {
+		insert.OnDupExprErr = v.OnDupExprErr
+	} else if v.GenCols.OnDupExprErr != nil {
+		insert.OnDupExprErr = v.GenCols.OnDupExprErr
+	}
 	return insert
 }
 

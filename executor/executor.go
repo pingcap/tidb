@@ -1100,7 +1100,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	} else if num != 1 {
-		return errors.New("subquery returns more than 1 row")
+		return plannercore.ErrSubqueryNo1Row
 	}
 
 	childChunk := newFirstChunk(e.children[0])
@@ -1109,7 +1109,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if childChunk.NumRows() != 0 {
-		return errors.New("subquery returns more than 1 row")
+		return plannercore.ErrSubqueryNo1Row
 	}
 
 	return nil

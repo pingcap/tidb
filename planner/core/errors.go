@@ -142,7 +142,8 @@ var (
 	ErrUnsupportedOnGeneratedColumn    = terror.ClassOptimizer.New(codeUnsupportedOnGeneratedColumn, mysql.MySQLErrName[mysql.ErrUnsupportedOnGeneratedColumn])
 	ErrNoSuchThread                    = terror.ClassOptimizer.New(mysql.ErrNoSuchThread, mysql.MySQLErrName[mysql.ErrNoSuchThread])
 	// Since we cannot know if user loggined with a password, use message of ErrAccessDeniedNoPassword instead
-	ErrAccessDenied = terror.ClassOptimizer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
+	ErrAccessDenied   = terror.ClassOptimizer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
+	ErrSubqueryNo1Row = terror.ClassOptimizer.New(mysql.ErrSubqueryNo1Row, mysql.MySQLErrName[mysql.ErrSubqueryNo1Row])
 )
 
 func init() {

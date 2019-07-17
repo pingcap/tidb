@@ -30,8 +30,9 @@ import (
 // InsertExec represents an insert executor.
 type InsertExec struct {
 	*InsertValues
-	OnDuplicate []*expression.Assignment
-	Priority    mysql.PriorityEnum
+	OnDuplicate  []*expression.Assignment
+	OnDupExprErr error
+	Priority     mysql.PriorityEnum
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
@@ -56,7 +57,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
-	if len(e.OnDuplicate) > 0 {
+	if len(e.OnDuplicate) > 0 || e.OnDupExprErr != nil {
 		err := e.batchUpdateDupRows(rows)
 		if err != nil {
 			return err
@@ -92,6 +93,9 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 	for i, r := range e.toBeCheckedRows {
 		if r.handleKey != nil {
 			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
+				if e.OnDupExprErr != nil {
+					return e.OnDupExprErr
+				}
 				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
 				if err != nil {
 					return err
@@ -105,6 +109,9 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 		}
 		for _, uk := range r.uniqueKeys {
 			if val, found := e.dupKVs[string(uk.newKV.key)]; found {
+				if e.OnDupExprErr != nil {
+					return e.OnDupExprErr
+				}
 				handle, err := tables.DecodeHandle(val)
 				if err != nil {
 					return err

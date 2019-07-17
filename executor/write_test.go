@@ -2537,3 +2537,48 @@ func (s *testSuite4) TestSetWithRefGenCol(c *C) {
 	_, err = tk.Exec(`insert into t3 set j = i + 1`)
 	c.Assert(err, NotNil)
 }
+
+func (s *testSuite4) TestInsertOnDupSubquery(c *C) {
+	var cfg kv.InjectionConfig
+	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
+	tk.MustExec("use test")
+	testSQL := `drop table if exists t1;
+    drop table if exists t11;
+    drop table if exists t2;
+    drop table if exists tu;
+    create table t1 (a int);
+    create table t11(a int primary key);
+    create table t2 (b int);
+    create table tu (a int unique key);
+    insert into t2 values (1),(1);`
+	tk.MustExec(testSQL)
+	testSQL = `INSERT INTO t1(a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1"))
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1", "1"))
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1", "1", "1"))
+
+	testSQL = `INSERT INTO t11(a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select * from t11`).Check(testkit.Rows("1"))
+	_, err := tk.Exec(testSQL)
+	c.Assert(core.ErrSubqueryNo1Row.Equal(err), IsTrue)
+	tk.MustQuery(`select * from t11`).Check(testkit.Rows("1"))
+	_, err = tk.Exec(testSQL)
+	c.Assert(core.ErrSubqueryNo1Row.Equal(err), IsTrue)
+	tk.MustQuery(`select * from t11`).Check(testkit.Rows("1"))
+	testSQL = `INSERT INTO t11(a) VALUES (2) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select * from t11`).Check(testkit.Rows("1", "2"))
+
+	testSQL = `INSERT INTO tu(a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select * from tu`).Check(testkit.Rows("1"))
+	_, err = tk.Exec(testSQL)
+	c.Assert(core.ErrSubqueryNo1Row.Equal(err), IsTrue)
+	testSQL = `INSERT INTO tu(a) VALUES (2) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select * from tu`).Check(testkit.Rows("1", "2"))
+}

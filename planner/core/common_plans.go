@@ -416,6 +416,7 @@ type InsertGeneratedColumns struct {
 	Columns      []*ast.ColumnName
 	Exprs        []expression.Expression
 	OnDuplicates []*expression.Assignment
+	OnDupExprErr error
 }
 
 // Insert represents an insert plan.
@@ -429,6 +430,7 @@ type Insert struct {
 	SetList     []*expression.Assignment
 
 	OnDuplicate        []*expression.Assignment
+	OnDupExprErr       error
 	Schema4OnDuplicate *expression.Schema
 
 	IsReplace bool
