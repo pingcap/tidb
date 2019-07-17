@@ -336,6 +336,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
+		ctx.GetSessionVars().StmtCtx.InDeleteStmt = false
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
