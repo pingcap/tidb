@@ -178,7 +178,12 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				p.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(x.FnName.L)
 			} else {
 				_, isValueExpr1 := x.Args[0].(*driver.ValueExpr)
-				_, isValueExpr2 := x.Args[1].(*driver.ValueExpr)
+				isValueExpr2 := false
+				switch x.Args[1].(type) {
+				case *driver.ValueExpr, *ast.UnaryOperationExpr:
+					isValueExpr2 = true
+				}
+
 				if !isValueExpr1 || !isValueExpr2 {
 					p.err = ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
 				}

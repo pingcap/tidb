@@ -125,10 +125,10 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (Ra
 			}
 			continue
 		}
-		deleteRangeResp := resp.DeleteRange
-		if deleteRangeResp == nil {
+		if resp.Resp == nil {
 			return stat, errors.Trace(ErrBodyMissing)
 		}
+		deleteRangeResp := resp.Resp.(*kvrpcpb.DeleteRangeResponse)
 		if err := deleteRangeResp.GetError(); err != "" {
 			return stat, errors.Errorf("unexpected delete range err: %v", err)
 		}

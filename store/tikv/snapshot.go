@@ -177,10 +177,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			err = s.batchGetKeysByRegions(bo, pending, collectF)
 			return errors.Trace(err)
 		}
-		batchGetResp := resp.BatchGet
-		if batchGetResp == nil {
+		if resp.Resp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}
+		batchGetResp := resp.Resp.(*pb.BatchGetResponse)
 		var (
 			lockedKeys [][]byte
 			locks      []*Lock
@@ -260,10 +260,10 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			}
 			continue
 		}
-		cmdGetResp := resp.Get
-		if cmdGetResp == nil {
+		if resp.Resp == nil {
 			return nil, errors.Trace(ErrBodyMissing)
 		}
+		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
 			lock, err := extractLockFromKeyErr(keyErr)
