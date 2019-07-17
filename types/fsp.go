@@ -86,9 +86,12 @@ func ParseFrac(s string, fsp int) (v int, overflow bool, err error) {
 	return
 }
 
-// alignFrac is used to generate alignment frac, like `100` -> `100000`
+// alignFrac is used to generate alignment frac, like `100` -> `100000` ,`-100` -> `-100000`
 func alignFrac(s string, fsp int) string {
 	sl := len(s)
+	if sl > 0 && s[0] == '-' {
+		sl = sl - 1
+	}
 	if sl < fsp {
 		return s + strings.Repeat("0", fsp-sl)
 	}
