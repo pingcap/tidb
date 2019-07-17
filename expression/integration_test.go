@@ -4133,6 +4133,10 @@ func (s *testIntegrationSuite) TestFuncNameConst(c *C) {
 	r.Check(testkit.Rows("2"))
 	r = tk.MustQuery("SELECT concat('hello', name_const('test_string', 'world')) FROM t;")
 	r.Check(testkit.Rows("helloworld"))
+	r = tk.MustQuery("SELECT NAME_CONST('come', -1);")
+	r.Check(testkit.Rows("-1"))
+	r = tk.MustQuery("SELECT NAME_CONST('come', -1.0);")
+	r.Check(testkit.Rows("-1.0"))
 	err := tk.ExecToErr(`select name_const(a,b) from t;`)
 	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const(a,"hello") from t;`)
@@ -4462,4 +4466,16 @@ func (s *testIntegrationSuite) TestIssue10675(c *C) {
 	tk.MustQuery(`select * from t where a < 184467440737095516167.1;`).Check(
 		testkit.Rows("1"))
 	tk.MustQuery(`select * from t where a > 184467440737095516167.1;`).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestIssue11257(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 SECOND_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 MINUTE_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 HOUR_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 DAY_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
 }
