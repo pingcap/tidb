@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/atomic"
 )
 
@@ -219,5 +220,5 @@ var DefaultDisabledLogicalRulesList *atomic.Value
 func init() {
 	expression.EvalAstExpr = evalAstExpr
 	DefaultDisabledLogicalRulesList = new(atomic.Value)
-	DefaultDisabledLogicalRulesList.Store(make(map[string]struct{}))
+	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
 }

@@ -21,6 +21,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -41,11 +42,11 @@ func LoadOptRuleBlacklist(ctx sessionctx.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	newDisabledLogicalRules := make(map[string]struct{})
+	newDisabledLogicalRules := set.NewStringSet()
 	for _, row := range rows {
 		name := strings.ToLower(row.GetString(0))
 		if row.GetString(1) == "logical_rule" {
-			newDisabledLogicalRules[name] = struct{}{}
+			newDisabledLogicalRules.Insert(name)
 		} else {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("type field of mysql.opt_rule_blacklist can only be \"expr_push_down\" or \"logical_rule\""))
 		}
