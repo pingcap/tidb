@@ -216,7 +216,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if types.ErrOverflow.Equal(err) {
 		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(col.Name.O, rowIdx+1)
 	}
-	if types.ErrTruncated.Equal(err) {
+	if types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("truncate error", zap.Error(err1))
