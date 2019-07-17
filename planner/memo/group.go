@@ -71,6 +71,7 @@ func (g *Group) Insert(e *GroupExpr) bool {
 		g.FirstExpr[operand] = newEquiv
 	}
 	g.Fingerprints[e.FingerPrint()] = newEquiv
+	e.Group = g
 	return true
 }
 
@@ -84,6 +85,7 @@ func (g *Group) Delete(e *GroupExpr) {
 
 	g.Equivalents.Remove(equiv)
 	delete(g.Fingerprints, fingerprint)
+	e.Group = nil
 
 	operand := GetOperand(equiv.Value.(*GroupExpr).ExprNode)
 	if g.FirstExpr[operand] != equiv {

@@ -338,7 +338,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) 
 	proj.SetChildren(p)
 	proj.self = proj
 	proj.SetSchema(schema)
-	proj.calculateNoDelay = true
+	proj.CalculateNoDelay = true
 	return proj, nil
 }
 

@@ -35,14 +35,14 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 		p.Children()[chIdx] = child
 		return
 	}
-	conditions = expression.PropagateConstant(p.context(), conditions)
+	conditions = expression.PropagateConstant(p.Context(), conditions)
 	// Return table dual when filter is constant false or null.
 	dual := conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
 		return
 	}
-	selection := LogicalSelection{Conditions: conditions}.Init(p.context())
+	selection := LogicalSelection{Conditions: conditions}.Init(p.Context())
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
 }
@@ -480,9 +480,9 @@ func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	if !ok {
 		return nil
 	}
-	sc := p.context().GetSessionVars().StmtCtx
+	sc := p.Context().GetSessionVars().StmtCtx
 	if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.context())
+		dual := LogicalTableDual{}.Init(p.Context())
 		dual.SetSchema(p.Schema())
 		return dual
 	}

@@ -39,3 +39,13 @@ func (impl *baseImpl) GetCost() float64 {
 func (impl *baseImpl) GetPlan() plannercore.PhysicalPlan {
 	return impl.plan
 }
+
+// ProjectionImpl implementation of PhysicalProjection.
+type ProjectionImpl struct {
+	baseImpl
+}
+
+// NewProjectionImpl creates a new projection Implementation.
+func NewProjectionImpl(proj *plannercore.PhysicalProjection) *ProjectionImpl {
+	return &ProjectionImpl{baseImpl{plan: proj}}
+}

@@ -73,7 +73,7 @@ func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFun
 func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
 	hasScalarFunc := false
 
-	wrapCastForAggFuncs(aggPlan.context(), aggFuncs)
+	wrapCastForAggFuncs(aggPlan.Context(), aggFuncs)
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		for _, arg := range aggFuncs[i].Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)
@@ -115,7 +115,7 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 		}
 		projExprs = append(projExprs, item)
 		newArg := &expression.Column{
-			UniqueID: aggPlan.context().GetSessionVars().AllocPlanColumnID(),
+			UniqueID: aggPlan.Context().GetSessionVars().AllocPlanColumnID(),
 			RetType:  item.GetType(),
 			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
 			Index:    cursor,
@@ -130,7 +130,7 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 	proj := PhysicalProjection{
 		Exprs:                projExprs,
 		AvoidColumnEvaluator: false,
-	}.Init(aggPlan.context(), child.statsInfo().ScaleByExpectCnt(prop.ExpectedCnt), prop)
+	}.Init(aggPlan.Context(), child.statsInfo().ScaleByExpectCnt(prop.ExpectedCnt), prop)
 	proj.SetSchema(expression.NewSchema(projSchemaCols...))
 	proj.SetChildren(child)
 
@@ -164,7 +164,7 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 	topProj := PhysicalProjection{
 		Exprs:                topProjExprs,
 		AvoidColumnEvaluator: false,
-	}.Init(p.context(), p.statsInfo(), nil)
+	}.Init(p.Context(), p.statsInfo(), nil)
 	topProj.SetSchema(p.Schema().Clone())
 	topProj.SetChildren(p)
 
@@ -185,7 +185,7 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 		}
 		bottomProjExprs = append(bottomProjExprs, itemExpr)
 		newArg := &expression.Column{
-			UniqueID: p.context().GetSessionVars().AllocPlanColumnID(),
+			UniqueID: p.Context().GetSessionVars().AllocPlanColumnID(),
 			RetType:  itemExpr.GetType(),
 			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(bottomProjSchemaCols))),
 			Index:    len(bottomProjSchemaCols),
@@ -198,7 +198,7 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 	bottomProj := PhysicalProjection{
 		Exprs:                bottomProjExprs,
 		AvoidColumnEvaluator: false,
-	}.Init(p.context(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), childProp)
+	}.Init(p.Context(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
 	p.SetChildren(bottomProj)
