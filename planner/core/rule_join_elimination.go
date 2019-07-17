@@ -16,6 +16,7 @@ package core
 import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/util/set"
 )
 
 type outerJoinEliminator struct {
@@ -41,9 +42,9 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 
 	outerPlan := p.children[1^innerChildIdx]
 	innerPlan := p.children[innerChildIdx]
-	outerUniqueIDs := make(map[int64]interface{})
+	outerUniqueIDs := set.NewInt64Set()
 	for _, outerCol := range outerPlan.Schema().Columns {
-		outerUniqueIDs[outerCol.UniqueID] = true
+		outerUniqueIDs.Insert(outerCol.UniqueID)
 	}
 	matched := o.isColsAllFromOuterTable(outerPlan, parentCols, outerUniqueIDs)
 	if !matched {
@@ -78,7 +79,7 @@ func (o *outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChild
 }
 
 // check whether the cols all from outer plan
-func (o *outerJoinEliminator) isColsAllFromOuterTable(outerPlan LogicalPlan, cols []*expression.Column, outerUniqueIDs map[int64]interface{}) bool {
+func (o *outerJoinEliminator) isColsAllFromOuterTable(outerPlan LogicalPlan, cols []*expression.Column, outerUniqueIDs set.Int64Set) bool {
 	// There are two cases "return false" here:
 	// 1. If cols represents aggCols, then "len(cols) == 0" means no duplicate agnostic aggregate functions before.
 	// 2. If cols represents parentCols, then "len(cols) == 0" means no parent logical plan of this join plan.
@@ -86,7 +87,7 @@ func (o *outerJoinEliminator) isColsAllFromOuterTable(outerPlan LogicalPlan, col
 		return false
 	}
 	for _, col := range cols {
-		if _, ok := outerUniqueIDs[col.UniqueID]; !ok {
+		if !outerUniqueIDs.Exist(col.UniqueID) {
 			return false
 		}
 	}
@@ -215,5 +216,5 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 }
 
 func (o *outerJoinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
-	return o.doOptimize(p, nil, []*expression.Column{})
+	return o.doOptimize(p, nil, nil)
 }
