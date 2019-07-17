@@ -219,7 +219,9 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 				p.IsTableDual = true
 				return p
 			}
-			return nil
+			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
+				return nil
+			}
 		}
 		cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &handlePair.value)
 		if err != nil {
