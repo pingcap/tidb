@@ -694,6 +694,7 @@ func (s *testMyDecimalSuite) TestAdd(c *C) {
 		{"-123.45", "12345", "12221.55", nil},
 		{"5", "-6.0", "-1.0", nil},
 		{"2" + strings.Repeat("1", 71), strings.Repeat("8", 81), "8888888890" + strings.Repeat("9", 71), nil},
+		{"-1234.1234", "1234.1234", "0.0000", nil},
 	}
 	for _, tt := range tests {
 		a := NewDecFromStringForTest(tt.a)
@@ -839,6 +840,7 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 		{"1", "1.000", "1.0000", nil},
 		{"2", "3", "0.6667", nil},
 		{"51", "0.003430", "14868.8047", nil},
+		{"0.000", "0.1", "0.0000000", nil},
 	}
 	for _, tt := range tests {
 		var a, b, to MyDecimal
