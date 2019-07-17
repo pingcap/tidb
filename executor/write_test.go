@@ -255,7 +255,7 @@ func (s *testSuite4) TestInsert(c *C) {
 	tk.MustExec("insert into t value (-1.111);")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
 	tk.MustExec("insert into t value ('-1.111');")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect INTEGER value: '-1.111'", "Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
 	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
@@ -496,13 +496,13 @@ func (s *testSuite4) TestInsertIgnore(c *C) {
 	c.Assert(err, IsNil)
 	tk.CheckLastMessage("Records: 1  Duplicates: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect INTEGER value: '1a'"))
+	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
 	testSQL = "insert ignore into t values ('1a')"
 	_, err = tk.Exec(testSQL)
 	c.Assert(err, IsNil)
 	tk.CheckLastMessage("")
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect INTEGER value: '1a'"))
+	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
 
 	// for duplicates with warning
 	testSQL = `drop table if exists t;

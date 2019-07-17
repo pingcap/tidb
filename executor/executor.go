@@ -1346,6 +1346,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
+		sc.ConvertStrToIntStrict = true
 	case *ast.ExplainStmt:
 		sc.InExplainStmt = true
 	case *ast.ShowStmt:

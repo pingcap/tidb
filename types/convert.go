@@ -362,6 +362,14 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
 func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error) {
+	if !sc.ConvertStrToIntStrict {
+		floatPrefix, err := getValidFloatPrefix(sc, str)
+		if err != nil {
+			return floatPrefix, errors.Trace(err)
+		}
+		return floatStrToIntStr(sc, floatPrefix, str)
+	}
+
 	if sc.InDeleteStmt && str == "" {
 		return "0", nil
 	}

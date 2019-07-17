@@ -70,6 +70,7 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
+	ConvertStrToIntStrict  bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
