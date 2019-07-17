@@ -2660,7 +2660,11 @@ func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, a
 	if isNull || err != nil {
 		return "", true, err
 	}
-
+	neg := false
+	if interval != "" && interval[0] == '-' {
+		neg = true
+		interval = interval[1:]
+	}
 	switch strings.ToUpper(unit) {
 	case "HOUR_MINUTE", "MINUTE_SECOND":
 		interval = strings.Replace(interval, ".", ":", -1)
@@ -2695,6 +2699,10 @@ func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, a
 		if isNull || err != nil {
 			return "", true, err
 		}
+	}
+
+	if neg {
+		interval = "-" + interval
 	}
 
 	return interval, false, nil
