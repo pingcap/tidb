@@ -121,6 +121,16 @@ func (s *testSuite3) TestCreateTable(c *C) {
 		}
 	}
 
+	// only collate column option is specified, it should derived the charset from the collate rather than use the table's collate
+	tk.MustExec("drop table if exists test_only_column_collate;")
+	tk.MustExec("create table test_only_column_collate (a char(1) collate utf8_bin) charset utf8mb4 collate utf8mb4_bin")
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_only_column_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8_bin")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
 	// table option is auto-increment
 	tk.MustExec("drop table if exists create_auto_increment_test;")
 	tk.MustExec("create table create_auto_increment_test (id int not null auto_increment, name varchar(255), primary key(id)) auto_increment = 999;")
@@ -322,6 +332,19 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
 	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
+
+	// Test collate modification in column
+	tk.MustExec("drop table if exists modify_only_column_collate;")
+	tk.MustExec("create table modify_only_column_collate (a char(1) collate utf8_bin) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("alter table modify_only_column_collate modify column a char(1) collate utf8mb4_bin;")
+	c.Assert(err, IsNil)
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_only_column_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8mb4")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8mb4_bin")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
 }
 
 func (s *testSuite3) TestDefaultDBAfterDropCurDB(c *C) {

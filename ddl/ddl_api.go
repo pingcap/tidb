@@ -312,16 +312,29 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCharset string) error {
+func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollate string, tblCharset string, dbCharset string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
 		if typesNeedCharset(tp.Tp) {
-			var err error
-			tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
-			if err != nil {
-				return errors.Trace(err)
+			if len(specifiedCollate) == 0 {
+				// Both the charset and collate are not specified by user
+				var err error
+				tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				// The charset is not specified by user but the collate is.
+				// We should derive charset from it's collate specified rather than getting from table and db.
+				derivedCollation, err := charset.GetCollationByName(specifiedCollate)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				tp.Charset = derivedCollation.CharsetName
+				tp.Collate = derivedCollation.Name
 			}
+
 		} else {
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
@@ -331,10 +344,24 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 			return errUnsupportedCharset.GenWithStackByArgs(tp.Charset, tp.Collate)
 		}
 		if len(tp.Collate) == 0 {
-			var err error
-			tp.Collate, err = charset.GetDefaultCollation(tp.Charset)
-			if err != nil {
-				return errors.Trace(err)
+			if len(specifiedCollate) == 0 {
+				// The charset is specified, but the collate is not.
+				var err error
+				tp.Collate, err = charset.GetDefaultCollation(tp.Charset)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				// Both the charset and collate are specified .
+				derivedCollation, err := charset.GetCollationByName(specifiedCollate)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				// Judge the charset and collate is match for each other.
+				if tp.Charset != derivedCollation.CharsetName {
+					return ErrCollationCharsetMismatch.GenWithStackByArgs(tp.Charset, specifiedCollate)
+				}
+				tp.Collate = derivedCollation.Name
 			}
 		}
 	}
@@ -358,7 +385,16 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, tblCharset, dbCharset); err != nil {
+	// The specified collate is in colDef.Options, but the charset is in colDef.Tp.
+	specifiedCollate := ""
+	for _, op := range colDef.Options {
+		if op.Tp == ast.ColumnOptionCollate {
+			specifiedCollate = op.StrValue
+			break
+		}
+	}
+	// When we set charset and collate here, we should take the collate in colDef.Option into consideration.
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollate, tblCharset, dbCharset); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -2596,7 +2632,22 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		newCol.FieldType.Charset = col.FieldType.Charset
 		newCol.FieldType.Collate = col.FieldType.Collate
 	}
-	err = setCharsetCollationFlenDecimal(&newCol.FieldType, t.Meta().Charset, schema.Charset)
+	// Same to create table, since collate info is in colDef.Option, when setting charset and collate here we
+	// should take the collate in colDef.Option into consideration rather than handling it separately
+	specifiedCollate := ""
+	collateIndex := -1
+	for i, op := range specNewColumn.Options {
+		if op.Tp == ast.ColumnOptionCollate {
+			specifiedCollate = op.StrValue
+			collateIndex = i
+			break
+		}
+	}
+	// We will handle it now, so remove it in options
+	if collateIndex != -1 {
+		specNewColumn.Options = append(specNewColumn.Options[:collateIndex], specNewColumn.Options[collateIndex+1:]...)
+	}
+	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollate, t.Meta().Charset, schema.Charset)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
