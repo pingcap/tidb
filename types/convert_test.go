@@ -689,6 +689,47 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 
+func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
+	tests := []struct {
+		origin  string
+		valid   string
+		warning bool
+	}{
+		{"100", "100", false},
+		{"-100", "-100", false},
+		{"1abc", "1", true},
+		{"-1-1", "-1", true},
+		{"+1+1", "+1", true},
+		{"123..34", "123", true},
+		{"123.23E-10", "123", true},
+		{"1.1e1.3", "1", true},
+		{"11e1.3", "11", true},
+		{"1.", "1", true},
+		{".1", "0", true},
+		{"", "0", true},
+		{"123e+", "123", true},
+		{"123de", "123", true},
+	}
+	sc := new(stmtctx.StatementContext)
+	sc.TruncateAsWarning = true
+	warningCount := 0
+	for _, tt := range tests {
+		prefix, err := getValidIntPrefix(sc, tt.origin)
+		c.Assert(err, IsNil)
+		c.Assert(prefix, Equals, tt.valid)
+		_, err = strconv.ParseInt(prefix, 10, 64)
+		c.Assert(err, IsNil)
+		warnings := sc.GetWarnings()
+		if tt.warning {
+			c.Assert(warnings, HasLen, warningCount+1)
+			c.Assert(terror.ErrorEqual(warnings[len(warnings)-1].Err, ErrTruncatedWrongVal), IsTrue)
+			warningCount += 1
+		} else {
+			c.Assert(warnings, HasLen, warningCount)
+		}
+	}
+}
+
 func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	tests := []struct {
 		origin string
