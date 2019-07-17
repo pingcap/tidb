@@ -712,6 +712,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.TruncateAsWarning = true
+	sc.ConvertStrToIntStrict = true
 	warningCount := 0
 	for _, tt := range tests {
 		prefix, err := getValidIntPrefix(sc, tt.origin)
@@ -727,6 +728,39 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 		} else {
 			c.Assert(warnings, HasLen, warningCount)
 		}
+	}
+
+	tests2 := []struct {
+		origin  string
+		valid   string
+		warning bool
+	}{
+		{"100", "100", false},
+		{"-100", "-100", false},
+		{"1abc", "1", true},
+		{"-1-1", "-1", true},
+		{"+1+1", "+1", true},
+		{"123..34", "123.", true},
+		{"123.23E-10", "0", false},
+		{"1.1e1.3", "1.1e1", true},
+		{"11e1.3", "11e1", true},
+		{"1.", "1", false},
+		{".1", "0", false},
+		{"", "0", true},
+		{"123e+", "123", true},
+		{"123de", "123", true},
+	}
+	sc.TruncateAsWarning = false
+	sc.ConvertStrToIntStrict = false
+	warningCount = 0
+	for _, tt := range tests2 {
+		prefix, err := getValidIntPrefix(sc, tt.origin)
+		if tt.warning {
+			c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+		}
+		c.Assert(prefix, Equals, tt.valid)
 	}
 }
 
