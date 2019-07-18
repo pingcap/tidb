@@ -459,6 +459,29 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 	testStrToFloat(c, "1e649", math.MaxFloat64, false, nil)
 	testStrToFloat(c, "-1e649", -math.MaxFloat64, true, ErrTruncatedWrongVal)
 	testStrToFloat(c, "-1e649", -math.MaxFloat64, false, nil)
+
+	// for issue  #10806
+	testDeleteEmptyStringError(c)
+}
+
+func testDeleteEmptyStringError(c *C) {
+	sc := new(stmtctx.StatementContext)
+	sc.InDeleteStmt = true
+
+	str := ""
+	expect := 0
+
+	val, err := StrToInt(sc, str)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, int64(expect))
+
+	val1, err := StrToUint(sc, str)
+	c.Assert(err, IsNil)
+	c.Assert(val1, Equals, uint64(expect))
+
+	val2, err := StrToFloat(sc, str)
+	c.Assert(err, IsNil)
+	c.Assert(val2, Equals, float64(expect))
 }
 
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {

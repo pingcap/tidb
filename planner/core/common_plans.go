@@ -131,6 +131,23 @@ type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer
 }
 
+// AdminPluginsAction indicate action will be taken on plugins.
+type AdminPluginsAction int
+
+const (
+	// Enable indicates enable plugins.
+	Enable AdminPluginsAction = iota + 1
+	// Disable indicates disable plugins.
+	Disable
+)
+
+// AdminPlugins administrates tidb plugins.
+type AdminPlugins struct {
+	baseSchemaProducer
+	Action  AdminPluginsAction
+	Plugins []string
+}
+
 // Prepare represents prepare plan.
 type Prepare struct {
 	baseSchemaProducer
@@ -286,18 +303,27 @@ type Deallocate struct {
 type Show struct {
 	baseSchemaProducer
 
-	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName string
-	Table  *ast.TableName  // Used for showing columns.
-	Column *ast.ColumnName // Used for `desc table column`.
-	Flag   int             // Some flag parsed from sql, such as FULL.
-	Full   bool
-	User   *auth.UserIdentity // Used for show grants.
+	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName    string
+	Table     *ast.TableName  // Used for showing columns.
+	Column    *ast.ColumnName // Used for `desc table column`.
+	IndexName model.CIStr
+	Flag      int // Some flag parsed from sql, such as FULL.
+	Full      bool
+	User      *auth.UserIdentity // Used for show grants.
 
 	Conditions []expression.Expression
 
 	// Used by show variables
 	GlobalScope bool
+}
+
+// SplitRegionStatus represents a split regions status plan.
+type SplitRegionStatus struct {
+	baseSchemaProducer
+
+	Table     table.Table
+	IndexInfo *model.IndexInfo
 }
 
 // Set represents a plan for set stmt.

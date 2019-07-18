@@ -2206,7 +2206,9 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 
 	updt := Update{OrderedList: orderedList}.init(b.ctx)
 	updt.SetSchema(p.Schema())
-	updt.SelectPlan, err = doOptimize(b.optFlag, p)
+	// We cannot apply projection elimination when building the subplan, because
+	// columns in orderedList cannot be resolved.
+	updt.SelectPlan, err = doOptimize(b.optFlag&^flagEliminateProjection, p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

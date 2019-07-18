@@ -1474,12 +1474,32 @@ func (s *testEvaluatorSuite) TestInsertBinarySig(c *C) {
 	input := chunk.NewChunkWithCapacity(colTypes, 2)
 	input.AppendString(0, "abc")
 	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendNull(0)
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendInt64(1, 3)
+	input.AppendInt64(1, 3)
+	input.AppendInt64(1, 0)
+	input.AppendInt64(1, 3)
+	input.AppendNull(1)
 	input.AppendInt64(1, 3)
 	input.AppendInt64(1, 3)
 	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendNull(2)
 	input.AppendInt64(2, -1)
 	input.AppendString(3, "d")
 	input.AppendString(3, "de")
+	input.AppendString(3, "d")
+	input.AppendString(3, "d")
+	input.AppendString(3, "d")
+	input.AppendString(3, "d")
+	input.AppendNull(3)
 
 	res, isNull, err := insert.evalString(input.GetRow(0))
 	c.Assert(res, Equals, "abd")
@@ -1487,6 +1507,31 @@ func (s *testEvaluatorSuite) TestInsertBinarySig(c *C) {
 	c.Assert(err, IsNil)
 
 	res, isNull, err = insert.evalString(input.GetRow(1))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(2))
+	c.Assert(res, Equals, "abc")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(3))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(4))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(5))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(6))
 	c.Assert(res, Equals, "")
 	c.Assert(isNull, IsTrue)
 	c.Assert(err, IsNil)
@@ -1848,6 +1893,8 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 		{[]interface{}{"Quadratic", 3, 4, nil}, nil},
 		{[]interface{}{"Quadratic", 3, -1, "What"}, "QuWhat"},
 		{[]interface{}{"Quadratic", 3, 1, "What"}, "QuWhatdratic"},
+		{[]interface{}{"Quadratic", -1, nil, "What"}, nil},
+		{[]interface{}{"Quadratic", -1, 4, nil}, nil},
 
 		{[]interface{}{"我叫小雨呀", 3, 2, "王雨叶"}, "我叫王雨叶呀"},
 		{[]interface{}{"我叫小雨呀", -1, 2, "王雨叶"}, "我叫小雨呀"},
@@ -1858,6 +1905,8 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 		{[]interface{}{"我叫小雨呀", 3, 4, nil}, nil},
 		{[]interface{}{"我叫小雨呀", 3, -1, "王雨叶"}, "我叫王雨叶"},
 		{[]interface{}{"我叫小雨呀", 3, 1, "王雨叶"}, "我叫王雨叶雨呀"},
+		{[]interface{}{"我叫小雨呀", -1, nil, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", -1, 2, nil}, nil},
 	}
 	fc := funcs[ast.InsertFunc]
 	for _, test := range tests {

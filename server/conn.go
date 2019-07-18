@@ -1211,11 +1211,15 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		return errors.Trace(err)
 	}
 
+	if plugin.IsEnable(plugin.Audit) {
+		cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	}
+
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			connInfo := cc.connectInfo()
-			err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: connInfo.Host}, plugin.ChangeUser, connInfo)
+			connInfo := cc.ctx.GetSessionVars().ConnectionInfo
+			err = authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
