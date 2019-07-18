@@ -23,27 +23,8 @@ func (s *testSuite2) TestReloadOptRuleBlacklist(c *C) {
 	tk.MustExec("create database opt_rule_blacklist")
 	tk.MustExec("use opt_rule_blacklist")
 	tk.MustExec("create table t (a int)")
-	// test disable expr push down.
-	tk.MustQuery("desc select * from t where a < 1").Check(testkit.Rows(
-		"TableReader_7 3323.33 root data:Selection_6",
-		"└─Selection_6 3323.33 cop lt(opt_rule_blacklist.t.a, 1)",
-		"  └─TableScan_5 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
-
-	tk.MustExec("insert into mysql.opt_rule_blacklist values('lt', 'expr_push_down')")
-	tk.MustQuery("desc select * from t where a < 1").Check(testkit.Rows(
-		"TableReader_7 3323.33 root data:Selection_6",
-		"└─Selection_6 3323.33 cop lt(opt_rule_blacklist.t.a, 1)",
-		"  └─TableScan_5 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
-
-	tk.MustExec("admin reload opt_rule_blacklist")
-	tk.MustQuery("desc select * from t where a < 1").Check(testkit.Rows(
-		"Selection_5 8000.00 root lt(opt_rule_blacklist.t.a, 1)",
-		"└─TableReader_7 10000.00 root data:TableScan_6",
-		"  └─TableScan_6 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 
 	// test disable logical rule.
-	tk.MustExec("delete from mysql.opt_rule_blacklist where name='lt'")
-	tk.MustExec("admin reload opt_rule_blacklist")
 	tk.MustQuery("desc select * from t where a < 1").Check(testkit.Rows(
 		"TableReader_7 3323.33 root data:Selection_6",
 		"└─Selection_6 3323.33 cop lt(opt_rule_blacklist.t.a, 1)",
