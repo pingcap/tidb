@@ -196,7 +196,6 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.bytesLimit))
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
-	fmt.Fprintf(buffer, "%s  \"max-consumed\": %s\n", indent, t.BytesToString(t.MaxConsumed()))
 
 	t.mu.Lock()
 	for i := range t.mu.children {
