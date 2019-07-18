@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -148,8 +147,6 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
-var tableReaderDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("TableReaderDistSQLTracker")
-
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
@@ -160,7 +157,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, tableReaderDistSQLTrackerLabel).
+		SetMemTracker(e.ctx, e.id).
 		Build()
 	if err != nil {
 		return nil, err

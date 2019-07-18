@@ -650,7 +650,6 @@ func (e *IndexLookUpJoin) Close() error {
 		e.cancelFunc()
 	}
 	e.workerWg.Wait()
-	e.memTracker.Detach()
 	e.memTracker = nil
 	return e.children[0].Close()
 }

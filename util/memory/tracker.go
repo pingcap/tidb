@@ -144,17 +144,13 @@ func (t *Tracker) Consume(bytes int64) {
 			rootExceed = tracker
 		}
 
-		if tracker.parent == nil {
-			// since we only need a total memory usage during execution,
-			// we only record max consumed bytes in root(statement-level) for performance.
-			for {
-				maxNow := atomic.LoadInt64(&tracker.maxConsumed)
-				consumed := atomic.LoadInt64(&tracker.bytesConsumed)
-				if consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed) {
-					continue
-				}
-				break
+		for {
+			maxNow := atomic.LoadInt64(&tracker.maxConsumed)
+			consumed := atomic.LoadInt64(&tracker.bytesConsumed)
+			if consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed) {
+				continue
 			}
+			break
 		}
 	}
 	if rootExceed != nil {
@@ -172,6 +168,21 @@ func (t *Tracker) MaxConsumed() int64 {
 	return atomic.LoadInt64(&t.maxConsumed)
 }
 
+// SearchTracker searches the specific tracker under this tracker.
+func (t *Tracker) SearchTracker(label string) *Tracker {
+	if t.label.String() == label {
+		return t
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, child := range t.mu.children {
+		if result := child.SearchTracker(label); result != nil {
+			return result
+		}
+	}
+	return nil
+}
+
 // String returns the string representation of this Tracker tree.
 func (t *Tracker) String() string {
 	buffer := bytes.NewBufferString("\n")
@@ -185,6 +196,7 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.bytesLimit))
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
+	fmt.Fprintf(buffer, "%s  \"max-consumed\": %s\n", indent, t.BytesToString(t.MaxConsumed()))
 
 	t.mu.Lock()
 	for i := range t.mu.children {
