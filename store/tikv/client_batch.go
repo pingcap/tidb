@@ -311,9 +311,9 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) (stopped bool) 
 	// Forbids the batchSendLoop using the old client.
 	c.lockForRecreate()
 	defer c.unlockForRecreate()
+
 	for { // try to re-create the streaming in the loop.
 		if c.isStopped() {
-			c.unlockForRecreate()
 			return true
 		}
 		logutil.BgLogger().Error(
