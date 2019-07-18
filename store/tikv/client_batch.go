@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -209,7 +210,7 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 	})
 }
 
-func (c *batchCommandsClient) reCreateStreamingClient(err error) bool {
+func (c *batchCommandsClient) reCreateStreamingClient(err error, skipLog bool) error {
 	// Hold the lock to forbid batchSendLoop using the old client.
 	c.clientLock.Lock()
 	defer c.clientLock.Unlock()
@@ -224,14 +225,16 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) bool {
 			zap.String("target", c.target),
 		)
 		c.client = streamClient
-		return true
+		return err
 	}
-	logutil.BgLogger().Error(
-		"batchRecvLoop re-create streaming fail",
-		zap.String("target", c.target),
-		zap.Error(err),
-	)
-	return false
+	if !skipLog {
+		logutil.BgLogger().Error(
+			"batchRecvLoop re-create streaming fail",
+			zap.String("target", c.target),
+			zap.Error(err),
+		)
+	}
+	return err
 }
 
 func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
@@ -249,23 +252,31 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 	for {
 		resp, err := c.recv()
 		if err != nil {
+			b := NewBackoffer(context.Background(), math.MaxInt32)
 			now := time.Now()
-			for { // try to re-create the streaming in the loop.
+			skipLog := false
+			for count := 0; ; count++ { // try to re-create the streaming in the loop.
 				if c.isStopped() {
 					return
 				}
-				logutil.BgLogger().Error(
-					"batchRecvLoop error when receive",
-					zap.String("target", c.target),
-					zap.Error(err),
-				)
 
-				if c.reCreateStreamingClient(err) {
-					break
+				if count <= 10 {
+					logutil.BgLogger().Error(
+						"batchRecvLoop error when receive",
+						zap.String("target", c.target),
+						zap.Error(err),
+					)
+					if count == 10 {
+						logutil.BgLogger().Error("meet error for 10 times and don't show the same log any more")
+						skipLog = true
+					}
 				}
 
-				// TODO: Use a more smart backoff strategy.
-				time.Sleep(time.Second)
+				err1 := c.reCreateStreamingClient(err, skipLog)
+				if err1 == nil {
+					break
+				}
+				b.Backoff(boTiKVRPC, err1)
 			}
 			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
 			continue
