@@ -13,10 +13,10 @@ require (
 	github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65
 	github.com/dgryski/go-farm v0.0.0-20190104051053-3adb47b1fb0f
 	github.com/dustin/go-humanize v1.0.0 // indirect
-	github.com/go-ole/go-ole v1.2.1 // indirect
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
 	github.com/gogo/protobuf v1.2.0
 	github.com/golang/protobuf v1.2.0
+	github.com/golangci/golangci-lint v1.16.0 // indirect
 	github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/context v1.1.1 // indirect
@@ -69,7 +69,7 @@ require (
 	golang.org/x/sys v0.0.0-20190109145017-48ac38b7c8cb
 	golang.org/x/text v0.3.0
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
-	golang.org/x/tools v0.0.0-20190130214255-bb1329dc71a0
+	golang.org/x/tools v0.0.0-20190314010720-f0bfdbff1f9c
 	google.golang.org/genproto v0.0.0-20190108161440-ae2f86662275 // indirect
 	google.golang.org/grpc v1.17.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0

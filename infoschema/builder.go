@@ -125,7 +125,7 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	b.is.schemaMap[di.Name.L] = &schemaTables{dbInfo: di, tables: make(map[string]table.Table)}
+	b.is.schemaMap.Set(di.Name.L, &schemaTables{dbInfo: di, tables: make(map[string]table.Table)})
 	return nil
 }
 
@@ -151,7 +151,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	if !ok {
 		return nil
 	}
-	delete(b.is.schemaMap, di.Name.L)
+	b.is.schemaMap.Delete(di.Name.L)
 
 	// Copy the sortedTables that contain the table we are going to drop.
 	bucketIdxMap := make(map[int]struct{})
@@ -203,8 +203,27 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tableNames := b.is.schemaMap[dbInfo.Name.L]
-	tableNames.tables[tblInfo.Name.L] = tbl
+
+	// Copy and Set
+	st, ok := b.is.schemaMap.Get(dbInfo.Name.L)
+	if !ok {
+		return errors.New("InfoSchema error!")
+	}
+
+	// oldSchemaTables := st.(*schemaTables)
+	// newSchemaTables := &schemaTables{
+	// 	dbInfo: oldSchemaTables.dbInfo.Copy(),
+	// 	tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
+	// }
+	// for k, v := range oldSchemaTables.tables {
+	// 	newSchemaTables.tables[k] = v
+	// }
+	// newSchemaTables.tables[tblInfo.Name.L] = tbl
+	// b.is.schemaMap.Set(dbInfo.Name.L, newSchemaTables)
+
+	// Copied
+	st.(*schemaTables).tables[tblInfo.Name.L] = tbl
+
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
 	sortedTbls = append(sortedTbls, tbl)
@@ -256,8 +275,22 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64) {
 	if idx == -1 {
 		return
 	}
-	if tableNames, ok := b.is.schemaMap[dbInfo.Name.L]; ok {
-		delete(tableNames.tables, sortedTbls[idx].Meta().Name.L)
+	if tn, ok := b.is.schemaMap.Get(dbInfo.Name.L); ok {
+		oldSchemaTables := tn.(*schemaTables)
+
+		// newSchemaTables := &schemaTables{
+		// 	dbInfo: oldSchemaTables.dbInfo.Copy(),
+		// 	tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
+		// }
+		// for k, v := range oldSchemaTables.tables {
+		// 	if k != sortedTbls[idx].Meta().Name.L {
+		// 		newSchemaTables.tables[k] = v
+		// 	}
+		// }
+		// b.is.schemaMap.Set(dbInfo.Name.L, newSchemaTables)
+		// dbInfo = newSchemaTables.dbInfo
+
+		delete(oldSchemaTables.tables, sortedTbls[idx].Meta().Name.L)
 	}
 	// Remove the table in sorted table slice.
 	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTbls[0:idx], sortedTbls[idx+1:]...)
@@ -285,15 +318,24 @@ func (b *Builder) InitWithOldInfoSchema() *Builder {
 }
 
 func (b *Builder) copySchemasMap(oldIS *infoSchema) {
-	for k, v := range oldIS.schemaMap {
-		b.is.schemaMap[k] = v
+	copy(b.is.schemaMap.s, oldIS.schemaMap.s)
+	for i, m := range oldIS.schemaMap.s {
+		b.is.schemaMap.s[i] = make(map[string]interface{})
+		for k, v := range m {
+			b.is.schemaMap.s[i][k] = v
+		}
 	}
 }
 
 // copySchemaTables creates a new schemaTables instance when a table in the database has changed.
 // It also does modifications on the new one because old schemaTables must be read-only.
 func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
-	oldSchemaTables := b.is.schemaMap[dbName]
+	st, ok := b.is.schemaMap.Get(dbName)
+	if !ok {
+		panic(fmt.Sprintf("Cannot find DB: %v", dbName))
+		return nil
+	}
+	oldSchemaTables := st.(*schemaTables)
 	newSchemaTables := &schemaTables{
 		dbInfo: oldSchemaTables.dbInfo.Copy(),
 		tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
@@ -301,7 +343,7 @@ func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 	for k, v := range oldSchemaTables.tables {
 		newSchemaTables.tables[k] = v
 	}
-	b.is.schemaMap[dbName] = newSchemaTables
+	b.is.schemaMap.Set(dbName, newSchemaTables)
 	return newSchemaTables.dbInfo
 }
 
@@ -338,7 +380,8 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		dbInfo: di,
 		tables: make(map[string]table.Table, len(di.Tables)),
 	}
-	b.is.schemaMap[di.Name.L] = schTbls
+	// May too many copies here
+	b.is.schemaMap.Set(di.Name.L, schTbls)
 	for _, t := range di.Tables {
 		schemaID := di.ID
 		alloc := autoid.NewAllocator(b.handle.store, t.GetDBID(schemaID), t.IsAutoIncColUnsigned())
@@ -371,7 +414,7 @@ func (b *Builder) createSchemaTablesForInfoSchemaDB() {
 		dbInfo: infoSchemaDB,
 		tables: make(map[string]table.Table, len(infoSchemaDB.Tables)),
 	}
-	b.is.schemaMap[infoSchemaDB.Name.L] = infoSchemaSchemaTables
+	b.is.schemaMap.Set(infoSchemaDB.Name.L, infoSchemaSchemaTables)
 	for _, t := range infoSchemaDB.Tables {
 		tbl := createInfoSchemaTable(b.handle, t)
 		infoSchemaSchemaTables.tables[t.Name.L] = tbl
@@ -390,7 +433,7 @@ func NewBuilder(handle *Handle) *Builder {
 	b := new(Builder)
 	b.handle = handle
 	b.is = &infoSchema{
-		schemaMap:           map[string]*schemaTables{},
+		schemaMap:           *NewBucketMap(),
 		sortedTablesBuckets: make([]sortedTables, bucketCount),
 	}
 	return b
