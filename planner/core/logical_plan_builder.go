@@ -281,9 +281,10 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 	return
 }
 
-// The table alias is only used to check if the logicalPlan match some
-// optimizer hints. It will return nil when there are multiple table alias,
-// because hints are not expected to take effect in this case.
+// extractTableAlias returns table alias of the LogicalPlan's columns.
+// It will return nil when there are multiple table alias, because the alias
+// is only used to check if the logicalPlan match some optimizer hints,
+// and hints are not expected to take effect in this case.
 func extractTableAlias(p LogicalPlan) *model.CIStr {
 	if p.Schema().Len() > 0 && p.Schema().Columns[0].TblName.L != "" {
 		tblName := p.Schema().Columns[0].TblName.L
