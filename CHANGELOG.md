@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Support automatically adjusting the auto-incremental ID allocation step based on the load, and the auto-adjustment scope of the step is 1000~2000000 [#11006](https://github.com/pingcap/tidb/pull/11006)
 * Add the `ADMIN PLUGINS ENABLE`/`ADMIN PLUGINS DISABLE` SQL statement to dynamically enable or disable plugins [#11157](https://github.com/pingcap/tidb/pull/11157)
 * Add the session connection information in the audit plugin [#11013](https://github.com/pingcap/tidb/pull/11013)
+* Add optimizer hint `MAX_EXECUTION_TIME`, which places a limit N (a timeout value in milliseconds) on how long a `SELECT` statement is permitted to execute before the server terminates it: [#11026](https://github.com/pingcap/tidb/pull/11026)
 * Change the default behavior during the period of splitting Regions to wait for PD to finish scheduling [#11166](https://github.com/pingcap/tidb/pull/11166)
 * Prohibit Window Functions from being cached in Prepare Plan Cache to avoid incorrect results in some cases [#11048](https://github.com/pingcap/tidb/pull/11048)
 * Prohibit `ALTER` statements from modifying the definition of stored generated columns [#11068](https://github.com/pingcap/tidb/pull/11068)
