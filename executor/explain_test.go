@@ -96,7 +96,7 @@ func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
 
 func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	memCol := 5
-	ops := []string{"Join", "MergeAgg", "Reader", "Top", "Sort"}
+	ops := []string{"Join", "Reader", "Top", "Sort"}
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
 		strs := make([]string, len(row))
