@@ -211,17 +211,17 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 func (t *Tracker) BytesToString(numBytes int64) string {
 	GB := float64(numBytes) / float64(1<<30)
 	if GB > 1 {
-		return fmt.Sprintf("%.3f GB", GB)
+		return fmt.Sprintf("%v GB", GB)
 	}
 
 	MB := float64(numBytes) / float64(1<<20)
 	if MB > 1 {
-		return fmt.Sprintf("%.3f MB", MB)
+		return fmt.Sprintf("%v MB", MB)
 	}
 
 	KB := float64(numBytes) / float64(1<<10)
 	if KB > 1 {
-		return fmt.Sprintf("%.3f KB", KB)
+		return fmt.Sprintf("%v KB", KB)
 	}
 
 	return fmt.Sprintf("%v Bytes", numBytes)
