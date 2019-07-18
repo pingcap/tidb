@@ -1349,6 +1349,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.ConvertStrToIntStrict = true
 	case *ast.ExplainStmt:
 		sc.InExplainStmt = true
+		sc.ConvertStrToIntStrict = true
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
