@@ -582,6 +582,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
+	defer func() { ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(job.Type)

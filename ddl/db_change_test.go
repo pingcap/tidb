@@ -1012,7 +1012,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		se1.SetConnectionID(2)
 		_, err2 := se1.Execute(context.Background(), "alter table test_table add column c2 int")
 		c.Assert(err2, NotNil)
-		c.Assert(strings.Contains(err2.Error(), "Information schema is changed"), IsTrue)
+		c.Assert(err2.Error(), Equals, "[schema:1060]Duplicate column name 'c2'")
 	}()
 
 	wg.Wait()

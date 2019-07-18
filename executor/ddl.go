@@ -53,6 +53,10 @@ func (e *DDLExec) toErr(err error) error {
 		return err
 	}
 
+	if !infoschema.ErrTableNotExists.Equal(err) {
+		return err
+	}
+
 	// Before the DDL job is ready, it encouters an error that may be due to the outdated schema information.
 	// After the DDL job is ready, the ErrInfoSchemaChanged error won't happen because we are getting the schema directly from storage.
 	// So we needn't to consider this condition.
@@ -82,7 +86,6 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if err = e.ctx.NewTxn(ctx); err != nil {
 		return err
 	}
-	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	switch x := e.stmt.(type) {
 	case *ast.AlterDatabaseStmt:
