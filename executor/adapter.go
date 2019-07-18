@@ -366,7 +366,8 @@ func (a *ExecStmt) logAudit() {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-			audit.OnGeneralEvent(context.Background(), sessVars, plugin.Log, cmd)
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.StartTime)
+			audit.OnGeneralEvent(ctx, sessVars, plugin.Log, cmd)
 		}
 		return nil
 	})
