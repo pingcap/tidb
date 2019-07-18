@@ -370,10 +370,6 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error)
 		return floatStrToIntStr(sc, floatPrefix, str)
 	}
 
-	if sc.InDeleteStmt && str == "" {
-		return "0", nil
-	}
-
 	validLen := 0
 	for i := 0; i < len(str); i++ {
 		c := str[i]
