@@ -1239,7 +1239,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		}
 		if !isNull {
 			patValue, patTypes := stringutil.CompilePattern(patString, v.Escape)
-			if stringutil.IsExactMatch(patTypes) {
+			if stringutil.IsExactMatch(patTypes) && er.ctxStack[l-2].GetType().EvalType().IsStringKind() {
 				op := ast.EQ
 				if v.Not {
 					op = ast.NE
