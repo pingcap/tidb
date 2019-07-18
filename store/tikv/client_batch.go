@@ -236,7 +236,7 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 	})
 }
 
-func (c *batchCommandsClient) reCreateStreamingClient(err error) bool {
+func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) bool {
 	c.failPendingRequests(err) // fail all pending requests.
 
 	// Re-establish a application layer stream. TCP layer is handled by gRPC.
@@ -275,27 +275,9 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 		resp, err := c.recv()
 		if err != nil {
 			now := time.Now()
-			// Forbids the batchSendLoop using the old client.
-			c.lockForRecreate()
-			for { // try to re-create the streaming in the loop.
-				if c.isStopped() {
-					c.unlockForRecreate()
-					return
-				}
-				logutil.BgLogger().Error(
-					"batchRecvLoop error when receive",
-					zap.String("target", c.target),
-					zap.Error(err),
-				)
-
-				if c.reCreateStreamingClient(err) {
-					break
-				}
-
-				// TODO: Use a more smart backoff strategy.
-				time.Sleep(time.Second)
+			if stopped := c.reCreateStreamingClient(err); stopped {
+				return
 			}
-			c.unlockForRecreate()
 			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
 			continue
 		}
@@ -323,6 +305,31 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 			atomic.StoreUint64(c.tikvTransportLayerLoad, tikvTransportLayerLoad)
 		}
 	}
+}
+
+func (c *batchCommandsClient) reCreateStreamingClient(err error) (stopped bool) {
+	// Forbids the batchSendLoop using the old client.
+	c.lockForRecreate()
+	defer c.unlockForRecreate()
+	for { // try to re-create the streaming in the loop.
+		if c.isStopped() {
+			c.unlockForRecreate()
+			return true
+		}
+		logutil.BgLogger().Error(
+			"batchRecvLoop error when receive",
+			zap.String("target", c.target),
+			zap.Error(err),
+		)
+
+		if c.reCreateStreamingClientOnce(err) {
+			break
+		}
+
+		// TODO: Use a more smart backoff strategy.
+		time.Sleep(time.Second)
+	}
+	return false
 }
 
 type batchCommandsEntry struct {
@@ -386,36 +393,40 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 			bestBatchWaitSize += 1
 		}
 
-		length = removeCanceledRequests(&entries, &requests)
-		if length == 0 {
+		entries, requests = removeCanceledRequests(entries, requests)
+		if len(entries) == 0 {
 			continue // All requests are canceled.
 		}
 
-		// Choose a connection by round-robbin.
-		var cli *batchCommandsClient
-		for {
-			a.index = (a.index + 1) % uint32(len(a.batchCommandsClients))
-			cli = a.batchCommandsClients[a.index]
-			// The lock protects the batchCommandsClient from been closed while it's inuse.
-			if cli.tryLockForSend() {
-				break
-			}
-		}
-
-		maxBatchID := atomic.AddUint64(&cli.idAlloc, uint64(length))
-		for i := 0; i < length; i++ {
-			requestID := uint64(i) + maxBatchID - uint64(length)
-			requestIDs = append(requestIDs, requestID)
-		}
-		req := &tikvpb.BatchCommandsRequest{
-			Requests:   requests,
-			RequestIds: requestIDs,
-		}
-
-		cli.send(req, entries)
-		tikvTransportLayerLoad = atomic.LoadUint64(cli.tikvTransportLayerLoad)
-		cli.unlockForSend()
+		tikvTransportLayerLoad = a.getClientAndSend(entries, requests, requestIDs)
 	}
+}
+
+func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*tikvpb.BatchCommandsRequest_Request, requestIDs []uint64) (tikvTransportLayerLoad uint64) {
+	// Choose a connection by round-robbin.
+	var cli *batchCommandsClient
+	for {
+		a.index = (a.index + 1) % uint32(len(a.batchCommandsClients))
+		cli = a.batchCommandsClients[a.index]
+		// The lock protects the batchCommandsClient from been closed while it's inuse.
+		if cli.tryLockForSend() {
+			break
+		}
+	}
+	defer cli.unlockForSend()
+
+	maxBatchID := atomic.AddUint64(&cli.idAlloc, uint64(len(requests)))
+	for i := 0; i < len(requests); i++ {
+		requestID := uint64(i) + maxBatchID - uint64(len(requests))
+		requestIDs = append(requestIDs, requestID)
+	}
+	req := &tikvpb.BatchCommandsRequest{
+		Requests:   requests,
+		RequestIds: requestIDs,
+	}
+
+	cli.send(req, entries)
+	return atomic.LoadUint64(cli.tikvTransportLayerLoad)
 }
 
 func (a *batchConn) Close() {
@@ -431,20 +442,17 @@ func (a *batchConn) Close() {
 }
 
 // removeCanceledRequests removes canceled requests before sending.
-func removeCanceledRequests(
-	entries *[]*batchCommandsEntry,
-	requests *[]*tikvpb.BatchCommandsRequest_Request) int {
-	validEntries := (*entries)[:0]
-	validRequets := (*requests)[:0]
-	for _, e := range *entries {
+func removeCanceledRequests(entries []*batchCommandsEntry,
+	requests []*tikvpb.BatchCommandsRequest_Request) ([]*batchCommandsEntry, []*tikvpb.BatchCommandsRequest_Request) {
+	validEntries := entries[:0]
+	validRequets := requests[:0]
+	for _, e := range entries {
 		if !e.isCanceled() {
 			validEntries = append(validEntries, e)
 			validRequets = append(validRequets, e.req)
 		}
 	}
-	*entries = validEntries
-	*requests = validRequets
-	return len(*entries)
+	return validEntries, validRequets
 }
 
 func sendBatchRequest(
