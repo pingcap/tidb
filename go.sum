@@ -164,6 +164,8 @@ github.com/pingcap/kvproto v0.0.0-20190703131923-d9830856b531/go.mod h1:QMdbTAXC
 github.com/pingcap/log v0.0.0-20190214045112-b37da76f67a7/go.mod h1:xsfkWVaFVV5B8e1K9seWfyJWFrIhbtUTAD8NV1Pq3+w=
 github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596 h1:t2OQTpPJnrPDGlvA+3FwJptMTt6MEPdzK1Wt99oaefQ=
 github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596/go.mod h1:WpHUKhNZ18v116SvGrmjkA9CBhYmuUTKL+p8JC9ANEw=
+github.com/pingcap/parser v0.0.0-20190710072914-6cd203114f2d h1:vOZjn1ami1LIjtIj0i5QunGh/sHawbhiBCb1qPx373w=
+github.com/pingcap/parser v0.0.0-20190710072914-6cd203114f2d/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/parser v0.0.0-20190716105515-ded7e0436a50 h1:tcE49c/+/GiFAqNEiO03KDIA3MOD9eu1zgGrtncPm10=
 github.com/pingcap/parser v0.0.0-20190716105515-ded7e0436a50/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v0.0.0-20190712044914-75a1f9f3062b h1:oS9PftxQqgcRouKhhdaB52tXhVLEP7Ng3Qqsd6Z18iY=
