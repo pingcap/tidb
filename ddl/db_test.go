@@ -2387,6 +2387,12 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	(partition p0 values less than (0));`)
 
 	s.testErrorCode(c, `create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
+
+	s.tk.MustExec(`create table t (a int) /*!50100 partition by list (a) (
+partition p0 values in (1) ENGINE = InnoDB,
+partition p1 values in (29) ENGINE = InnoDB,
+partition p2 values in (2) ENGINE = InnoDB,
+partition p3 values in (3) ENGINE = InnoDB) */`)
 }
 
 func (s *testDBSuite) TestCreateTableWithHashPartition(c *C) {
