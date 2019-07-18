@@ -2747,26 +2747,26 @@ DoStmt:
  *
  *******************************************************************/
 DeleteFromStmt:
-	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional "FROM" TableName IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
+	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional "FROM" TableName TableAsNameOpt IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
 		tn := $7.(*ast.TableName)
-		tn.IndexHints = $8.([]*ast.IndexHint)
-		join := &ast.Join{Left: &ast.TableSource{Source: tn}, Right: nil}
+		tn.IndexHints = $9.([]*ast.IndexHint)
+		join := &ast.Join{Left: &ast.TableSource{Source: tn, AsName: $8.(model.CIStr)}, Right: nil}
 		x := &ast.DeleteStmt{
 			TableRefs: &ast.TableRefsClause{TableRefs: join},
 			Priority:  $3.(mysql.PriorityEnum),
 			Quick:	   $4.(bool),
 			IgnoreErr: $5.(bool),
 		}
-		if $9 != nil {
-			x.Where = $9.(ast.ExprNode)
-		}
 		if $10 != nil {
-			x.Order = $10.(*ast.OrderByClause)
+			x.Where = $10.(ast.ExprNode)
 		}
 		if $11 != nil {
-			x.Limit = $11.(*ast.Limit)
+			x.Order = $11.(*ast.OrderByClause)
+		}
+		if $12 != nil {
+			x.Limit = $12.(*ast.Limit)
 		}
 
 		$$ = x
