@@ -276,7 +276,9 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				if err1 == nil {
 					break
 				}
-				b.Backoff(boTiKVRPC, err1)
+				if err := b.Backoff(boTiKVRPC, err1); err != nil {
+					logutil.BgLogger().Error("backoff error", zap.Error(err))
+				}
 			}
 			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
 			continue
