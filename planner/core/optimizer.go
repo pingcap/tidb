@@ -90,11 +90,7 @@ type logicalOptRule interface {
 func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
 	ctx.GetSessionVars().PlanColumnID = 0
-	builder := &PlanBuilder{
-		ctx:       ctx,
-		is:        is,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
-	}
+	builder := NewPlanBuilder(ctx, is)
 	p, err := builder.Build(node)
 	if err != nil {
 		return nil, err

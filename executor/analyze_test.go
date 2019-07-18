@@ -400,7 +400,7 @@ func (c *regionProperityClient) SendRequest(ctx context.Context, addr string, re
 		defer c.mu.Unlock()
 		c.mu.count++
 		// Mock failure once.
-		if req.DebugGetRegionProperties.RegionId == c.mu.regionID {
+		if req.DebugGetRegionProperties().RegionId == c.mu.regionID {
 			c.mu.regionID = 0
 			return &tikvrpc.Response{}, nil
 		}
