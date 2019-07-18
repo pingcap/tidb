@@ -2689,12 +2689,14 @@ func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, a
 		/* keep interval as original decimal */
 	case "SECOND":
 		// Decimal's EvalString is like %f format.
+		neg = false
 		interval, isNull, err = args[1].EvalString(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
 	default:
 		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, MICROSECOND
+		neg = false
 		args[1] = WrapWithCastAsInt(ctx, args[1])
 		interval, isNull, err = args[1].EvalString(ctx, row)
 		if isNull || err != nil {
