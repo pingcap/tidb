@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Add the `tidb_wait_split_region_finish_backoff` session variable to control the backoff time of splitting Regions [#11166](https://github.com/pingcap/tidb/pull/11166)
 * Support automatically adjusting the auto-incremental ID allocation step based on the load, and the auto-adjustment scope of the step is 1000~2000000 [#11006](https://github.com/pingcap/tidb/pull/11006)
 * Add the `ADMIN PLUGINS ENABLE`/`ADMIN PLUGINS DISABLE` SQL statement to dynamically enable or disable plugins [#11157](https://github.com/pingcap/tidb/pull/11157)
-* Add the session connection information in the Audit plugin [#11013](https://github.com/pingcap/tidb/pull/11013)
+* Add the session connection information in the audit plugin [#11013](https://github.com/pingcap/tidb/pull/11013)
 * Change the default behavior during the period of splitting Regions to wait for PD to finish scheduling [#11166](https://github.com/pingcap/tidb/pull/11166)
 * Prohibit Window Functions from being cached in Prepare Plan Cache to avoid incorrect results in some cases [#11048](https://github.com/pingcap/tidb/pull/11048)
 * Prohibit `ALTER` statements from modifying the definition of stored generated columns [#11068](https://github.com/pingcap/tidb/pull/11068)
