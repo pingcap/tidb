@@ -48,7 +48,7 @@ func LoadOptRuleBlacklist(ctx sessionctx.Context) (err error) {
 		if row.GetString(1) == "logical_rule" {
 			newDisabledLogicalRules.Insert(name)
 		} else {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("type field of mysql.opt_rule_blacklist can only be \"expr_push_down\" or \"logical_rule\""))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("type field of mysql.opt_rule_blacklist can only be \"logical_rule\""))
 		}
 	}
 	plannercore.DefaultDisabledLogicalRulesList.Store(newDisabledLogicalRules)
