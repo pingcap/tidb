@@ -14,12 +14,13 @@
 package executor_test
 
 import (
+	"strings"
+	
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
-	"strings"
 )
 
 func (s *testSuite1) TestExplainPriviliges(c *C) {
