@@ -550,6 +550,8 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1),(2),(3)")
+	tk.Se.GetSessionVars().MaxChunkSize = 1
+	tk.MustQuery("select rand(1) from t").Sort().Check(testkit.Rows("0.6046602879796196", "0.6645600532184904", "0.9405090880450124"))
 	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.6046602879796196", "0.16729663442585624", "0.7199826688373036"))
 	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.6046602879796196 0.16729663442585624 0.7199826688373036"))
 }
@@ -917,6 +919,10 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("aaa文 ba aaa ba"))
 	result = tk.MustQuery(`select insert("bb", NULL, 1, "aa"), insert("bb", 1, NULL, "aa"), insert(NULL, 1, 1, "aaa"), insert("bb", 1, 1, NULL);`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`SELECT INSERT("bb", 0, 1, NULL), INSERT("bb", 0, NULL, "aaa");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery(`SELECT INSERT("中文", 0, 1, NULL), INSERT("中文", 0, NULL, "aaa");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
 
 	// for export_set
 	result = tk.MustQuery(`select export_set(7, "1", "0", ",", 65);`)
@@ -4370,4 +4376,30 @@ func (s *testIntegrationSuite) TestMySQLExtAssignment(c *C) {
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestIssue10675(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a int);`)
+	tk.MustExec(`insert into t values(1);`)
+	tk.MustQuery(`select * from t where a < -184467440737095516167.1;`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a > -184467440737095516167.1;`).Check(
+		testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a < 184467440737095516167.1;`).Check(
+		testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a > 184467440737095516167.1;`).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestIssue11257(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 SECOND_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 MINUTE_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 HOUR_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 DAY_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
 }

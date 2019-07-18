@@ -93,6 +93,8 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	wg.Wait()
 }
 
+var _ pd.Client = &mockPDClient{}
+
 type mockPDClient struct {
 	sync.RWMutex
 	client pd.Client
@@ -187,6 +189,10 @@ func (c *mockPDClient) Close() {}
 
 func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
 	return nil
+}
+
+func (c *mockPDClient) ScanRegions(ctx context.Context, key []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+	return nil, nil, nil
 }
 
 func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {

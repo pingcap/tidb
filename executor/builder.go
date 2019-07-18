@@ -108,6 +108,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildChecksumTable(v)
 	case *plannercore.ReloadExprPushdownBlacklist:
 		return b.buildReloadExprPushdownBlacklist(v)
+	case *plannercore.AdminPlugins:
+		return b.buildAdminPlugins(v)
 	case *plannercore.DDL:
 		return b.buildDDL(v)
 	case *plannercore.Deallocate:
@@ -467,6 +469,10 @@ func (b *executorBuilder) buildReloadExprPushdownBlacklist(v *plannercore.Reload
 	return &ReloadExprPushdownBlacklistExec{baseExecutor{ctx: b.ctx}}
 }
 
+func (b *executorBuilder) buildAdminPlugins(v *plannercore.AdminPlugins) Executor {
+	return &AdminPluginsExec{baseExecutor: baseExecutor{ctx: b.ctx}, Action: v.Action, Plugins: v.Plugins}
+}
+
 func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) Executor {
 	base := newBaseExecutor(b.ctx, nil, v.ExplainID())
 	base.initCap = chunk.ZeroCapacity
@@ -547,6 +553,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		DBName:       model.NewCIStr(v.DBName),
 		Table:        v.Table,
 		Column:       v.Column,
+		IndexName:    v.IndexName,
 		User:         v.User,
 		Roles:        v.Roles,
 		IfNotExists:  v.IfNotExists,
@@ -1731,6 +1738,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
+	hasPrefixCol := false
+	for _, l := range v.IdxColLens {
+		if l != types.UnspecifiedLength {
+			hasPrefixCol = true
+			break
+		}
+	}
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 		outerCtx: outerCtx{
@@ -1740,6 +1754,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
 			rowTypes:      innerTypes,
+			colLens:       v.IdxColLens,
+			hasPrefixCol:  hasPrefixCol,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),

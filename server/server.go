@@ -49,7 +49,6 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -84,12 +83,13 @@ func init() {
 }
 
 var (
-	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
-	errInvalidPayloadLen = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
-	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
-	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
-	errNotAllowedCommand = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
-	errAccessDenied      = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	errUnknownFieldType    = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
+	errInvalidPayloadLen   = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
+	errInvalidSequence     = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
+	errInvalidType         = terror.ClassServer.New(codeInvalidType, "invalid type")
+	errNotAllowedCommand   = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
+	errAccessDenied        = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	errMaxExecTimeExceeded = terror.ClassServer.New(codeMaxExecTimeExceeded, mysql.MySQLErrName[mysql.ErrMaxExecTimeExceeded])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -107,7 +107,7 @@ type Server struct {
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
-	rwlock            *sync.RWMutex
+	rwlock            sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
@@ -199,7 +199,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
-		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
@@ -342,7 +341,7 @@ func (s *Server) Run() error {
 					terror.Log(clientConn.Close())
 					return errors.Trace(err)
 				}
-				err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host}, plugin.PreAuth, nil)
+				err = authPlugin.OnConnectionEvent(context.Background(), plugin.PreAuth, &variable.ConnectionInfo{Host: host})
 				if err != nil {
 					logutil.Logger(context.Background()).Info("do connection event failed", zap.Error(err))
 					terror.Log(clientConn.Close())
@@ -429,7 +428,7 @@ func (s *Server) onConn(conn *clientConn) {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			sessionVars := conn.ctx.GetSessionVars()
-			return authPlugin.OnConnectionEvent(context.Background(), sessionVars.User, plugin.Connected, sessionVars.ConnectionInfo)
+			return authPlugin.OnConnectionEvent(context.Background(), plugin.Connected, sessionVars.ConnectionInfo)
 		}
 		return nil
 	})
@@ -445,7 +444,7 @@ func (s *Server) onConn(conn *clientConn) {
 		if authPlugin.OnConnectionEvent != nil {
 			sessionVars := conn.ctx.GetSessionVars()
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
-			err := authPlugin.OnConnectionEvent(context.Background(), sessionVars.User, plugin.Disconnect, sessionVars.ConnectionInfo)
+			err := authPlugin.OnConnectionEvent(context.Background(), plugin.Disconnect, sessionVars.ConnectionInfo)
 			if err != nil {
 				logutil.Logger(context.Background()).Warn("do connection event failed", zap.String("plugin", authPlugin.Name), zap.Error(err))
 			}
@@ -621,14 +620,16 @@ const (
 	codeInvalidSequence   = 3
 	codeInvalidType       = 4
 
-	codeNotAllowedCommand = 1148
-	codeAccessDenied      = mysql.ErrAccessDenied
+	codeNotAllowedCommand   = 1148
+	codeAccessDenied        = mysql.ErrAccessDenied
+	codeMaxExecTimeExceeded = mysql.ErrMaxExecTimeExceeded
 )
 
 func init() {
 	serverMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeNotAllowedCommand: mysql.ErrNotAllowedCommand,
-		codeAccessDenied:      mysql.ErrAccessDenied,
+		codeNotAllowedCommand:   mysql.ErrNotAllowedCommand,
+		codeAccessDenied:        mysql.ErrAccessDenied,
+		codeMaxExecTimeExceeded: mysql.ErrMaxExecTimeExceeded,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }

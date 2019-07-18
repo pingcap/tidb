@@ -116,7 +116,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
-	SetProcessInfo(string, time.Time, byte)
+	SetProcessInfo(string, time.Time, byte, uint64)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -780,6 +780,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, err
 		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		return se, nil
@@ -795,6 +799,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutoCommit, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, err
+		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
@@ -907,7 +915,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
+func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
 	var db interface{}
 	if len(s.sessionVars.CurrentDB) > 0 {
 		db = s.sessionVars.CurrentDB
@@ -918,16 +926,17 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 		info = sql
 	}
 	pi := util.ProcessInfo{
-		ID:            s.sessionVars.ConnectionID,
-		DB:            db,
-		Command:       command,
-		Plan:          s.currentPlan,
-		Time:          t,
-		State:         s.Status(),
-		Info:          info,
-		CurTxnStartTS: s.sessionVars.TxnCtx.StartTS,
-		StmtCtx:       s.sessionVars.StmtCtx,
-		StatsInfo:     plannercore.GetStatsInfo,
+		ID:               s.sessionVars.ConnectionID,
+		DB:               db,
+		Command:          command,
+		Plan:             s.currentPlan,
+		Time:             t,
+		State:            s.Status(),
+		Info:             info,
+		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+		StmtCtx:          s.sessionVars.StmtCtx,
+		StatsInfo:        plannercore.GetStatsInfo,
+		MaxExecutionTime: maxExecutionTime,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
@@ -936,7 +945,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet) ([]sqlexec.RecordSet, error) {
+func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
 	s.SetValue(sessionctx.QueryString, stmt.OriginText())
 	if _, ok := stmtNode.(ast.DDLNode); ok {
 		s.SetValue(sessionctx.LastExecuteDDL, true)
@@ -959,6 +968,16 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
 	} else {
 		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
+	}
+
+	if inMulitQuery && recordSet == nil {
+		recordSet = &multiQueryNoDelayRecordSet{
+			affectedRows: s.AffectedRows(),
+			lastMessage:  s.LastMessage(),
+			warnCount:    s.sessionVars.StmtCtx.WarningCount(),
+			lastInsertID: s.sessionVars.StmtCtx.LastInsertID,
+			status:       s.sessionVars.Status,
+		}
 	}
 
 	if recordSet != nil {
@@ -1007,6 +1026,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	var tempStmtNodes []ast.StmtNode
 	compiler := executor.Compiler{Ctx: s}
+	multiQuery := len(stmtNodes) > 1
 	for idx, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
 
@@ -1043,7 +1063,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		s.currentPlan = stmt.Plan
 
 		// Step3: Execute the physical plan.
-		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
+		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets, multiQuery); err != nil {
 			return nil, err
 		}
 	}
@@ -1632,6 +1652,7 @@ var builtinGlobalVariable = []string{
 	variable.WaitTimeout,
 	variable.InteractiveTimeout,
 	variable.MaxPreparedStmtCount,
+	variable.MaxExecutionTime,
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,
@@ -1878,4 +1899,48 @@ func (s *session) recordTransactionCounter(err error) {
 			transactionCounterGeneralOK.Inc()
 		}
 	}
+}
+
+type multiQueryNoDelayRecordSet struct {
+	affectedRows uint64
+	lastMessage  string
+	status       uint16
+	warnCount    uint16
+	lastInsertID uint64
+}
+
+func (c *multiQueryNoDelayRecordSet) Fields() []*ast.ResultField {
+	panic("unsupported method")
+}
+
+func (c *multiQueryNoDelayRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+	panic("unsupported method")
+}
+
+func (c *multiQueryNoDelayRecordSet) NewChunk() *chunk.Chunk {
+	panic("unsupported method")
+}
+
+func (c *multiQueryNoDelayRecordSet) Close() error {
+	return nil
+}
+
+func (c *multiQueryNoDelayRecordSet) AffectedRows() uint64 {
+	return c.affectedRows
+}
+
+func (c *multiQueryNoDelayRecordSet) LastMessage() string {
+	return c.lastMessage
+}
+
+func (c *multiQueryNoDelayRecordSet) WarnCount() uint16 {
+	return c.warnCount
+}
+
+func (c *multiQueryNoDelayRecordSet) Status() uint16 {
+	return c.status
+}
+
+func (c *multiQueryNoDelayRecordSet) LastInsertID() uint64 {
+	return c.lastInsertID
 }

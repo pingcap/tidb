@@ -28,12 +28,13 @@ var (
 
 // metrics labels.
 const (
-	LabelSession  = "session"
-	LabelDomain   = "domain"
-	LabelDDLOwner = "ddl-owner"
-	LabelDDL      = "ddl"
-	LabelGCWorker = "gcworker"
-	LabelAnalyze  = "analyze"
+	LabelSession   = "session"
+	LabelDomain    = "domain"
+	LabelDDLOwner  = "ddl-owner"
+	LabelDDL       = "ddl"
+	LabelDDLSyncer = "ddl-syncer"
+	LabelGCWorker  = "gcworker"
+	LabelAnalyze   = "analyze"
 
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
@@ -113,6 +114,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVSecondaryLockCleanupFailureCounter)
 	prometheus.MustRegister(TiKVSendReqHistogram)
 	prometheus.MustRegister(TiKVSnapshotCounter)
+	prometheus.MustRegister(TiKVTxnCmdCounter)
 	prometheus.MustRegister(TiKVTxnCmdHistogram)
 	prometheus.MustRegister(TiKVTxnCounter)
 	prometheus.MustRegister(TiKVTxnRegionsNumHistogram)

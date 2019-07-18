@@ -35,9 +35,13 @@ type testClientSuite struct {
 
 var _ = Suite(&testClientSuite{})
 
+func setMaxBatchSize(size uint) {
+	config.GetGlobalConfig().TiKVClient.MaxBatchSize = size
+}
+
 func (s *testClientSuite) TestConn(c *C) {
-	globalConfig := config.GetGlobalConfig()
-	globalConfig.TiKVClient.MaxBatchSize = 0 // Disable batch.
+	maxBatchSize := config.GetGlobalConfig().TiKVClient.MaxBatchSize
+	setMaxBatchSize(0)
 
 	client := newRPCClient(config.Security{})
 
@@ -49,12 +53,11 @@ func (s *testClientSuite) TestConn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(conn2.Get(), Not(Equals), conn1.Get())
 
-	client.recycleIdleConnArray()
-
 	client.Close()
 	conn3, err := client.getConnArray(addr)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
+	setMaxBatchSize(maxBatchSize)
 }
 
 func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
@@ -83,7 +86,7 @@ func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
 
 func (s *testClientSuite) TestCancelTimeoutRetErr(c *C) {
 	req := new(tikvpb.BatchCommandsRequest_Request)
-	a := &connArray{batchCommandsCh: make(chan *batchCommandsEntry, 1)}
+	a := newBatchConn(1, 1, nil)
 
 	ctx, cancel := context.WithCancel(context.TODO())
 	cancel()
