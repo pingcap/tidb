@@ -81,6 +81,7 @@ func (a *batchConn) fetchAllPendingRequests(
 			tp:   eventConnIdle,
 			addr: addr,
 		}
+		return
 	case <-a.closed:
 		return
 	}
