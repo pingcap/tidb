@@ -17,7 +17,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -137,7 +136,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 	return row, nil
 }
 
-// SubstituteGenColsInDecodeColMap substitutes generated columns in every expression in decodeColMap
+// SubstituteGenColsInDecodeColMap substitutes generated columns in every expression
 // with non-generated one by looking up decodeColMap.
 func SubstituteGenColsInDecodeColMap(decodeColMap map[int64]Column) {
 	// Sort columns by ID in ascending order.
@@ -147,8 +146,8 @@ func SubstituteGenColsInDecodeColMap(decodeColMap map[int64]Column) {
 	}
 	sort.Slice(orderedCols, func(i, j int) bool { return orderedCols[i] < orderedCols[j] })
 
-	// Iterate over decodeColMap, substitution only happens once because
-	// the column with smaller columnID can not refer to those with larger.
+	// Iterate over decodeColMap, the substitution only happens once because
+	// columns with smaller columnID can not refer to those with larger ones.
 	for _, colID := range orderedCols {
 		decCol := decodeColMap[colID]
 		if decCol.GenExpr != nil {
@@ -173,11 +172,6 @@ func substituteGeneratedColumn(expr expression.Expression, decodeColMap map[int6
 		}
 		return v
 	case *expression.ScalarFunction:
-		if v.FuncName.L == ast.Cast {
-			newFunc := v.Clone().(*expression.ScalarFunction)
-			newFunc.GetArgs()[0] = substituteGeneratedColumn(newFunc.GetArgs()[0], decodeColMap)
-			return newFunc
-		}
 		newArgs := make([]expression.Expression, 0, len(v.GetArgs()))
 		for _, arg := range v.GetArgs() {
 			newArgs = append(newArgs, substituteGeneratedColumn(arg, decodeColMap))
@@ -199,6 +193,7 @@ func RemoveUnusedVirtualCols(decodeColMap map[int64]Column, indexedCols []*table
 		for _, v := range indexedCols {
 			if v.Offset == col.Offset {
 				found = true
+				break
 			}
 		}
 

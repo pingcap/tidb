@@ -817,6 +817,27 @@ func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint, b decimal as (a+1), c varchar(20) as (b*2), d float as (a*23+b-1+length(c)))")
+	tk.MustExec("insert into t (a) values (1)")
+	tk.MustExec("create index idx on t (d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 4 25"))
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10), b float as (length(a)+123), c varchar(20) as (right(a, 2)), d float as (b+b-7+1-3+3*ASCII(c)))")
+	tk.MustExec("insert into t (a) values ('adorable')")
+	tk.MustExec("create index idx on t (d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("adorable 131 le 577")) // 131+131-7+1-3+3*108
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint, b decimal as (a), c int(10) as (a+b), d float as (a+b+c), e decimal as (a+b+c+d))")
+	tk.MustExec("insert into t (a) values (1)")
+	tk.MustExec("create index idx on t (d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 1 2 4 8"))
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint, b bigint as (a+1) virtual, c bigint as (b+1) virtual)")
 	tk.MustExec("alter table t add index idx_b(b)")
 	tk.MustExec("alter table t add index idx_c(c)")
