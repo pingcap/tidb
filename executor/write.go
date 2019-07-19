@@ -87,7 +87,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			modified[i] = true
 			// Rebase auto increment id if the field is changed.
 			if mysql.HasAutoIncrementFlag(col.Flag) {
-				recordID, err := getAutoRecordID(newData[i], &col.FieldType)
+				recordID, err := getAutoRecordID(newData[i], &col.FieldType, false)
 				if err != nil {
 					return false, false, 0, err
 				}

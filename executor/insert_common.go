@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -488,7 +489,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		recordID, err = getAutoRecordID(d, &c.FieldType)
+		recordID, err = getAutoRecordID(d, &c.FieldType, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -528,13 +529,17 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	return casted, nil
 }
 
-func getAutoRecordID(d types.Datum, target *types.FieldType) (int64, error) {
+func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
 	var recordID int64
 
 	switch target.Tp {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		f := d.GetFloat64()
-		recordID = int64(f)
+		if isInsert {
+			recordID = int64(math.Round(f))
+		} else {
+			recordID = int64(f)
+		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		recordID = d.GetInt64()
 	default:

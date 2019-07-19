@@ -350,8 +350,8 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 		},
 		{
 			`insert into t1(n) values(9)`,
-			`select * from t1 where id = 8`,
-			testkit.Rows(`8 9`),
+			`select * from t1 where id = 9`,
+			testkit.Rows(`9 9`),
 		},
 		{
 			`insert into t2(id, n) values(1, 1)`,
@@ -421,7 +421,7 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 		{
 			`insert into t4(id) values(6)`,
 			`select * from t4 where id = 6`,
-			testkit.Rows(`6 6`),
+			testkit.Rows(`6 7`),
 		},
 		{
 			`insert into t4(id, n) values(7, '7.7')`,
@@ -431,7 +431,17 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 		{
 			`insert into t4(id) values(8)`,
 			`select * from t4 where id = 8`,
-			testkit.Rows(`8 8`),
+			testkit.Rows(`8 9`),
+		},
+		{
+			`insert into t4(id, n) values(9, 10.4)`,
+			`select * from t4 where id = 9`,
+			testkit.Rows(`9 10.4`),
+		},
+		{
+			`insert into t4(id) values(10)`,
+			`select * from t4 where id = 10`,
+			testkit.Rows(`10 11`),
 		},
 		{
 			`insert into t5(id, n) values(1, 1)`,
@@ -476,7 +486,7 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 		{
 			`insert into t6(id) values(6)`,
 			`select * from t6 where id = 6`,
-			testkit.Rows(`6 6`),
+			testkit.Rows(`6 7`),
 		},
 		{
 			`insert into t6(id, n) values(7, '7.7')`,
@@ -486,7 +496,17 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 		{
 			`insert into t6(id) values(8)`,
 			`select * from t4 where id = 8`,
-			testkit.Rows(`8 8`),
+			testkit.Rows(`8 9`),
+		},
+		{
+			`insert into t6(id, n) values(9, 10.4)`,
+			`select * from t6 where id = 9`,
+			testkit.Rows(`9 10.4`),
+		},
+		{
+			`insert into t6(id) values(10)`,
+			`select * from t6 where id = 10`,
+			testkit.Rows(`10 11`),
 		},
 		{
 			`insert into t7(id, n) values(1, 1)`,
