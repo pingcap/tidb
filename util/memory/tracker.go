@@ -87,11 +87,6 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 	t.parent.Consume(t.BytesConsumed())
 }
 
-// Detach detaches this Tracker from its parent.
-func (t *Tracker) Detach() {
-	t.parent.remove(t)
-}
-
 func (t *Tracker) remove(oldChild *Tracker) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
