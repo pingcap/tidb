@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
@@ -71,11 +72,16 @@ type TableReaderExecutor struct {
 	corColInAccess bool
 	plans          []plannercore.PhysicalPlan
 
+	memTracker *memory.Tracker
+
 	selectResultHook // for testing
 }
 
 // Open initialzes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaDistSQL)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	var err error
 	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
@@ -157,7 +163,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, e.id).
+		SetMemTracker(e.memTracker).
 		Build()
 	if err != nil {
 		return nil, err

@@ -42,7 +42,6 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(s.sctx, stringutil.StringerStr("testSuite.createSelectNormal")).
 		Build()
 	c.Assert(err, IsNil)
 

@@ -220,6 +220,8 @@ type IndexReaderExecutor struct {
 	colLens        []int
 	plans          []plannercore.PhysicalPlan
 
+	memTracker *memory.Tracker
+
 	selectResultHook // for testing
 }
 
@@ -275,6 +277,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaDistSQL)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -282,7 +285,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, e.id).
+		SetMemTracker(e.memTracker).
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -413,6 +416,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 
+	tracker := memory.NewTracker(stringutil.StringerStr("InnerWorker"), e.ctx.GetSessionVars().MemQuotaDistSQL)
+	tracker.AttachTo(e.memTracker)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -420,7 +425,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.indexStreaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, indexLookupDistSQLTrackerLabel).
+		SetMemTracker(tracker).
 		Build()
 	if err != nil {
 		return err
