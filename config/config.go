@@ -329,7 +329,7 @@ var defaultConf = Config{
 	TokenLimit:                   1000,
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
-	EnableStreaming:              false,
+	EnableStreaming:              true,
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,

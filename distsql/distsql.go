@@ -58,6 +58,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 			fieldTypes: fieldTypes,
 			ctx:        sctx,
 			feedback:   fb,
+			// TODO: add sqlType add metric it
 		}, nil
 	}
 
