@@ -126,6 +126,16 @@ func (s *testUpdateSuite) TestUpdateWithAutoidSchema(c *C) {
 			testkit.Rows(`5 3`),
 		},
 		{
+			`update t1 set id = id + '0.5' where id = 5`,
+			`select * from t1 where id = 6`,
+			testkit.Rows(`6 3`),
+		},
+		{
+			`insert into t1 set n = 4`,
+			`select * from t1 where id = 7`,
+			testkit.Rows(`7 4`),
+		},
+		{
 			`insert into t2 set id = 1`,
 			`select * from t2 where id = 1`,
 			testkit.Rows(`1 1`),
@@ -151,6 +161,16 @@ func (s *testUpdateSuite) TestUpdateWithAutoidSchema(c *C) {
 			testkit.Rows(`3 6`),
 		},
 		{
+			`update t2 set n = n + '0.5' where id = 3`,
+			`select * from t2 where id = 3`,
+			testkit.Rows(`3 6.5`),
+		},
+		{
+			`insert into t2 set id = 4`,
+			`select * from t2 where id = 4`,
+			testkit.Rows(`4 7`),
+		},
+		{
 			`insert into t3 set id = 1`,
 			`select * from t3 where id = 1`,
 			testkit.Rows(`1 1`),
@@ -174,6 +194,16 @@ func (s *testUpdateSuite) TestUpdateWithAutoidSchema(c *C) {
 			`insert into t3 set id = 3`,
 			`select * from t3 where id = 3`,
 			testkit.Rows(`3 7`),
+		},
+		{
+			`update t3 set n = n + '0.5' where id = 3`,
+			`select * from t3 where id = 3`,
+			testkit.Rows(`3 7.5`),
+		},
+		{
+			`insert into t3 set id = 4`,
+			`select * from t3 where id = 4`,
+			testkit.Rows(`4 8`),
 		},
 	}
 
