@@ -15,7 +15,7 @@ package executor_test
 
 import (
 	"strings"
-	
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -97,7 +97,7 @@ func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
 
 func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	memCol := 5
-	ops := []string{"Join", "Reader", "Top", "Sort"}
+	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp"}
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
 		strs := make([]string, len(row))
