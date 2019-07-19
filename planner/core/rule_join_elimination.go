@@ -58,12 +58,18 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 	// outer join elimination without duplicate agnostic aggregate functions
 	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
 	contain, err := o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys)
-	if err != nil || contain {
-		return outerPlan, true, err
+	if err != nil {
+		return p, false, err
+	}
+	if contain {
+		return outerPlan, true, nil
 	}
 	contain, err = o.isInnerJoinKeysContainIndex(innerPlan, innerJoinKeys)
-	if err != nil || contain {
-		return outerPlan, true, err
+	if err != nil {
+		return p, false, err
+	}
+	if contain {
+		return outerPlan, true, nil
 	}
 
 	return p, false, nil
@@ -149,19 +155,29 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 	return false, nil
 }
 
-// Check whether a LogicalPlan is a LogicalAggregation and its all aggregate functions is duplicate agnostic.
-// And get the columns in duplicate agnostic aggregate functions.
+// isDuplicateAgnosticAgg checks whether a LogicalPlan is LogicalAggregation
+// and all its aggregate functions are duplicate agnostic. Only the following
+// functions are considered to be duplicate agnostic:
+//   1. MAX(arg)
+//   2. MIN(arg)
+//   3. FIRST_ROW(arg)
+//   4. other agg function with DISTINCT, like SUM(DISTINCT arg)
+// It also returns the columns used by all the aggregate functions if the
+// validation is passed.
 func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (_ bool, cols []*expression.Column) {
 	agg, ok := p.(*LogicalAggregation)
 	if !ok {
 		return false, nil
 	}
+	cols = make([]*expression.Column, 0, len(agg.AggFuncs))
 	for _, aggDesc := range agg.AggFuncs {
 		if !aggDesc.HasDistinct &&
 			aggDesc.Name != ast.AggFuncFirstRow &&
 			aggDesc.Name != ast.AggFuncMax &&
 			aggDesc.Name != ast.AggFuncMin {
-			return false, nil
+			// If not all aggregate functions are duplicate agnostic,
+			// we should clean the aggCols, so `return true, nil`.
+			return true, nil
 		}
 		for _, expr := range aggDesc.Args {
 			cols = append(cols, expression.ExtractColumns(expr)...)
@@ -183,21 +199,21 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		}
 	}
 
-	var colsInSchema []*expression.Column
 	switch x := p.(type) {
 	case *LogicalProjection:
+		parentCols = make([]*expression.Column, 0, len(x.Exprs))
 		for _, expr := range x.Exprs {
-			colsInSchema = append(colsInSchema, expression.ExtractColumns(expr)...)
+			parentCols = append(parentCols, expression.ExtractColumns(expr)...)
 		}
 	case *LogicalAggregation:
-		colsInSchema = x.groupByCols
+		parentCols = x.groupByCols
 		for _, aggDesc := range x.AggFuncs {
 			for _, expr := range aggDesc.Args {
-				colsInSchema = append(colsInSchema, expression.ExtractColumns(expr)...)
+				parentCols = append(parentCols, expression.ExtractColumns(expr)...)
 			}
 		}
 	default:
-		colsInSchema = p.Schema().Columns
+		parentCols = p.Schema().Columns
 	}
 
 	// check the duplicate agnostic aggregate functions
@@ -206,7 +222,7 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 	}
 
 	for i, child := range p.Children() {
-		newChild, err := o.doOptimize(child, aggCols, colsInSchema)
+		newChild, err := o.doOptimize(child, aggCols, parentCols)
 		if err != nil {
 			return nil, err
 		}
