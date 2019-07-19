@@ -394,6 +394,9 @@ func roundIntStr(numNextDot byte, intStr string) string {
 // strconv.ParseInt, we can't parse float first then convert it to string because precision will
 // be lost. For example, the string value "18446744073709551615" which is the max number of unsigned
 // int will cause some precision to lose. intStr[0] may be a positive and negative sign like '+' or '-'.
+//
+// This func will find serious overflow such as the len of intStr > 20 (without prefix `+/-`)
+// however, it will not check whether the intStr overflow BIGINT.
 func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
@@ -443,12 +446,15 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	if err != nil {
 		return validFloat, errors.Trace(err)
 	}
-	if exp > 0 && int64(intCnt) > (math.MaxInt64-int64(exp)) {
-		// (exp + incCnt) overflows MaxInt64.
+	intCnt += exp
+	if exp >= 0 && (intCnt > 21 || intCnt < 0) {
+		// MaxInt64 has 19 decimal digits.
+		// MaxUint64 has 20 decimal digits.
+		// And the intCnt may contain the len of `+/-`,
+		// so I use 21 here as the early detection.
 		sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
 		return validFloat[:eIdx], nil
 	}
-	intCnt += exp
 	if intCnt <= 0 {
 		intStr = "0"
 		if intCnt == 0 && len(digits) > 0 {
@@ -474,11 +480,6 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	} else {
 		// convert scientific notation decimal number
 		extraZeroCount := intCnt - len(digits)
-		if extraZeroCount > 20 {
-			// Append overflow warning and return to avoid allocating too much memory.
-			sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
-			return validFloat[:eIdx], nil
-		}
 		intStr = string(digits) + strings.Repeat("0", extraZeroCount)
 	}
 	return intStr, nil
@@ -580,6 +581,10 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
 func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, err error) {
+	if sc.InDeleteStmt && s == "" {
+		return "0", nil
+	}
+
 	var (
 		sawDot   bool
 		sawDigit bool
