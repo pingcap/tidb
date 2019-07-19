@@ -796,6 +796,7 @@ import (
 	OnDuplicateKeyUpdate		"ON DUPLICATE KEY UPDATE value list"
 	DuplicateOpt			"[IGNORE|REPLACE] in CREATE TABLE ... SELECT statement or LOAD DATA statement"
 	OptFull				"Full or empty"
+	OptTemporary			"TEMPORARY or empty"
 	Order				"ORDER BY clause optional collation specification"
 	OrderBy				"ORDER BY clause"
 	OrReplace			"or replace"
@@ -2828,14 +2829,15 @@ DropIndexStmt:
 	}
 
 DropTableStmt:
-	"DROP" TableOrTables TableNameList RestrictOrCascadeOpt
+	"DROP" OptTemporary TableOrTables IfExists TableNameList RestrictOrCascadeOpt
 	{
-		$$ = &ast.DropTableStmt{Tables: $3.([]*ast.TableName), IsView: false}
+		$$ = &ast.DropTableStmt{IfExists: $4.(bool), Tables: $5.([]*ast.TableName), IsView: false, IsTemporary: $2.(bool)}
 	}
-|	"DROP" TableOrTables "IF" "EXISTS" TableNameList RestrictOrCascadeOpt
-	{
-		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName), IsView: false}
-	}
+
+OptTemporary:
+	  /* empty */ { $$= false; }
+	| "TEMPORARY" { $$= true;  }
+	;
 
 DropViewStmt:
 	"DROP" "VIEW" TableNameList RestrictOrCascadeOpt

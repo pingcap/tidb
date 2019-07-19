@@ -331,6 +331,20 @@ func (ts *testDDLSuite) TestDDLTruncateTableStmtRestore(c *C) {
 	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
 }
 
+func (ts *testDDLSuite) TestDDLDropTableStmtRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"drop table t1", "DROP TABLE `t1`"},
+		{"drop table if exists t1", "DROP TABLE IF EXISTS `t1`"},
+		{"drop temporary table t1", "DROP TEMPORARY TABLE `t1`"},
+		{"drop temporary table if exists t1", "DROP TEMPORARY TABLE IF EXISTS `t1`"},
+		{"DROP /*!40005 TEMPORARY */ TABLE IF EXISTS `test`", "DROP TEMPORARY TABLE IF EXISTS `test`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*DropTableStmt)
+	}
+	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
+}
+
 func (ts *testDDLSuite) TestColumnPositionRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"", ""},
