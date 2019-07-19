@@ -277,7 +277,7 @@ func toStringWithCount(in Plan, strs []string, idxs []int) ([]string, []int) {
 			r := eq.GetArgs()[1].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-		str += fmt.Sprintf("%.2f", x.StatsCount())
+		str += fmt.Sprintf(" %.2f", x.StatsCount())
 	case *PhysicalMergeJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
@@ -307,26 +307,26 @@ func toStringWithCount(in Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.RightKeys[i].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-		str += fmt.Sprintf("%.2f", x.StatsCount())
+		str += fmt.Sprintf(" %.2f", x.StatsCount())
 	case *PhysicalApply:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
 		strs = strs[:idx]
 		idxs = idxs[:last]
-		str = "Apply{" + strings.Join(children, "->") + "}" + fmt.Sprintf("%.2f", x.StatsCount())
+		str = "Apply{" + strings.Join(children, "->") + "}" + fmt.Sprintf(" %.2f", x.StatsCount())
 	case *PhysicalMaxOneRow:
 		str = "MaxOneRow"
 	case *PhysicalLimit:
-		str = "Limit" + fmt.Sprintf("%v\n", x.StatsCount())
+		str = "Limit" + fmt.Sprintf(" %.2f", x.StatsCount())
 	case *PhysicalSort:
-		str = "Sort" + fmt.Sprintf("%.2f", x.StatsCount())
+		str = "Sort" + fmt.Sprintf(" %.2f", x.StatsCount())
 	case *PhysicalUnionAll:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
 		strs = strs[:idx]
-		str = "UnionAll{" + strings.Join(children, "->") + "}" + fmt.Sprintf("%.2f", x.StatsCount())
+		str = "UnionAll{" + strings.Join(children, "->") + "}" + fmt.Sprintf(" %.2f", x.StatsCount())
 		idxs = idxs[:last]
 	case *PhysicalSelection:
 		str = fmt.Sprintf("Sel(%s) %.2f", x.Conditions, x.StatsCount())
@@ -337,9 +337,9 @@ func toStringWithCount(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *PhysicalTableDual:
 		str = "Dual"
 	case *PhysicalHashAgg:
-		str = "HashAgg" + fmt.Sprintf("%.2f", x.StatsCount())
+		str = "HashAgg" + fmt.Sprintf(" %.2f", x.StatsCount())
 	case *PhysicalStreamAgg:
-		str = "StreamAgg" + fmt.Sprintf("%.2f", x.StatsCount())
+		str = "StreamAgg" + fmt.Sprintf(" %.2f", x.StatsCount())
 	case *PhysicalTableReader:
 		str = fmt.Sprintf("TableReader(%s) %.2f", ToStringWithCount(x.tablePlan), x.StatsCount())
 	case *PhysicalIndexReader:
