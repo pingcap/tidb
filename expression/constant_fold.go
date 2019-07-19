@@ -81,11 +81,11 @@ func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 
 func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 	args, l := expr.GetArgs(), len(expr.GetArgs())
-	isDeferred, isDeferredConst, hasNonConstCondition := false, false, true
+	var isDeferred, isDeferredConst, hasNonConstCondition bool
 	for i := 0; i < l-1; i += 2 {
 		expr.GetArgs()[i], isDeferred = foldConstant(args[i])
 		isDeferredConst = isDeferredConst || isDeferred
-		if _, isConst := expr.GetArgs()[i].(*Constant); isConst && hasNonConstCondition {
+		if _, isConst := expr.GetArgs()[i].(*Constant); isConst && !hasNonConstCondition {
 			// If the condition is const and true, and the previous conditions
 			// has no expr, then the folded execution body is returned, otherwise
 			// the arguments of the casewhen are folded and replaced.
@@ -99,13 +99,13 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 				return BuildCastFunction(expr.GetCtx(), foldedExpr, expr.GetType()), isDeferredConst
 			}
 		} else {
-			hasNonConstCondition = false
+			hasNonConstCondition = true
 		}
 		expr.GetArgs()[i+1], isDeferred = foldConstant(args[i+1])
 		isDeferredConst = isDeferredConst || isDeferred
 	}
 
-	if l%2 == 1 && hasNonConstCondition {
+	if l%2 == 1 && !hasNonConstCondition {
 		// If the number of arguments in casewhen is odd, and the previous conditions
 		// is const and false, then the folded else execution body is returned. otherwise
 		// the execution body of the else are folded and replaced.
