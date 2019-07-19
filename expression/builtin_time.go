@@ -2662,26 +2662,38 @@ func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, a
 	}
 
 	switch strings.ToUpper(unit) {
-	case "HOUR_MINUTE", "MINUTE_SECOND":
-		interval = strings.Replace(interval, ".", ":", -1)
-	case "YEAR_MONTH":
-		interval = strings.Replace(interval, ".", "-", -1)
-	case "DAY_HOUR":
-		interval = strings.Replace(interval, ".", " ", -1)
-	case "DAY_MINUTE":
-		interval = "0 " + strings.Replace(interval, ".", ":", -1)
-	case "DAY_SECOND":
-		interval = "0 00:" + strings.Replace(interval, ".", ":", -1)
-	case "DAY_MICROSECOND":
-		interval = "0 00:00:" + interval
-	case "HOUR_MICROSECOND":
-		interval = "00:00:" + interval
-	case "HOUR_SECOND":
-		interval = "00:" + strings.Replace(interval, ".", ":", -1)
-	case "MINUTE_MICROSECOND":
-		interval = "00:" + interval
-	case "SECOND_MICROSECOND":
-		/* keep interval as original decimal */
+	case "HOUR_MINUTE", "MINUTE_SECOND", "YEAR_MONTH", "DAY_HOUR", "DAY_MINUTE",
+		"DAY_SECOND", "DAY_MICROSECOND", "HOUR_MICROSECOND", "HOUR_SECOND", "MINUTE_MICROSECOND", "SECOND_MICROSECOND":
+		neg := false
+		if interval != "" && interval[0] == '-' {
+			neg = true
+			interval = interval[1:]
+		}
+		switch strings.ToUpper(unit) {
+		case "HOUR_MINUTE", "MINUTE_SECOND":
+			interval = strings.Replace(interval, ".", ":", -1)
+		case "YEAR_MONTH":
+			interval = strings.Replace(interval, ".", "-", -1)
+		case "DAY_HOUR":
+			interval = strings.Replace(interval, ".", " ", -1)
+		case "DAY_MINUTE":
+			interval = "0 " + strings.Replace(interval, ".", ":", -1)
+		case "DAY_SECOND":
+			interval = "0 00:" + strings.Replace(interval, ".", ":", -1)
+		case "DAY_MICROSECOND":
+			interval = "0 00:00:" + interval
+		case "HOUR_MICROSECOND":
+			interval = "00:00:" + interval
+		case "HOUR_SECOND":
+			interval = "00:" + strings.Replace(interval, ".", ":", -1)
+		case "MINUTE_MICROSECOND":
+			interval = "00:" + interval
+		case "SECOND_MICROSECOND":
+			/* keep interval as original decimal */
+		}
+		if neg {
+			interval = "-" + interval
+		}
 	case "SECOND":
 		// Decimal's EvalString is like %f format.
 		interval, isNull, err = args[1].EvalString(ctx, row)

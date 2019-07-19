@@ -920,6 +920,10 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("aaa文 ba aaa ba"))
 	result = tk.MustQuery(`select insert("bb", NULL, 1, "aa"), insert("bb", 1, NULL, "aa"), insert(NULL, 1, 1, "aaa"), insert("bb", 1, 1, NULL);`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`SELECT INSERT("bb", 0, 1, NULL), INSERT("bb", 0, NULL, "aaa");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery(`SELECT INSERT("中文", 0, 1, NULL), INSERT("中文", 0, NULL, "aaa");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
 
 	// for export_set
 	result = tk.MustQuery(`select export_set(7, "1", "0", ",", 65);`)
@@ -4126,6 +4130,10 @@ func (s *testIntegrationSuite) TestFuncNameConst(c *C) {
 	r.Check(testkit.Rows("2"))
 	r = tk.MustQuery("SELECT concat('hello', name_const('test_string', 'world')) FROM t;")
 	r.Check(testkit.Rows("helloworld"))
+	r = tk.MustQuery("SELECT NAME_CONST('come', -1);")
+	r.Check(testkit.Rows("-1"))
+	r = tk.MustQuery("SELECT NAME_CONST('come', -1.0);")
+	r.Check(testkit.Rows("-1.0"))
 	err := tk.ExecToErr(`select name_const(a,b) from t;`)
 	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const(a,"hello") from t;`)
@@ -4455,4 +4463,148 @@ func (s *testIntegrationSuite) TestIssue10675(c *C) {
 	tk.MustQuery(`select * from t where a < 184467440737095516167.1;`).Check(
 		testkit.Rows("1"))
 	tk.MustQuery(`select * from t where a > 184467440737095516167.1;`).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestDatetimeMicrosecond(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For int
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 SECOND_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 MINUTE_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 HOUR_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 DAY_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+
+	// For Decimal
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MINUTE);`).Check(
+		testkit.Rows("2007-03-29 00:10:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:10:30"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR_MONTH);`).Check(
+		testkit.Rows("2009-05-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_HOUR);`).Check(
+		testkit.Rows("2007-03-31 00:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_MINUTE);`).Check(
+		testkit.Rows("2007-03-29 00:10:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:10:30"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:10:30"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:30.200000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR);`).Check(
+		testkit.Rows("2009-03-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 QUARTER);`).Check(
+		testkit.Rows("2007-09-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MONTH);`).Check(
+		testkit.Rows("2007-05-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 WEEK);`).Check(
+		testkit.Rows("2007-04-11 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY);`).Check(
+		testkit.Rows("2007-03-30 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR);`).Check(
+		testkit.Rows("2007-03-29 00:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE);`).Check(
+		testkit.Rows("2007-03-28 22:10:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:28.000002"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 HOUR_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MINUTE_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 YEAR_MONTH);`).Check(
+		testkit.Rows("2005-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY_HOUR);`).Check(
+		testkit.Rows("2007-03-26 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 HOUR_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 SECOND);`).Check(
+	//		testkit.Rows("2007-03-28 22:08:25.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 YEAR);`).Check(
+		testkit.Rows("2005-03-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 QUARTER);`).Check(
+		testkit.Rows("2006-09-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MONTH);`).Check(
+		testkit.Rows("2007-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 WEEK);`).Check(
+		testkit.Rows("2007-03-14 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY);`).Check(
+		testkit.Rows("2007-03-26 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 HOUR);`).Check(
+		testkit.Rows("2007-03-28 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MINUTE);`).Check(
+		testkit.Rows("2007-03-28 22:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.999998"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" HOUR_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" MINUTE_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" YEAR_MONTH);`).Check(
+		testkit.Rows("2005-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" DAY_HOUR);`).Check(
+		testkit.Rows("2007-03-26 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" DAY_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" DAY_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" HOUR_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" SECOND);`).Check(
+	//		testkit.Rows("2007-03-28 22:08:25.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" YEAR);`).Check(
+		testkit.Rows("2005-03-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" QUARTER);`).Check(
+		testkit.Rows("2006-09-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" MONTH);`).Check(
+		testkit.Rows("2007-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" WEEK);`).Check(
+		testkit.Rows("2007-03-14 22:08:28"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" DAY);`).Check(
+	//		testkit.Rows("2007-03-26 22:08:28"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" HOUR);`).Check(
+	//		testkit.Rows("2007-03-28 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" MINUTE);`).Check(
+		testkit.Rows("2007-03-28 22:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.999998"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" HOUR_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" MINUTE_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" YEAR_MONTH);`).Check(
+		testkit.Rows("2005-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" DAY_HOUR);`).Check(
+		testkit.Rows("2007-03-26 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" DAY_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" DAY_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" HOUR_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" SECOND);`).Check(
+	//		testkit.Rows("2007-03-28 22:08:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" YEAR);`).Check(
+		testkit.Rows("2005-03-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" QUARTER);`).Check(
+		testkit.Rows("2006-09-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" MONTH);`).Check(
+		testkit.Rows("2007-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" WEEK);`).Check(
+		testkit.Rows("2007-03-14 22:08:28"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" DAY);`).Check(
+	//		testkit.Rows("2007-03-26 22:08:28"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" HOUR);`).Check(
+	//		testkit.Rows("2007-03-28 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" MINUTE);`).Check(
+		testkit.Rows("2007-03-28 22:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.999998"))
+
 }

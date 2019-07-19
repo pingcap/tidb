@@ -237,19 +237,16 @@ func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGet,
-		Get: &kvrpcpb.GetRequest{
-			Key:     key,
-			Version: ver.Ver,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
+		Key:     key,
+		Version: ver.Ver,
+	})
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Get, NotNil)
-	keyErr := resp.Get.GetError()
+	c.Assert(resp.Resp, NotNil)
+	keyErr := (resp.Resp.(*kvrpcpb.GetResponse)).GetError()
 	return keyErr.GetLocked() != nil
 }
 
@@ -455,8 +452,8 @@ func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	batch.keys = append(batch.keys, []byte("t1"))
 	batch.region = RegionVerID{1, 1, 1}
 	req := commiter.buildPrewriteRequest(batch)
-	c.Assert(len(req.Prewrite.IsPessimisticLock), Greater, 0)
-	c.Assert(req.Prewrite.ForUpdateTs, Equals, uint64(100))
+	c.Assert(len(req.Prewrite().IsPessimisticLock), Greater, 0)
+	c.Assert(req.Prewrite().ForUpdateTs, Equals, uint64(100))
 }
 
 func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
