@@ -499,7 +499,7 @@ func updateColumnDefaultValue(t *meta.Meta, job *model.Job, newCol *model.Column
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(newCol.Name, tblInfo.Name)
 	}
-	// The newCol's offset may be the value of the old schema version, so we can't use its "offset" directly.
+	// The newCol's offset may be the value of the old schema version, so we can't use newCol directly.
 	oldCol.DefaultValue = newCol.DefaultValue
 	oldCol.DefaultValueBit = newCol.DefaultValueBit
 	oldCol.Flag = newCol.Flag
