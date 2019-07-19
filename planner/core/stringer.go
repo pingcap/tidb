@@ -226,3 +226,144 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	strs = append(strs, str)
 	return strs, idxs
 }
+
+// ToStringWithCount explains a Plan, returns description string.
+func ToStringWithCount(p Plan) string {
+	strs, _ := toStringWithCount(p, []string{}, []int{})
+	return strings.Join(strs, "->")
+}
+
+func toStringWithCount(in Plan, strs []string, idxs []int) ([]string, []int) {
+	switch x := in.(type) {
+	case LogicalPlan:
+		if len(x.Children()) > 1 {
+			idxs = append(idxs, len(strs))
+		}
+
+		for _, c := range x.Children() {
+			strs, idxs = toString(c, strs, idxs)
+		}
+	case PhysicalPlan:
+		if len(x.Children()) > 1 {
+			idxs = append(idxs, len(strs))
+		}
+
+		for _, c := range x.Children() {
+			strs, idxs = toString(c, strs, idxs)
+		}
+	}
+
+	var str string
+	switch x := in.(type) {
+	case *CheckTable:
+		str = "CheckTable"
+	case *PhysicalIndexScan:
+		str = fmt.Sprintf("Index(%s.%s) %.2f", x.Table.Name.L, x.Index.Name.L, x.StatsCount())
+	case *PhysicalTableScan:
+		str = fmt.Sprintf("Table(%s) %.2f", x.Table.Name.L, x.StatsCount())
+	case *PhysicalHashJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		if x.InnerChildIdx == 0 {
+			str = "RightHashJoin{" + strings.Join(children, "->") + "}"
+		} else {
+			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
+		}
+		for _, eq := range x.EqualConditions {
+			l := eq.GetArgs()[0].String()
+			r := eq.GetArgs()[1].String()
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
+		str += fmt.Sprintf("%.2f", x.StatsCount())
+	case *PhysicalMergeJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		id := "MergeJoin"
+		switch x.JoinType {
+		case SemiJoin:
+			id = "MergeSemiJoin"
+		case AntiSemiJoin:
+			id = "MergeAntiSemiJoin"
+		case LeftOuterSemiJoin:
+			id = "MergeLeftOuterSemiJoin"
+		case AntiLeftOuterSemiJoin:
+			id = "MergeAntiLeftOuterSemiJoin"
+		case LeftOuterJoin:
+			id = "MergeLeftOuterJoin"
+		case RightOuterJoin:
+			id = "MergeRightOuterJoin"
+		case InnerJoin:
+			id = "MergeInnerJoin"
+		}
+		str = id + "{" + strings.Join(children, "->") + "}"
+		for i := range x.LeftKeys {
+			l := x.LeftKeys[i].String()
+			r := x.RightKeys[i].String()
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
+		str += fmt.Sprintf("%.2f", x.StatsCount())
+	case *PhysicalApply:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "Apply{" + strings.Join(children, "->") + "}" + fmt.Sprintf("%.2f", x.StatsCount())
+	case *PhysicalMaxOneRow:
+		str = "MaxOneRow"
+	case *PhysicalLimit:
+		str = "Limit" + fmt.Sprintf("%v\n", x.StatsCount())
+	case  *PhysicalSort:
+		str = "Sort" + fmt.Sprintf("%.2f", x.StatsCount())
+	case *PhysicalUnionAll:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		str = "UnionAll{" + strings.Join(children, "->") + "}" + fmt.Sprintf("%.2f", x.StatsCount())
+		idxs = idxs[:last]
+	case *PhysicalSelection:
+		str = fmt.Sprintf("Sel(%s) %.2f", x.Conditions, x.StatsCount())
+	case *PhysicalProjection:
+		str = "Projection"
+	case *PhysicalTopN:
+		str = fmt.Sprintf("TopN(%v,%d,%d) %.2f", x.ByItems, x.Offset, x.Count, x.StatsCount())
+	case *PhysicalTableDual:
+		str = "Dual"
+	case *PhysicalHashAgg:
+		str = "HashAgg" + fmt.Sprintf("%.2f", x.StatsCount())
+	case *PhysicalStreamAgg:
+		str = "StreamAgg" + fmt.Sprintf("%.2f", x.StatsCount())
+	case *PhysicalTableReader:
+		str = fmt.Sprintf("TableReader(%s) %.2f", ToStringWithCount(x.tablePlan), x.StatsCount())
+	case *PhysicalIndexReader:
+		str = fmt.Sprintf("IndexReader(%s) %.2f", ToStringWithCount(x.indexPlan), x.StatsCount())
+	case *PhysicalIndexLookUpReader:
+		str = fmt.Sprintf("IndexLookUp(%s, %s) %.2f", ToStringWithCount(x.indexPlan), ToStringWithCount(x.tablePlan), x.StatsCount())
+	case *PhysicalUnionScan:
+		str = fmt.Sprintf("UnionScan(%s) %.2f", x.Conditions, x.StatsCount())
+	case *PhysicalIndexJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "IndexJoin{" + strings.Join(children, "->") + "}"
+		for i := range x.OuterJoinKeys {
+			l := x.OuterJoinKeys[i]
+			r := x.InnerJoinKeys[i]
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
+		str += fmt.Sprintf(" %.2f", x.StatsCount())
+	default:
+		str = fmt.Sprintf("%T", in)
+	}
+	strs = append(strs, str)
+	return strs, idxs
+}

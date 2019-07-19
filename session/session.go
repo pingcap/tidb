@@ -877,6 +877,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				zap.String("sql", sql))
 			return nil, errors.Trace(err)
 		}
+		s.sessionVars.Plan = stmt.Plan
 		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
 
 		// Step3: Execute the physical plan.

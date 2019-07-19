@@ -319,6 +319,8 @@ type SessionVars struct {
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
+
+	Plan interface{}
 }
 
 // ConnectionInfo present connection used by audit.
@@ -800,6 +802,8 @@ const (
 	SlowLogCopWaitMax = "Cop_wait_max"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
+	SlowLogPlan = "Plan"
+	SlowLogJoinVars = "Join_Var"
 )
 
 // SlowLogFormat uses for formatting slow log.
@@ -821,7 +825,7 @@ const (
 // # Memory_max: 4096
 // select * from t_slim;
 func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string,
-	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, sql string) string {
+	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, sql string, planString string, joinVars string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
 	buf.WriteString(SlowLogPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
@@ -878,6 +882,12 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 	}
 	if memMax > 0 {
 		buf.WriteString(SlowLogPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
+	}
+	if len(planString) > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogPlan+ SlowLogSpaceMarkStr + planString + "\n")
+	}
+	if len(joinVars) > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogJoinVars+ SlowLogSpaceMarkStr + joinVars + "\n")
 	}
 	if len(sql) == 0 {
 		sql = ";"

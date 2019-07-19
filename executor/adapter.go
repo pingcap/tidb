@@ -391,16 +391,23 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	if len(sessVars.StmtCtx.IndexIDs) > 0 {
 		indexIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
 	}
+	var planString string
+	if sessVars.Plan != nil {
+		if plan, ok := sessVars.Plan.(plannercore.Plan); ok {
+			planString = plannercore.ToStringWithCount(plan)
+		}
+	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := a.getStatsInfo()
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
+	joinVars := fmt.Sprintf("idxBatch %d hjCon %d", sessVars.IndexJoinBatchSize,sessVars.HashJoinConcurrency)
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql, planString, joinVars))
 	} else {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql, planString, joinVars))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
