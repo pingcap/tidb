@@ -87,12 +87,26 @@ type RecordSet interface {
 	Fields() []*ast.ResultField
 
 	// Next reads records into chunk.
-	Next(ctx context.Context, req *chunk.RecordBatch) error
+	Next(ctx context.Context, req *chunk.Chunk) error
 
-	//NewRecordBatch create a recordBatch.
-	NewRecordBatch() *chunk.RecordBatch
+	//NewChunk create a chunk.
+	NewChunk() *chunk.Chunk
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
 	Close() error
+}
+
+// MultiQueryNoDelayResult is an interface for one no-delay result for one statement in multi-queries.
+type MultiQueryNoDelayResult interface {
+	// AffectedRows return affected row for one statement in multi-queries.
+	AffectedRows() uint64
+	// LastMessage return last message for one statement in multi-queries.
+	LastMessage() string
+	// WarnCount return warn count for one statement in multi-queries.
+	WarnCount() uint16
+	// Status return status when executing one statement in multi-queries.
+	Status() uint16
+	// LastInsertID return last insert id for one statement in multi-queries.
+	LastInsertID() uint64
 }

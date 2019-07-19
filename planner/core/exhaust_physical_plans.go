@@ -15,7 +15,6 @@ package core
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 
@@ -322,8 +321,15 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
-func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, outerIdx int, innerPlan PhysicalPlan,
-	ranges []*ranger.Range, keyOff2IdxOff []int, compareFilters *ColWithCmpFuncManager) []PhysicalPlan {
+func (p *LogicalJoin) constructIndexJoin(
+	prop *property.PhysicalProperty,
+	outerIdx int,
+	innerPlan PhysicalPlan,
+	ranges []*ranger.Range,
+	keyOff2IdxOff []int,
+	lens []int,
+	compareFilters *ColWithCmpFuncManager,
+) []PhysicalPlan {
 	joinType := p.JoinType
 	outerSchema := p.children[outerIdx].Schema()
 	var (
@@ -373,6 +379,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, outerI
 		DefaultValues:   p.DefaultValues,
 		innerPlan:       innerPlan,
 		KeyOff2IdxOff:   newKeyOff,
+		IdxColLens:      lens,
 		Ranges:          ranges,
 		CompareFilters:  compareFilters,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
@@ -431,7 +438,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			innerPlan := p.constructInnerTableScan(ds, pkCol, outerJoinKeys, us)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
-			return p.constructIndexJoin(prop, outerIdx, innerPlan, nil, keyOff2IdxOff, nil)
+			return p.constructIndexJoin(prop, outerIdx, innerPlan, nil, keyOff2IdxOff, nil, nil)
 		}
 	}
 	helper := &indexJoinBuildHelper{join: p}
@@ -442,7 +449,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		indexInfo := path.index
 		err := helper.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("build index join failed", zap.Error(err))
+			logutil.BgLogger().Warn("build index join failed", zap.Error(err))
 		}
 	}
 	if helper.chosenIndexInfo != nil {
@@ -455,10 +462,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 				keyOff2IdxOff[keyOff] = idxOff
 			}
 		}
-		idxCols, _ := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
+		idxCols, lens := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
 		rangeInfo := helper.buildRangeDecidedByInformation(idxCols, outerJoinKeys)
 		innerPlan := p.constructInnerIndexScan(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
-		return p.constructIndexJoin(prop, outerIdx, innerPlan, helper.chosenRanges, keyOff2IdxOff, helper.lastColManager)
+		return p.constructIndexJoin(prop, outerIdx, innerPlan, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
 	}
 	return nil
 }
@@ -495,8 +502,12 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		buffer.WriteString(fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
 	}
 	for _, access := range ijHelper.chosenAccess {
-		// Since now there must be eq/in condition so here we can just append space directly.
-		buffer.WriteString(fmt.Sprintf(" %v", access))
+		if !isFirst {
+			buffer.WriteString(" ")
+		} else {
+			isFirst = false
+		}
+		buffer.WriteString(fmt.Sprintf("%v", access))
 	}
 	buffer.WriteString("]")
 	return buffer.String()
@@ -584,8 +595,23 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, idx.Columns, ds.tableInfo)
-	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
-	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
+	path := &accessPath{
+		indexFilters:     indexConds,
+		tableFilters:     tblConds,
+		countAfterAccess: rowCount,
+	}
+	// Assume equal conditions used by index join and other conditions are independent.
+	if len(indexConds) > 0 {
+		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, indexConds)
+		if err != nil {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			selectivity = selectionFactor
+		}
+		path.countAfterIndex = rowCount * selectivity
+	}
+	selectivity := ds.stats.RowCount / ds.tableStats.RowCount
+	finalStats := ds.stats.ScaleByExpectCnt(selectivity * rowCount)
+	is.addPushedDownSelection(cop, ds, path, finalStats)
 	t := finishCopTask(ds.ctx, cop)
 	reader := t.plan()
 	return p.constructInnerUnionScan(us, reader)
@@ -678,22 +704,19 @@ func (cwc *ColWithCmpFuncManager) String() string {
 	return buffer.String()
 }
 
-func (ijHelper *indexJoinBuildHelper) checkIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int) bool {
+func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int) {
 	tmpSchema := expression.NewSchema(innerKeys...)
 	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))
 	ijHelper.curNotUsedIndexCols = make([]*expression.Column, 0, len(idxCols))
 	ijHelper.curNotUsedColLens = make([]int, 0, len(idxCols))
-	keyMatched := false
 	for i, idxCol := range idxCols {
 		ijHelper.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
 		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
-			keyMatched = true
 			continue
 		}
 		ijHelper.curNotUsedIndexCols = append(ijHelper.curNotUsedIndexCols, idxCol)
 		ijHelper.curNotUsedColLens = append(ijHelper.curNotUsedColLens, colLens[i])
 	}
-	return keyMatched
 }
 
 // findUsefulEqAndInFilters analyzes the pushedDownConds held by inner child and split them to three parts.
@@ -791,26 +814,31 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 		return nil
 	}
 	accesses := make([]expression.Expression, 0, len(idxCols))
-	// If no index column appears in join key, we just break.
-	// TODO: It may meet this case: There's no join key condition, but have compare filters.
-	//  e.g. select * from t1, t2 on t1.a=t2.a and t2.b > t1.b-10 and t2.b < t1.b where t1.a=1 and t2.a=1.
-	//       After constant propagation. The t1.a=t2.a is removed. And if we have index (t2.a, t2.b). It can apply index join
-	//       to speed up.
-	if !ijHelper.checkIndex(innerJoinKeys, idxCols, colLengths) {
-		return nil
-	}
+	ijHelper.resetContextForIndex(innerJoinKeys, idxCols, colLengths)
 	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(innerPlan)
 	var remainedEqAndIn []expression.Expression
 	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(idxCols, notKeyEqAndIn)
 	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
-	if matchedKeyCnt <= 0 {
+	// If no join key is matched while join keys actually are not empty. We don't choose index join for now.
+	if matchedKeyCnt <= 0 && len(innerJoinKeys) > 0 {
 		return nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
 	remained = append(remained, remainedEqAndIn...)
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
+	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
+	// A more strict check is applied later.
+	if lastColPos <= 0 {
+		return nil
+	}
 	// If all the index columns are covered by eq/in conditions, we don't need to consider other conditions anymore.
 	if lastColPos == len(idxCols) {
+		// If there's join key matched index column. Then choose hash join is always a better idea.
+		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1. And t2 has index(a, b).
+		//      If we don't have the following check, TiDB will build index join for this case.
+		if matchedKeyCnt <= 0 {
+			return nil
+		}
 		remained = append(remained, rangeFilterCandidates...)
 		ranges, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
 		if err != nil {
@@ -828,6 +856,12 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 	lastColAccess := ijHelper.buildLastColManager(lastPossibleCol, innerPlan, lastColManager)
 	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
 	if len(lastColAccess) == 0 {
+		// If there's join key matched index column. Then choose hash join is always a better idea.
+		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1 and t2.c > 10 and t2.c < 20. And t2 has index(a, b, c).
+		//      If we don't have the following check, TiDB will build index join for this case.
+		if matchedKeyCnt <= 0 {
+			return nil
+		}
 		colAccesses, colRemained := ranger.DetachCondsForColumn(ijHelper.join.ctx, rangeFilterCandidates, lastPossibleCol)
 		var ranges, nextColRange []*ranger.Range
 		var err error
@@ -1146,10 +1180,10 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 		return nil
 	}
 	window := PhysicalWindow{
-		WindowFuncDesc: p.WindowFuncDesc,
-		PartitionBy:    p.PartitionBy,
-		OrderBy:        p.OrderBy,
-		Frame:          p.Frame,
+		WindowFuncDescs: p.WindowFuncDescs,
+		PartitionBy:     p.PartitionBy,
+		OrderBy:         p.OrderBy,
+		Frame:           p.Frame,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProperty)
 	window.SetSchema(p.Schema())
 	return []PhysicalPlan{window}

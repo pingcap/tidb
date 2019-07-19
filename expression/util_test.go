@@ -14,12 +14,18 @@
 package expression
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -27,6 +33,231 @@ import (
 var _ = check.Suite(&testUtilSuite{})
 
 type testUtilSuite struct {
+}
+
+func (s *testUtilSuite) checkPanic(f func()) (ret bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			ret = true
+		}
+	}()
+	f()
+	return false
+}
+
+func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
+	c.Assert(s.checkPanic(func() {
+		newBaseBuiltinFuncWithTp(nil, nil, types.ETTimestamp)
+	}), check.IsTrue)
+
+	ctx := mock.NewContext()
+	c.Assert(s.checkPanic(func() {
+		newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp, types.ETTimestamp)
+	}), check.IsTrue)
+
+	bf := newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp)
+	c.Assert(s.checkPanic(func() {
+		bf.evalInt(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalReal(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalString(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalDecimal(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalTime(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalDuration(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalJSON(chunk.Row{})
+	}), check.IsTrue)
+}
+
+func (s *testUtilSuite) TestClone(c *check.C) {
+	builtinFuncs := []builtinFunc{
+		&builtinArithmeticPlusRealSig{}, &builtinArithmeticPlusDecimalSig{}, &builtinArithmeticPlusIntSig{}, &builtinArithmeticMinusRealSig{}, &builtinArithmeticMinusDecimalSig{},
+		&builtinArithmeticMinusIntSig{}, &builtinArithmeticDivideRealSig{}, &builtinArithmeticDivideDecimalSig{}, &builtinArithmeticMultiplyRealSig{}, &builtinArithmeticMultiplyDecimalSig{},
+		&builtinArithmeticMultiplyIntUnsignedSig{}, &builtinArithmeticMultiplyIntSig{}, &builtinArithmeticIntDivideIntSig{}, &builtinArithmeticIntDivideDecimalSig{}, &builtinArithmeticModIntSig{},
+		&builtinArithmeticModRealSig{}, &builtinArithmeticModDecimalSig{}, &builtinCastIntAsIntSig{}, &builtinCastIntAsRealSig{}, &builtinCastIntAsStringSig{},
+		&builtinCastIntAsDecimalSig{}, &builtinCastIntAsTimeSig{}, &builtinCastIntAsDurationSig{}, &builtinCastIntAsJSONSig{}, &builtinCastRealAsIntSig{},
+		&builtinCastRealAsRealSig{}, &builtinCastRealAsStringSig{}, &builtinCastRealAsDecimalSig{}, &builtinCastRealAsTimeSig{}, &builtinCastRealAsDurationSig{},
+		&builtinCastRealAsJSONSig{}, &builtinCastDecimalAsIntSig{}, &builtinCastDecimalAsRealSig{}, &builtinCastDecimalAsStringSig{}, &builtinCastDecimalAsDecimalSig{},
+		&builtinCastDecimalAsTimeSig{}, &builtinCastDecimalAsDurationSig{}, &builtinCastDecimalAsJSONSig{}, &builtinCastStringAsIntSig{}, &builtinCastStringAsRealSig{},
+		&builtinCastStringAsStringSig{}, &builtinCastStringAsDecimalSig{}, &builtinCastStringAsTimeSig{}, &builtinCastStringAsDurationSig{}, &builtinCastStringAsJSONSig{},
+		&builtinCastTimeAsIntSig{}, &builtinCastTimeAsRealSig{}, &builtinCastTimeAsStringSig{}, &builtinCastTimeAsDecimalSig{}, &builtinCastTimeAsTimeSig{},
+		&builtinCastTimeAsDurationSig{}, &builtinCastTimeAsJSONSig{}, &builtinCastDurationAsIntSig{}, &builtinCastDurationAsRealSig{}, &builtinCastDurationAsStringSig{},
+		&builtinCastDurationAsDecimalSig{}, &builtinCastDurationAsTimeSig{}, &builtinCastDurationAsDurationSig{}, &builtinCastDurationAsJSONSig{}, &builtinCastJSONAsIntSig{},
+		&builtinCastJSONAsRealSig{}, &builtinCastJSONAsStringSig{}, &builtinCastJSONAsDecimalSig{}, &builtinCastJSONAsTimeSig{}, &builtinCastJSONAsDurationSig{},
+		&builtinCastJSONAsJSONSig{}, &builtinCoalesceIntSig{}, &builtinCoalesceRealSig{}, &builtinCoalesceDecimalSig{}, &builtinCoalesceStringSig{},
+		&builtinCoalesceTimeSig{}, &builtinCoalesceDurationSig{}, &builtinGreatestIntSig{}, &builtinGreatestRealSig{}, &builtinGreatestDecimalSig{},
+		&builtinGreatestStringSig{}, &builtinGreatestTimeSig{}, &builtinLeastIntSig{}, &builtinLeastRealSig{}, &builtinLeastDecimalSig{},
+		&builtinLeastStringSig{}, &builtinLeastTimeSig{}, &builtinIntervalIntSig{}, &builtinIntervalRealSig{}, &builtinLTIntSig{},
+		&builtinLTRealSig{}, &builtinLTDecimalSig{}, &builtinLTStringSig{}, &builtinLTDurationSig{}, &builtinLTTimeSig{},
+		&builtinLEIntSig{}, &builtinLERealSig{}, &builtinLEDecimalSig{}, &builtinLEStringSig{}, &builtinLEDurationSig{},
+		&builtinLETimeSig{}, &builtinGTIntSig{}, &builtinGTRealSig{}, &builtinGTDecimalSig{}, &builtinGTStringSig{},
+		&builtinGTTimeSig{}, &builtinGTDurationSig{}, &builtinGEIntSig{}, &builtinGERealSig{}, &builtinGEDecimalSig{},
+		&builtinGEStringSig{}, &builtinGETimeSig{}, &builtinGEDurationSig{}, &builtinNEIntSig{}, &builtinNERealSig{},
+		&builtinNEDecimalSig{}, &builtinNEStringSig{}, &builtinNETimeSig{}, &builtinNEDurationSig{}, &builtinNullEQIntSig{},
+		&builtinNullEQRealSig{}, &builtinNullEQDecimalSig{}, &builtinNullEQStringSig{}, &builtinNullEQTimeSig{}, &builtinNullEQDurationSig{},
+		&builtinCaseWhenIntSig{}, &builtinCaseWhenRealSig{}, &builtinCaseWhenDecimalSig{}, &builtinCaseWhenStringSig{}, &builtinCaseWhenTimeSig{},
+		&builtinCaseWhenDurationSig{}, &builtinIfNullIntSig{}, &builtinIfNullRealSig{}, &builtinIfNullDecimalSig{}, &builtinIfNullStringSig{},
+		&builtinIfNullTimeSig{}, &builtinIfNullDurationSig{}, &builtinIfNullJSONSig{}, &builtinIfIntSig{}, &builtinIfRealSig{},
+		&builtinIfDecimalSig{}, &builtinIfStringSig{}, &builtinIfTimeSig{}, &builtinIfDurationSig{}, &builtinIfJSONSig{},
+		&builtinAesDecryptSig{}, &builtinAesDecryptIVSig{}, &builtinAesEncryptSig{}, &builtinAesEncryptIVSig{}, &builtinCompressSig{},
+		&builtinMD5Sig{}, &builtinPasswordSig{}, &builtinRandomBytesSig{}, &builtinSHA1Sig{}, &builtinSHA2Sig{},
+		&builtinUncompressSig{}, &builtinUncompressedLengthSig{}, &builtinDatabaseSig{}, &builtinFoundRowsSig{}, &builtinCurrentUserSig{},
+		&builtinUserSig{}, &builtinConnectionIDSig{}, &builtinLastInsertIDSig{}, &builtinLastInsertIDWithIDSig{}, &builtinVersionSig{},
+		&builtinTiDBVersionSig{}, &builtinRowCountSig{}, &builtinJSONTypeSig{}, &builtinJSONQuoteSig{}, &builtinJSONUnquoteSig{},
+		&builtinJSONArraySig{}, &builtinJSONArrayAppendSig{}, &builtinJSONObjectSig{}, &builtinJSONExtractSig{}, &builtinJSONSetSig{},
+		&builtinJSONInsertSig{}, &builtinJSONReplaceSig{}, &builtinJSONRemoveSig{}, &builtinJSONMergeSig{}, &builtinJSONContainsSig{},
+		&builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
+		&builtinLikeSig{}, &builtinRegexpBinarySig{}, &builtinRegexpSig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
+		&builtinAbsUIntSig{}, &builtinAbsDecSig{}, &builtinRoundRealSig{}, &builtinRoundIntSig{}, &builtinRoundDecSig{},
+		&builtinRoundWithFracRealSig{}, &builtinRoundWithFracIntSig{}, &builtinRoundWithFracDecSig{}, &builtinCeilRealSig{}, &builtinCeilIntToDecSig{},
+		&builtinCeilIntToIntSig{}, &builtinCeilDecToIntSig{}, &builtinCeilDecToDecSig{}, &builtinFloorRealSig{}, &builtinFloorIntToDecSig{},
+		&builtinFloorIntToIntSig{}, &builtinFloorDecToIntSig{}, &builtinFloorDecToDecSig{}, &builtinLog1ArgSig{}, &builtinLog2ArgsSig{},
+		&builtinLog2Sig{}, &builtinLog10Sig{}, &builtinRandSig{}, &builtinRandWithSeedSig{}, &builtinPowSig{},
+		&builtinConvSig{}, &builtinCRC32Sig{}, &builtinSignSig{}, &builtinSqrtSig{}, &builtinAcosSig{},
+		&builtinAsinSig{}, &builtinAtan1ArgSig{}, &builtinAtan2ArgsSig{}, &builtinCosSig{}, &builtinCotSig{},
+		&builtinDegreesSig{}, &builtinExpSig{}, &builtinPISig{}, &builtinRadiansSig{}, &builtinSinSig{},
+		&builtinTanSig{}, &builtinTruncateIntSig{}, &builtinTruncateRealSig{}, &builtinTruncateDecimalSig{}, &builtinTruncateUintSig{},
+		&builtinSleepSig{}, &builtinLockSig{}, &builtinReleaseLockSig{}, &builtinDecimalAnyValueSig{}, &builtinDurationAnyValueSig{},
+		&builtinIntAnyValueSig{}, &builtinJSONAnyValueSig{}, &builtinRealAnyValueSig{}, &builtinStringAnyValueSig{}, &builtinTimeAnyValueSig{},
+		&builtinInetAtonSig{}, &builtinInetNtoaSig{}, &builtinInet6AtonSig{}, &builtinInet6NtoaSig{}, &builtinIsIPv4Sig{},
+		&builtinIsIPv4CompatSig{}, &builtinIsIPv4MappedSig{}, &builtinIsIPv6Sig{}, &builtinUUIDSig{}, &builtinNameConstIntSig{},
+		&builtinNameConstRealSig{}, &builtinNameConstDecimalSig{}, &builtinNameConstTimeSig{}, &builtinNameConstDurationSig{}, &builtinNameConstStringSig{},
+		&builtinNameConstJSONSig{}, &builtinLogicAndSig{}, &builtinLogicOrSig{}, &builtinLogicXorSig{}, &builtinRealIsTrueSig{},
+		&builtinDecimalIsTrueSig{}, &builtinIntIsTrueSig{}, &builtinRealIsFalseSig{}, &builtinDecimalIsFalseSig{}, &builtinIntIsFalseSig{},
+		&builtinUnaryMinusIntSig{}, &builtinDecimalIsNullSig{}, &builtinDurationIsNullSig{}, &builtinIntIsNullSig{}, &builtinRealIsNullSig{},
+		&builtinStringIsNullSig{}, &builtinTimeIsNullSig{}, &builtinUnaryNotSig{}, &builtinSleepSig{}, &builtinInIntSig{},
+		&builtinInStringSig{}, &builtinInDecimalSig{}, &builtinInRealSig{}, &builtinInTimeSig{}, &builtinInDurationSig{},
+		&builtinInJSONSig{}, &builtinRowSig{}, &builtinSetVarSig{}, &builtinGetVarSig{}, &builtinLockSig{},
+		&builtinReleaseLockSig{}, &builtinValuesIntSig{}, &builtinValuesRealSig{}, &builtinValuesDecimalSig{}, &builtinValuesStringSig{},
+		&builtinValuesTimeSig{}, &builtinValuesDurationSig{}, &builtinValuesJSONSig{}, &builtinBitCountSig{}, &builtinGetParamStringSig{},
+		&builtinLengthSig{}, &builtinASCIISig{}, &builtinConcatSig{}, &builtinConcatWSSig{}, &builtinLeftBinarySig{},
+		&builtinLeftSig{}, &builtinRightBinarySig{}, &builtinRightSig{}, &builtinRepeatSig{}, &builtinLowerSig{},
+		&builtinReverseSig{}, &builtinReverseBinarySig{}, &builtinSpaceSig{}, &builtinUpperSig{}, &builtinStrcmpSig{},
+		&builtinReplaceSig{}, &builtinConvertSig{}, &builtinSubstringBinary2ArgsSig{}, &builtinSubstringBinary3ArgsSig{}, &builtinSubstring2ArgsSig{},
+		&builtinSubstring3ArgsSig{}, &builtinSubstringIndexSig{}, &builtinLocate2ArgsSig{}, &builtinLocate3ArgsSig{}, &builtinLocateBinary2ArgsSig{},
+		&builtinLocateBinary3ArgsSig{}, &builtinHexStrArgSig{}, &builtinHexIntArgSig{}, &builtinUnHexSig{}, &builtinTrim1ArgSig{},
+		&builtinTrim2ArgsSig{}, &builtinTrim3ArgsSig{}, &builtinLTrimSig{}, &builtinRTrimSig{}, &builtinLpadSig{},
+		&builtinLpadBinarySig{}, &builtinRpadSig{}, &builtinRpadBinarySig{}, &builtinBitLengthSig{}, &builtinCharSig{},
+		&builtinCharLengthSig{}, &builtinFindInSetSig{}, &builtinMakeSetSig{}, &builtinOctIntSig{}, &builtinOctStringSig{},
+		&builtinOrdSig{}, &builtinQuoteSig{}, &builtinBinSig{}, &builtinEltSig{}, &builtinExportSet3ArgSig{},
+		&builtinExportSet4ArgSig{}, &builtinExportSet5ArgSig{}, &builtinFormatWithLocaleSig{}, &builtinFormatSig{}, &builtinFromBase64Sig{},
+		&builtinToBase64Sig{}, &builtinInsertBinarySig{}, &builtinInsertSig{}, &builtinInstrSig{}, &builtinInstrBinarySig{},
+		&builtinFieldRealSig{}, &builtinFieldIntSig{}, &builtinFieldStringSig{}, &builtinDateSig{}, &builtinDateLiteralSig{},
+		&builtinDateDiffSig{}, &builtinNullTimeDiffSig{}, &builtinTimeStringTimeDiffSig{}, &builtinDurationStringTimeDiffSig{}, &builtinDurationDurationTimeDiffSig{},
+		&builtinStringTimeTimeDiffSig{}, &builtinStringDurationTimeDiffSig{}, &builtinStringStringTimeDiffSig{}, &builtinTimeTimeTimeDiffSig{}, &builtinDateFormatSig{},
+		&builtinHourSig{}, &builtinMinuteSig{}, &builtinSecondSig{}, &builtinMicroSecondSig{}, &builtinMonthSig{},
+		&builtinMonthNameSig{}, &builtinNowWithArgSig{}, &builtinNowWithoutArgSig{}, &builtinDayNameSig{}, &builtinDayOfMonthSig{},
+		&builtinDayOfWeekSig{}, &builtinDayOfYearSig{}, &builtinWeekWithModeSig{}, &builtinWeekWithoutModeSig{}, &builtinWeekDaySig{},
+		&builtinWeekOfYearSig{}, &builtinYearSig{}, &builtinYearWeekWithModeSig{}, &builtinYearWeekWithoutModeSig{}, &builtinGetFormatSig{},
+		&builtinSysDateWithFspSig{}, &builtinSysDateWithoutFspSig{}, &builtinCurrentDateSig{}, &builtinCurrentTime0ArgSig{}, &builtinCurrentTime1ArgSig{},
+		&builtinTimeSig{}, &builtinTimeLiteralSig{}, &builtinUTCDateSig{}, &builtinUTCTimestampWithArgSig{}, &builtinUTCTimestampWithoutArgSig{},
+		&builtinAddDatetimeAndDurationSig{}, &builtinAddDatetimeAndStringSig{}, &builtinAddTimeDateTimeNullSig{}, &builtinAddStringAndDurationSig{}, &builtinAddStringAndStringSig{},
+		&builtinAddTimeStringNullSig{}, &builtinAddDurationAndDurationSig{}, &builtinAddDurationAndStringSig{}, &builtinAddTimeDurationNullSig{}, &builtinAddDateAndDurationSig{},
+		&builtinAddDateAndStringSig{}, &builtinSubDatetimeAndDurationSig{}, &builtinSubDatetimeAndStringSig{}, &builtinSubTimeDateTimeNullSig{}, &builtinSubStringAndDurationSig{},
+		&builtinSubStringAndStringSig{}, &builtinSubTimeStringNullSig{}, &builtinSubDurationAndDurationSig{}, &builtinSubDurationAndStringSig{}, &builtinSubTimeDurationNullSig{},
+		&builtinSubDateAndDurationSig{}, &builtinSubDateAndStringSig{}, &builtinUnixTimestampCurrentSig{}, &builtinUnixTimestampIntSig{}, &builtinUnixTimestampDecSig{},
+		&builtinConvertTzSig{}, &builtinMakeDateSig{}, &builtinMakeTimeSig{}, &builtinPeriodAddSig{}, &builtinPeriodDiffSig{},
+		&builtinQuarterSig{}, &builtinSecToTimeSig{}, &builtinTimeToSecSig{}, &builtinTimestampAddSig{}, &builtinToDaysSig{},
+		&builtinToSecondsSig{}, &builtinUTCTimeWithArgSig{}, &builtinUTCTimeWithoutArgSig{}, &builtinTimestamp1ArgSig{}, &builtinTimestamp2ArgsSig{},
+		&builtinTimestampLiteralSig{}, &builtinLastDaySig{}, &builtinStrToDateDateSig{}, &builtinStrToDateDatetimeSig{}, &builtinStrToDateDurationSig{},
+		&builtinFromUnixTime1ArgSig{}, &builtinFromUnixTime2ArgSig{}, &builtinExtractDatetimeSig{}, &builtinExtractDurationSig{}, &builtinAddDateStringStringSig{},
+		&builtinAddDateStringIntSig{}, &builtinAddDateStringRealSig{}, &builtinAddDateStringDecimalSig{}, &builtinAddDateIntStringSig{}, &builtinAddDateIntIntSig{},
+		&builtinAddDateIntRealSig{}, &builtinAddDateIntDecimalSig{}, &builtinAddDateDatetimeStringSig{}, &builtinAddDateDatetimeIntSig{}, &builtinAddDateDatetimeRealSig{},
+		&builtinAddDateDatetimeDecimalSig{}, &builtinSubDateStringStringSig{}, &builtinSubDateStringIntSig{}, &builtinSubDateStringRealSig{}, &builtinSubDateStringDecimalSig{},
+		&builtinSubDateIntStringSig{}, &builtinSubDateIntIntSig{}, &builtinSubDateIntRealSig{}, &builtinSubDateIntDecimalSig{}, &builtinSubDateDatetimeStringSig{},
+		&builtinSubDateDatetimeIntSig{}, &builtinSubDateDatetimeRealSig{}, &builtinSubDateDatetimeDecimalSig{},
+	}
+	for _, f := range builtinFuncs {
+		cf := f.Clone()
+		c.Assert(reflect.TypeOf(f) == reflect.TypeOf(cf), check.IsTrue)
+	}
+}
+
+func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
+	con := &Constant{
+		Value: types.NewDatum(nil),
+	}
+	_, isNull, ok := GetUint64FromConstant(con)
+	c.Assert(ok, check.IsTrue)
+	c.Assert(isNull, check.IsTrue)
+
+	con = &Constant{
+		Value: types.NewIntDatum(-1),
+	}
+	_, _, ok = GetUint64FromConstant(con)
+	c.Assert(ok, check.IsFalse)
+
+	con.Value = types.NewIntDatum(1)
+	num, isNull, ok := GetUint64FromConstant(con)
+	c.Assert(ok, check.IsTrue)
+	c.Assert(isNull, check.IsFalse)
+	c.Assert(num, check.Equals, uint64(1))
+
+	con.Value = types.NewUintDatum(1)
+	num, _, _ = GetUint64FromConstant(con)
+	c.Assert(num, check.Equals, uint64(1))
+
+	con.DeferredExpr = &Constant{Value: types.NewIntDatum(1)}
+	num, _, _ = GetUint64FromConstant(con)
+	c.Assert(num, check.Equals, uint64(1))
+}
+
+func (s *testUtilSuite) TestSetExprColumnInOperand(c *check.C) {
+	col := &Column{RetType: newIntFieldType()}
+	c.Assert(setExprColumnInOperand(col).(*Column).InOperand, check.IsTrue)
+
+	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
+	c.Assert(err, check.IsNil)
+	fun := &ScalarFunction{Function: f}
+	setExprColumnInOperand(fun)
+	c.Assert(f.getArgs()[0].(*Column).InOperand, check.IsTrue)
+}
+
+func (s testUtilSuite) TestPopRowFirstArg(c *check.C) {
+	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
+	f, err := funcs[ast.RowFunc].getFunction(mock.NewContext(), []Expression{c1, c2, c3})
+	c.Assert(err, check.IsNil)
+	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
+	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
+	c.Assert(err, check.IsNil)
+	c.Assert(len(fun2.(*ScalarFunction).GetArgs()), check.Equals, 2)
+}
+
+func (s testUtilSuite) TestGetStrIntFromConstant(c *check.C) {
+	col := &Column{}
+	_, _, err := GetStringFromConstant(mock.NewContext(), col)
+	c.Assert(err, check.NotNil)
+
+	con := &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
+	_, isNull, err := GetStringFromConstant(mock.NewContext(), con)
+	c.Assert(err, check.IsNil)
+	c.Assert(isNull, check.IsTrue)
+
+	con = &Constant{RetType: newIntFieldType(), Value: types.NewIntDatum(1)}
+	ret, _, _ := GetStringFromConstant(mock.NewContext(), con)
+	c.Assert(ret, check.Equals, "1")
+
+	con = &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
+	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
+	c.Assert(isNull, check.IsTrue)
+
+	con = &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("abc")}
+	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
+	c.Assert(isNull, check.IsTrue)
+
+	con = &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("123")}
+	num, _, _ := GetIntFromConstant(mock.NewContext(), con)
+	c.Assert(num, check.Equals, 123)
 }
 
 func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
@@ -161,3 +392,66 @@ func BenchmarkExprFromSchema(b *testing.B) {
 	}
 	b.ReportAllocs()
 }
+
+// MockExpr is mainly for test.
+type MockExpr struct {
+	err error
+	t   *types.FieldType
+	i   interface{}
+}
+
+func (m *MockExpr) String() string                          { return "" }
+func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
+func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
+func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
+	if x, ok := m.i.(int64); ok {
+		return int64(x), false, m.err
+	}
+	return 0, m.i == nil, m.err
+}
+func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error) {
+	if x, ok := m.i.(float64); ok {
+		return float64(x), false, m.err
+	}
+	return 0, m.i == nil, m.err
+}
+func (m *MockExpr) EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error) {
+	if x, ok := m.i.(string); ok {
+		return string(x), false, m.err
+	}
+	return "", m.i == nil, m.err
+}
+func (m *MockExpr) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
+	if x, ok := m.i.(*types.MyDecimal); ok {
+		return x, false, m.err
+	}
+	return nil, m.i == nil, m.err
+}
+func (m *MockExpr) EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error) {
+	if x, ok := m.i.(types.Time); ok {
+		return x, false, m.err
+	}
+	return types.Time{}, m.i == nil, m.err
+}
+func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error) {
+	if x, ok := m.i.(types.Duration); ok {
+		return x, false, m.err
+	}
+	return types.Duration{}, m.i == nil, m.err
+}
+func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error) {
+	if x, ok := m.i.(json.BinaryJSON); ok {
+		return x, false, m.err
+	}
+	return json.BinaryJSON{}, m.i == nil, m.err
+}
+func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
+func (m *MockExpr) Clone() Expression                                 { return nil }
+func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
+func (m *MockExpr) IsCorrelated() bool                                { return false }
+func (m *MockExpr) ConstItem() bool                                   { return false }
+func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
+func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
+func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
+func (m *MockExpr) ExplainInfo() string                               { return "" }
+func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }

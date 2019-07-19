@@ -71,8 +71,8 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(ctx context.Context, args ...interface{}) (rs ResultSet, err error) {
-	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ctx, ts.id, args...)
+func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs ResultSet, err error) {
+	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ctx, ts.id, args)
 	if err != nil {
 		return nil, err
 	}
@@ -212,8 +212,8 @@ func (tc *TiDBContext) CommitTxn(ctx context.Context) error {
 }
 
 // SetProcessInfo implements QueryCtx SetProcessInfo method.
-func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte) {
-	tc.session.SetProcessInfo(sql, t, command)
+func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	tc.session.SetProcessInfo(sql, t, command, maxExecutionTime)
 }
 
 // RollbackTxn implements QueryCtx RollbackTxn method.
@@ -336,7 +336,7 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 }
 
 // ShowProcess implements QueryCtx ShowProcess method.
-func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
+func (tc *TiDBContext) ShowProcess() *util.ProcessInfo {
 	return tc.session.ShowProcess()
 }
 
@@ -357,11 +357,11 @@ type tidbResultSet struct {
 	closed    int32
 }
 
-func (trs *tidbResultSet) NewRecordBatch() *chunk.RecordBatch {
-	return trs.recordSet.NewRecordBatch()
+func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
+	return trs.recordSet.NewChunk()
 }
 
-func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.Chunk) error {
 	return trs.recordSet.Next(ctx, req)
 }
 

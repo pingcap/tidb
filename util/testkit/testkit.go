@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build !codes
+
 package testkit
 
 import (
@@ -23,8 +25,11 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -145,7 +150,11 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtID, args...)
+	params := make([]types.Datum, len(args))
+	for i := 0; i < len(params); i++ {
+		params[i] = types.NewDatum(args[i])
+	}
+	rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -236,29 +245,21 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.Comment
 
 // ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
 func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
-	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
-	err = rs.Close()
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
-	sRows := make([][]string, len(rows))
-	for i := range rows {
-		row := rows[i]
-		iRow := make([]string, row.Len())
-		for j := 0; j < row.Len(); j++ {
-			if row.IsNull(j) {
-				iRow[j] = "<nil>"
-			} else {
-				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
-				iRow[j], err = d.ToString()
-				tk.c.Assert(err, check.IsNil)
-			}
-		}
-		sRows[i] = iRow
-	}
+	sRows, err := session.ResultSetToStringSlice(ctx, tk.Se, rs)
+	tk.c.Check(err, check.IsNil, comment)
 	return &Result{rows: sRows, c: tk.c, comment: comment}
 }
 
 // Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
 	return testutil.RowsWithSep(" ", args...)
+}
+
+// GetTableID gets table ID by name.
+func (tk *TestKit) GetTableID(tableName string) int64 {
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
+	tk.c.Assert(err, check.IsNil)
+	return tbl.Meta().ID
 }

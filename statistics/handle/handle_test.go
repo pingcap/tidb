@@ -208,19 +208,19 @@ func (s *testStatsSuite) TestAvgColLen(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count, false), Equals, 1.0)
 
 	// The size of varchar type is LEN + BYTE, here is 1 + 7 = 8
-	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count), Equals, 8.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count), Equals, 4.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count), Equals, 16.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count, false), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count, false), Equals, 8.0)
 	testKit.MustExec("insert into t values(132, '123456789112', 1232.3, '2018-03-07 19:17:29')")
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count), Equals, 8.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count), Equals, 10.5)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count), Equals, 4.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count), Equals, 16.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count, false), Equals, 1.5)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count, false), Equals, 10.5)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count, false), Equals, 8.0)
 }
 
 func (s *testStatsSuite) TestDurationToTS(c *C) {
@@ -246,7 +246,7 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
 
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.LastUpdateVersion(), Equals, 2*unit)
 	statsTbl1 := h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Pseudo, IsFalse)
@@ -259,7 +259,7 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	tableInfo2 := tbl2.Meta()
 	// A smaller version write, and we can still read it.
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", unit, tableInfo2.ID)
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.LastUpdateVersion(), Equals, 2*unit)
 	statsTbl2 := h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
@@ -268,7 +268,7 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	testKit.MustExec("analyze table t1")
 	offset := 3 * unit
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+4, tableInfo1.ID)
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Count, Equals, int64(1))
@@ -277,7 +277,7 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	testKit.MustExec("analyze table t2")
 	// A smaller version write, and we can still read it.
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+3, tableInfo2.ID)
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Count, Equals, int64(1))
@@ -286,7 +286,7 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	testKit.MustExec("analyze table t2")
 	// A smaller version write, and we cannot read it. Because at this time, lastThree Version is 4.
 	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Count, Equals, int64(1))
@@ -295,13 +295,13 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	testKit.MustExec("alter table t2 add column c3 int")
 	testKit.MustExec("analyze table t2")
 	// load it with old schema.
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	c.Assert(statsTbl2.Columns[int64(3)], IsNil)
 	// Next time DDL updated.
 	is = do.InfoSchema()
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	// We can read it without analyze again! Thanks for PrevLastVersion.
@@ -330,7 +330,7 @@ func (s *testStatsSuite) TestLoadHist(c *C) {
 	for i := 0; i < rowCount; i++ {
 		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
-	h.DumpStatsDeltaToKV(handle.DumpAll)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	h.Update(do.InfoSchema())
 	newStatsTbl := h.GetTableStats(tableInfo)
 	// The stats table is updated.
@@ -356,7 +356,7 @@ func (s *testStatsSuite) TestLoadHist(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	newStatsTbl2 := h.GetTableStats(tableInfo)
 	c.Assert(newStatsTbl2 == newStatsTbl, IsFalse)
 	// The histograms is not updated.
@@ -379,7 +379,7 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	c.Assert(err, IsNil)
 	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
 	// `Lease` is not 0, so here we just change it.
-	h.Lease = time.Millisecond
+	h.SetLease(time.Millisecond)
 
 	h.Clear()
 	c.Assert(h.InitStats(is), IsNil)
@@ -388,7 +388,7 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	table1 := h.GetTableStats(tbl.Meta())
 	assertTableEqual(c, table0, table1)
-	h.Lease = 0
+	h.SetLease(0)
 }
 
 func (s *testStatsSuite) TestLoadStats(c *C) {
@@ -398,10 +398,10 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
-	oriLease := s.do.StatsHandle().Lease
-	s.do.StatsHandle().Lease = 1
+	oriLease := s.do.StatsHandle().Lease()
+	s.do.StatsHandle().SetLease(1)
 	defer func() {
-		s.do.StatsHandle().Lease = oriLease
+		s.do.StatsHandle().SetLease(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 
@@ -431,13 +431,13 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 	c.Assert(hg.Len(), Greater, 0)
 }
 
-func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain, error) {
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	session.SetSchemaLease(0)
-	session.SetStatsLease(statsLease)
+	session.DisableStats4Test()
 	domain.RunAutoAnalyze = false
 	do, err := session.BootstrapSession(store)
 	do.SetStatsUpdating(true)

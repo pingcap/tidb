@@ -15,7 +15,6 @@ package tables
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -156,7 +155,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			logutil.Logger(context.Background()).Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
+			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		locateExprs = append(locateExprs, exprs[0])
@@ -174,14 +173,14 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 				}
 			}
 			if column == nil {
-				logutil.Logger(context.Background()).Warn("partition pruning not applicable", zap.String("expression", partStr))
+				logutil.BgLogger().Warn("partition pruning not applicable", zap.String("expression", partStr))
 			}
 		}
 
 		exprs, err = expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			logutil.Logger(context.Background()).Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
+			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
@@ -209,7 +208,7 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			logutil.Logger(context.Background()).Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
+			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
@@ -218,7 +217,7 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 	exprs, err := expression.ParseSimpleExprsWithSchema(ctx, pi.Expr, schema)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
-		logutil.Logger(context.Background()).Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
+		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	if col, ok := exprs[0].(*expression.Column); ok {
@@ -332,7 +331,7 @@ func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.D
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
-func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
@@ -384,7 +383,7 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 		// unlikely to happen in step2.
 		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
+			logutil.BgLogger().Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
 			return errors.Trace(err)
 		}
 		return nil

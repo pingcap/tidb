@@ -23,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -42,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
+func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists tp;")
@@ -108,7 +109,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	a int not null,
 	b int not null
 	)
-	partition by range( id ) (
+	partition by range( a ) (
 		partition p1 values less than maxvalue,
 		partition p2 values less than (1991),
 		partition p3 values less than (1995)
@@ -141,7 +142,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	a int not null,
 	b int not null
 	)
-	partition by range( id ) (
+	partition by range( a ) (
 		partition p1 values less than (1991),
 		partition p2 values less than maxvalue,
 		partition p3 values less than maxvalue,
@@ -154,7 +155,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	a int not null,
 	b int not null
 	)
-	partition by range( id ) (
+	partition by range( a ) (
 		partition p1 values less than (19xx91),
 		partition p2 values less than maxvalue
 	);`)
@@ -233,9 +234,22 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	assertErrorCode(c, tk, `create table t33 (a timestamp, b int) partition by hash(a) partitions 30;`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
 	// TODO: fix this one
 	// assertErrorCode(c, tk, `create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`, tmysql.ErrPartitionFuncNotAllowed)
+
+	// Fix issue 8647
+	assertErrorCode(c, tk, `CREATE TABLE trb8 (
+		id int(11) DEFAULT NULL,
+		name varchar(50) DEFAULT NULL,
+		purchased date DEFAULT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin
+	PARTITION BY RANGE ( year(notexist.purchased) - 1 ) (
+		PARTITION p0 VALUES LESS THAN (1990),
+		PARTITION p1 VALUES LESS THAN (1995),
+		PARTITION p2 VALUES LESS THAN (2000),
+		PARTITION p3 VALUES LESS THAN (2005)
+	);`, tmysql.ErrBadField)
 }
 
-func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
+func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists employees;")
@@ -266,7 +280,7 @@ func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
 	partition by hash( year(hired) ) partitions 4;`)
 }
 
-func (s *testIntegrationSuite10) TestCreateTableWithRangeColumnPartition(c *C) {
+func (s *testIntegrationSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
@@ -311,14 +325,18 @@ create table log_message_1 (
 	cases := []testCase{
 		{
 			"create table t (id int) partition by range columns (id);",
-			ddl.ErrPartitionsMustBeDefined,
+			ast.ErrPartitionsMustBeDefined,
 		},
 		{
 			"create table t (id int) partition by range columns (id) (partition p0 values less than (1, 2));",
-			ddl.ErrPartitionColumnList,
+			ast.ErrPartitionColumnList,
 		},
 		{
 			"create table t (a int) partition by range columns (b) (partition p0 values less than (1, 2));",
+			ast.ErrPartitionColumnList,
+		},
+		{
+			"create table t (a int) partition by range columns (b) (partition p0 values less than (1));",
 			ddl.ErrFieldNotFoundPart,
 		},
 		{
@@ -358,7 +376,10 @@ create table log_message_1 (
 	}
 	for i, t := range cases {
 		_, err := tk.Exec(t.sql)
-		c.Assert(t.err.Equal(err), IsTrue, Commentf("case %d fail, sql = %s", i, t.sql))
+		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
+			i, t.sql, t.err, err,
+		))
 	}
 
 	tk.MustExec("create table t1 (a int, b char(3)) partition by range columns (a, b) (" +
@@ -366,7 +387,7 @@ create table log_message_1 (
 		"partition p1 values less than (2, maxvalue))")
 }
 
-func (s *testIntegrationSuite8) TestCreateTableWithKeyPartition(c *C) {
+func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists tm1;")
@@ -482,9 +503,18 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 		partition p5 values less than maxvalue
 	);`
 	assertErrorCode(c, tk, sql7, tmysql.ErrSameNamePartition)
+
+	sql8 := "alter table table3 add partition (partition p6);"
+	assertErrorCode(c, tk, sql8, tmysql.ErrPartitionRequiresValues)
+
+	sql9 := "alter table table3 add partition (partition p7 values in (2018));"
+	assertErrorCode(c, tk, sql9, tmysql.ErrPartitionWrongValues)
+
+	sql10 := "alter table table3 add partition partitions 4;"
+	assertErrorCode(c, tk, sql10, tmysql.ErrPartitionsMustBeDefined)
 }
 
-func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
+func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employees")
@@ -619,9 +649,12 @@ func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
 	tk.MustExec("alter table table4 drop partition PAR5;")
 	sql4 := "alter table table4 drop partition PAR0;"
 	assertErrorCode(c, tk, sql4, tmysql.ErrDropPartitionNonExistent)
+
+	tk.MustExec("CREATE TABLE t1 (a int(11), b varchar(64)) PARTITION BY HASH(a) PARTITIONS 3")
+	assertErrorCode(c, tk, "alter table t1 drop partition p2", tmysql.ErrOnlyOnRangeListPartition)
 }
 
-func (s *testIntegrationSuite11) TestAddPartitionTooManyPartitions(c *C) {
+func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	count := ddl.PartitionCountLimit
@@ -678,7 +711,7 @@ func checkPartitionDelRangeDone(c *C, s *testIntegrationSuite, partitionPrefix k
 	return hasOldPartitionData
 }
 
-func (s *testIntegrationSuite6) TestTruncatePartitionAndDropTable(c *C) {
+func (s *testIntegrationSuite5) TestTruncatePartitionAndDropTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	// Test truncate common table.
@@ -784,7 +817,7 @@ func (s *testIntegrationSuite6) TestTruncatePartitionAndDropTable(c *C) {
 	tk.MustExec("drop table if exists t5;")
 	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`create table t5(
-		id int, name varchar(50), 
+		id int, name varchar(50),
 		purchased date
 	)
 	partition by range( year(purchased) ) (
@@ -1141,6 +1174,10 @@ func (s *testIntegrationSuite2) TestPartitionCancelAddIndex(c *C) {
 	var checkErr error
 	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
+	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s.store, s.ctx, hook)
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
@@ -1395,7 +1432,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 	return num
 }
 
-func (s *testIntegrationSuite4) TestPartitionErrorCode(c *C) {
+func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// add partition
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
@@ -1435,4 +1472,144 @@ func (s *testIntegrationSuite4) TestPartitionErrorCode(c *C) {
 		);`)
 	_, err = tk.Exec("alter table t_part coalesce partition 4;")
 	c.Assert(ddl.ErrCoalesceOnlyOnHashPartition.Equal(err), IsTrue)
+}
+
+func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// add partition
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop database if exists test_db_with_partition_const")
+	tk.MustExec("create database test_db_with_partition_const")
+	tk.MustExec("use test_db_with_partition_const")
+
+	sql1 := `create table t1 ( id int ) 
+		partition by range(4) (
+		partition p1 values less than (10)
+		);`
+	assertErrorCode(c, tk, sql1, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql2 := `create table t2 ( time_recorded timestamp ) 
+		partition by range(TO_DAYS(time_recorded)) (
+		partition p1 values less than (1559192604)
+		);`
+	assertErrorCode(c, tk, sql2, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql3 := `create table t3 ( id int ) 
+		partition by range(DAY(id)) (
+		partition p1 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql3, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql4 := `create table t4 ( id int ) 
+		partition by hash(4) partitions 4
+		;`
+	assertErrorCode(c, tk, sql4, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql5 := `create table t5 ( time_recorded timestamp ) 
+		partition by range(to_seconds(time_recorded)) (
+		partition p1 values less than (1559192604)
+		);`
+	assertErrorCode(c, tk, sql5, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql6 := `create table t6 ( id int ) 
+		partition by range(to_seconds(id)) (
+		partition p1 values less than (1559192604)
+		);`
+	assertErrorCode(c, tk, sql6, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql7 := `create table t7 ( time_recorded timestamp ) 
+		partition by range(abs(time_recorded)) (
+		partition p1 values less than (1559192604)
+		);`
+	assertErrorCode(c, tk, sql7, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql8 := `create table t2332 ( time_recorded time )
+         partition by range(TO_DAYS(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql8, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql9 := `create table t1 ( id int ) 
+		partition by hash(4) partitions 4;`
+	assertErrorCode(c, tk, sql9, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql10 := `create table t1 ( id int ) 
+		partition by hash(ed) partitions 4;`
+	assertErrorCode(c, tk, sql10, tmysql.ErrBadField)
+
+	sql11 := `create table t2332 ( time_recorded time )
+         partition by range(TO_SECONDS(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql11, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql12 := `create table t2332 ( time_recorded time )
+         partition by range(TO_SECONDS(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql12, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql13 := `create table t2332 ( time_recorded time )
+         partition by range(day(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql13, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql14 := `create table t2332 ( time_recorded timestamp )
+         partition by range(day(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql14, tmysql.ErrWrongExprInPartitionFunc)
+}
+
+func (s *testIntegrationSuite5) TestConstAndTimezoneDepent2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// add partition
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop database if exists test_db_with_partition_const")
+	tk.MustExec("create database test_db_with_partition_const")
+	tk.MustExec("use test_db_with_partition_const")
+
+	tk.MustExec(`create table t1 ( time_recorded datetime ) 
+	partition by range(TO_DAYS(time_recorded)) (
+	partition p0 values less than (1));`)
+
+	tk.MustExec(`create table t2 ( time_recorded date ) 
+	partition by range(TO_DAYS(time_recorded)) (
+	partition p0 values less than (1));`)
+
+	tk.MustExec(`create table t3 ( time_recorded date ) 
+	partition by range(TO_SECONDS(time_recorded)) (
+	partition p0 values less than (1));`)
+
+	tk.MustExec(`create table t4 ( time_recorded date ) 
+	partition by range(TO_SECONDS(time_recorded)) (
+	partition p0 values less than (1));`)
+
+	tk.MustExec(`create table t5 ( time_recorded timestamp )
+	partition by range(unix_timestamp(time_recorded)) (
+		partition p1 values less than (1559192604)
+	);`)
+}
+
+func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists test_1465;")
+	tk.MustExec(`
+		create table test_1465 (a int)
+		partition by range(a) (
+			partition p1 values less than (10),
+			partition p2 values less than (20),
+			partition p3 values less than (30)
+		);
+	`)
+
+	_, err := tk.Exec("alter table test_1465 truncate partition p1, p2")
+	c.Assert(err, ErrorMatches, ".*can't run multi schema change")
+	_, err = tk.Exec("alter table test_1465 drop partition p1, p2")
+	c.Assert(err, ErrorMatches, ".*can't run multi schema change")
+
+	_, err = tk.Exec("alter table test_1465 partition by hash(a)")
+	c.Assert(err, ErrorMatches, ".*alter table partition is unsupported")
 }

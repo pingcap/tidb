@@ -250,6 +250,11 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 
+	value, op, isValidRange := handleUnsignedIntCol(ft, value, op)
+	if !isValidRange {
+		return nil
+	}
+
 	switch op {
 	case ast.EQ:
 		startPoint := point{value: value, start: true}
@@ -337,6 +342,29 @@ func HandlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType
 	default:
 		return val, nil
 	}
+}
+
+// handleUnsignedIntCol handles the case when unsigned column meets negative integer value.
+// The three returned values are: fixed constant value, fixed operator, and a boolean
+// which indicates whether the range is valid or not.
+func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
+	isIntegerType := mysql.IsIntegerType(ft.Tp)
+	isNegativeInteger := (val.Kind() == types.KindInt64 && val.GetInt64() < 0)
+
+	if !isUnsigned || !isIntegerType || !isNegativeInteger {
+		return val, op, true
+	}
+
+	// If the operator is GT, GE or NE, the range should be [0, +inf].
+	// Otherwise the value is out of valid range.
+	if op == ast.GT || op == ast.GE || op == ast.NE {
+		op = ast.GE
+		val.SetUint64(0)
+		return val, op, true
+	}
+
+	return val, op, false
 }
 
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []point {
@@ -588,13 +616,37 @@ func (r *builder) union(a, b []point) []point {
 	return r.merge(a, b, true)
 }
 
+func (r *builder) mergeSorted(a, b []point) []point {
+	ret := make([]point, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		less, err := rangePointLess(r.sc, a[i], b[j])
+		if err != nil {
+			r.err = err
+			return nil
+		}
+		if less {
+			ret = append(ret, a[i])
+			i++
+		} else {
+			ret = append(ret, b[j])
+			j++
+		}
+	}
+	if i < len(a) {
+		ret = append(ret, a[i:]...)
+	} else if j < len(b) {
+		ret = append(ret, b[j:]...)
+	}
+	return ret
+}
+
 func (r *builder) merge(a, b []point, union bool) []point {
-	sorter := pointSorter{points: append(a, b...), sc: r.sc}
-	sort.Sort(&sorter)
-	if sorter.err != nil {
-		r.err = sorter.err
+	mergedPoints := r.mergeSorted(a, b)
+	if r.err != nil {
 		return nil
 	}
+
 	var (
 		inRangeCount         int
 		requiredInRangeCount int
@@ -604,8 +656,8 @@ func (r *builder) merge(a, b []point, union bool) []point {
 	} else {
 		requiredInRangeCount = 2
 	}
-	merged := make([]point, 0, len(sorter.points))
-	for _, val := range sorter.points {
+	merged := make([]point, 0, len(mergedPoints))
+	for _, val := range mergedPoints {
 		if val.start {
 			inRangeCount++
 			if inRangeCount == requiredInRangeCount {

@@ -42,13 +42,11 @@ func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	b := &PlanBuilder{
-		ctx:       ctx,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
-	}
+	var is infoschema.InfoSchema
 	if ctx.GetSessionVars().TxnCtx.InfoSchema != nil {
-		b.is = ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+		is = ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
+	b := NewPlanBuilder(ctx, is)
 	fakePlan := LogicalTableDual{}.Init(ctx)
 	newExpr, _, err := b.rewrite(expr, fakePlan, nil, true)
 	if err != nil {
@@ -82,14 +80,14 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mock
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
 func (b *PlanBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
-	expr, resultPlan, err := b.rewriteWithPreprocess(exprNode, p, aggMapper, asScalar, nil)
+	expr, resultPlan, err := b.rewriteWithPreprocess(exprNode, p, aggMapper, nil, asScalar, nil)
 	return expr, resultPlan, err
 }
 
 // rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
 // before really using its node in `expressionRewriter.Leave`. In that case, we first call
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
-func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (expression.Expression, LogicalPlan, error) {
+func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (expression.Expression, LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -103,6 +101,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan
 	}
 
 	rewriter.aggrMap = aggMapper
+	rewriter.windowMap = windowMapper
 	rewriter.asScalar = asScalar
 	rewriter.preprocess = preprocess
 
@@ -153,13 +152,14 @@ func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast
 }
 
 type expressionRewriter struct {
-	ctxStack []expression.Expression
-	p        LogicalPlan
-	schema   *expression.Schema
-	err      error
-	aggrMap  map[*ast.AggregateFuncExpr]int
-	b        *PlanBuilder
-	ctx      sessionctx.Context
+	ctxStack  []expression.Expression
+	p         LogicalPlan
+	schema    *expression.Schema
+	err       error
+	aggrMap   map[*ast.AggregateFuncExpr]int
+	windowMap map[*ast.WindowFuncExpr]int
+	b         *PlanBuilder
+	ctx       sessionctx.Context
 
 	// asScalar indicates the return value must be a scalar value.
 	// NOTE: This value can be changed during expression rewritten.
@@ -315,7 +315,16 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(er.ctx, col.Index, col.RetType))
 		return inNode, true
 	case *ast.WindowFuncExpr:
-		return er.handleWindowFunction(v)
+		index, ok := -1, false
+		if er.windowMap != nil {
+			index, ok = er.windowMap[v]
+		}
+		if !ok {
+			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
+			return inNode, true
+		}
+		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
+		return inNode, true
 	case *ast.FuncCallExpr:
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter++
@@ -324,17 +333,6 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.asScalar = true
 	}
 	return inNode, false
-}
-
-func (er *expressionRewriter) handleWindowFunction(v *ast.WindowFuncExpr) (ast.Node, bool) {
-	windowPlan, err := er.b.buildWindowFunction(er.p, v, er.aggrMap)
-	if err != nil {
-		er.err = err
-		return v, false
-	}
-	er.ctxStack = append(er.ctxStack, windowPlan.GetWindowResultColumn())
-	er.p = windowPlan
-	return v, true
 }
 
 func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r expression.Expression, not bool) {
@@ -445,7 +443,11 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	if useMin {
 		funcName = ast.AggFuncMin
 	}
-	funcMaxOrMin := aggregation.NewAggFuncDesc(er.ctx, funcName, []expression.Expression{rexpr}, false)
+	funcMaxOrMin, err := aggregation.NewAggFuncDesc(er.ctx, funcName, []expression.Expression{rexpr}, false)
+	if err != nil {
+		er.err = err
+		return
+	}
 
 	// Create a column and append it to the schema of that aggregation.
 	colMaxOrMin := &expression.Column{
@@ -467,7 +469,11 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	innerIsNull := expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr)
 	outerIsNull := expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), lexpr)
 
-	funcSum := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
+	funcSum, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
+	if err != nil {
+		er.err = err
+		return
+	}
 	colSum := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_sum"),
 		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -478,7 +484,11 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	innerHasNull := expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum, expression.Zero)
 
 	// Build `count(1)` aggregation to check if subquery is empty.
-	funcCount := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{expression.One}, false)
+	funcCount, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{expression.One}, false)
+	if err != nil {
+		er.err = err
+		return
+	}
 	colCount := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_cnt"),
 		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -539,8 +549,16 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 // t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	firstRowFunc, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	if err != nil {
+		er.err = err
+		return
+	}
+	countFunc, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	if err != nil {
+		er.err = err
+		return
+	}
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.ctx)
@@ -565,8 +583,16 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
 // t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	firstRowFunc, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	if err != nil {
+		er.err = err
+		return
+	}
+	countFunc, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	if err != nil {
+		er.err = err
+		return
+	}
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.ctx)
@@ -712,7 +738,11 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.b.optFlag |= flagEliminateProjection
 		er.b.optFlag |= flagJoinReOrder
 		// Build distinct for the inner query.
-		agg := er.b.buildDistinct(np, np.Schema().Len())
+		agg, err := er.b.buildDistinct(np, np.Schema().Len())
+		if err != nil {
+			er.err = err
+			return v, true
+		}
 		for _, col := range agg.schema.Columns {
 			col.IsReferenced = true
 		}
@@ -1095,7 +1125,11 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	if leftEt == types.ETInt {
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
-				args[i], _ = expression.RefineComparedConstant(er.ctx, mysql.HasUnsignedFlag(leftFt.Flag), c, opcode.EQ)
+				var isExceptional bool
+				args[i], isExceptional = expression.RefineComparedConstant(er.ctx, *leftFt, c, opcode.EQ)
+				if isExceptional {
+					args[i] = c
+				}
 			}
 		}
 	}

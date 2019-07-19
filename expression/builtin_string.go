@@ -19,7 +19,6 @@ package expression
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -266,24 +265,33 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
-			logutil.Logger(context.Background()).Warn("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
+			logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
 		}
 		bf.tp.Flen += argType.Flen
 	}
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinConcatSig{bf}
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	sig := &builtinConcatSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinConcatSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinConcatSig) Clone() builtinFunc {
 	newSig := &builtinConcatSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -295,6 +303,10 @@ func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err
 		d, isNull, err = a.EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return d, isNull, err
+		}
+		if uint64(len(s)+len(d)) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
+			return "", true, nil
 		}
 		s = append(s, []byte(d)...)
 	}
@@ -324,7 +336,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if i != 0 {
 			if argType.Flen < 0 {
 				bf.tp.Flen = mysql.MaxBlobWidth
-				logutil.Logger(context.Background()).Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
+				logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
 			bf.tp.Flen += argType.Flen
 		}
@@ -338,17 +350,25 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 
-	sig := &builtinConcatWSSig{bf}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	sig := &builtinConcatWSSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinConcatWSSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinConcatWSSig) Clone() builtinFunc {
 	newSig := &builtinConcatWSSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -358,25 +378,35 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 	args := b.getArgs()
 	strs := make([]string, 0, len(args))
 	var sep string
-	for i, arg := range args {
-		val, isNull, err := arg.EvalString(b.ctx, row)
+	var targetLength int
+
+	N := len(args)
+	if N > 0 {
+		val, isNull, err := args[0].EvalString(b.ctx, row)
+		if err != nil || isNull {
+			// If the separator is NULL, the result is NULL.
+			return val, isNull, err
+		}
+		sep = val
+	}
+	for i := 1; i < N; i++ {
+		val, isNull, err := args[i].EvalString(b.ctx, row)
 		if err != nil {
 			return val, isNull, err
 		}
-
 		if isNull {
-			// If the separator is NULL, the result is NULL.
-			if i == 0 {
-				return val, isNull, nil
-			}
 			// CONCAT_WS() does not skip empty strings. However,
 			// it does skip any NULL values after the separator argument.
 			continue
 		}
 
-		if i == 0 {
-			sep = val
-			continue
+		targetLength += len(val)
+		if i > 1 {
+			targetLength += len(sep)
+		}
+		if uint64(targetLength) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
+			return "", true, nil
 		}
 		strs = append(strs, val)
 	}
@@ -1796,7 +1826,7 @@ func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		length, isNull, err := constant.EvalInt(ctx, chunk.Row{})
 		if err != nil {
-			logutil.Logger(context.Background()).Error("eval `Flen` for LPAD/RPAD", zap.Error(err))
+			logutil.BgLogger().Error("eval `Flen` for LPAD/RPAD", zap.Error(err))
 		}
 		if isNull || err != nil || length > mysql.MaxBlobWidth {
 			return mysql.MaxBlobWidth
@@ -2176,7 +2206,7 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 	oldStr := result
 	result, _, err = transform.String(encoding.NewDecoder(), result)
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("change charset of string",
+		logutil.BgLogger().Warn("change charset of string",
 			zap.String("string", oldStr),
 			zap.String("charset", charsetName),
 			zap.Error(err))
@@ -3326,14 +3356,10 @@ func (b *builtinInsertBinarySig) evalString(row chunk.Row) (string, bool, error)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	strLength := int64(len(str))
 
 	pos, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
-	}
-	if pos < 1 || pos > strLength {
-		return str, false, nil
 	}
 
 	length, isNull, err := b.args[2].EvalInt(b.ctx, row)
@@ -3346,6 +3372,10 @@ func (b *builtinInsertBinarySig) evalString(row chunk.Row) (string, bool, error)
 		return "", true, err
 	}
 
+	strLength := int64(len(str))
+	if pos < 1 || pos > strLength {
+		return str, false, nil
+	}
 	if length > strLength-pos+1 || length < 0 {
 		length = strLength - pos + 1
 	}
@@ -3377,15 +3407,10 @@ func (b *builtinInsertSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-	runes := []rune(str)
-	runeLength := int64(len(runes))
 
 	pos, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
-	}
-	if pos < 1 || pos > runeLength {
-		return str, false, nil
 	}
 
 	length, isNull, err := b.args[2].EvalInt(b.ctx, row)
@@ -3398,6 +3423,11 @@ func (b *builtinInsertSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, err
 	}
 
+	runes := []rune(str)
+	runeLength := int64(len(runes))
+	if pos < 1 || pos > runeLength {
+		return str, false, nil
+	}
 	if length > runeLength-pos+1 || length < 0 {
 		length = runeLength - pos + 1
 	}

@@ -122,8 +122,8 @@ const (
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
-	// tidb_pessimistic_lock is used to control the transactin behavior.
-	TiDBPessimisticLock = "tidb_pessimistic_lock"
+	// tidb_txn_mode is used to control the transaction behavior.
+	TiDBTxnMode = "tidb_txn_mode"
 
 	// tidb_enable_table_partition is used to control table partition feature.
 	// The valid value include auto/on/off:
@@ -138,6 +138,9 @@ const (
 	// tidb_skip_isolation_level_check is used to control whether to return error when set unsupported transaction
 	// isolation level.
 	TiDBSkipIsolationLevelCheck = "tidb_skip_isolation_level_check"
+
+	// TiDBLowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
+	TiDBLowResolutionTSO = "tidb_low_resolution_tso"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -241,8 +244,14 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
-	// TiDBWaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
-	TiDBWaitTableSplitFinish = "tidb_wait_table_split_finish"
+	// tidb_scatter_region will scatter the regions for DDLs when it is ON.
+	TiDBScatterRegion = "tidb_scatter_region"
+
+	// TiDBWaitSplitRegionFinish defines the split region behaviour is sync or async.
+	TiDBWaitSplitRegionFinish = "tidb_wait_split_region_finish"
+
+	// TiDBWaitSplitRegionTimeout uses to set the split and scatter region back off time.
+	TiDBWaitSplitRegionTimeout = "tidb_wait_split_region_timeout"
 
 	// tidb_force_priority defines the operations priority of all statements.
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
@@ -268,66 +277,79 @@ const (
 
 	// TiDBEnableFastAnalyze indicates to use fast analyze.
 	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
+
+	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
+	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
+
+	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
+	TiDBEnableIndexMerge = "tidb_enable_index_merge"
+
+	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
+	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
 )
 
 // Default TiDB system variable values.
 const (
-	DefHostname                      = "localhost"
-	DefIndexLookupConcurrency        = 4
-	DefIndexLookupJoinConcurrency    = 4
-	DefIndexSerialScanConcurrency    = 1
-	DefIndexJoinBatchSize            = 25000
-	DefIndexLookupSize               = 20000
-	DefDistSQLScanConcurrency        = 15
-	DefBuildStatsConcurrency         = 4
-	DefAutoAnalyzeRatio              = 0.5
-	DefAutoAnalyzeStartTime          = "00:00 +0000"
-	DefAutoAnalyzeEndTime            = "23:59 +0000"
-	DefChecksumTableConcurrency      = 4
-	DefSkipUTF8Check                 = false
-	DefOptAggPushDown                = false
-	DefOptWriteRowID                 = false
-	DefOptCorrelationThreshold       = 0.9
-	DefOptCorrelationExpFactor       = 0
-	DefOptInSubqToJoinAndAgg         = true
-	DefBatchInsert                   = false
-	DefBatchDelete                   = false
-	DefBatchCommit                   = false
-	DefCurretTS                      = 0
-	DefInitChunkSize                 = 32
-	DefMaxChunkSize                  = 1024
-	DefDMLBatchSize                  = 20000
-	DefMaxPreparedStmtCount          = -1
-	DefWaitTimeout                   = 0
-	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
-	DefTiDBMemQuotaMergeJoin         = 32 << 30 // 32GB.
-	DefTiDBMemQuotaSort              = 32 << 30 // 32GB.
-	DefTiDBMemQuotaTopn              = 32 << 30 // 32GB.
-	DefTiDBMemQuotaIndexLookupReader = 32 << 30 // 32GB.
-	DefTiDBMemQuotaIndexLookupJoin   = 32 << 30 // 32GB.
-	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
-	DefTiDBMemQuotaDistSQL           = 32 << 30 // 32GB.
-	DefTiDBGeneralLog                = 0
-	DefTiDBRetryLimit                = 10
-	DefTiDBDisableTxnAutoRetry       = true
-	DefTiDBConstraintCheckInPlace    = false
-	DefTiDBHashJoinConcurrency       = 5
-	DefTiDBProjectionConcurrency     = 4
-	DefTiDBOptimizerSelectivityLevel = 0
-	DefTiDBPessimisticLock           = 0
-	DefTiDBDDLReorgWorkerCount       = 16
-	DefTiDBDDLReorgBatchSize         = 1024
-	DefTiDBDDLErrorCountLimit        = 512
-	DefTiDBHashAggPartialConcurrency = 4
-	DefTiDBHashAggFinalConcurrency   = 4
-	DefTiDBForcePriority             = mysql.NoPriority
-	DefTiDBUseRadixJoin              = false
-	DefEnableWindowFunction          = false
-	DefTiDBOptJoinReorderThreshold   = 0
-	DefTiDBDDLSlowOprThreshold       = 300
-	DefTiDBUseFastAnalyze            = false
-	DefTiDBSkipIsolationLevelCheck   = false
-	DefTiDBWaitTableSplitFinish      = false
+	DefHostname                        = "localhost"
+	DefIndexLookupConcurrency          = 4
+	DefIndexLookupJoinConcurrency      = 4
+	DefIndexSerialScanConcurrency      = 1
+	DefIndexJoinBatchSize              = 25000
+	DefIndexLookupSize                 = 20000
+	DefDistSQLScanConcurrency          = 15
+	DefBuildStatsConcurrency           = 4
+	DefAutoAnalyzeRatio                = 0.5
+	DefAutoAnalyzeStartTime            = "00:00 +0000"
+	DefAutoAnalyzeEndTime              = "23:59 +0000"
+	DefChecksumTableConcurrency        = 4
+	DefSkipUTF8Check                   = false
+	DefOptAggPushDown                  = false
+	DefOptWriteRowID                   = false
+	DefOptCorrelationThreshold         = 0.9
+	DefOptCorrelationExpFactor         = 1
+	DefOptInSubqToJoinAndAgg           = true
+	DefBatchInsert                     = false
+	DefBatchDelete                     = false
+	DefBatchCommit                     = false
+	DefCurretTS                        = 0
+	DefInitChunkSize                   = 32
+	DefMaxChunkSize                    = 1024
+	DefDMLBatchSize                    = 20000
+	DefMaxPreparedStmtCount            = -1
+	DefWaitTimeout                     = 0
+	DefTiDBMemQuotaHashJoin            = 32 << 30 // 32GB.
+	DefTiDBMemQuotaMergeJoin           = 32 << 30 // 32GB.
+	DefTiDBMemQuotaSort                = 32 << 30 // 32GB.
+	DefTiDBMemQuotaTopn                = 32 << 30 // 32GB.
+	DefTiDBMemQuotaIndexLookupReader   = 32 << 30 // 32GB.
+	DefTiDBMemQuotaIndexLookupJoin     = 32 << 30 // 32GB.
+	DefTiDBMemQuotaNestedLoopApply     = 32 << 30 // 32GB.
+	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
+	DefTiDBGeneralLog                  = 0
+	DefTiDBRetryLimit                  = 10
+	DefTiDBDisableTxnAutoRetry         = true
+	DefTiDBConstraintCheckInPlace      = false
+	DefTiDBHashJoinConcurrency         = 5
+	DefTiDBProjectionConcurrency       = 4
+	DefTiDBOptimizerSelectivityLevel   = 0
+	DefTiDBTxnMode                     = ""
+	DefTiDBDDLReorgWorkerCount         = 16
+	DefTiDBDDLReorgBatchSize           = 1024
+	DefTiDBDDLErrorCountLimit          = 512
+	DefTiDBHashAggPartialConcurrency   = 4
+	DefTiDBHashAggFinalConcurrency     = 4
+	DefTiDBForcePriority               = mysql.NoPriority
+	DefTiDBUseRadixJoin                = false
+	DefEnableWindowFunction            = true
+	DefTiDBOptJoinReorderThreshold     = 0
+	DefTiDBDDLSlowOprThreshold         = 300
+	DefTiDBUseFastAnalyze              = false
+	DefTiDBSkipIsolationLevelCheck     = false
+	DefTiDBExpensiveQueryTimeThreshold = 60 // 60s
+	DefTiDBScatterRegion               = false
+	DefTiDBWaitSplitRegionFinish       = true
+	DefWaitSplitRegionTimeout          = 300 // 300s
+	DefTiDBEnableNoopFuncs             = false
 )
 
 // Process global variables.
@@ -341,8 +363,10 @@ var (
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold   uint32 = DefTiDBDDLSlowOprThreshold
-	ForcePriority                = int32(DefTiDBForcePriority)
-	ServerHostname, _            = os.Hostname()
-	MaxOfMaxAllowedPacket uint64 = 1073741824
+	DDLSlowOprThreshold            uint32 = DefTiDBDDLSlowOprThreshold
+	ForcePriority                         = int32(DefTiDBForcePriority)
+	ServerHostname, _                     = os.Hostname()
+	MaxOfMaxAllowedPacket          uint64 = 1073741824
+	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
+	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 )

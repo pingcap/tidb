@@ -21,7 +21,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -47,7 +46,7 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable(), MockView()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView()})
 	s.ctx = MockContext()
 	s.Parser = parser.New()
 }
@@ -629,43 +628,43 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h < 31",
+			sql:  "select * from t where t.ptn < 31",
 			best: "UnionAll{Partition(41)->Partition(42)}->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h < 61",
+			sql:  "select * from t where t.ptn < 61",
 			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h > 17 and t.h < 61",
+			sql:  "select * from t where t.ptn > 17 and t.ptn < 61",
 			best: "UnionAll{Partition(42)->Partition(43)}->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h < 8",
+			sql:  "select * from t where t.ptn < 8",
 			best: "Partition(41)->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h > 128",
+			sql:  "select * from t where t.ptn > 128",
 			best: "Partition(45)->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h > 128",
+			sql:  "select * from t where t.ptn > 128",
 			best: "Dual->Projection",
 			is:   is1,
 		},
 		{
 			// NULL will be located in the first partition.
-			sql:  "select * from t where t.h is null",
+			sql:  "select * from t where t.ptn is null",
 			best: "Partition(41)->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h is null or t.h > 70",
+			sql:  "select * from t where t.ptn is null or t.ptn > 70",
 			best: "UnionAll{Partition(41)->Partition(44)}->Projection",
 			is:   is1,
 		},
@@ -829,7 +828,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",
-			plan: "Show([eq(cast(key), 0)])",
+			plan: "Show->Sel([eq(cast(key), 0)])",
 		},
 		{
 			sql:  "do sleep(5)",
@@ -1146,6 +1145,24 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				8:  {"test.t01.a"},
 				10: {"test.t3.a"},
 				12: {"test.t4.a"},
+			},
+		},
+		{
+			sql: "select 1 from (select count(b) as cnt from t) t1;",
+			ans: map[int][]string{
+				1: {"test.t.a"},
+			},
+		},
+		{
+			sql: "select count(1) from (select count(b) as cnt from t) t1;",
+			ans: map[int][]string{
+				1: {"test.t.a"},
+			},
+		},
+		{
+			sql: "select count(1) from (select count(b) as cnt from t group by c) t1;",
+			ans: map[int][]string{
+				1: {"test.t.c"},
 			},
 		},
 	}
@@ -1696,11 +1713,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			ctx:       MockContext(),
-			is:        s.is,
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
 		_, err = builder.Build(stmt)
 		c.Assert(err, IsNil, comment)
@@ -1814,11 +1827,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		plan, err := builder.Build(stmt)
 		if tt.err {
 			c.Assert(err, NotNil)
@@ -1946,11 +1955,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		p, err := builder.Build(stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
@@ -2057,11 +2062,7 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		p, err := builder.Build(stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
@@ -2088,11 +2089,7 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		p, err := builder.Build(stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
@@ -2180,6 +2177,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:3581]A window which depends on another cannot define partitioning.",
 		},
 		{
+			sql:    "SELECT FIRST_VALUE(a) RESPECT NULLS OVER (w1 PARTITION BY b ORDER BY b ASC, a DESC ROWS 2 PRECEDING) AS 'first_value', a, b FROM ( SELECT a, b FROM `t` ) as t WINDOW w1 AS (PARTITION BY b ORDER BY b ASC, a ASC );",
+			result: "[planner:3581]A window which depends on another cannot define partitioning.",
+		},
+		{
 			sql:    "select sum(a) over(w) from t window w as (rows between 1 preceding AND 1 following)",
 			result: "[planner:3582]Window 'w' has a frame definition, so cannot be referenced by another window.",
 		},
@@ -2196,8 +2197,8 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:3591]Window 'w1' is defined twice.",
 		},
 		{
-			sql:    "select sum(a) over(w1), avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(partition by test.t.a))->Window(avg(cast(test.t.a)) over())->Projection",
+			sql:    "select avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
+			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)) over(partition by test.t.a))->Projection",
 		},
 		{
 			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
@@ -2256,11 +2257,15 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
 		},
 		{
-			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max, min(avg(b)) over(rows between 1 preceding and 1 following) min from t group by c",
-			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_4) over(rows between 1 preceding and 1 following))->Window(min(sel_agg_5) over(rows between 1 preceding and 1 following))->Projection",
+			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max from t group by c",
+			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_3) over(rows between 1 preceding and 1 following))->Projection",
 		},
 		{
 			sql:    "select nth_value(a, 1.0) over() from t",
+			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
+			sql:    "SELECT NTH_VALUE(a, 1.0) OVER() FROM t",
 			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
 		{
@@ -2283,6 +2288,19 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "select nth_value(i_date, 1) over() from t",
 			result: "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1) over())->Projection",
 		},
+		{
+			sql:    "select sum(b) over w, sum(c) over w from t window w as (order by a)",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.b)), sum(cast(test.t.c)) over(order by test.t.a asc range between unbounded preceding and current row))->Projection",
+		},
+		{
+			sql:    "delete from t order by (sum(a) over())",
+			result: "[planner:3593]You cannot use the window function 'sum' in this context.'",
+		},
+		{
+			// The best execution order should be (a,c), (a, b, c), (a, b), (), it requires only 2 sort operations.
+			sql:    "select sum(a) over (partition by a order by b), sum(b) over (order by a, b, c), sum(c) over(partition by a order by c), sum(d) over() from t",
+			result: "TableReader(Table(t))->Sort->Window(sum(cast(test.t.c)) over(partition by test.t.a order by test.t.c asc range between unbounded preceding and current row))->Sort->Window(sum(cast(test.t.b)) over(order by test.t.a asc, test.t.b asc, test.t.c asc range between unbounded preceding and current row))->Window(sum(cast(test.t.a)) over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row))->Window(sum(cast(test.t.d)) over())->Projection",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)
@@ -2294,11 +2312,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		p, err := builder.Build(stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
@@ -2379,11 +2393,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
+		builder := NewPlanBuilder(MockContext(), s.is)
 		p, err := builder.Build(stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)

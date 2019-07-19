@@ -29,7 +29,10 @@ import (
 
 const (
 	rangeTaskDefaultStatLogInterval = time.Minute * 10
-	rangeTaskMetricsUpdateInterval  = time.Second * 10
+	defaultRegionsPerTask           = 128
+
+	lblCompletedRegions = "completed-regions"
+	lblFailedRegions    = "failed-regions"
 )
 
 // RangeTaskRunner splits a range into many ranges to process concurrently, and convenient to send requests to all
@@ -41,13 +44,22 @@ type RangeTaskRunner struct {
 	concurrency     int
 	handler         RangeTaskHandler
 	statLogInterval time.Duration
+	regionsPerTask  int
 
 	completedRegions int32
+	failedRegions    int32
+}
+
+// RangeTaskStat is used to count Regions that completed or failed to do the task.
+type RangeTaskStat struct {
+	CompletedRegions int
+	FailedRegions    int
 }
 
 // RangeTaskHandler is the type of functions that processes a task of a key range.
-// The function should return the number of successfully processed regions.
-type RangeTaskHandler = func(ctx context.Context, r kv.KeyRange) (int, error)
+// The function should calculate Regions that succeeded or failed to the task.
+// Returning error from the handler means the error caused the whole task should be stopped.
+type RangeTaskHandler = func(ctx context.Context, r kv.KeyRange) (RangeTaskStat, error)
 
 // NewRangeTaskRunner creates a RangeTaskRunner.
 //
@@ -66,7 +78,17 @@ func NewRangeTaskRunner(
 		concurrency:     concurrency,
 		handler:         handler,
 		statLogInterval: rangeTaskDefaultStatLogInterval,
+		regionsPerTask:  defaultRegionsPerTask,
 	}
+}
+
+// SetRegionsPerTask sets how many regions is in a divided task. Since regions may split and merge, it's possible that
+// a sub task contains not exactly specified number of regions.
+func (s *RangeTaskRunner) SetRegionsPerTask(regionsPerTask int) {
+	if regionsPerTask < 1 {
+		panic("RangeTaskRunner: regionsPerTask should be at least 1")
+	}
+	s.regionsPerTask = regionsPerTask
 }
 
 // SetStatLogInterval sets the time interval to log the stats.
@@ -78,6 +100,7 @@ func (s *RangeTaskRunner) SetStatLogInterval(interval time.Duration) {
 // Empty startKey or endKey means unbounded.
 func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKey []byte) error {
 	s.completedRegions = 0
+	metrics.TiKVRangeTaskStats.WithLabelValues(s.name, lblCompletedRegions).Set(0)
 
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
 		logutil.Logger(ctx).Info("empty range task executed. ignored",
@@ -95,8 +118,6 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 
 	// Periodically log the progress
 	statLogTicker := time.NewTicker(s.statLogInterval)
-	// Periodically update metrics
-	metricsTicker := time.NewTicker(rangeTaskMetricsUpdateInterval)
 
 	ctx, cancel := context.WithCancel(ctx)
 	taskCh := make(chan *kv.KeyRange, s.concurrency)
@@ -121,16 +142,15 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 			wg.Wait()
 		}
 		statLogTicker.Stop()
-		metricsTicker.Stop()
 		cancel()
+		metrics.TiKVRangeTaskStats.WithLabelValues(s.name, lblCompletedRegions).Set(0)
 	}()
 
 	// Iterate all regions and send each region's range as a task to the workers.
 	key := startKey
+Loop:
 	for {
 		select {
-		case <-ctx.Done():
-			return errors.Trace(ctx.Err())
 		case <-statLogTicker.C:
 			logutil.Logger(ctx).Info("range task in progress",
 				zap.String("name", s.name),
@@ -138,15 +158,13 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 				zap.Binary("endKey", endKey),
 				zap.Int("concurrency", s.concurrency),
 				zap.Duration("cost time", time.Since(startTime)),
-				zap.Int32("completed regions", s.CompletedRegions()))
-		case <-metricsTicker.C:
-			metrics.TiKVRangeTaskStats.WithLabelValues(s.name, "completed").Set(float64(s.CompletedRegions()))
+				zap.Int("completed regions", s.CompletedRegions()))
 		default:
 		}
 
 		bo := NewBackoffer(ctx, locateRegionMaxBackoff)
 
-		loc, err := s.store.GetRegionCache().LocateKey(bo, key)
+		rangeEndKey, err := s.store.GetRegionCache().BatchLoadRegionsFromKey(bo, key, s.regionsPerTask)
 		if err != nil {
 			logutil.Logger(ctx).Info("range task failed",
 				zap.String("name", s.name),
@@ -158,7 +176,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		}
 		task := &kv.KeyRange{
 			StartKey: key,
-			EndKey:   loc.EndKey,
+			EndKey:   rangeEndKey,
 		}
 
 		isLast := len(task.EndKey) == 0 || (len(endKey) > 0 && bytes.Compare(task.EndKey, endKey) >= 0)
@@ -168,7 +186,12 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		}
 
 		pushTaskStartTime := time.Now()
-		taskCh <- task
+
+		select {
+		case taskCh <- task:
+		case <-ctx.Done():
+			break Loop
+		}
 		metrics.TiKVRangeTaskPushDuration.WithLabelValues(s.name).Observe(time.Since(pushTaskStartTime).Seconds())
 
 		if isLast {
@@ -198,7 +221,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		zap.Binary("startKey", startKey),
 		zap.Binary("endKey", endKey),
 		zap.Duration("cost time", time.Since(startTime)),
-		zap.Int32("completed regions", s.CompletedRegions()))
+		zap.Int("completed regions", s.CompletedRegions()))
 
 	return nil
 }
@@ -213,12 +236,18 @@ func (s *RangeTaskRunner) createWorker(taskCh chan *kv.KeyRange, wg *sync.WaitGr
 		wg:      wg,
 
 		completedRegions: &s.completedRegions,
+		failedRegions:    &s.failedRegions,
 	}
 }
 
 // CompletedRegions returns how many regions has been sent requests.
-func (s *RangeTaskRunner) CompletedRegions() int32 {
-	return atomic.LoadInt32(&s.completedRegions)
+func (s *RangeTaskRunner) CompletedRegions() int {
+	return int(atomic.LoadInt32(&s.completedRegions))
+}
+
+// FailedRegions returns how many regions has failed to do the task.
+func (s *RangeTaskRunner) FailedRegions() int {
+	return int(atomic.LoadInt32(&s.failedRegions))
 }
 
 // rangeTaskWorker is used by RangeTaskRunner to process tasks concurrently.
@@ -232,6 +261,7 @@ type rangeTaskWorker struct {
 	err error
 
 	completedRegions *int32
+	failedRegions    *int32
 }
 
 // run starts the worker. It collects all objects from `w.taskCh` and process them one by one.
@@ -246,8 +276,12 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 		default:
 		}
 
-		completedRegions, err := w.handler(ctx, *r)
-		atomic.AddInt32(w.completedRegions, int32(completedRegions))
+		stat, err := w.handler(ctx, *r)
+
+		atomic.AddInt32(w.completedRegions, int32(stat.CompletedRegions))
+		atomic.AddInt32(w.failedRegions, int32(stat.FailedRegions))
+		metrics.TiKVRangeTaskStats.WithLabelValues(w.name, lblCompletedRegions).Add(float64(stat.CompletedRegions))
+		metrics.TiKVRangeTaskStats.WithLabelValues(w.name, lblFailedRegions).Add(float64(stat.FailedRegions))
 
 		if err != nil {
 			logutil.Logger(ctx).Info("canceling range task because of error",

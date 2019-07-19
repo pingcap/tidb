@@ -15,10 +15,10 @@ package mocktikv
 
 import (
 	"bytes"
-	"context"
 	"math"
 	"sync"
 
+	"github.com/dgryski/go-farm"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/goleveldb/leveldb"
 	"github.com/pingcap/goleveldb/leveldb/iterator"
@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/deadlock"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -60,7 +61,8 @@ type MVCCLevelDB struct {
 	// mu used for lock
 	// leveldb can not guarantee multiple operations to be atomic, for example, read
 	// then write, another write may happen during it, so this lock is necessory.
-	mu sync.RWMutex
+	mu               sync.RWMutex
+	deadlockDetector *deadlock.Detector
 }
 
 const lockVer uint64 = math.MaxUint64
@@ -121,7 +123,7 @@ func NewMVCCLevelDB(path string) (*MVCCLevelDB, error) {
 		d, err = leveldb.OpenFile(path, &opt.Options{BlockCacheCapacity: 600 * 1024 * 1024})
 	}
 
-	return &MVCCLevelDB{db: d}, errors.Trace(err)
+	return &MVCCLevelDB{db: d, deadlockDetector: deadlock.NewDetector()}, errors.Trace(err)
 }
 
 // Iterator wraps iterator.Iterator to provide Valid() method.
@@ -168,13 +170,6 @@ func newScanIterator(db *leveldb.DB, startKey, endKey []byte) (*Iterator, []byte
 		startKey = key
 	}
 	return iter, startKey, nil
-}
-
-// iterDecoder tries to decode an Iterator value.
-// If current iterator value can be decoded by this decoder, store the value and call iter.Next(),
-// Otherwise current iterator is not touched and returns false.
-type iterDecoder interface {
-	Decode(iter *Iterator) (bool, error)
 }
 
 type lockDecoder struct {
@@ -265,37 +260,6 @@ func (dec *skipDecoder) Decode(iter *Iterator) (bool, error) {
 	return false, nil
 }
 
-type mvccEntryDecoder struct {
-	expectKey []byte
-	// mvccEntry represents values and lock is valid.
-	mvccEntry
-}
-
-// Decode decodes a mvcc entry.
-func (dec *mvccEntryDecoder) Decode(iter *Iterator) (bool, error) {
-	ldec := lockDecoder{expectKey: dec.expectKey}
-	ok, err := ldec.Decode(iter)
-	if err != nil {
-		return ok, errors.Trace(err)
-	}
-	if ok {
-		dec.mvccEntry.lock = &ldec.lock
-	}
-	for iter.Valid() {
-		vdec := valueDecoder{expectKey: dec.expectKey}
-		ok, err = vdec.Decode(iter)
-		if err != nil {
-			return ok, errors.Trace(err)
-		}
-		if !ok {
-			break
-		}
-		dec.mvccEntry.values = append(dec.mvccEntry.values, vdec.value)
-	}
-	succ := dec.mvccEntry.lock != nil || len(dec.mvccEntry.values) > 0
-	return succ, nil
-}
-
 // Get implements the MVCCStore interface.
 // key cannot be nil or []byte{}
 func (mvcc *MVCCLevelDB) Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
@@ -377,7 +341,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()
 	if err != nil {
-		logutil.Logger(context.Background()).Error("scan new iterator fail", zap.Error(err))
+		logutil.BgLogger().Error("scan new iterator fail", zap.Error(err))
 		return nil
 	}
 
@@ -401,7 +365,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 		skip := skipDecoder{currKey}
 		ok, err = skip.Decode(iter)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("seek to next key error", zap.Error(err))
+			logutil.BgLogger().Error("seek to next key error", zap.Error(err))
 			break
 		}
 		currKey = skip.currKey
@@ -456,7 +420,7 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 			helper.entry.values = append(helper.entry.values, value)
 		}
 		if err != nil {
-			logutil.Logger(context.Background()).Error("unmarshal fail", zap.Error(err))
+			logutil.BgLogger().Error("unmarshal fail", zap.Error(err))
 			break
 		}
 		succ = iter.Prev()
@@ -507,7 +471,7 @@ func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary 
 	batch := &leveldb.Batch{}
 	errs := make([]error, 0, len(mutations))
 	for _, m := range mutations {
-		err := pessimisticLockMutation(mvcc.db, batch, m, startTS, forUpdateTS, primary, ttl)
+		err := mvcc.pessimisticLockMutation(batch, m, startTS, forUpdateTS, primary, ttl)
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
@@ -517,15 +481,15 @@ func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary 
 		return errs
 	}
 	if err := mvcc.db.Write(batch, nil); err != nil {
-		return nil
+		return []error{err}
 	}
 
 	return errs
 }
 
-func pessimisticLockMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS, forUpdateTS uint64, primary []byte, ttl uint64) error {
+func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS, forUpdateTS uint64, primary []byte, ttl uint64) error {
 	startKey := mvccEncode(mutation.Key, lockVer)
-	iter := newIterator(db, &util.Range{
+	iter := newIterator(mvcc.db, &util.Range{
 		Start: startKey,
 	})
 	defer iter.Release()
@@ -539,19 +503,28 @@ func pessimisticLockMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvr
 	}
 	if ok {
 		if dec.lock.startTS != startTS {
+			errDeadlock := mvcc.deadlockDetector.Detect(startTS, dec.lock.startTS, farm.Fingerprint64(mutation.Key))
+			if errDeadlock != nil {
+				return &ErrDeadlock{
+					LockKey:        mutation.Key,
+					LockTS:         dec.lock.startTS,
+					DealockKeyHash: errDeadlock.KeyHash,
+				}
+			}
 			return dec.lock.lockErr(mutation.Key)
 		}
 		return nil
 	}
-	if err = checkConflictValue(iter, mutation.Key, forUpdateTS); err != nil {
+	if err = checkConflictValue(iter, mutation, forUpdateTS); err != nil {
 		return err
 	}
 
 	lock := mvccLock{
-		startTS: startTS,
-		primary: primary,
-		op:      kvrpcpb.Op_PessimisticLock,
-		ttl:     ttl,
+		startTS:     startTS,
+		primary:     primary,
+		op:          kvrpcpb.Op_PessimisticLock,
+		ttl:         ttl,
+		forUpdateTS: forUpdateTS,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
 	writeValue, err := lock.MarshalBinary()
@@ -563,15 +536,67 @@ func pessimisticLockMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvr
 	return nil
 }
 
+// PessimisticRollback implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) PessimisticRollback(keys [][]byte, startTS, forUpdateTS uint64) []error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	anyError := false
+	batch := &leveldb.Batch{}
+	errs := make([]error, 0, len(keys))
+	for _, key := range keys {
+		err := pessimisticRollbackKey(mvcc.db, batch, key, startTS, forUpdateTS)
+		errs = append(errs, err)
+		if err != nil {
+			anyError = true
+		}
+	}
+	if anyError {
+		return errs
+	}
+	if err := mvcc.db.Write(batch, nil); err != nil {
+		return []error{err}
+	}
+	return errs
+}
+
+func pessimisticRollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, forUpdateTS uint64) error {
+	startKey := mvccEncode(key, lockVer)
+	iter := newIterator(db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	dec := lockDecoder{
+		expectKey: key,
+	}
+	ok, err := dec.Decode(iter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
+		lock := dec.lock
+		if lock.op == kvrpcpb.Op_PessimisticLock && lock.startTS == startTS && lock.forUpdateTS <= forUpdateTS {
+			batch.Delete(startKey)
+		}
+	}
+	return nil
+}
+
 // Prewrite implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64) []error {
+func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
+	mutations := req.Mutations
+	primary := req.PrimaryLock
+	startTS := req.StartVersion
+	ttl := req.LockTtl
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
 	anyError := false
 	batch := &leveldb.Batch{}
 	errs := make([]error, 0, len(mutations))
-	for _, m := range mutations {
+	txnSize := len(mutations)
+	for i, m := range mutations {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
 		if m.GetOp() == kvrpcpb.Op_Insert {
@@ -590,7 +615,8 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 				continue
 			}
 		}
-		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl)
+		isPessimisticLock := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i]
+		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl, uint64(txnSize), isPessimisticLock)
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
@@ -600,32 +626,60 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 		return errs
 	}
 	if err := mvcc.db.Write(batch, nil); err != nil {
-		return nil
+		return []error{err}
 	}
 
 	return errs
 }
 
-func checkConflictValue(iter *Iterator, key []byte, startTS uint64) error {
+func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) error {
 	dec := valueDecoder{
-		expectKey: key,
+		expectKey: m.Key,
 	}
 	ok, err := dec.Decode(iter)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if !ok {
+		if m.Assertion == kvrpcpb.Assertion_Exist {
+			logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
+		}
+		return nil
+	}
+
 	// Note that it's a write conflict here, even if the value is a rollback one.
-	if ok && dec.value.commitTS >= startTS {
+	if dec.value.commitTS >= startTS {
 		return &ErrConflict{
 			StartTS:    startTS,
 			ConflictTS: dec.value.commitTS,
-			Key:        key,
+			Key:        m.Key,
+		}
+	}
+
+	if m.Assertion == kvrpcpb.Assertion_NotExist {
+		for ok {
+			if dec.value.valueType == typeRollback {
+				ok, err = dec.Decode(iter)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else if dec.value.valueType == typeDelete {
+				break
+			} else {
+				if m.Op == kvrpcpb.Op_PessimisticLock {
+					return &ErrKeyAlreadyExist{
+						Key: m.Key,
+					}
+				}
+				logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
+				break
+			}
 		}
 	}
 	return nil
 }
 
-func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
+func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64, txnSize uint64, isPessimisticLock bool) error {
 	startKey := mvccEncode(mutation.Key, lockVer)
 	iter := newIterator(db, &util.Range{
 		Start: startKey,
@@ -648,7 +702,10 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		}
 		// Overwrite the pessimistic lock.
 	} else {
-		err = checkConflictValue(iter, mutation.Key, startTS)
+		if isPessimisticLock {
+			return ErrAbort("pessimistic lock not found")
+		}
+		err = checkConflictValue(iter, mutation, startTS)
 		if err != nil {
 			return err
 		}
@@ -664,17 +721,12 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		value:   mutation.Value,
 		op:      op,
 		ttl:     ttl,
+		txnSize: txnSize,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
 	writeValue, err := lock.MarshalBinary()
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	// Check assertions.
-	if (ok && mutation.Assertion == kvrpcpb.Assertion_NotExist) ||
-		(!ok && mutation.Assertion == kvrpcpb.Assertion_Exist) {
-		logutil.Logger(context.Background()).Error("ASSERTION FAIL!!!", zap.Stringer("mutation", mutation))
 	}
 
 	batch.Put(writeKey, writeValue)
@@ -684,7 +736,10 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 // Commit implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) Commit(keys [][]byte, startTS, commitTS uint64) error {
 	mvcc.mu.Lock()
-	defer mvcc.mu.Unlock()
+	defer func() {
+		mvcc.mu.Unlock()
+		mvcc.deadlockDetector.CleanUp(startTS)
+	}()
 
 	batch := &leveldb.Batch{}
 	for _, k := range keys {
@@ -758,7 +813,10 @@ func commitLock(batch *leveldb.Batch, lock mvccLock, key []byte, startTS, commit
 // Rollback implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) Rollback(keys [][]byte, startTS uint64) error {
 	mvcc.mu.Lock()
-	defer mvcc.mu.Unlock()
+	defer func() {
+		mvcc.mu.Unlock()
+		mvcc.deadlockDetector.CleanUp(startTS)
+	}()
 
 	batch := &leveldb.Batch{}
 	for _, k := range keys {
@@ -860,7 +918,10 @@ func getTxnCommitInfo(iter *Iterator, expectKey []byte, startTS uint64) (mvccVal
 // Cleanup implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
 	mvcc.mu.Lock()
-	defer mvcc.mu.Unlock()
+	defer func() {
+		mvcc.mu.Unlock()
+		mvcc.deadlockDetector.CleanUp(startTS)
+	}()
 
 	batch := &leveldb.Batch{}
 	err := rollbackKey(mvcc.db, batch, key, startTS)
@@ -983,6 +1044,72 @@ func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[
 		}
 		currKey = skip.currKey
 	}
+	return mvcc.db.Write(batch, nil)
+}
+
+// GC implements the MVCCStore interface
+func (mvcc *MVCCLevelDB) GC(startKey, endKey []byte, safePoint uint64) error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
+	defer iter.Release()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Mock TiKV usually doesn't need to process large amount of data. So write it in a single batch.
+	batch := &leveldb.Batch{}
+
+	for iter.Valid() {
+		lockDec := lockDecoder{expectKey: currKey}
+		ok, err := lockDec.Decode(iter)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok && lockDec.lock.startTS <= safePoint {
+			return errors.Errorf(
+				"key %+q has lock with startTs %v which is under safePoint %v",
+				currKey,
+				lockDec.lock.startTS,
+				safePoint)
+		}
+
+		keepNext := true
+		dec := valueDecoder{expectKey: currKey}
+
+		for iter.Valid() {
+			ok, err := dec.Decode(iter)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			if !ok {
+				// Go to the next key
+				currKey, _, err = mvccDecode(iter.Key())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				break
+			}
+
+			if dec.value.commitTS > safePoint {
+				continue
+			}
+
+			if dec.value.valueType == typePut || dec.value.valueType == typeDelete {
+				// Keep the latest version if it's `typePut`
+				if !keepNext || dec.value.valueType == typeDelete {
+					batch.Delete(mvccEncode(currKey, dec.value.commitTS))
+				}
+				keepNext = false
+			} else {
+				// Delete all other types
+				batch.Delete(mvccEncode(currKey, dec.value.commitTS))
+			}
+		}
+	}
+
 	return mvcc.db.Write(batch, nil)
 }
 

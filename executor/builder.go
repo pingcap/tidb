@@ -106,6 +106,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCheckIndexRange(v)
 	case *plannercore.ChecksumTable:
 		return b.buildChecksumTable(v)
+	case *plannercore.ReloadExprPushdownBlacklist:
+		return b.buildReloadExprPushdownBlacklist(v)
+	case *plannercore.AdminPlugins:
+		return b.buildAdminPlugins(v)
 	case *plannercore.DDL:
 		return b.buildDDL(v)
 	case *plannercore.Deallocate:
@@ -194,8 +198,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildWindow(v)
 	case *plannercore.SQLBindPlan:
 		return b.buildSQLBindExec(v)
-	case *plannercore.SplitIndexRegion:
-		return b.buildSplitIndexRegion(v)
+	case *plannercore.SplitRegion:
+		return b.buildSplitRegion(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -461,6 +465,14 @@ func (b *executorBuilder) buildChecksumTable(v *plannercore.ChecksumTable) Execu
 	return e
 }
 
+func (b *executorBuilder) buildReloadExprPushdownBlacklist(v *plannercore.ReloadExprPushdownBlacklist) Executor {
+	return &ReloadExprPushdownBlacklistExec{baseExecutor{ctx: b.ctx}}
+}
+
+func (b *executorBuilder) buildAdminPlugins(v *plannercore.AdminPlugins) Executor {
+	return &AdminPluginsExec{baseExecutor: baseExecutor{ctx: b.ctx}, Action: v.Action, Plugins: v.Plugins}
+}
+
 func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) Executor {
 	base := newBaseExecutor(b.ctx, nil, v.ExplainID())
 	base.initCap = chunk.ZeroCapacity
@@ -541,6 +553,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		DBName:       model.NewCIStr(v.DBName),
 		Table:        v.Table,
 		Column:       v.Column,
+		IndexName:    v.IndexName,
 		User:         v.User,
 		Roles:        v.Roles,
 		IfNotExists:  v.IfNotExists,
@@ -550,7 +563,12 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		is:           b.is,
 	}
 	if e.Tp == ast.ShowGrants && e.User == nil {
-		e.User = e.ctx.GetSessionVars().User
+		// The input is a "show grants" statement, fulfill the user and roles field.
+		// Note: "show grants" result are different from "show grants for current_user",
+		// The former determine privileges with roles, while the later doesn't.
+		vars := e.ctx.GetSessionVars()
+		e.User = vars.User
+		e.Roles = vars.ActiveRoles
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
@@ -558,14 +576,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 			b.err = err
 		}
 	}
-	if len(v.Conditions) == 0 {
-		return e
-	}
-	sel := &SelectionExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), e),
-		filters:      v.Conditions,
-	}
-	return sel
+	return e
 }
 
 func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
@@ -657,6 +668,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	loadDataExec := &LoadDataExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		IsLocal:      v.IsLocal,
+		OnDuplicate:  v.OnDuplicate,
 		loadDataInfo: &LoadDataInfo{
 			row:          make([]types.Datum, len(insertVal.insertColumns)),
 			InsertValues: insertVal,
@@ -860,8 +872,8 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			v.JoinType == plannercore.RightOuterJoin,
 			defaultValues,
 			v.OtherConditions,
-			leftExec.retTypes(),
-			rightExec.retTypes(),
+			retTypes(leftExec),
+			retTypes(rightExec),
 		),
 		isOuterJoin: v.JoinType.IsOuterJoin(),
 	}
@@ -934,7 +946,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 
 	defaultValues := v.DefaultValues
-	lhsTypes, rhsTypes := leftExec.retTypes(), rightExec.retTypes()
+	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
 	if v.InnerChildIdx == 0 {
 		if len(v.LeftConditions) > 0 {
 			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
@@ -968,9 +980,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	executorCountHashJoinExec.Inc()
-	if e.ctx.GetSessionVars().EnableRadixJoin {
-		return &RadixHashJoinExec{HashJoinExec: e}
-	}
 	return e
 }
 
@@ -1008,7 +1017,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
 	} else {
-		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
+		e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
 	}
 	for _, aggDesc := range v.AggFuncs {
 		if aggDesc.HasDistinct {
@@ -1067,7 +1076,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
 	} else {
-		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
+		e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
 	}
 	for i, aggDesc := range v.AggFuncs {
 		aggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
@@ -1208,7 +1217,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		defaultValues = make([]types.Datum, v.Children()[v.InnerChildIdx].Schema().Len())
 	}
 	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-		defaultValues, otherConditions, leftChild.retTypes(), rightChild.retTypes())
+		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild))
 	outerExec, innerExec := leftChild, rightChild
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	if v.InnerChildIdx == 0 {
@@ -1255,14 +1264,33 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	return e
 }
 
-func (b *executorBuilder) buildSplitIndexRegion(v *plannercore.SplitIndexRegion) Executor {
+func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor {
 	base := newBaseExecutor(b.ctx, nil, v.ExplainID())
 	base.initCap = chunk.ZeroCapacity
-	return &SplitIndexRegionExec{
+	if v.IndexInfo != nil {
+		return &SplitIndexRegionExec{
+			baseExecutor: base,
+			tableInfo:    v.TableInfo,
+			indexInfo:    v.IndexInfo,
+			lower:        v.Lower,
+			upper:        v.Upper,
+			num:          v.Num,
+			valueLists:   v.ValueLists,
+		}
+	}
+	if len(v.ValueLists) > 0 {
+		return &SplitTableRegionExec{
+			baseExecutor: base,
+			tableInfo:    v.TableInfo,
+			valueLists:   v.ValueLists,
+		}
+	}
+	return &SplitTableRegionExec{
 		baseExecutor: base,
-		table:        v.Table,
-		indexInfo:    v.IndexInfo,
-		valueLists:   v.ValueLists,
+		tableInfo:    v.TableInfo,
+		lower:        v.Lower[0],
+		upper:        v.Upper[0],
+		num:          v.Num,
 	}
 }
 
@@ -1372,6 +1400,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, maxNumBuckets uint64, autoAnalyze string) *analyzeTask {
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
+	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeIndexExec{
 		ctx:             b.ctx,
 		physicalTableID: task.PhysicalTableID,
@@ -1380,7 +1409,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			StartTs:        math.MaxUint64,
-			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
 		maxNumBuckets: maxNumBuckets,
@@ -1438,6 +1467,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	}
 
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
+	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeColumnsExec{
 		ctx:             b.ctx,
 		physicalTableID: task.PhysicalTableID,
@@ -1447,7 +1477,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			StartTs:        math.MaxUint64,
-			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
 		maxNumBuckets: maxNumBuckets,
@@ -1630,7 +1660,7 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dag
 	}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Flags = sc.PushDownFlags()
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
 	return dagReq, streaming, err
 }
@@ -1672,7 +1702,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	if b.err != nil {
 		return nil
 	}
-	outerTypes := outerExec.retTypes()
+	outerTypes := retTypes(outerExec)
 	innerPlan := v.Children()[1-v.OuterIndex]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
@@ -1703,6 +1733,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
+	hasPrefixCol := false
+	for _, l := range v.IdxColLens {
+		if l != types.UnspecifiedLength {
+			hasPrefixCol = true
+			break
+		}
+	}
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 		outerCtx: outerCtx{
@@ -1712,6 +1749,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
 			rowTypes:      innerTypes,
+			colLens:       v.IdxColLens,
+			hasPrefixCol:  hasPrefixCol,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
@@ -1730,7 +1769,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 	}
 	e.innerCtx.keyCols = innerKeyCols
-	e.joinResult = e.newFirstChunk()
+	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
 	return e
 }
@@ -1984,7 +2023,7 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 		return nil, err
 	}
 	us := e.(*UnionScanExec)
-	us.snapshotChunkBuffer = us.newFirstChunk()
+	us.snapshotChunkBuffer = newFirstChunk(us)
 	return us, nil
 }
 
@@ -2019,7 +2058,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		return nil, err
 	}
 	e.resultHandler = &tableResultHandler{}
-	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, err
 	}
@@ -2113,25 +2152,36 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	for _, item := range v.PartitionBy {
 		groupByItems = append(groupByItems, item.Col)
 	}
-	aggDesc := aggregation.NewAggFuncDesc(b.ctx, v.WindowFuncDesc.Name, v.WindowFuncDesc.Args, false)
-	resultColIdx := len(v.Schema().Columns) - 1
 	orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
 	for _, item := range v.OrderBy {
 		orderByCols = append(orderByCols, item.Col)
 	}
-	agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
+	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
+	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
+	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
+	for _, desc := range v.WindowFuncDescs {
+		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
+		windowFuncs = append(windowFuncs, agg)
+		partialResults = append(partialResults, agg.AllocPartialResult())
+		resultColIdx++
+	}
 	var processor windowProcessor
 	if v.Frame == nil {
 		processor = &aggWindowProcessor{
-			windowFunc:    agg,
-			partialResult: agg.AllocPartialResult(),
+			windowFuncs:    windowFuncs,
+			partialResults: partialResults,
 		}
 	} else if v.Frame.Type == ast.Rows {
 		processor = &rowFrameWindowProcessor{
-			windowFunc:    agg,
-			partialResult: agg.AllocPartialResult(),
-			start:         v.Frame.Start,
-			end:           v.Frame.End,
+			windowFuncs:    windowFuncs,
+			partialResults: partialResults,
+			start:          v.Frame.Start,
+			end:            v.Frame.End,
 		}
 	} else {
 		cmpResult := int64(-1)
@@ -2139,8 +2189,8 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 			cmpResult = 1
 		}
 		processor = &rangeFrameWindowProcessor{
-			windowFunc:        agg,
-			partialResult:     agg.AllocPartialResult(),
+			windowFuncs:       windowFuncs,
+			partialResults:    partialResults,
 			start:             v.Frame.Start,
 			end:               v.Frame.End,
 			orderByCols:       orderByCols,
@@ -2148,8 +2198,9 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		}
 	}
 	return &WindowExec{baseExecutor: base,
-		processor:    processor,
-		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+		processor:      processor,
+		groupChecker:   newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }
 

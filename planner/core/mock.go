@@ -39,8 +39,8 @@ func newDateType() types.FieldType {
 	return *ft
 }
 
-// MockTable is only used for plan related tests.
-func MockTable() *model.TableInfo {
+// MockSignedTable is only used for plan related tests.
+func MockSignedTable() *model.TableInfo {
 	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
 	// PK: a
 	// indeices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
@@ -237,14 +237,14 @@ func MockTable() *model.TableInfo {
 		Offset:    10,
 		Name:      model.NewCIStr("h"),
 		FieldType: newLongType(),
-		ID:        10,
+		ID:        11,
 	}
 	col7 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    11,
 		Name:      model.NewCIStr("i_date"),
 		FieldType: newDateType(),
-		ID:        11,
+		ID:        12,
 	}
 	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
@@ -258,6 +258,51 @@ func MockTable() *model.TableInfo {
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6, col7},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
+		PKIsHandle: true,
+	}
+	return table
+}
+
+// MockUnsignedTable is only used for plan related tests.
+func MockUnsignedTable() *model.TableInfo {
+	// column: a, b
+	// PK: a
+	// indeices: b
+	indices := []*model.IndexInfo{
+		{
+			Name: model.NewCIStr("b"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 4,
+				},
+			},
+			State:  model.StatePublic,
+			Unique: true,
+		},
+	}
+	pkColumn := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    0,
+		Name:      model.NewCIStr("a"),
+		FieldType: newLongType(),
+		ID:        1,
+	}
+	col0 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    1,
+		Name:      model.NewCIStr("b"),
+		FieldType: newLongType(),
+		ID:        2,
+	}
+	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag
+	// Column 'b', 'c', 'd', 'f', 'g' is not null.
+	col0.Flag = mysql.NotNullFlag
+	table := &model.TableInfo{
+		Columns:    []*model.ColumnInfo{pkColumn, col0},
+		Indices:    indices,
+		Name:       model.NewCIStr("t2"),
 		PKIsHandle: true,
 	}
 	return table
@@ -308,24 +353,25 @@ func MockContext() sessionctx.Context {
 
 // MockPartitionInfoSchema mocks an info schema for partition table.
 func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
-	tableInfo := *MockTable()
+	tableInfo := MockSignedTable()
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
 	cols = append(cols, tableInfo.Columns...)
+	last := tableInfo.Columns[len(tableInfo.Columns)-1]
 	cols = append(cols, &model.ColumnInfo{
 		State:     model.StatePublic,
-		Offset:    10,
-		Name:      model.NewCIStr("h"),
+		Offset:    last.Offset + 1,
+		Name:      model.NewCIStr("ptn"),
 		FieldType: newLongType(),
-		ID:        11,
+		ID:        last.ID + 1,
 	})
 	partition := &model.PartitionInfo{
 		Type:        model.PartitionTypeRange,
-		Expr:        "h",
+		Expr:        "ptn",
 		Enable:      true,
 		Definitions: definitions,
 	}
 	tableInfo.Columns = cols
 	tableInfo.Partition = partition
-	is := infoschema.MockInfoSchema([]*model.TableInfo{&tableInfo})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
 	return is
 }

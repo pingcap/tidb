@@ -14,13 +14,13 @@
 package util
 
 import (
-	"context"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -73,7 +73,7 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 			recoverFn(r)
 		}
 		if r != nil {
-			logutil.Logger(context.Background()).Error("panic in the recoverable goroutine",
+			logutil.BgLogger().Error("panic in the recoverable goroutine",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 		}
@@ -111,7 +111,7 @@ func SyntaxError(err error) error {
 	if err == nil {
 		return nil
 	}
-	logutil.Logger(context.Background()).Error("syntax error", zap.Error(err))
+	logutil.BgLogger().Error("syntax error", zap.Error(err))
 
 	// If the error is already a terror with stack, pass it through.
 	if errors.HasStack(err) {
@@ -130,4 +130,24 @@ func SyntaxWarn(err error) error {
 		return nil
 	}
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
+}
+
+const (
+	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
+	InformationSchemaName = "INFORMATION_SCHEMA"
+	// InformationSchemaLowerName is the `INFORMATION_SCHEMA` database lower name.
+	InformationSchemaLowerName = "information_schema"
+	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
+	PerformanceSchemaName = "PERFORMANCE_SCHEMA"
+	// PerformanceSchemaLowerName is the `PERFORMANCE_SCHEMA` database lower name.
+	PerformanceSchemaLowerName = "performance_schema"
+)
+
+// IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
+func IsMemOrSysDB(dbLowerName string) bool {
+	switch dbLowerName {
+	case InformationSchemaLowerName, PerformanceSchemaLowerName, mysql.SystemDB:
+		return true
+	}
+	return false
 }

@@ -46,13 +46,6 @@ func (o *MockOracle) Disable() {
 	o.stop = true
 }
 
-func (o *MockOracle) setOffset(offset time.Duration) {
-	o.Lock()
-	defer o.Unlock()
-
-	o.offset = offset
-}
-
 // AddOffset adds the offset of the oracle.
 func (o *MockOracle) AddOffset(d time.Duration) {
 	o.Lock()
@@ -90,6 +83,16 @@ func (m *mockOracleFuture) Wait() (uint64, error) {
 // GetTimestampAsync implements oracle.Oracle interface.
 func (o *MockOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
 	return &mockOracleFuture{o, ctx}
+}
+
+// GetLowResolutionTimestamp implements oracle.Oracle interface.
+func (o *MockOracle) GetLowResolutionTimestamp(ctx context.Context) (uint64, error) {
+	return o.GetTimestamp(ctx)
+}
+
+// GetLowResolutionTimestampAsync implements oracle.Oracle interface.
+func (o *MockOracle) GetLowResolutionTimestampAsync(ctx context.Context) oracle.Future {
+	return o.GetTimestampAsync(ctx)
 }
 
 // IsExpired implements oracle.Oracle interface.

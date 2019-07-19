@@ -19,8 +19,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/lock"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -72,11 +74,7 @@ type logicalOptRule interface {
 func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
 	ctx.GetSessionVars().PlanColumnID = 0
-	builder := &PlanBuilder{
-		ctx:       ctx,
-		is:        is,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
-	}
+	builder := NewPlanBuilder(ctx, is)
 	p, err := builder.Build(node)
 	if err != nil {
 		return nil, err
@@ -92,6 +90,21 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 				return ErrPrivilegeCheckFail
 			}
 			return v.err
+		}
+	}
+	return nil
+}
+
+// CheckTableLock checks the table lock.
+func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visitInfo) error {
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	checker := lock.NewChecker(ctx, is)
+	for i := range vs {
+		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege)
+		if err != nil {
+			return err
 		}
 	}
 	return nil
