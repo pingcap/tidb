@@ -3516,6 +3516,20 @@ func (s *testParserSuite) TestQuotedVariableColumnName(c *C) {
 	}
 }
 
+func (s *testParserSuite) TestCharset(c *C) {
+	parser := parser.New()
+
+	st, err := parser.ParseOneStmt("ALTER SCHEMA GLOBAL DEFAULT CHAR SET utf8mb4", "", "")
+	c.Assert(err, IsNil)
+	c.Assert(st.(*ast.AlterDatabaseStmt), NotNil)
+	st, err = parser.ParseOneStmt("ALTER DATABASE CHAR SET = utf8mb4", "", "")
+	c.Assert(err, IsNil)
+	c.Assert(st.(*ast.AlterDatabaseStmt), NotNil)
+	st, err = parser.ParseOneStmt("ALTER DATABASE DEFAULT CHAR SET = utf8mb4", "", "")
+	c.Assert(err, IsNil)
+	c.Assert(st.(*ast.AlterDatabaseStmt), NotNil)
+}
+
 // CleanNodeText set the text of node and all child node empty.
 // For test only.
 func CleanNodeText(node ast.Node) {
