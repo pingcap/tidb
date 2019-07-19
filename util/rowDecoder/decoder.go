@@ -139,16 +139,21 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 // SubstituteGenColsInDecodeColMap substitutes generated columns in every expression
 // with non-generated one by looking up decodeColMap.
 func SubstituteGenColsInDecodeColMap(decodeColMap map[int64]Column) {
-	// Sort columns by ID in ascending order.
-	var orderedCols []int64
-	for colID := range decodeColMap {
-		orderedCols = append(orderedCols, colID)
+	// Sort columns by table.Column.Offset in ascending order.
+	type Pair struct {
+		colID     int64
+		colOffset int
 	}
-	sort.Slice(orderedCols, func(i, j int) bool { return orderedCols[i] < orderedCols[j] })
+	var orderedCols []Pair
+	for colID, col := range decodeColMap {
+		orderedCols = append(orderedCols, Pair{colID, col.Col.Offset})
+	}
+	sort.Slice(orderedCols, func(i, j int) bool { return orderedCols[i].colOffset < orderedCols[j].colOffset })
 
 	// Iterate over decodeColMap, the substitution only happens once because
-	// columns with smaller columnID can not refer to those with larger ones.
-	for _, colID := range orderedCols {
+	// columns with smaller offset can not refer to those with larger ones.
+	for _, pair := range orderedCols {
+		colID := pair.colID
 		decCol := decodeColMap[colID]
 		if decCol.GenExpr != nil {
 			decodeColMap[colID] = Column{
