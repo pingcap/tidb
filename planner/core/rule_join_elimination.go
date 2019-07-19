@@ -206,14 +206,14 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 			parentCols = append(parentCols, expression.ExtractColumns(expr)...)
 		}
 	case *LogicalAggregation:
-		copy(parentCols, x.groupByCols)
+		parentCols = append(parentCols[:0], x.groupByCols...)
 		for _, aggDesc := range x.AggFuncs {
 			for _, expr := range aggDesc.Args {
 				parentCols = append(parentCols, expression.ExtractColumns(expr)...)
 			}
 		}
 	default:
-		copy(parentCols, p.Schema().Columns)
+		parentCols = append(parentCols[:0], p.Schema().Columns...)
 	}
 
 	if ok, newCols := o.isDuplicateAgnosticAgg(p); ok {
