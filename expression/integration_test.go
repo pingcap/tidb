@@ -4460,3 +4460,16 @@ func (s *testIntegrationSuite) TestIssue10675(c *C) {
 		testkit.Rows("1"))
 	tk.MustQuery(`select * from t where a > 184467440737095516167.1;`).Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite) TestFuncCaseWithLeftJoin(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table kankan1(id int, name text)")
+	tk.MustExec("insert into kankan1 values(1, 'a')")
+	tk.MustExec("insert into kankan1 values(2, 'a')")
+
+	tk.MustExec("create table kankan2(id int, h1 text)")
+	tk.MustExec("insert into kankan2 values(2, 'z')")
+
+	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1' order by t1.id").Check(testkit.Rows("1", "2"))
+}
