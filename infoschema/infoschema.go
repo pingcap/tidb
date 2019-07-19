@@ -388,3 +388,12 @@ func IsMemoryDB(dbName string) bool {
 	}
 	return false
 }
+
+func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
+	for _, col := range tbInfo.Columns {
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			return true, col.Name.L
+		}
+	}
+	return false, ""
+}
