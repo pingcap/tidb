@@ -54,6 +54,10 @@ const (
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
+	// TiDBHashAgg is hint enforce hash aggregation.
+	TiDBHashAgg = "tidb_hashagg"
+	// TiDBStreamAgg is hint enforce stream aggregation.
+	TiDBStreamAgg = "tidb_streamagg"
 )
 
 const (
@@ -137,6 +141,12 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	plan4Agg.GroupByItems = gbyItems
 	plan4Agg.SetSchema(schema4Agg)
 	plan4Agg.collectGroupByColumns()
+	if hint := b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
+	if bits.OnesCount(plan4Agg.preferAggType) > 1 {
+		return nil, nil, errors.New("Aggregation hints are conflict, you can only specify one type of aggregation")
+	}
 	return plan4Agg, aggIndexMap, nil
 }
 
@@ -1933,6 +1943,7 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	var sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
+	var preferAggType uint
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin:
@@ -1941,15 +1952,20 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 			INLJTables = tableNames2HintTableInfo(hint.Tables)
 		case TiDBHashJoin:
 			hashJoinTables = tableNames2HintTableInfo(hint.Tables)
+		case TiDBHashAgg:
+			preferAggType |= preferHashAgg
+		case TiDBStreamAgg:
+			preferAggType |= preferStreamAgg
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 || preferAggType != 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
+			preferAggType:             preferAggType,
 		})
 		return true
 	}

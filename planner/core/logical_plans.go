@@ -237,6 +237,11 @@ func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColu
 	return corCols
 }
 
+const (
+	preferHashAgg = 1 << iota
+	preferStreamAgg
+)
+
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
 	logicalSchemaProducer
@@ -245,6 +250,10 @@ type LogicalAggregation struct {
 	GroupByItems []expression.Expression
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
+
+	// hintInfo stores the aggregation algorithm hint information specified by client.
+	hintInfo      *tableHintInfo
+	preferAggType uint
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
