@@ -167,6 +167,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
+
 	if err != nil {
 		return errors.Trace(err)
 	}
