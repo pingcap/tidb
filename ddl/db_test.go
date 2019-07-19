@@ -3387,38 +3387,6 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
 }
 
-// TestParallelTruncateTableAndAddColumn tests add column when truncate table.
-func (s *testDBSuite5) TestParallelTruncateTableAndAddColumn(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	tk2 := testkit.NewTestKit(c, s.store)
-	tk2.MustExec("use test_db")
-	s.mustExec(c, "use test_db")
-	s.mustExec(c, "create database if not exists test_truncate_table")
-	s.mustExec(c, "drop table if exists t")
-	s.mustExec(c, "create table t(c1 int)")
-	defer s.mustExec(c, "drop table t;")
-	var addColumnErr error
-	var wg sync.WaitGroup
-	hook := &ddl.TestDDLCallback{}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionTruncateTable && job.State == model.JobStateNone {
-			wg.Add(1)
-			go func() {
-				_, addColumnErr = tk2.Exec("alter table t add column c3 int")
-				wg.Done()
-			}()
-		}
-	}
-	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	_, err := s.tk.Exec("truncate table t")
-	wg.Wait()
-	c.Assert(addColumnErr, NotNil)
-	c.Assert(addColumnErr.Error(), Equals, "[domain:2]Information schema is changed. [try again later]")
-	c.Assert(err, IsNil)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-}
-
 func init() {
 	// Make sure it will only be executed once.
 	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)

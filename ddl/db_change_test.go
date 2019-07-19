@@ -1012,7 +1012,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		se1.SetConnectionID(2)
 		_, err2 := se1.Execute(context.Background(), "alter table test_table add column c2 int")
 		c.Assert(err2, NotNil)
-		c.Assert(err2.Error(), Equals, "[schema:1060]Duplicate column name 'c2'")
+		c.Assert(strings.Contains(err2.Error(), "Information schema is changed"), IsTrue)
 	}()
 
 	wg.Wait()
@@ -1033,4 +1033,36 @@ func (s *testStateChangeSuite) TestParallelAlterSchemaCharsetAndCollate(c *C) {
 			WHERE schema_name='test_db_state'`
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(sql).Check(testkit.Rows("utf8mb4 utf8mb4_general_ci"))
+}
+
+// TestParallelTruncateTableAndAddColumn tests add column when truncate table.
+func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("create database if not exists test_truncate_table")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int)")
+	defer tk.MustExec("drop table t;")
+	var addColumnErr error
+	var wg sync.WaitGroup
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTable && job.State == model.JobStateNone {
+			wg.Add(1)
+			go func() {
+				_, addColumnErr = tk2.Exec("alter table t add column c3 int")
+				wg.Done()
+			}()
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	_, err := tk.Exec("truncate table t")
+	wg.Wait()
+	c.Assert(addColumnErr, NotNil)
+	c.Assert(addColumnErr.Error(), Equals, "[domain:2]Information schema is changed. [try again later]")
+	c.Assert(err, IsNil)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 }
