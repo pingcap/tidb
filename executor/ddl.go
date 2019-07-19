@@ -78,7 +78,6 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if err = e.ctx.NewTxn(ctx); err != nil {
 		return err
 	}
-
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	switch x := e.stmt.(type) {
