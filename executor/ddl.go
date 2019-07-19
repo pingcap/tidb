@@ -115,6 +115,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	}
 	if err != nil {
+		// If owner return ErrTableNotExists error when running this DDL, It maybe cause by schema changed,
+		// otherwise, ErrTableNotExists could return before put this DDL job to job queue.
 		if (e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) ||
 			!e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
 			return e.toErr(err)
