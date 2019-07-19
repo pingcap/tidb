@@ -118,24 +118,24 @@ id	count	task	operator info
 Projection_13	1.00	root	test.gad.id, test.dd.id, test.gad.aid, test.gad.cm, test.dd.dic, test.dd.ip, test.dd.t, test.gad.p1, test.gad.p2, test.gad.p3, test.gad.p4, test.gad.p5, test.gad.p6_md5, test.gad.p7_md5, test.gad.ext, test.gad.t
 └─Limit_16	1.00	root	offset:0, count:2500
   └─HashAgg_19	1.00	root	group by:test.dd.dic, test.gad.aid, funcs:firstrow(test.gad.id), firstrow(test.gad.aid), firstrow(test.gad.cm), firstrow(test.gad.p1), firstrow(test.gad.p2), firstrow(test.gad.p3), firstrow(test.gad.p4), firstrow(test.gad.p5), firstrow(test.gad.p6_md5), firstrow(test.gad.p7_md5), firstrow(test.gad.ext), firstrow(test.gad.t), firstrow(test.dd.id), firstrow(test.dd.dic), firstrow(test.dd.ip), firstrow(test.dd.t)
-    └─IndexJoin_24	0.00	root	inner join, inner:IndexLookUp_23, outer key:test.gad.aid, inner key:test.dd.aid, other cond:eq(test.dd.ip, test.gad.ip), gt(test.dd.t, test.gad.t)
-      ├─IndexLookUp_23	0.00	root	
-      │ ├─IndexScan_20	10.00	cop	table:dd, index:aid, dic, range: decided by [eq(test.dd.aid, test.gad.aid)], keep order:false, stats:pseudo
-      │ └─Selection_22	0.00	cop	eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
-      │   └─TableScan_21	10.00	cop	table:dd, keep order:false, stats:pseudo
-      └─IndexLookUp_33	3.33	root	
-        ├─IndexScan_30	3333.33	cop	table:gad, index:t, range:(1478143908,+inf], keep order:false, stats:pseudo
-        └─Selection_32	3.33	cop	eq(test.gad.pt, "android"), not(isnull(test.gad.ip))
-          └─TableScan_31	3333.33	cop	table:st, keep order:false, stats:pseudo
+    └─IndexMergeJoin_30	0.00	root	inner join, inner:IndexLookUp_28, outer key:test.gad.aid, inner key:test.dd.aid, other cond:eq(test.dd.ip, test.gad.ip), gt(test.dd.t, test.gad.t)
+      ├─IndexLookUp_28	0.00	root	
+      │ ├─IndexScan_25	10.00	cop	table:dd, index:aid, dic, range: decided by [eq(test.dd.aid, test.gad.aid)], keep order:true, stats:pseudo
+      │ └─Selection_27	0.00	cop	eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
+      │   └─TableScan_26	10.00	cop	table:dd, keep order:true, stats:pseudo
+      └─IndexLookUp_39	3.33	root	
+        ├─IndexScan_36	3333.33	cop	table:gad, index:t, range:(1478143908,+inf], keep order:false, stats:pseudo
+        └─Selection_38	3.33	cop	eq(test.gad.pt, "android"), not(isnull(test.gad.ip))
+          └─TableScan_37	3333.33	cop	table:st, keep order:false, stats:pseudo
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	count	task	operator info
 Projection_10	0.00	root	test.gad.id, test.sdk.id, test.gad.aid, test.gad.cm, test.sdk.dic, test.sdk.ip, test.sdk.t, test.gad.p1, test.gad.p2, test.gad.p3, test.gad.p4, test.gad.p5, test.gad.p6_md5, test.gad.p7_md5, test.gad.ext
 └─Limit_13	0.00	root	offset:0, count:3000
   └─IndexJoin_18	0.00	root	inner join, inner:IndexLookUp_17, outer key:test.gad.aid, inner key:test.sdk.aid, other cond:eq(test.gad.dic, test.sdk.mac), lt(test.gad.t, test.sdk.t)
-    ├─IndexLookUp_27	0.00	root	
-    │ ├─IndexScan_24	3333.33	cop	table:gad, index:t, range:(1477971479,+inf], keep order:false, stats:pseudo
-    │ └─Selection_26	0.00	cop	eq(test.gad.bm, 0), eq(test.gad.dit, "mac"), eq(test.gad.pt, "ios"), not(isnull(test.gad.dic))
-    │   └─TableScan_25	3333.33	cop	table:st, keep order:false, stats:pseudo
+    ├─IndexLookUp_33	0.00	root	
+    │ ├─IndexScan_30	3333.33	cop	table:gad, index:t, range:(1477971479,+inf], keep order:false, stats:pseudo
+    │ └─Selection_32	0.00	cop	eq(test.gad.bm, 0), eq(test.gad.dit, "mac"), eq(test.gad.pt, "ios"), not(isnull(test.gad.dic))
+    │   └─TableScan_31	3333.33	cop	table:st, keep order:false, stats:pseudo
     └─IndexLookUp_17	0.00	root	
       ├─IndexScan_14	10.00	cop	table:sdk, index:aid, dic, range: decided by [eq(test.sdk.aid, test.gad.aid)], keep order:false, stats:pseudo
       └─Selection_16	0.00	cop	eq(test.sdk.bm, 0), eq(test.sdk.pt, "ios"), gt(test.sdk.t, 1477971479), not(isnull(test.sdk.mac)), not(isnull(test.sdk.t))
@@ -153,9 +153,9 @@ id	count	task	operator info
 Projection_10	0.00	root	test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
 └─Limit_13	0.00	root	offset:0, count:2000
   └─IndexJoin_19	0.00	root	inner join, inner:IndexLookUp_18, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic
-    ├─TableReader_41	0.00	root	data:Selection_40
-    │ └─Selection_40	0.00	cop	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
-    │   └─TableScan_39	10000.00	cop	table:dt, range:[0,+inf], keep order:false, stats:pseudo
+    ├─TableReader_54	0.00	root	data:Selection_53
+    │ └─Selection_53	0.00	cop	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
+    │   └─TableScan_52	10000.00	cop	table:dt, range:[0,+inf], keep order:false, stats:pseudo
     └─IndexLookUp_18	0.00	root	
       ├─IndexScan_15	10.00	cop	table:rr, index:aid, dic, range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false, stats:pseudo
       └─Selection_17	0.00	cop	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)

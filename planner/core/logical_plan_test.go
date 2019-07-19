@@ -856,7 +856,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			// table t rather than Join.
 			// If this schema is not set correctly, table.RemoveRecord would fail when adding
 			// binlog columns, because the schema and data are not consistent.
-			plan: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(6_aux_0, 10_aux_0)])->Projection->Delete",
+			plan: "IndexMergeJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->TableReader(Table(t)->Sel([eq(test.t.c, 42)]))}(test.t.b,test.t.a)->Sel([or(6_aux_0, 10_aux_0)])->Projection->Delete",
 		},
 	}
 	for _, ca := range tests {

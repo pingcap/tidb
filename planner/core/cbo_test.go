@@ -78,7 +78,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	tk.MustExec("insert into t2 values (2, 22), (3, 33), (5, 55), (233, 2), (333, 3), (3434, 5)")
 	tk.MustExec("analyze table t1, t2")
 	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
-	c.Assert(len(rs.Rows()), Equals, 10)
+	c.Assert(len(rs.Rows()), Equals, 11)
 	for _, row := range rs.Rows() {
 		c.Assert(len(row), Equals, 5)
 		execInfo := row[4].(string)
@@ -902,13 +902,13 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 	tk.MustExec("create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))")
 
 	tk.MustQuery("explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c;").Check(testkit.Rows(
-		"IndexJoin_9 12475.01 root inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
-		"├─TableReader_12 9980.01 root data:Selection_11",
-		"│ └─Selection_11 9980.01 cop not(isnull(test.t1.a)), not(isnull(test.t1.c))",
-		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─IndexReader_8 9.98 root index:Selection_7",
-		"  └─Selection_7 9.98 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
-		"    └─IndexScan_6 10.00 cop table:t2, index:a, b, c, range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo",
+		"IndexMergeJoin_14 12475.01 root inner join, inner:IndexReader_12, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
+		"├─TableReader_17 9980.01 root data:Selection_16",
+		"│ └─Selection_16 9980.01 cop not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+		"│   └─TableScan_15 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─IndexReader_12 9.98 root index:Selection_11",
+		"  └─Selection_11 9.98 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
+		"    └─IndexScan_10 10.00 cop table:t2, index:a, b, c, range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:true, stats:pseudo",
 	))
 
 	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
@@ -958,27 +958,26 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 
 	// Expected output is like:
 	//
-	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
-	// | id                             | count    | task | operator info                                                                    | execution info                   |
-	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
-	// | Projection_9                   | 10.00    | root | test.t1.id, test.t2.a                                                            | time:203.355µs, loops:1, rows:0  |
-	// | └─IndexJoin_13                 | 10.00    | root | inner join, inner:IndexLookUp_12, outer key:test.t1.a, inner key:test.t2.d       | time:199.633µs, loops:1, rows:0  |
-	// |   ├─Projection_16              | 8.00     | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                       | time:164.587µs, loops:1, rows:0  |
-	// |   │ └─Selection_17             | 8.00     | root | eq(cast(mod(test.t1.a, 30)), 4)                                                  | time:157.768µs, loops:1, rows:0  |
-	// |   │   └─TableReader_20         | 10.00    | root | data:Selection_19                                                                | time:154.61µs, loops:1, rows:0   |
-	// |   │     └─Selection_19         | 10.00    | cop  | eq(test.t1.b, "t2")                                                              | time:28.824µs, loops:1, rows:0   |
-	// |   │       └─TableScan_18       | 10000.00 | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                      | time:27.654µs, loops:1, rows:0   |
-	// |   └─IndexLookUp_12             | 10.00    | root |                                                                                  | time:0ns, loops:0, rows:0        |
-	// |     ├─IndexScan_10             | 10.00    | cop  | table:t2, index:d, range: decided by [test.t1.a], keep order:false, stats:pseudo | time:0ns, loops:0, rows:0        |
-	// |     └─TableScan_11             | 10.00    | cop  | table:t2, keep order:false, stats:pseudo                                         | time:0ns, loops:0, rows:0        |
-	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
-	// 10 rows in set (0.00 sec)
+	// +--------------------------------+----------+------+------------------------------------------------------------------------------------------------+----------------------------------+
+	// | id                             | count    | task | operator info                                                                                  | execution info                   |
+	// +--------------------------------+----------+------+------------------------------------------------------------------------------------------------+----------------------------------+
+	// | Projection_9                   | 10.00    | root | test.t1.id, test.t2.a                                                                          | time:0s, loops:0, rows:0         |
+	// | └─IndexMergeJoin_18            | 10.00    | root | inner join, inner:IndexLookUp_16, outer key:test.t1.a, inner key:test.t2.d                     | time:2.725346ms, loops:1, rows:0 |
+	// |   ├─Projection_21              | 8.00     | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                                     | time:2.763644ms, loops:1, rows:0 |
+	// |   │ └─Selection_22             | 8.00     | root | eq(cast(mod(test.t1.a, 30)), 4)                                                                | time:2.757287ms, loops:1, rows:0 |
+	// |   │   └─TableReader_25         | 10.00    | root | data:Selection_24                                                                              | time:2.753215ms, loops:1, rows:0 |
+	// |   │     └─Selection_24         | 10.00    | cop  | eq(test.t1.b, "t2")                                                                            | time:14.79µs, loops:1, rows:0    |
+	// |   │       └─TableScan_23       | 10000.00 | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                                    | time:14.122µs, loops:1, rows:0   |
+	// |   └─IndexLookUp_16             | 10.00    | root |                                                                                                | time:0ns, loops:0, rows:0        |
+	// |     ├─IndexScan_14             | 10.00    | cop  | table:t2, index:d, range: decided by [eq(test.t2.d, test.t1.a)], keep order:true, stats:pseudo | time:0ns, loops:0, rows:0        |
+	// |     └─TableScan_15             | 10.00    | cop  | table:t2, keep order:true, stats:pseudo                                                        | time:0ns, loops:0, rows:0        |
+	// +--------------------------------+----------+------+------------------------------------------------------------------------------------------------+----------------------------------+	// 10 rows in set (0.00 sec)
 	//
 	c.Assert(rs.Rows(), HasLen, 10)
 	hasIndexLookUp12 := false
 	for _, row := range rs.Rows() {
 		c.Assert(row, HasLen, 5)
-		if strings.HasSuffix(row[0].(string), "IndexLookUp_12") {
+		if strings.HasSuffix(row[0].(string), "IndexLookUp_16") {
 			hasIndexLookUp12 = true
 			c.Assert(row[4], Equals, "time:0ns, loops:0, rows:0")
 		}
@@ -1029,13 +1028,13 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	// Outer plan of index join (to test that correct column ID is used).
 	tk.MustQuery("EXPLAIN SELECT *, t1.a IN (SELECT t2.b FROM t t2) FROM t t1 WHERE t1.b <= 6 ORDER BY t1.a limit 1").Check(testkit.Rows(
 		"Limit_17 1.00 root offset:0, count:1",
-		"└─IndexJoin_58 1.00 root left outer semi join, inner:IndexReader_57, outer key:test.t1.a, inner key:test.t2.b",
-		"  ├─TopN_23 1.00 root test.t1.a:asc, offset:0, count:1",
-		"  │ └─IndexReader_31 1.00 root index:TopN_30",
-		"  │   └─TopN_30 1.00 cop test.t1.a:asc, offset:0, count:1",
-		"  │     └─IndexScan_29 6.00 cop table:t1, index:b, range:[-inf,6], keep order:false",
-		"  └─IndexReader_57 1.04 root index:IndexScan_56",
-		"    └─IndexScan_56 1.04 cop table:t2, index:b, range: decided by [eq(test.t2.b, test.t1.a)], keep order:false",
+		"└─IndexJoin_62 1.00 root left outer semi join, inner:IndexReader_61, outer key:test.t1.a, inner key:test.t2.b",
+		"  ├─TopN_27 1.00 root test.t1.a:asc, offset:0, count:1",
+		"  │ └─IndexReader_35 1.00 root index:TopN_34",
+		"  │   └─TopN_34 1.00 cop test.t1.a:asc, offset:0, count:1",
+		"  │     └─IndexScan_33 6.00 cop table:t1, index:b, range:[-inf,6], keep order:false",
+		"  └─IndexReader_61 1.04 root index:IndexScan_60",
+		"    └─IndexScan_60 1.04 cop table:t2, index:b, range: decided by [eq(test.t2.b, test.t1.a)], keep order:false",
 	))
 	// Desc TableScan.
 	tk.MustExec("truncate table t")

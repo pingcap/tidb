@@ -45,15 +45,13 @@ IndexReader_6	0.00	root	index:IndexScan_5
 └─IndexScan_5	0.00	cop	table:t1, index:c2, range:[1,1], keep order:false
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	count	task	operator info
-MergeJoin_7	2481.25	root	left outer join, left key:test.t1.c2, right key:test.t2.c1
-├─IndexLookUp_17	1998.00	root	
-│ ├─Selection_16	1998.00	cop	gt(test.t1.c1, 1)
-│ │ └─IndexScan_14	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:true
-│ └─TableScan_15	1998.00	cop	table:t1, keep order:false, stats:pseudo
-└─Projection_22	1985.00	root	test.t2.c1, test.t2.c2
-  └─IndexLookUp_21	1985.00	root	
-    ├─IndexScan_19	1985.00	cop	table:t2, index:c1, range:[-inf,+inf], keep order:true
-    └─TableScan_20	1985.00	cop	table:t2, keep order:false
+IndexMergeJoin_18	2481.25	root	left outer join, inner:IndexLookUp_16, outer key:test.t1.c2, inner key:test.t2.c1
+├─TableReader_30	1998.00	root	data:TableScan_29
+│ └─TableScan_29	1998.00	cop	table:t1, range:(1,+inf], keep order:false
+└─IndexLookUp_16	1.00	root	
+  ├─Selection_15	1.00	cop	not(isnull(test.t2.c1))
+  │ └─IndexScan_13	1.00	cop	table:t2, index:c1, range: decided by [eq(test.t2.c1, test.t1.c2)], keep order:true
+  └─TableScan_14	1.00	cop	table:t2, keep order:true, stats:pseudo
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
 Point_Get_1	1.00	root	table:t1, handle:1
@@ -65,14 +63,14 @@ IndexLookUp_9	0.00	root
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	1985.00	root	cast(join_agg_0)
-└─IndexJoin_14	1985.00	root	inner join, inner:TableReader_13, outer key:test.b.c2, inner key:test.a.c1
-  ├─TableReader_13	1.00	root	data:TableScan_12
-  │ └─TableScan_12	1.00	cop	table:a, range: decided by [test.b.c2], keep order:false
-  └─HashAgg_22	1985.00	root	group by:col_2, funcs:count(col_0), firstrow(col_1)
-    └─TableReader_23	1985.00	root	data:HashAgg_17
-      └─HashAgg_17	1985.00	cop	group by:test.b.c2, funcs:count(test.b.c2), firstrow(test.b.c2)
-        └─Selection_21	1985.00	cop	not(isnull(test.b.c2))
-          └─TableScan_20	1985.00	cop	table:b, range:[-inf,+inf], keep order:false
+└─IndexMergeJoin_18	1985.00	root	inner join, inner:TableReader_16, outer key:test.b.c2, inner key:test.a.c1
+  ├─TableReader_16	1.00	root	data:TableScan_15
+  │ └─TableScan_15	1.00	cop	table:a, range: decided by [test.b.c2], keep order:true
+  └─HashAgg_26	1985.00	root	group by:col_2, funcs:count(col_0), firstrow(col_1)
+    └─TableReader_27	1985.00	root	data:HashAgg_21
+      └─HashAgg_21	1985.00	cop	group by:test.b.c2, funcs:count(test.b.c2), firstrow(test.b.c2)
+        └─Selection_25	1985.00	cop	not(isnull(test.b.c2))
+          └─TableScan_24	1985.00	cop	table:b, range:[-inf,+inf], keep order:false
 explain select * from t2 order by t2.c2 limit 0, 1;
 id	count	task	operator info
 TopN_7	1.00	root	test.t2.c2:asc, offset:0, count:1
@@ -93,14 +91,14 @@ TableReader_7	0.50	root	data:Selection_6
 explain select c1 from t1 where c1 in (select c2 from t2);
 id	count	task	operator info
 Projection_9	1985.00	root	test.t1.c1
-└─IndexJoin_12	1985.00	root	inner join, inner:TableReader_11, outer key:test.t2.c2, inner key:test.t1.c1
-  ├─TableReader_11	1.00	root	data:TableScan_10
-  │ └─TableScan_10	1.00	cop	table:t1, range: decided by [test.t2.c2], keep order:false
-  └─HashAgg_20	1985.00	root	group by:col_1, funcs:firstrow(col_0)
-    └─TableReader_21	1985.00	root	data:HashAgg_15
-      └─HashAgg_15	1985.00	cop	group by:test.t2.c2, funcs:firstrow(test.t2.c2)
-        └─Selection_19	1985.00	cop	not(isnull(test.t2.c2))
-          └─TableScan_18	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
+└─IndexMergeJoin_16	1985.00	root	inner join, inner:TableReader_14, outer key:test.t2.c2, inner key:test.t1.c1
+  ├─TableReader_14	1.00	root	data:TableScan_13
+  │ └─TableScan_13	1.00	cop	table:t1, range: decided by [test.t2.c2], keep order:true
+  └─HashAgg_24	1985.00	root	group by:col_1, funcs:firstrow(col_0)
+    └─TableReader_25	1985.00	root	data:HashAgg_19
+      └─HashAgg_19	1985.00	cop	group by:test.t2.c2, funcs:firstrow(test.t2.c2)
+        └─Selection_23	1985.00	cop	not(isnull(test.t2.c2))
+          └─TableScan_22	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
 explain select * from information_schema.columns;
 id	count	task	operator info
 MemTableScan_4	10000.00	root	

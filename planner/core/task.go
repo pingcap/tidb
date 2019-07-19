@@ -146,6 +146,35 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	}
 }
 
+func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
+	outerTask := finishCopTask(p.ctx, tasks[p.OuterIndex].copy())
+	if p.OuterIndex == 0 {
+		p.SetChildren(outerTask.plan(), p.innerPlan)
+	} else {
+		p.SetChildren(p.innerPlan, outerTask.plan())
+	}
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	return &rootTask{
+		p:   p,
+		cst: outerTask.cost() + p.getCost(outerTask.count()),
+	}
+}
+
+func (p *PhysicalIndexMergeJoin) getCost(lCnt float64) float64 {
+	if lCnt < 1 {
+		lCnt = 1
+	}
+	cst := lCnt * netWorkFactor
+	batchSize := p.ctx.GetSessionVars().IndexJoinBatchSize
+	sortFactor := 1.0
+	if p.NeedOuterSort {
+		sortFactor = math.Log2(math.Min(float64(batchSize), lCnt))
+	}
+	cst += lCnt * sortFactor * 2
+	cst += lCnt / float64(batchSize) * netWorkStartFactor
+	return cst
+}
+
 func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
 	if lCnt < 1 {
 		lCnt = 1

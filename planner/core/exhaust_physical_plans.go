@@ -387,6 +387,93 @@ func (p *LogicalJoin) constructIndexJoin(
 	return []PhysicalPlan{join}
 }
 
+func findIndexScanAndTableScan(p PhysicalPlan) (is *PhysicalIndexScan, ts *PhysicalTableScan) {
+	var children []PhysicalPlan
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		children = x.TablePlans
+	case *PhysicalIndexReader:
+		children = x.IndexPlans
+	case *PhysicalIndexLookUpReader:
+		children = append(x.IndexPlans, x.TablePlans...)
+	default:
+		children = x.Children()
+	}
+	for _, child := range children {
+		tmpIS, tmpTS := findIndexScanAndTableScan(child)
+		if tmpIS != nil {
+			is = tmpIS
+		}
+		if tmpTS != nil {
+			ts = tmpTS
+		}
+	}
+	if tmpIS, ok := p.(*PhysicalIndexScan); ok {
+		return tmpIS, ts
+	}
+	if tmpTS, ok := p.(*PhysicalTableScan); ok {
+		return is, tmpTS
+	}
+	return is, ts
+}
+
+func (p *LogicalJoin) constructIndexMergeJoin(
+	prop *property.PhysicalProperty,
+	outerIdx int,
+	innerPlan PhysicalPlan,
+	ranges []*ranger.Range,
+	keyOff2IdxOff []int,
+	lens []int,
+	compareFilters *ColWithCmpFuncManager,
+) []PhysicalPlan {
+	indexJoins := p.constructIndexJoin(prop, outerIdx, innerPlan, ranges, keyOff2IdxOff, lens, compareFilters)
+	indexMergeJoins := make([]PhysicalPlan, 0, len(indexJoins))
+	for _, plan := range indexJoins {
+		is, ts := findIndexScanAndTableScan(innerPlan)
+		join := plan.(*PhysicalIndexJoin)
+		// needOuterSort means whether the outer join keys are the prefix of the prop items.
+		needOuterSort := len(prop.Items) > 0 && len(join.OuterJoinKeys) <= len(prop.Items)
+		compareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
+		outerCompareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
+		for i := range join.OuterJoinKeys {
+			if needOuterSort && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[i]) {
+				needOuterSort = false
+			}
+			compareFuncs = append(compareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
+			outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.OuterJoinKeys[i]))
+		}
+		// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
+		canKeepOuterOrder := len(prop.Items) <= len(join.OuterJoinKeys)
+		for i := range prop.Items {
+			if !canKeepOuterOrder {
+				break
+			}
+			if !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[i]) {
+				canKeepOuterOrder = false
+			}
+		}
+		// If the prop items are NOT the prefix of the outer join keys,
+		// or the outer join keys are NOT the prefix of the prop items,
+		// then we can't execute merge join.
+		if canKeepOuterOrder || needOuterSort {
+			indexMergeJoin := PhysicalIndexMergeJoin{
+				PhysicalIndexJoin: *join,
+				NeedOuterSort:     needOuterSort,
+				CompareFuncs:      compareFuncs,
+				OuterCompareFuncs: outerCompareFuncs,
+			}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), join.childrenReqProps...)
+			if is != nil {
+				is.KeepOrder = true
+			}
+			if ts != nil {
+				ts.KeepOrder = true
+			}
+			indexMergeJoins = append(indexMergeJoins, indexMergeJoin)
+		}
+	}
+	return indexMergeJoins
+}
+
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child.
 // First of all, we'll check whether the inner child is DataSource.
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
@@ -438,7 +525,13 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			innerPlan := p.constructInnerTableScan(ds, pkCol, outerJoinKeys, us)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
-			return p.constructIndexJoin(prop, outerIdx, innerPlan, nil, keyOff2IdxOff, nil, nil)
+			indexJoins := p.constructIndexJoin(prop, outerIdx, innerPlan, nil, keyOff2IdxOff, nil, nil)
+
+			// The index merge join's inner plan is different from index join, so we should consturct another inner plan
+			// for it.
+			innerPlan2 := p.constructInnerTableScan(ds, pkCol, outerJoinKeys, us)
+			indexMergeJoins := p.constructIndexMergeJoin(prop, outerIdx, innerPlan2, nil, keyOff2IdxOff, nil, nil)
+			return append(indexJoins, indexMergeJoins...)
 		}
 	}
 	helper := &indexJoinBuildHelper{join: p}
@@ -465,7 +558,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		idxCols, lens := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
 		rangeInfo := helper.buildRangeDecidedByInformation(idxCols, outerJoinKeys)
 		innerPlan := p.constructInnerIndexScan(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
-		return p.constructIndexJoin(prop, outerIdx, innerPlan, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
+		indexJoins := p.constructIndexJoin(prop, outerIdx, innerPlan, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
+		// The index merge join's inner plan is different from index join, so we should consturct another inner plan
+		// for it.
+		innerPlan2 := p.constructInnerIndexScan(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
+		indexMergeJoins := p.constructIndexMergeJoin(prop, outerIdx, innerPlan2, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
+		return append(indexJoins, indexMergeJoins...)
 	}
 	return nil
 }
