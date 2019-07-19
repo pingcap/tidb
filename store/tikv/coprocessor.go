@@ -637,11 +637,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 
 	if task.cmdType == tikvrpc.CmdCopStream {
-		return worker.handleCopStreamResult(bo, rpcCtx, resp.CopStream, task, ch)
+		return worker.handleCopStreamResult(bo, rpcCtx, resp.Resp.(*tikvrpc.CopStreamResponse), task, ch)
 	}
 
 	// Handles the response for non-streaming copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Cop}, task, ch, nil)
+	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, nil)
 }
 
 const (
@@ -657,11 +657,11 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
 	}
 	var detail *kvrpcpb.ExecDetails
-	if resp.Cop != nil {
-		detail = resp.Cop.ExecDetails
-	} else if resp.CopStream != nil && resp.CopStream.Response != nil {
+	if resp.Resp != nil {
+		detail = resp.Resp.(*coprocessor.Response).ExecDetails
+	} else if resp.Resp != nil && resp.Resp.(*tikvrpc.CopStreamResponse).Response != nil {
 		// streaming request returns io.EOF, so the first resp.CopStream.Response maybe nil.
-		detail = resp.CopStream.ExecDetails
+		detail = (resp.Resp.(*tikvrpc.CopStreamResponse)).ExecDetails
 	}
 
 	if detail != nil && detail.HandleTime != nil {
