@@ -127,7 +127,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	c.Assert(fp1, NotNil)
 	defer func() {
 		c.Assert(fp1.Close(), IsNil)
-		//c.Assert(os.Remove(path1), IsNil)
+		c.Assert(os.Remove(path1), IsNil)
 	}()
 
 	resp1, err = http.Get("http://127.0.0.1:10090/stats/dump/tidb/test/" + snapshot)
@@ -190,7 +190,6 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 
 	dbt.mustExec("use tidb")
 	dbt.mustExec("drop stats test")
-	fmt.Printf("%v\n", fmt.Sprintf("load stats '%s'", path))
 	_, err = dbt.db.Exec(fmt.Sprintf("load stats '%s'", path))
 	c.Assert(err, IsNil)
 
