@@ -1159,13 +1159,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					createOptions = "partitioned"
 				}
 				var autoIncID interface{}
-				hasAutoIncID := false
-				for _, col := range table.Cols() {
-					if mysql.HasAutoIncrementFlag(col.Flag) {
-						hasAutoIncID = true
-						break
-					}
-				}
+				hasAutoIncID, _ := HasAutoIncrementColumn(table)
 				if hasAutoIncID {
 					autoIncID, err = getAutoIncrementID(ctx, schema, table)
 					if err != nil {
