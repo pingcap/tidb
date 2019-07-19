@@ -117,9 +117,9 @@ func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 		}
 
 		if shouldHasMem {
-			c.Assert(strs[memCol], Not(Equals), "-")
+			c.Assert(strs[memCol], Not(Equals), "N/A")
 		} else {
-			c.Assert(strs[memCol], Equals, "-")
+			c.Assert(strs[memCol], Equals, "N/A")
 		}
 	}
 }

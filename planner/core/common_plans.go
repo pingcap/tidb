@@ -648,7 +648,7 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 		if tracker != nil {
 			row = append(row, tracker.BytesToString(tracker.MaxConsumed()))
 		} else {
-			row = append(row, "-")
+			row = append(row, "N/A")
 		}
 	}
 	e.Rows = append(e.Rows, row)
