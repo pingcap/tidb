@@ -895,9 +895,10 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 type DropTableStmt struct {
 	ddlNode
 
-	IfExists bool
-	Tables   []*TableName
-	IsView   bool
+	IfExists    bool
+	Tables      []*TableName
+	IsView      bool
+	IsTemporary bool // make sense ONLY if/when IsView == false
 }
 
 // Restore implements Node interface.
@@ -905,7 +906,11 @@ func (n *DropTableStmt) Restore(ctx *RestoreCtx) error {
 	if n.IsView {
 		ctx.WriteKeyWord("DROP VIEW ")
 	} else {
-		ctx.WriteKeyWord("DROP TABLE ")
+		if n.IsTemporary {
+			ctx.WriteKeyWord("DROP TEMPORARY TABLE ")
+		} else {
+			ctx.WriteKeyWord("DROP TABLE ")
+		}
 	}
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
