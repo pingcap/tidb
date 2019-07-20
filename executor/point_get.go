@@ -91,6 +91,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	if e.ctx.GetSessionVars().ReplicaRead.IsFollowerRead() {
+		e.snapshot.SetFollowerRead()
+	}
 	if e.idxInfo != nil {
 		idxKey, err1 := e.encodeIndexKey()
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {

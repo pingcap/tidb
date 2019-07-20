@@ -56,6 +56,7 @@ type tikvSnapshot struct {
 	syncLog      bool
 	keyOnly      bool
 	vars         *kv.Variables
+	replicaRead  kv.ReplicaReadType
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -160,6 +161,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		}, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
+			FollowerRead: s.replicaRead.IsFollowerRead(),
 		})
 		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutMedium)
 		if err != nil {
@@ -239,6 +241,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		}, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
+			FollowerRead: s.replicaRead.IsFollowerRead(),
 		})
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
@@ -296,6 +299,16 @@ func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	scanner, err := newScanner(s, nil, k, scanBatchSize, true)
 	return scanner, errors.Trace(err)
+}
+
+// SetFollowerRead sets current transaction to read data from follower
+func (s *tikvSnapshot) SetFollowerRead() {
+	s.replicaRead = kv.ReplicaReadFollower
+}
+
+// ClearFollowerRead disables follower read on current transaction
+func (s *tikvSnapshot) ClearFollowerRead() {
+	s.replicaRead = kv.ReplicaReadLeader
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {

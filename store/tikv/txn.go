@@ -484,3 +484,13 @@ func (txn *tikvTxn) Size() int {
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return txn.us.GetMemBuffer()
 }
+
+// SetFollowerRead sets current transaction to read data from follower
+func (txn *tikvTxn) SetFollowerRead() {
+	txn.snapshot.SetFollowerRead()
+}
+
+// ClearFollowerRead disables follower read on current transaction
+func (txn *tikvTxn) ClearFollowerRead() {
+	txn.snapshot.ClearFollowerRead()
+}

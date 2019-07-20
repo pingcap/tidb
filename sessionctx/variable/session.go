@@ -399,6 +399,9 @@ type SessionVars struct {
 
 	// use noop funcs or not
 	EnableNoopFuncs bool
+
+	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
+	ReplicaRead kv.ReplicaReadType
 }
 
 // ConnectionInfo present connection used by audit.
@@ -831,6 +834,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableIndexMerge = TiDBOptOn(val)
 	case TiDBEnableNoopFuncs:
 		s.EnableNoopFuncs = TiDBOptOn(val)
+	case TiDBReplicaRead:
+		if strings.EqualFold(val, "follower") {
+			s.ReplicaRead = kv.ReplicaReadFollower
+		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
+			s.ReplicaRead = kv.ReplicaReadLeader
+		}
 	}
 	s.systems[name] = val
 	return nil

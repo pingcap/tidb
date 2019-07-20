@@ -22,6 +22,7 @@ import (
 	"github.com/google/btree"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
@@ -107,7 +108,7 @@ func (s *testRegionCacheSuite) getRegionWithEndKey(c *C, key []byte) *Region {
 func (s *testRegionCacheSuite) getAddr(c *C, key []byte) string {
 	loc, err := s.cache.LocateKey(s.bo, key)
 	c.Assert(err, IsNil)
-	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	if ctx == nil {
 		return ""
@@ -133,7 +134,7 @@ func (s *testRegionCacheSuite) TestDropStore(c *C) {
 	s.cluster.RemoveStore(s.store1)
 	loc, err := s.cache.LocateKey(bo, []byte("a"))
 	c.Assert(err, IsNil)
-	ctx, err := s.cache.GetRPCContext(bo, loc.Region)
+	ctx, err := s.cache.GetRPCContext(bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx, IsNil)
 	s.checkCache(c, 0)
@@ -235,20 +236,20 @@ func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
 
 	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
-	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
 	c.Assert(len(ctx.Meta.Peers), Equals, 3)
 
 	// send fail leader switch to 2
 	s.cache.OnSendFail(s.bo, ctx, false, nil)
-	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
 
 	// access 1 it will return NotLeader, leader back to 2 again
 	s.cache.UpdateLeader(loc.Region, s.store2, ctx.PeerIdx)
-	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
 }
@@ -263,28 +264,28 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 
 	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
-	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
 	c.Assert(len(ctx.Meta.Peers), Equals, 3)
 
 	// send fail leader switch to 2
 	s.cache.OnSendFail(s.bo, ctx, false, nil)
-	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
 
 	// access 2, it's in hibernate and return 0 leader, so switch to 3
 	s.cache.UpdateLeader(loc.Region, 0, ctx.PeerIdx)
-	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, peer3)
 
 	// again peer back to 1
-	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	s.cache.UpdateLeader(loc.Region, 0, ctx.PeerIdx)
-	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
 }
@@ -299,26 +300,26 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 
 	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
-	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
 	c.Assert(len(ctx.Meta.Peers), Equals, 3)
 
 	// send fail leader switch to 2
 	s.cache.OnSendFail(s.bo, ctx, false, nil)
-	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
 
 	// send 2 fail leader switch to 3
 	s.cache.OnSendFail(s.bo, ctx, false, nil)
-	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, peer3)
 
 	// 3 can be access, so switch to 1
 	s.cache.UpdateLeader(loc.Region, s.store1, ctx.PeerIdx)
-	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
 }

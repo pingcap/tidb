@@ -69,6 +69,23 @@ const (
 	RC
 )
 
+// ReplicaReadType is the type of replica to read data from
+type ReplicaReadType byte
+
+const (
+	// ReplicaReadLeader stands for 'read from leader'.
+	ReplicaReadLeader ReplicaReadType = iota
+	// ReplicaReadFollower stands for 'read from follower'.
+	ReplicaReadFollower
+	// ReplicaReadLearner stands for 'read from learner'.
+	ReplicaReadLearner
+)
+
+// IsFollowerRead checks if leader is going to be used to read data.
+func (r ReplicaReadType) IsFollowerRead() bool {
+	return r == ReplicaReadFollower
+}
+
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
@@ -158,6 +175,11 @@ type Transaction interface {
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	BatchGet(keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
+
+	// SetFollowerRead sets current transaction to read data from follower
+	SetFollowerRead()
+	// ClearFollowerRead disables follower read on current transaction
+	ClearFollowerRead()
 }
 
 // AssertionProto is an interface defined for the assertion protocol.
@@ -222,6 +244,8 @@ type Request struct {
 	Streaming bool
 	// MemTracker is used to trace and control memory usage in co-processor layer.
 	MemTracker *memory.Tracker
+	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
+	ReplicaRead ReplicaReadType
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -253,6 +277,11 @@ type Snapshot interface {
 	BatchGet(keys []Key) (map[string][]byte, error)
 	// SetPriority snapshot set the priority
 	SetPriority(priority int)
+
+	// SetFollowerRead sets current snapshot to read data from follower
+	SetFollowerRead()
+	// ClearFollowerRead disables follower read on current snapshot
+	ClearFollowerRead()
 }
 
 // Driver is the interface that must be implemented by a KV storage.

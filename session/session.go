@@ -1256,6 +1256,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
+		if s.sessionVars.ReplicaRead.IsFollowerRead() {
+			s.txn.SetFollowerRead()
+		}
 	}
 	return &s.txn, nil
 }
@@ -1315,7 +1318,10 @@ func (s *session) NewTxn(ctx context.Context) error {
 		return err
 	}
 	txn.SetCap(s.getMembufCap())
-	txn.SetVars(s.sessionVars.KVVars)
+	txn.SetVars(s.GetSessionVars().KVVars)
+	if s.GetSessionVars().ReplicaRead.IsFollowerRead() {
+		txn.SetFollowerRead()
+	}
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{

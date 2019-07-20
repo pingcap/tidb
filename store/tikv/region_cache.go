@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -67,16 +68,37 @@ type Region struct {
 // RegionStore represents region stores info
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
-	workStoreIdx int32    // point to current work peer in meta.Peers and work store in stores(same idx)
-	stores       []*Store // stores in this region
+	workStoreIdx      int32    // point to current work peer in meta.Peers and work store in stores(same idx)
+	stores            []*Store // stores in this region
+	nextFollowerStore uint32   // point to current follower in followers store
+	followers         []int32  // followers' index in this region
 }
 
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
 	return &RegionStore{
-		workStoreIdx: r.workStoreIdx,
-		stores:       r.stores,
+		workStoreIdx:      r.workStoreIdx,
+		stores:            r.stores,
+		nextFollowerStore: 0,
+		followers:         r.followers,
 	}
+}
+
+// reset region store followers
+func (r *RegionStore) initFollowers() {
+	r.followers = make([]int32, 0, len(r.stores)-1)
+	for i := int32(0); i < int32(len(r.stores)); i++ {
+		if i != r.workStoreIdx {
+			r.followers = append(r.followers, i)
+		}
+	}
+}
+
+// return next follower store's index
+func (r *RegionStore) nextFollower() int32 {
+	followers := r.followers
+	nextFollower := atomic.AddUint32(&r.nextFollowerStore, 1)
+	return followers[nextFollower%uint32(len(followers))]
 }
 
 // init initializes region after constructed.
@@ -84,10 +106,12 @@ func (r *Region) init(c *RegionCache) {
 	// region store pull used store from global store map
 	// to avoid acquire storeMu in later access.
 	rs := &RegionStore{
-		workStoreIdx: 0,
-		stores:       make([]*Store, 0, len(r.meta.Peers)),
+		workStoreIdx:      0,
+		stores:            make([]*Store, 0, len(r.meta.Peers)),
+		nextFollowerStore: 0,
+		followers:         make([]int32, 0, len(r.meta.Peers)-1),
 	}
-	for _, p := range r.meta.Peers {
+	for i, p := range r.meta.Peers {
 		c.storeMu.RLock()
 		store, exists := c.storeMu.stores[p.StoreId]
 		c.storeMu.RUnlock()
@@ -95,6 +119,9 @@ func (r *Region) init(c *RegionCache) {
 			store = c.getStoreByStoreID(p.StoreId)
 		}
 		rs.stores = append(rs.stores, store)
+		if i != 0 {
+			rs.followers = append(rs.followers, int32(i))
+		}
 	}
 	atomic.StorePointer(&r.store, unsafe.Pointer(rs))
 
@@ -248,7 +275,7 @@ func (c *RPCContext) String() string {
 
 // GetRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
-func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
+func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -261,7 +288,15 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	}
 
 	regionStore := cachedRegion.getStore()
-	store, peer, storeIdx := cachedRegion.WorkStorePeer(regionStore)
+	var store *Store
+	var peer *metapb.Peer
+	var storeIdx int
+	switch replicaRead {
+	case kv.ReplicaReadFollower:
+		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore)
+	default:
+		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
+	}
 	addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
 	if err != nil {
 		return nil, err
@@ -892,12 +927,21 @@ func (r *Region) GetLeaderStoreID() uint64 {
 	return r.meta.Peers[int(r.getStore().workStoreIdx)].StoreId
 }
 
+func (r *Region) getStorePeer(rs *RegionStore, pidx int32) (store *Store, peer *metapb.Peer, idx int) {
+	store = rs.stores[pidx]
+	peer = r.meta.Peers[pidx]
+	idx = int(pidx)
+	return
+}
+
 // WorkStorePeer returns current work store with work peer.
 func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer, idx int) {
-	idx = int(rs.workStoreIdx)
-	store = rs.stores[rs.workStoreIdx]
-	peer = r.meta.Peers[rs.workStoreIdx]
-	return
+	return r.getStorePeer(rs, rs.workStoreIdx)
+}
+
+// FollowerStorePeer returns a follower store with follower peer.
+func (r *Region) FollowerStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer, idx int) {
+	return r.getStorePeer(rs, rs.nextFollower())
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
@@ -947,6 +991,7 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int) {
 	nextIdx := (currentPeerIdx + 1) % len(regionStore.stores)
 	newRegionStore := regionStore.clone()
 	newRegionStore.workStoreIdx = int32(nextIdx)
+	newRegionStore.initFollowers()
 	r.compareAndSwapStore(regionStore, newRegionStore)
 }
 
@@ -973,6 +1018,7 @@ retry:
 	}
 	newRegionStore := oldRegionStore.clone()
 	newRegionStore.workStoreIdx = int32(leaderIdx)
+	newRegionStore.initFollowers()
 	if !r.compareAndSwapStore(oldRegionStore, newRegionStore) {
 		goto retry
 	}

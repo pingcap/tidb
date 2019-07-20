@@ -309,6 +309,10 @@ func (s *mockTikvGrpcServer) ReadIndex(context.Context, *kvrpcpb.ReadIndexReques
 	return nil, errors.New("unreachable")
 }
 
+func (s *mockTikvGrpcServer) KvRefreshLock(context.Context, *kvrpcpb.RefreshLockRequest) (*kvrpcpb.RefreshLockResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
 	// prepare a mock tikv grpc server
 	addr := "localhost:56341"
