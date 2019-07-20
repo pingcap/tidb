@@ -301,7 +301,7 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	return updateColumn(t, job, newCol, &newCol.Name)
+	return updateColumnDefaultValue(t, job, newCol, &newCol.Name)
 }
 
 func onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -417,8 +417,8 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 	return ver, nil
 }
 
-func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+func updateColumnDefaultValue(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -427,7 +427,10 @@ func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldCol
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(newCol.Name, tblInfo.Name)
 	}
-	*oldCol = *newCol
+	// The newCol's offset may be the value of the old schema version, so we can't use newCol directly.
+	oldCol.DefaultValue = newCol.DefaultValue
+	oldCol.DefaultValueBit = newCol.DefaultValueBit
+	oldCol.Flag = newCol.Flag
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
