@@ -187,13 +187,13 @@ Projection_37	100.00	root	tpch.supplier.s_acctbal, tpch.supplier.s_name, tpch.na
   └─HashRightJoin_45	155496.00	root	inner join, inner:HashLeftJoin_51, equal:[eq(tpch.part.p_partkey, tpch.partsupp.ps_partkey) eq(tpch.partsupp.ps_supplycost, min(ps_supplycost))]
     ├─HashLeftJoin_51	155496.00	root	inner join, inner:TableReader_74, equal:[eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)]
     │ ├─HashRightJoin_54	8155010.44	root	inner join, inner:HashRightJoin_56, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
-    │ │ ├─HashRightJoin_55	100000.00	root	inner join, inner:HashRightJoin_62, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
+    │ │ ├─HashRightJoin_56	100000.00	root	inner join, inner:HashRightJoin_62, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
     │ │ │ ├─HashRightJoin_62	5.00	root	inner join, inner:TableReader_67, equal:[eq(tpch.region.r_regionkey, tpch.nation.n_regionkey)]
     │ │ │ │ ├─TableReader_67	1.00	root	data:Selection_66
     │ │ │ │ │ └─Selection_66	1.00	cop	eq(tpch.region.r_name, "ASIA")
     │ │ │ │ │   └─TableScan_65	5.00	cop	table:region, range:[-inf,+inf], keep order:false
     │ │ │ │ └─TableReader_64	25.00	root	data:TableScan_63
-    │ │ │ │   └─TableScan_65	25.00	cop	table:nation, range:[-inf,+inf], keep order:false
+    │ │ │ │   └─TableScan_63	25.00	cop	table:nation, range:[-inf,+inf], keep order:false
     │ │ │ └─TableReader_69	500000.00	root	data:TableScan_68
     │ │ │   └─TableScan_68	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
     │ │ └─TableReader_71	40000000.00	root	data:TableScan_70
