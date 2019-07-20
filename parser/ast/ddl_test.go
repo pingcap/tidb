@@ -87,6 +87,8 @@ func (ts *testDDLSuite) TestDDLOnDeleteRestore(c *C) {
 		return node.(*CreateTableStmt).Constraints[1].Refer.OnDelete
 	}
 	RunNodeRestoreTest(c, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) %s)", extractNodeFunc)
+	RunNodeRestoreTest(c, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) on update CASCADE %s)", extractNodeFunc)
+	RunNodeRestoreTest(c, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) %s on update CASCADE)", extractNodeFunc)
 }
 
 func (ts *testDDLSuite) TestDDLOnUpdateRestore(c *C) {
@@ -100,6 +102,8 @@ func (ts *testDDLSuite) TestDDLOnUpdateRestore(c *C) {
 		return node.(*CreateTableStmt).Constraints[1].Refer.OnUpdate
 	}
 	RunNodeRestoreTest(c, testCases, "CREATE TABLE child ( id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE %s )", extractNodeFunc)
+	RunNodeRestoreTest(c, testCases, "CREATE TABLE child ( id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) %s ON DELETE CASCADE)", extractNodeFunc)
+	RunNodeRestoreTest(c, testCases, "CREATE TABLE child ( id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id)  %s )", extractNodeFunc)
 }
 
 func (ts *testDDLSuite) TestDDLIndexOption(c *C) {
