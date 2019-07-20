@@ -37,6 +37,12 @@ import (
 	"github.com/pingcap/parser/types"
 )
 
+// this is local type definition to serve ON UPDATE /ON DELETE
+type OnDeleteUpdateDef struct {
+    OnDelete *ast.OnDeleteOpt
+    OnUpdate *ast.OnUpdateOpt
+}
+
 %}
 
 %union {
@@ -829,8 +835,9 @@ import (
 	PrivLevel			"Privilege scope"
 	PrivType			"Privilege type"
 	ReferDef			"Reference definition"
-	OnDeleteOpt			"optional ON DELETE clause"
-	OnUpdateOpt			"optional ON UPDATE clause"
+	OnDelete			"ON DELETE clause"
+	OnUpdate			"ON UPDATE clause"
+	OnDeleteUpdateOpt   "optional ON DELETE clause + ON UPDATE clause"
 	OptGConcatSeparator		"optional GROUP_CONCAT SEPARATOR"
 	ReferOpt			"reference option"
 	RequireList			"require list"
@@ -1964,41 +1971,48 @@ ConstraintElem:
 	}
 
 ReferDef:
-	"REFERENCES" TableName '(' IndexColNameList ')' OnDeleteOpt OnUpdateOpt
+	"REFERENCES" TableName '(' IndexColNameList ')' OnDeleteUpdateOpt
 	{
-		var onDeleteOpt *ast.OnDeleteOpt
-		if $6 != nil {
-			onDeleteOpt = $6.(*ast.OnDeleteOpt)
-		}
-		var onUpdateOpt *ast.OnUpdateOpt
-		if $7 != nil {
-			onUpdateOpt = $7.(*ast.OnUpdateOpt)
-		}
 		$$ = &ast.ReferenceDef{
 			Table: $2.(*ast.TableName),
 			IndexColNames: $4.([]*ast.IndexColName),
-			OnDelete: onDeleteOpt,
-			OnUpdate: onUpdateOpt,
+			OnDelete: $6.(OnDeleteUpdateDef).OnDelete,
+			OnUpdate: $6.(OnDeleteUpdateDef).OnUpdate,
 		}
 	}
 
-OnDeleteOpt:
-	{
-		$$ = &ast.OnDeleteOpt{}
-	} %prec lowerThanOn
-|	"ON" "DELETE" ReferOpt
+OnDelete:
+	"ON" "DELETE" ReferOpt
 	{
 		$$ = &ast.OnDeleteOpt{ReferOpt: $3.(ast.ReferOptionType)}
 	}
 
-OnUpdateOpt:
-	{
-		$$ = &ast.OnUpdateOpt{}
-	} %prec lowerThanOn
-|	"ON" "UPDATE" ReferOpt
+OnUpdate:
+	"ON" "UPDATE" ReferOpt
 	{
 		$$ = &ast.OnUpdateOpt{ReferOpt: $3.(ast.ReferOptionType)}
 	}
+
+OnDeleteUpdateOpt:
+    OnDelete OnUpdate
+    {
+        $$ = OnDeleteUpdateDef{ $1.(*ast.OnDeleteOpt), $2.(*ast.OnUpdateOpt) }
+	}
+|   OnUpdate OnDelete
+    {
+        $$ = OnDeleteUpdateDef{ $2.(*ast.OnDeleteOpt), $1.(*ast.OnUpdateOpt) }
+	}
+|   OnUpdate
+    {
+        $$ = OnDeleteUpdateDef{ &ast.OnDeleteOpt{}, $1.(*ast.OnUpdateOpt) }
+    } %prec lowerThanOn
+|   OnDelete
+    {
+        $$ = OnDeleteUpdateDef{ $1.(*ast.OnDeleteOpt), &ast.OnUpdateOpt{} }
+    } %prec lowerThanOn
+|   {
+		$$ = OnDeleteUpdateDef{ &ast.OnDeleteOpt{}, &ast.OnUpdateOpt{} }
+	} %prec lowerThanOn
 
 ReferOpt:
 	"RESTRICT"
