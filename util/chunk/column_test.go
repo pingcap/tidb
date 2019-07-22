@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 func equalColumn(c1, c2 *Column) bool {
@@ -215,6 +216,27 @@ func (s *testChunkSuite) TestSetColumn(c *check.C) {
 		c.Assert(s1.Value, check.Equals, s2.Value)
 		c.Assert(s1.Name, check.Equals, fmt.Sprintf("%v", i))
 		c.Assert(s1.Value, check.Equals, uint64(i))
+		i++
+	}
+}
+
+func (s *testChunkSuite) TestJSONColumn(c *check.C) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1024)
+	col := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		j := new(json.BinaryJSON)
+		if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, i, i))); err != nil {
+			c.Fatal(err)
+		}
+		col.AppendJSON(*j)
+	}
+
+	it := NewIterator4Chunk(chk)
+	var i int
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		j1 := col.GetJSON(i)
+		j2 := row.GetJSON(0)
+		c.Assert(j1.String(), check.Equals, j2.String())
 		i++
 	}
 }
