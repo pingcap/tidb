@@ -226,8 +226,13 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) error {
 			zap.String("target", c.target),
 		)
 		c.client = streamClient
-		return err
+		return nil
 	}
+	logutil.BgLogger().Error(
+		"batchRecvLoop re-create streaming fail",
+		zap.String("target", c.target),
+		zap.Error(err),
+	)
 	return err
 }
 
