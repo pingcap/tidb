@@ -551,8 +551,8 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 }
 
 // Column returns the specific column.
-func (c *Chunk) Column(colID int) *Column {
-	return c.columns[colID]
+func (c *Chunk) Column(colIdx int) *Column {
+	return c.columns[colIdx]
 }
 
 func writeTime(buf []byte, t types.Time) {
