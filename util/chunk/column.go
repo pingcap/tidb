@@ -214,8 +214,6 @@ const (
 	sizeUint64    = int(unsafe.Sizeof(uint64(0)))
 	sizeFloat32   = int(unsafe.Sizeof(float32(0)))
 	sizeFloat64   = int(unsafe.Sizeof(float64(0)))
-	sizeTime      = int(unsafe.Sizeof(types.Time{}))
-	sizeDuration  = int(unsafe.Sizeof(types.Duration{}))
 	sizeMyDecimal = int(unsafe.Sizeof(types.MyDecimal{}))
 )
 

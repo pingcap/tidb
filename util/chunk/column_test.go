@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"time"
 )
 
 func equalColumn(c1, c2 *Column) bool {
@@ -237,6 +238,24 @@ func (s *testChunkSuite) TestJSONColumn(c *check.C) {
 		j1 := col.GetJSON(i)
 		j2 := row.GetJSON(0)
 		c.Assert(j1.String(), check.Equals, j2.String())
+		i++
+	}
+}
+
+func (s *testChunkSuite) TestTimeColumn(c *check.C) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 1024)
+	col := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col.AppendTime(types.CurrentTime(mysql.TypeDatetime))
+		time.Sleep(time.Millisecond / 10)
+	}
+
+	it := NewIterator4Chunk(chk)
+	var i int
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		j1 := col.GetTime(i)
+		j2 := row.GetTime(0)
+		c.Assert(j1.Compare(j2), check.Equals, 0)
 		i++
 	}
 }
