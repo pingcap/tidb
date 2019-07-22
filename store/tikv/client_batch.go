@@ -185,11 +185,10 @@ type batchCommandsClient struct {
 	// The target host.
 	target string
 
-	conn                   *grpc.ClientConn
-	client                 tikvpb.Tikv_BatchCommandsClient
-	batched                sync.Map
-	idAlloc                uint64
-	tikvTransportLayerLoad *uint64
+	conn    *grpc.ClientConn
+	client  tikvpb.Tikv_BatchCommandsClient
+	batched sync.Map
+	idAlloc uint64
 
 	// closed indicates the batch client is closed explicitly or not.
 	closed int32
@@ -259,7 +258,7 @@ func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) bool {
 	return false
 }
 
-func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
+func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransportLayerLoad *uint64) {
 	defer func() {
 		if r := recover(); r != nil {
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
@@ -267,7 +266,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
 			logutil.BgLogger().Info("restart batchRecvLoop")
-			go c.batchRecvLoop(cfg)
+			go c.batchRecvLoop(cfg, tikvTransportLayerLoad)
 		}
 	}()
 
@@ -299,10 +298,10 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 			c.batched.Delete(requestID)
 		}
 
-		tikvTransportLayerLoad := resp.GetTransportLayerLoad()
-		if tikvTransportLayerLoad > 0.0 && cfg.MaxBatchWaitTime > 0 {
+		transportLayerLoad := resp.GetTransportLayerLoad()
+		if transportLayerLoad > 0.0 && cfg.MaxBatchWaitTime > 0 {
 			// We need to consider TiKV load only if batch-wait strategy is enabled.
-			atomic.StoreUint64(c.tikvTransportLayerLoad, tikvTransportLayerLoad)
+			atomic.StoreUint64(tikvTransportLayerLoad, transportLayerLoad)
 		}
 	}
 }
@@ -426,7 +425,7 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 	}
 
 	cli.send(req, entries)
-	return atomic.LoadUint64(cli.tikvTransportLayerLoad)
+	return atomic.LoadUint64(&a.tikvTransportLayerLoad)
 }
 
 func (a *batchConn) Close() {
