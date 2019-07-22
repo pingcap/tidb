@@ -34,7 +34,7 @@ func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, select
 // return the number of rows which is selected.
 func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selected []bool, dst *Chunk) int {
 	oldLen := dst.columns[innerColOffset].length
-	var srcCols []*column
+	var srcCols []*Column
 	if innerColOffset == 0 {
 		srcCols = src.columns[:outerColOffset]
 	} else {
@@ -78,7 +78,7 @@ func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, 
 		return
 	}
 	row := src.GetRow(0)
-	var srcCols []*column
+	var srcCols []*Column
 	if innerColOffset == 0 {
 		srcCols = src.columns[outerColOffset:]
 	} else {
