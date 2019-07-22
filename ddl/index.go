@@ -913,9 +913,7 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 		indexedCols[i] = cols[v.Offset]
 	}
 
-	indexedColsCpy := make([]*table.Column, len(indexedCols))
-	copy(indexedColsCpy, indexedCols)
-	decodeColMap, err := buildFullDecodeColMap(indexedColsCpy, sessCtx, t)
+	decodeColMap, err := buildFullDecodeColMap(indexedCols, sessCtx, t)
 	if err != nil {
 		return nil, err
 	}
@@ -926,7 +924,9 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 	return decodeColMap, nil
 }
 
-func buildFullDecodeColMap(pendingCols []*table.Column, sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
+func buildFullDecodeColMap(indexedCols []*table.Column, sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
+	pendingCols := make([]*table.Column, len(indexedCols))
+	copy(pendingCols, indexedCols)
 	decodeColMap := make(map[int64]decoder.Column, len(pendingCols))
 	for i := 0; i < len(pendingCols); i++ {
 		col := pendingCols[i]
