@@ -152,6 +152,11 @@ func (c *Chunk) RequiredRows() int {
 	return c.requiredRows
 }
 
+func (c *Chunk) assertNilSel() {
+	if c.sel != nil {
+		panic("assert(Sel == nil)")
+	}
+}
 
 // SetRequiredRows sets the number of required rows.
 func (c *Chunk) SetRequiredRows(requiredRows, maxChunkSize int) *Chunk {
@@ -175,6 +180,7 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 // MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
 // NOTICE: it doesn't reference Sel.
 func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) {
+	c.assertNilSel()
 	c.columns[dstColIdx] = src.columns[srcColIdx]
 }
 
@@ -182,6 +188,7 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) {
 // "other.columns[otherIdx]". If there exists columns refer to the Column to be
 // swapped, we need to re-build the reference.
 func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
+	c.assertNilSel()
 	// Find the leftmost Column of the reference which is the actual Column to
 	// be swapped.
 	for i := 0; i < colIdx; i++ {
@@ -455,6 +462,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 
 // TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
 func (c *Chunk) TruncateTo(numRows int) {
+	c.assertNilSel()
 	for _, col := range c.columns {
 		if col.isFixed() {
 			elemLen := len(col.elemBuf)
