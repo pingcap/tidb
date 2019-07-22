@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -235,7 +237,7 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 	})
 }
 
-func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) bool {
+func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) error {
 	c.failPendingRequests(err) // fail all pending requests.
 
 	// Re-establish a application layer stream. TCP layer is handled by gRPC.
@@ -248,14 +250,14 @@ func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) bool {
 		)
 		c.client = streamClient
 
-		return true
+		return nil
 	}
 	logutil.BgLogger().Error(
 		"batchRecvLoop re-create streaming fail",
 		zap.String("target", c.target),
 		zap.Error(err),
 	)
-	return false
+	return err
 }
 
 func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransportLayerLoad *uint64) {
@@ -273,6 +275,12 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 	for {
 		resp, err := c.recv()
 		if err != nil {
+			logutil.BgLogger().Error(
+				"batchRecvLoop error when receive",
+				zap.String("target", c.target),
+				zap.Error(err),
+			)
+
 			now := time.Now()
 			if stopped := c.reCreateStreamingClient(err); stopped {
 				return
@@ -311,22 +319,20 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) (stopped bool) 
 	c.lockForRecreate()
 	defer c.unlockForRecreate()
 
+	b := NewBackoffer(context.Background(), math.MaxInt32)
 	for { // try to re-create the streaming in the loop.
 		if c.isStopped() {
 			return true
 		}
-		logutil.BgLogger().Error(
-			"batchRecvLoop error when receive",
-			zap.String("target", c.target),
-			zap.Error(err),
-		)
-
-		if c.reCreateStreamingClientOnce(err) {
+		err1 := c.reCreateStreamingClientOnce(err)
+		if err1 == nil {
 			break
 		}
 
-		// TODO: Use a more smart backoff strategy.
-		time.Sleep(time.Second)
+		err2 := b.Backoff(boTiKVRPC, err1)
+		// As timeout is set to math.MaxUint32, err2 should always be nil.
+		// This line is added to make the 'make errcheck' pass.
+		terror.Log(err2)
 	}
 	return false
 }

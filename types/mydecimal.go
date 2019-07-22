@@ -107,6 +107,14 @@ var (
 	zeroMyDecimal = MyDecimal{}
 )
 
+// get the zero of MyDecimal with the specified result fraction digits
+func zeroMyDecimalWithFrac(frac int8) MyDecimal {
+	zero := MyDecimal{}
+	zero.digitsFrac = frac
+	zero.resultFrac = frac
+	return zero
+}
+
 // add adds a and b and carry, returns the sum and new carry.
 func add(a, b, carry int32) (int32, int32) {
 	sum := a + b + carry
@@ -1556,7 +1564,7 @@ func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
 				if to == nil {
 					return 0, nil
 				}
-				*to = zeroMyDecimal
+				*to = zeroMyDecimalWithFrac(to.resultFrac)
 				return 0, nil
 			}
 		}
@@ -1911,7 +1919,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 			idx++
 			/* We got decimal zero */
 			if idx == end {
-				*to = zeroMyDecimal
+				*to = zeroMyDecimalWithFrac(to.resultFrac)
 				break
 			}
 		}
@@ -2010,7 +2018,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	}
 	if prec1 <= 0 {
 		/* short-circuit everything: from1 == 0 */
-		*to = zeroMyDecimal
+		*to = zeroMyDecimalWithFrac(to.resultFrac)
 		return nil
 	}
 	prec1 -= countLeadingZeroes((prec1-1)%digitsPerWord, from1.wordBuf[idx1])
