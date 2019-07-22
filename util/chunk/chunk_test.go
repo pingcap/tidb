@@ -300,7 +300,7 @@ func (s *testChunkSuite) TestChunkSizeControl(c *check.C) {
 }
 
 // newChunk creates a new chunk and initialize columns with element length.
-// 0 adds an varlen column, positive len add a fixed length column, negative len adds a interface column.
+// 0 adds an varlen Column, positive len add a fixed length Column, negative len adds a interface Column.
 func newChunk(elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
