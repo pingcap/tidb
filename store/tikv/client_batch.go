@@ -210,7 +210,7 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 	})
 }
 
-func (c *batchCommandsClient) reCreateStreamingClient(err error, skipLog bool) error {
+func (c *batchCommandsClient) reCreateStreamingClient(err error) error {
 	// Hold the lock to forbid batchSendLoop using the old client.
 	c.clientLock.Lock()
 	defer c.clientLock.Unlock()
@@ -226,13 +226,6 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error, skipLog bool) e
 		)
 		c.client = streamClient
 		return err
-	}
-	if !skipLog {
-		logutil.BgLogger().Error(
-			"batchRecvLoop re-create streaming fail",
-			zap.String("target", c.target),
-			zap.Error(err),
-		)
 	}
 	return err
 }
@@ -252,32 +245,25 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 	for {
 		resp, err := c.recv()
 		if err != nil {
+			logutil.BgLogger().Error(
+				"batchRecvLoop error when receive",
+				zap.String("target", c.target),
+				zap.Error(err),
+			)
+
 			b := NewBackoffer(context.Background(), math.MaxInt32)
 			now := time.Now()
-			skipLog := false
-			for count := 0; ; count++ { // try to re-create the streaming in the loop.
+			for { // try to re-create the streaming in the loop.
 				if c.isStopped() {
 					return
 				}
 
-				if count <= 10 {
-					logutil.BgLogger().Error(
-						"batchRecvLoop error when receive",
-						zap.String("target", c.target),
-						zap.Error(err),
-					)
-					if count == 10 {
-						logutil.BgLogger().Error("meet error for 10 times and don't show the same log any more")
-						skipLog = true
-					}
-				}
-
-				err1 := c.reCreateStreamingClient(err, skipLog)
+				err1 := c.reCreateStreamingClient(err)
 				if err1 == nil {
 					break
 				}
-				if err := b.Backoff(boTiKVRPC, err1); err != nil {
-					logutil.BgLogger().Error("backoff error", zap.Error(err))
+				if err2 := b.Backoff(boTiKVRPC, err1); err2 != nil {
+					logutil.BgLogger().Error("backoff error", zap.Error(err2))
 				}
 			}
 			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
