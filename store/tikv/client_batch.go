@@ -368,7 +368,6 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 	requests := make([]*tikvpb.BatchCommandsRequest_Request, 0, cfg.MaxBatchSize)
 	requestIDs := make([]uint64, 0, cfg.MaxBatchSize)
 
-	var tikvTransportLayerLoad uint64
 	var bestBatchWaitSize = cfg.BatchWaitSize
 	for {
 		entries = entries[:0]
@@ -380,7 +379,7 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 
 		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
 			// If the target TiKV is overload, wait a while to collect more requests.
-			if uint(tikvTransportLayerLoad) >= cfg.OverloadThreshold {
+			if atomic.LoadUint64(&a.tikvTransportLayerLoad) >= uint64(cfg.OverloadThreshold) {
 				fetchMorePendingRequests(
 					a.batchCommandsCh, int(cfg.MaxBatchSize), int(bestBatchWaitSize),
 					cfg.MaxBatchWaitTime, &entries, &requests,
@@ -403,11 +402,11 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 			continue // All requests are canceled.
 		}
 
-		tikvTransportLayerLoad = a.getClientAndSend(entries, requests, requestIDs)
+		a.getClientAndSend(entries, requests, requestIDs)
 	}
 }
 
-func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*tikvpb.BatchCommandsRequest_Request, requestIDs []uint64) (tikvTransportLayerLoad uint64) {
+func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*tikvpb.BatchCommandsRequest_Request, requestIDs []uint64) {
 	// Choose a connection by round-robbin.
 	var cli *batchCommandsClient
 	for {
@@ -431,7 +430,7 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 	}
 
 	cli.send(req, entries)
-	return atomic.LoadUint64(&a.tikvTransportLayerLoad)
+	return
 }
 
 func (a *batchConn) Close() {
