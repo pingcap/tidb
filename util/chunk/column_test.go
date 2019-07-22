@@ -259,3 +259,20 @@ func (s *testChunkSuite) TestTimeColumn(c *check.C) {
 		i++
 	}
 }
+
+func (s *testChunkSuite) TestDurationColumn(c *check.C) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
+	col := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col.AppendDuration(types.Duration{Duration: time.Second * time.Duration(i)})
+	}
+
+	it := NewIterator4Chunk(chk)
+	var i int
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		j1 := col.GetDuration(i, 0)
+		j2 := row.GetDuration(0, 0)
+		c.Assert(j1.Compare(j2), check.Equals, 0)
+		i++
+	}
+}
