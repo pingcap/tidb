@@ -267,8 +267,7 @@ const (
 
 	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
 	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
-		name char(100) NOT NULL,
-		type char(20) check(type="logical_rule") NOT NULL
+		name char(100) NOT NULL
 	);`
 )
 

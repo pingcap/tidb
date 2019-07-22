@@ -17,7 +17,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/pingcap/errors"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -37,7 +36,7 @@ func (e *ReloadOptRuleBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) e
 
 // LoadOptRuleBlacklist loads the latest data from table mysql.opt_rule_blacklist.
 func LoadOptRuleBlacklist(ctx sessionctx.Context) (err error) {
-	sql := "select HIGH_PRIORITY name, type from mysql.opt_rule_blacklist"
+	sql := "select HIGH_PRIORITY name from mysql.opt_rule_blacklist"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return err
@@ -45,11 +44,7 @@ func LoadOptRuleBlacklist(ctx sessionctx.Context) (err error) {
 	newDisabledLogicalRules := set.NewStringSet()
 	for _, row := range rows {
 		name := strings.ToLower(row.GetString(0))
-		if row.GetString(1) == "logical_rule" {
-			newDisabledLogicalRules.Insert(name)
-		} else {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("type field of mysql.opt_rule_blacklist can only be \"logical_rule\""))
-		}
+		newDisabledLogicalRules.Insert(name)
 	}
 	plannercore.DefaultDisabledLogicalRulesList.Store(newDisabledLogicalRules)
 	return nil
