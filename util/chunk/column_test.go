@@ -92,6 +92,48 @@ func (s *testChunkSuite) TestI64Column(c *check.C) {
 	}
 }
 
+func (s *testChunkSuite) TestF64Column(c *check.C) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1024)
+	col := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col.AppendFloat64(float64(i))
+	}
+
+	f64s := col.Float64s()
+	for i := 0; i < 1024; i++ {
+		c.Assert(f64s[i], check.Equals, float64(i))
+		f64s[i] /= 2
+	}
+
+	it := NewIterator4Chunk(chk)
+	var i int64
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		c.Assert(row.GetFloat64(0), check.Equals, float64(i)/2)
+		i++
+	}
+}
+
+func (s *testChunkSuite) TestF32Column(c *check.C) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeFloat)}, 1024)
+	col := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col.AppendFloat32(float32(i))
+	}
+
+	f32s := col.Float32s()
+	for i := 0; i < 1024; i++ {
+		c.Assert(f32s[i], check.Equals, float32(i))
+		f32s[i] /= 2
+	}
+
+	it := NewIterator4Chunk(chk)
+	var i int64
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		c.Assert(row.GetFloat32(0), check.Equals, float32(i)/2)
+		i++
+	}
+}
+
 func (s *testChunkSuite) TestStringColumn(c *check.C) {
 	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
 	for i := 0; i < 1024; i++ {

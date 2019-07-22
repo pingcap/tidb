@@ -64,9 +64,9 @@ type Column struct {
 func NewColumn(ft *types.FieldType, cap int) *Column {
 	typeSize := getFixedLen(ft)
 	if typeSize == varElemLen {
-		return newFixedLenColumn(typeSize, cap)
-	} else {
 		return newVarLenColumn(cap, nil)
+	} else {
+		return newFixedLenColumn(typeSize, cap)
 	}
 }
 
