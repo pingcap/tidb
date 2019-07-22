@@ -184,11 +184,17 @@ func (s *testChunkSuite) TestMyDecimal(c *check.C) {
 }
 
 func (s *testChunkSuite) TestStringColumn(c *check.C) {
-	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeVarString)}, 1024)
+	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
-		col.AppendString(fmt.Sprintf("%v", i))
+		col.AppendString(fmt.Sprintf("%v", i*i))
 	}
-	for i := 0; i < 1024; i++ {
-		c.Assert(col.GetString(i), check.Equals, fmt.Sprintf("%v", i))
+
+	it := NewIterator4Chunk(chk)
+	var i int
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		c.Assert(row.GetString(0), check.Equals, fmt.Sprintf("%v", i*i))
+		c.Assert(col.GetString(i), check.Equals, fmt.Sprintf("%v", i*i))
+		i++
 	}
 }
