@@ -523,8 +523,7 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 	case json.TypeCodeInt64:
 		return float64(j.GetInt64()), nil
 	case json.TypeCodeUint64:
-		u, err := ConvertIntToUint(sc, j.GetInt64(), UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
-		return float64(u), errors.Trace(err)
+		return float64(j.GetUint64()), nil
 	case json.TypeCodeFloat64:
 		return j.GetFloat64(), nil
 	case json.TypeCodeString:
