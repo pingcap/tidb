@@ -1813,11 +1813,11 @@ func (s *testIntegrationSuite4) TestDropAutoIncrementIndex(c *C) {
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int auto_increment, unique key (a))")
-	dropIndexSql := "alter table t1 drop index a"
-	assertErrorCode(c, tk, dropIndexSql, mysql.ErrWrongAutoKey)
+	dropIndexSQL := "alter table t1 drop index a"
+	assertErrorCode(c, tk, dropIndexSQL, mysql.ErrWrongAutoKey)
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
-	dropIndexSql = "alter table t1 drop index a"
-	assertErrorCode(c, tk, dropIndexSql, mysql.ErrWrongAutoKey)
+	dropIndexSQL = "alter table t1 drop index a"
+	assertErrorCode(c, tk, dropIndexSQL, mysql.ErrWrongAutoKey)
 }
