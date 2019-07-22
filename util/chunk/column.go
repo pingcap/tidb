@@ -209,6 +209,11 @@ func (c *Column) AppendTime(t types.Time) {
 	c.finishAppendFixed()
 }
 
+// AppendEnum appends a Enum value into this Column.
+func (c *Column) AppendEnum(enum types.Enum) {
+	c.appendNameValue(enum.Name, enum.Value)
+}
+
 const (
 	sizeInt64     = int(unsafe.Sizeof(int64(0)))
 	sizeUint64    = int(unsafe.Sizeof(uint64(0)))
