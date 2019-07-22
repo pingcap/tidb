@@ -155,34 +155,37 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 	return false, nil
 }
 
-// getDupAgnosticAggCols checks whether a LogicalPlan is LogicalAggregation
-// and will extract all columns from its duplicate agnostic aggregate functions.
-// If its aggregate functions are NOT all duplicate agnostic, then clear the cols.
+// getDupAgnosticAggCols checks whether a LogicalPlan is LogicalAggregation.
+// It extracts all the columns from the duplicate agnostic aggregate functions.
+// The returned column set is nil if not all the aggregate functions are duplicate agnostic.
 // Only the following functions are considered to be duplicate agnostic:
 //   1. MAX(arg)
 //   2. MIN(arg)
 //   3. FIRST_ROW(arg)
 //   4. Other agg functions with DISTINCT flag, like SUM(DISTINCT arg)
-func (o *outerJoinEliminator) getDupAgnosticAggCols(p LogicalPlan) (_ bool, cols []*expression.Column) {
+func (o *outerJoinEliminator) getDupAgnosticAggCols(
+	p LogicalPlan,
+	oldAggCols []*expression.Column, // Reuse the original buffer.
+) (isAgg bool, newAggCols []*expression.Column) {
 	agg, ok := p.(*LogicalAggregation)
 	if !ok {
 		return false, nil
 	}
-	cols = make([]*expression.Column, 0, len(agg.AggFuncs))
+	newAggCols = oldAggCols[:0]
 	for _, aggDesc := range agg.AggFuncs {
 		if !aggDesc.HasDistinct &&
 			aggDesc.Name != ast.AggFuncFirstRow &&
 			aggDesc.Name != ast.AggFuncMax &&
 			aggDesc.Name != ast.AggFuncMin {
 			// If not all aggregate functions are duplicate agnostic,
-			// we should clean the aggCols, so `return true, nil`.
-			return true, nil
+			// we should clean the aggCols, so `return true, newAggCols[:0]`.
+			return true, newAggCols[:0]
 		}
 		for _, expr := range aggDesc.Args {
-			cols = append(cols, expression.ExtractColumns(expr)...)
+			newAggCols = append(newAggCols, expression.ExtractColumns(expr)...)
 		}
 	}
-	return true, cols
+	return true, newAggCols
 }
 
 func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Column, parentCols []*expression.Column) (LogicalPlan, error) {
@@ -215,7 +218,7 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		parentCols = append(parentCols[:0], p.Schema().Columns...)
 	}
 
-	if ok, newCols := o.getDupAgnosticAggCols(p); ok {
+	if ok, newCols := o.getDupAgnosticAggCols(p, aggCols); ok {
 		aggCols = newCols
 	}
 
