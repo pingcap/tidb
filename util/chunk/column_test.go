@@ -17,7 +17,7 @@ import (
 	"github.com/pingcap/check"
 )
 
-func equalColumn(c1, c2 *column) bool {
+func equalColumn(c1, c2 *Column) bool {
 	if c1.length != c2.length ||
 		c1.nullCount != c2.nullCount {
 		return false

@@ -28,8 +28,8 @@ import (
 // Values are appended in compact format and can be directly accessed without decoding.
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 type Chunk struct {
-	columns []*column
-	// numVirtualRows indicates the number of virtual rows, which have zero column.
+	columns []*Column
+	// numVirtualRows indicates the number of virtual rows, which have zero Column.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
 	// capacity indicates the max number of rows this chunk can hold.
@@ -56,7 +56,7 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 //  maxChunkSize: the max limit for the number of rows.
 func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	chk := &Chunk{
-		columns:  make([]*column, 0, len(fields)),
+		columns:  make([]*Column, 0, len(fields)),
 		capacity: mathutil.Min(cap, maxChunkSize),
 		// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
 		// like how we judge whether a chunk is full now, then the statement
@@ -97,8 +97,8 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 
 // renewColumns creates the columns of a Chunk. The capacity of the newly
 // created columns is equal to cap.
-func renewColumns(oldCol []*column, cap int) []*column {
-	columns := make([]*column, 0, len(oldCol))
+func renewColumns(oldCol []*Column, cap int) []*Column {
+	columns := make([]*Column, 0, len(oldCol))
 	for _, col := range oldCol {
 		if col.isFixed() {
 			columns = append(columns, newFixedLenColumn(len(col.elemBuf), cap))
@@ -110,7 +110,7 @@ func renewColumns(oldCol []*column, cap int) []*column {
 }
 
 // MemoryUsage returns the total memory usage of a Chunk in B.
-// We ignore the size of column.length and column.nullCount
+// We ignore the size of Column.length and Column.nullCount
 // since they have little effect of the total memory usage.
 func (c *Chunk) MemoryUsage() (sum int64) {
 	for _, col := range c.columns {
@@ -120,17 +120,17 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 	return
 }
 
-// newFixedLenColumn creates a fixed length column with elemLen and initial data capacity.
-func newFixedLenColumn(elemLen, cap int) *column {
-	return &column{
+// newFixedLenColumn creates a fixed length Column with elemLen and initial data capacity.
+func newFixedLenColumn(elemLen, cap int) *Column {
+	return &Column{
 		elemBuf:    make([]byte, elemLen),
 		data:       make([]byte, 0, cap*elemLen),
 		nullBitmap: make([]byte, 0, cap>>3),
 	}
 }
 
-// newVarLenColumn creates a variable length column with initial data capacity.
-func newVarLenColumn(cap int, old *column) *column {
+// newVarLenColumn creates a variable length Column with initial data capacity.
+func newVarLenColumn(cap int, old *Column) *Column {
 	estimatedElemLen := 8
 	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
 	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
@@ -138,7 +138,7 @@ func newVarLenColumn(cap int, old *column) *column {
 	if old != nil && old.length != 0 {
 		estimatedElemLen = (len(old.data) + len(old.data)/8) / old.length
 	}
-	return &column{
+	return &Column{
 		offsets:    make([]int64, 1, cap+1),
 		data:       make([]byte, 0, cap*estimatedElemLen),
 		nullBitmap: make([]byte, 0, cap>>3),
@@ -164,7 +164,7 @@ func (c *Chunk) IsFull() bool {
 	return c.NumRows() >= c.requiredRows
 }
 
-// MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
+// MakeRef makes Column in "dstColIdx" reference to Column in "srcColIdx".
 func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
 }
@@ -174,11 +174,11 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) {
 	c.columns[dstColIdx] = src.columns[srcColIdx]
 }
 
-// SwapColumn swaps column "c.columns[colIdx]" with column
-// "other.columns[otherIdx]". If there exists columns refer to the column to be
+// SwapColumn swaps Column "c.columns[colIdx]" with Column
+// "other.columns[otherIdx]". If there exists columns refer to the Column to be
 // swapped, we need to re-build the reference.
 func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
-	// Find the leftmost column of the reference which is the actual column to
+	// Find the leftmost Column of the reference which is the actual Column to
 	// be swapped.
 	for i := 0; i < colIdx; i++ {
 		if c.columns[i] == c.columns[colIdx] {
@@ -191,7 +191,7 @@ func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
 		}
 	}
 
-	// Find the columns which refer to the actual column to be swapped.
+	// Find the columns which refer to the actual Column to be swapped.
 	refColsIdx := make([]int, 0, len(c.columns)-colIdx)
 	for i := colIdx; i < len(c.columns); i++ {
 		if c.columns[i] == c.columns[colIdx] {
@@ -224,7 +224,7 @@ func (c *Chunk) SwapColumns(other *Chunk) {
 }
 
 // SetNumVirtualRows sets the virtual row number for a Chunk.
-// It should only be used when there exists no column in the Chunk.
+// It should only be used when there exists no Column in the Chunk.
 func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 	c.numVirtualRows = numVirtualRows
 }
@@ -243,7 +243,7 @@ func (c *Chunk) Reset() {
 
 // CopyConstruct creates a new chunk and copies this chunk's data into it.
 func (c *Chunk) CopyConstruct() *Chunk {
-	newChk := &Chunk{numVirtualRows: c.numVirtualRows, capacity: c.capacity, columns: make([]*column, len(c.columns))}
+	newChk := &Chunk{numVirtualRows: c.numVirtualRows, capacity: c.capacity, columns: make([]*Column, len(c.columns))}
 	for i := range c.columns {
 		newChk.columns[i] = c.columns[i].copyConstruct()
 	}
