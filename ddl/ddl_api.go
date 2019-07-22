@@ -312,12 +312,13 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollate string, tblCharset string, dbCharset string) error {
+//Since only single charset specified supported in syntax, we just need handle multiple collate here
+func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []string, tblCharset string, dbCharset string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
 		if typesNeedCharset(tp.Tp) {
-			if len(specifiedCollate) == 0 {
+			if len(specifiedCollates) == 0 {
 				// Both the charset and collate are not specified by user
 				var err error
 				tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
@@ -327,12 +328,19 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollate string
 			} else {
 				// The charset is not specified by user but the collate is.
 				// We should derive charset from it's collate specified rather than getting from table and db.
-				derivedCollation, err := charset.GetCollationByName(specifiedCollate)
-				if err != nil {
-					return errors.Trace(err)
+				// It is handled like mysql's logic, use derived charset to judge conflict with next collate
+				for _, spc := range specifiedCollates {
+					derivedCollation, err := charset.GetCollationByName(spc)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					if len(tp.Charset) == 0 {
+						tp.Charset = derivedCollation.CharsetName
+					} else if tp.Charset != derivedCollation.CharsetName {
+						return ErrCollationCharsetMismatch.GenWithStackByArgs(derivedCollation.Name, tp.Charset)
+					}
+					tp.Collate = derivedCollation.Name
 				}
-				tp.Charset = derivedCollation.CharsetName
-				tp.Collate = derivedCollation.Name
 			}
 		} else {
 			tp.Charset = charset.CharsetBin
@@ -343,7 +351,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollate string
 			return errUnsupportedCharset.GenWithStackByArgs(tp.Charset, tp.Collate)
 		}
 		if len(tp.Collate) == 0 {
-			if len(specifiedCollate) == 0 {
+			if len(specifiedCollates) == 0 {
 				// The charset is specified, but the collate is not.
 				var err error
 				tp.Collate, err = charset.GetDefaultCollation(tp.Charset)
@@ -352,15 +360,17 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollate string
 				}
 			} else {
 				// Both the charset and collate are specified .
-				derivedCollation, err := charset.GetCollationByName(specifiedCollate)
-				if err != nil {
-					return errors.Trace(err)
+				for _, spc := range specifiedCollates {
+					derivedCollation, err := charset.GetCollationByName(spc)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					// Judge the charset and collate is match for each other.
+					if tp.Charset != derivedCollation.CharsetName {
+						return ErrCollationCharsetMismatch.GenWithStackByArgs(derivedCollation.Name, tp.Charset)
+					}
+					tp.Collate = derivedCollation.Name
 				}
-				// Judge the charset and collate is match for each other.
-				if tp.Charset != derivedCollation.CharsetName {
-					return ErrCollationCharsetMismatch.GenWithStackByArgs(tp.Charset, specifiedCollate)
-				}
-				tp.Collate = derivedCollation.Name
 			}
 		}
 	}
@@ -385,10 +395,10 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollate string
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
 	// The specified collate is in colDef.Options, but the charset is in colDef.Tp. We should handle them together
-	specifiedCollate := extractCollateFromOption(colDef)
+	specifiedCollates := extractCollateFromOption(colDef)
 
 	// When we set charset and collate here, we should take the collate in colDef.Option into consideration.
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollate, tblCharset, dbCharset); err != nil {
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollates, tblCharset, dbCharset); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -2628,9 +2638,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 	// Same to create table, since collate info is in colDef.Option, when setting charset and collate here we
 	// should take the collate in colDef.Option into consideration rather than handling it separately
-	specifiedCollate := extractCollateFromOption(specNewColumn)
+	specifiedCollates := extractCollateFromOption(specNewColumn)
 
-	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollate, t.Meta().Charset, schema.Charset)
+	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollates, t.Meta().Charset, schema.Charset)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3617,22 +3627,18 @@ type lockTablesArg struct {
 	IsCleanup     bool
 }
 
-// When handle charset and collate of a column, we should take collate in option into consideration
-// rather than handling it separately. Then the following option processing logic should ignores this
-// cause we will delete it from option here
-func extractCollateFromOption(def *ast.ColumnDef) string {
-	specifiedCollate := ""
-	collateIndex := -1
-	for i, op := range def.Options {
+// When handle charset and collate of a column, we should take collates(may multiple) in option into
+// consideration rather than handling it separately. Then the following option processing logic should
+// ignores this cause we will delete them from option here
+func extractCollateFromOption(def *ast.ColumnDef) []string {
+	specifiedCollates := make([]string, 0, 0)
+	for i := 0; i < len(def.Options); i++ {
+		op := def.Options[i]
 		if op.Tp == ast.ColumnOptionCollate {
-			specifiedCollate = op.StrValue
-			collateIndex = i
-			break
+			specifiedCollates = append(specifiedCollates, op.StrValue)
+			def.Options = append(def.Options[:i], def.Options[i+1:]...)
+			i-- // maintain the correct index
 		}
 	}
-	// We will handle it now, so remove it in options
-	if collateIndex != -1 {
-		def.Options = append(def.Options[:collateIndex], def.Options[collateIndex+1:]...)
-	}
-	return specifiedCollate
+	return specifiedCollates
 }
