@@ -20,16 +20,18 @@ import (
 	"github.com/pingcap/tidb/types/json"
 )
 
-func (c *column) appendDuration(dur types.Duration) {
-	c.appendInt64(int64(dur.Duration))
+// AppendDuration appends a duration value into this Column.
+func (c *Column) AppendDuration(dur types.Duration) {
+	c.AppendInt64(int64(dur.Duration))
 }
 
-func (c *column) appendMyDecimal(dec *types.MyDecimal) {
+// AppendMyDecimal appends a MyDecimal value into this Column.
+func (c *Column) AppendMyDecimal(dec *types.MyDecimal) {
 	*(*types.MyDecimal)(unsafe.Pointer(&c.elemBuf[0])) = *dec
 	c.finishAppendFixed()
 }
 
-func (c *column) appendNameValue(name string, val uint64) {
+func (c *Column) appendNameValue(name string, val uint64) {
 	var buf [8]byte
 	*(*uint64)(unsafe.Pointer(&buf[0])) = val
 	c.data = append(c.data, buf[:]...)
@@ -37,13 +39,16 @@ func (c *column) appendNameValue(name string, val uint64) {
 	c.finishAppendVar()
 }
 
-func (c *column) appendJSON(j json.BinaryJSON) {
+// AppendJSON appends a BinaryJSON value into this Column.
+func (c *Column) AppendJSON(j json.BinaryJSON) {
 	c.data = append(c.data, j.TypeCode)
 	c.data = append(c.data, j.Value...)
 	c.finishAppendVar()
 }
 
-type column struct {
+// Column stores one column of data in Apache Arrow format.
+// See https://arrow.apache.org/docs/memory_layout.html
+type Column struct {
 	length     int
 	nullCount  int
 	nullBitmap []byte
@@ -52,11 +57,12 @@ type column struct {
 	elemBuf    []byte
 }
 
-func (c *column) isFixed() bool {
+func (c *Column) isFixed() bool {
 	return c.elemBuf != nil
 }
 
-func (c *column) reset() {
+// Reset resets this Column.
+func (c *Column) Reset() {
 	c.length = 0
 	c.nullCount = 0
 	c.nullBitmap = c.nullBitmap[:0]
@@ -67,13 +73,13 @@ func (c *column) reset() {
 	c.data = c.data[:0]
 }
 
-func (c *column) isNull(rowIdx int) bool {
+func (c *Column) isNull(rowIdx int) bool {
 	nullByte := c.nullBitmap[rowIdx/8]
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
-func (c *column) copyConstruct() *column {
-	newCol := &column{length: c.length, nullCount: c.nullCount}
+func (c *Column) copyConstruct() *Column {
+	newCol := &Column{length: c.length, nullCount: c.nullCount}
 	newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
 	newCol.offsets = append(newCol.offsets, c.offsets...)
 	newCol.data = append(newCol.data, c.data...)
@@ -81,7 +87,7 @@ func (c *column) copyConstruct() *column {
 	return newCol
 }
 
-func (c *column) appendNullBitmap(notNull bool) {
+func (c *Column) appendNullBitmap(notNull bool) {
 	idx := c.length >> 3
 	if idx >= len(c.nullBitmap) {
 		c.nullBitmap = append(c.nullBitmap, 0)
@@ -97,7 +103,7 @@ func (c *column) appendNullBitmap(notNull bool) {
 // appendMultiSameNullBitmap appends multiple same bit value to `nullBitMap`.
 // notNull means not null.
 // num means the number of bits that should be appended.
-func (c *column) appendMultiSameNullBitmap(notNull bool, num int) {
+func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 	numNewBytes := ((c.length + num + 7) >> 3) - len(c.nullBitmap)
 	b := byte(0)
 	if notNull {
@@ -120,7 +126,8 @@ func (c *column) appendMultiSameNullBitmap(notNull bool, num int) {
 	c.nullBitmap[len(c.nullBitmap)-1] &= bitMask
 }
 
-func (c *column) appendNull() {
+// AppendNull appends a null value into this Column.
+func (c *Column) AppendNull() {
 	c.appendNullBitmap(false)
 	if c.isFixed() {
 		c.data = append(c.data, c.elemBuf...)
@@ -130,49 +137,56 @@ func (c *column) appendNull() {
 	c.length++
 }
 
-func (c *column) finishAppendFixed() {
+func (c *Column) finishAppendFixed() {
 	c.data = append(c.data, c.elemBuf...)
 	c.appendNullBitmap(true)
 	c.length++
 }
 
-func (c *column) appendInt64(i int64) {
+// AppendInt64 appends an int64 value into this Column.
+func (c *Column) AppendInt64(i int64) {
 	*(*int64)(unsafe.Pointer(&c.elemBuf[0])) = i
 	c.finishAppendFixed()
 }
 
-func (c *column) appendUint64(u uint64) {
+// AppendUint64 appends a uint64 value into this Column.
+func (c *Column) AppendUint64(u uint64) {
 	*(*uint64)(unsafe.Pointer(&c.elemBuf[0])) = u
 	c.finishAppendFixed()
 }
 
-func (c *column) appendFloat32(f float32) {
+// appendFloat32 appends a float32 value into this Column.
+func (c *Column) appendFloat32(f float32) {
 	*(*float32)(unsafe.Pointer(&c.elemBuf[0])) = f
 	c.finishAppendFixed()
 }
 
-func (c *column) appendFloat64(f float64) {
+// AppendFloat64 appends a float64 value into this Column.
+func (c *Column) AppendFloat64(f float64) {
 	*(*float64)(unsafe.Pointer(&c.elemBuf[0])) = f
 	c.finishAppendFixed()
 }
 
-func (c *column) finishAppendVar() {
+func (c *Column) finishAppendVar() {
 	c.appendNullBitmap(true)
 	c.offsets = append(c.offsets, int64(len(c.data)))
 	c.length++
 }
 
-func (c *column) appendString(str string) {
+// AppendString appends a string value into this Column.
+func (c *Column) AppendString(str string) {
 	c.data = append(c.data, str...)
 	c.finishAppendVar()
 }
 
-func (c *column) appendBytes(b []byte) {
+// AppendBytes appends a byte slice into this Column.
+func (c *Column) AppendBytes(b []byte) {
 	c.data = append(c.data, b...)
 	c.finishAppendVar()
 }
 
-func (c *column) appendTime(t types.Time) {
+// AppendTime appends a time value into this Column.
+func (c *Column) AppendTime(t types.Time) {
 	writeTime(c.elemBuf, t)
 	c.finishAppendFixed()
 }
