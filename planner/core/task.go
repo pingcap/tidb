@@ -123,6 +123,7 @@ func (t *copTask) finishIndexPlan() {
 	if t.tablePlan == nil {
 		return
 	}
+	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
 	rowSize := t.tableStats.HistColl.GetAvgRowSize(t.tableCols, false)
 	t.cst += cnt * rowSize * scanFactor
@@ -138,7 +139,7 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
-	cpuCost := lTask.cost()
+	var cpuCost float64
 	lCount := lTask.count()
 	if len(p.LeftConditions) > 0 {
 		cpuCost += lCount * cpuFactor
@@ -154,7 +155,7 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	}
 	return &rootTask{
 		p:   p,
-		cst: cpuCost,
+		cst: cpuCost + lTask.cost(),
 	}
 }
 

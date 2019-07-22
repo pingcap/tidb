@@ -529,10 +529,9 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 	ts.SetSchema(ds.schema)
 	ts.stats = &property.StatsInfo{
 		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
-		RowCount: 1,
-		// Actually this would not be used in cost computation of IndexJoin, set it just to keep consistency.
-		Cardinality:  make([]float64, len(ds.stats.Cardinality)),
+		RowCount:     1,
 		StatsVersion: ds.stats.StatsVersion,
+		// Cardinality would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
 	for i := range ds.stats.Cardinality {
 		ds.stats.Cardinality[i] = 1
@@ -541,7 +540,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
-		cst:               scanFactor * rowSize * 1.0,
+		cst:               scanFactor * rowSize * ts.stats.RowCount,
 		tableStats:        ds.tableStats,
 	}
 	selStats := ts.stats.Scale(selectionFactor)

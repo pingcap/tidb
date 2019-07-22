@@ -1594,6 +1594,10 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
+	sessionVars := se.(sessionctx.Context).GetSessionVars()
+	sessionVars.HashAggFinalConcurrency = 1
+	sessionVars.HashAggPartialConcurrency = 1
+
 	tests := []struct {
 		sql     string
 		best    string
