@@ -909,16 +909,13 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
 	cols := t.Cols()
 	indexedCols := make([]*table.Column, len(indexInfo.Columns))
-	var containsVirtualCol bool
-
 	for i, v := range indexInfo.Columns {
 		indexedCols[i] = cols[v.Offset]
-		if indexedCols[i].IsGenerated() && !indexedCols[i].GeneratedStored {
-			containsVirtualCol = true
-		}
 	}
 
+	var containsVirtualCol bool
 	decodeColMap, err := decoder.BuildFullDecodeColMap(indexedCols, t, func(genCol *table.Column) (expression.Expression, error) {
+		containsVirtualCol = true
 		return expression.ParseSimpleExprCastWithTableInfo(sessCtx, genCol.GeneratedExprString, t.Meta(), &genCol.FieldType)
 	})
 	if err != nil {

@@ -589,13 +589,17 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 }
 
 func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
-	decodeColsMap, ignore := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
+	var containsVirtualCol bool
+	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
+		containsVirtualCol = true
 		return genExpr[model.TableColumnID{TableID: t.Meta().ID, ColumnID: genCol.ID}], nil
 	})
-	_ = ignore
+	_ = ignored
 
-	decoder.SubstituteGenColsInDecodeColMap(decodeColsMap)
-	decoder.RemoveUnusedVirtualCols(decodeColsMap, decodeCol)
+	if containsVirtualCol {
+		decoder.SubstituteGenColsInDecodeColMap(decodeColsMap)
+		decoder.RemoveUnusedVirtualCols(decodeColsMap, decodeCol)
+	}
 	return decoder.NewRowDecoder(t, decodeColsMap)
 }
 
