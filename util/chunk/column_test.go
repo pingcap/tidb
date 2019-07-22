@@ -84,7 +84,7 @@ func (s *testChunkSuite) TestI64Column(c *check.C) {
 	i64s := col.Int64s()
 	for i := 0; i < 1024; i++ {
 		c.Assert(i64s[i], check.Equals, int64(i))
-		i64s[i] ++
+		i64s[i]++
 	}
 
 	it := NewIterator4Chunk(chk)
