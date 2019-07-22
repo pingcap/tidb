@@ -191,7 +191,7 @@ func SubstituteGenColsInDecodeColMap(decodeColMap map[int64]Column) {
 	sort.Slice(orderedCols, func(i, j int) bool { return orderedCols[i].colOffset < orderedCols[j].colOffset })
 
 	// Iterate over decodeColMap, the substitution only happens once for each virtual column because
-	// columns with smaller offset can not refer to those with larger ones.
+	// columns with smaller offset can not refer to those with larger ones. https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html.
 	for _, pair := range orderedCols {
 		colID := pair.colID
 		decCol := decodeColMap[colID]
