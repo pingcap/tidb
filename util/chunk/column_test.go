@@ -134,6 +134,55 @@ func (s *testChunkSuite) TestF32Column(c *check.C) {
 	}
 }
 
+func (s *testChunkSuite) TestMyDecimal(c *check.C) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 1024)
+	col := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		d := new(types.MyDecimal)
+		if err := d.FromFloat64(float64(i) * 1.1); err != nil {
+			c.Fatal(err)
+		}
+		col.AppendMyDecimal(d)
+	}
+
+	ds := col.MyDecimals()
+	for i := 0; i < 1024; i++ {
+		d := new(types.MyDecimal)
+		if err := d.FromFloat64(float64(i) * 1.1); err != nil {
+			c.Fatal(err)
+		}
+		c.Assert(d.Compare(&ds[i]), check.Equals, 0)
+
+		if err := types.DecimalAdd(&ds[i], d, &ds[i]); err != nil {
+			c.Fatal(err)
+		}
+	}
+
+	it := NewIterator4Chunk(chk)
+	var i int64
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		d := new(types.MyDecimal)
+		if err := d.FromFloat64(float64(i) * 1.1 * 2); err != nil {
+			c.Fatal(err)
+		}
+
+		delta := new(types.MyDecimal)
+		if err := types.DecimalSub(d, row.GetMyDecimal(0), delta); err != nil {
+			c.Fatal(err)
+		}
+
+		fDelta, err := delta.ToFloat64()
+		if err != nil {
+			c.Fatal(err)
+		}
+		if fDelta > 0.0001 || fDelta < -0.0001 {
+			c.Fatal()
+		}
+
+		i++
+	}
+}
+
 func (s *testChunkSuite) TestStringColumn(c *check.C) {
 	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
 	for i := 0; i < 1024; i++ {
