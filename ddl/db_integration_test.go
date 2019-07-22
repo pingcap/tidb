@@ -414,6 +414,8 @@ func (s *testIntegrationSuite5) TestMySQLErrorCode(c *C) {
 	assertErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int null, age int, primary key(id));"
 	assertErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
+	sql = "create table t2 (id int auto_increment);"
+	assertErrorCode(c, tk, sql, tmysql.ErrWrongAutoKey)
 
 	sql = "create table t2 (id int primary key , age int);"
 	tk.MustExec(sql)
@@ -1802,4 +1804,20 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
+}
+
+func (s *testIntegrationSuite4) TestDropAutoIncrementIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int auto_increment, unique key (a))")
+	dropIndexSql := "alter table t1 drop index a"
+	assertErrorCode(c, tk, dropIndexSql, mysql.ErrWrongAutoKey)
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
+	dropIndexSql = "alter table t1 drop index a"
+	assertErrorCode(c, tk, dropIndexSql, mysql.ErrWrongAutoKey)
 }

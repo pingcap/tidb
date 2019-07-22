@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/meta/autoid"
 	"math"
 	"strings"
 
@@ -295,7 +296,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		}
 	}
 	if (autoIncrementMustBeKey && !isKey) || count > 1 {
-		p.err = errors.New("Incorrect table definition; there can be only one auto column and it must be defined as a key")
+		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
 	}
 
 	switch autoIncrementCol.Tp.Tp {
