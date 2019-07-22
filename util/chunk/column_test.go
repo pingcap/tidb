@@ -198,3 +198,23 @@ func (s *testChunkSuite) TestStringColumn(c *check.C) {
 		i++
 	}
 }
+
+func (s *testChunkSuite) TestSetColumn(c *check.C) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeSet)}, 1024)
+	col := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col.AppendSet(types.Set{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
+	}
+
+	it := NewIterator4Chunk(chk)
+	var i int
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		s1 := col.GetSet(i)
+		s2 := row.GetSet(0)
+		c.Assert(s1.Name, check.Equals, s2.Name)
+		c.Assert(s1.Value, check.Equals, s2.Value)
+		c.Assert(s1.Name, check.Equals, fmt.Sprintf("%v", i))
+		c.Assert(s1.Value, check.Equals, uint64(i))
+		i++
+	}
+}

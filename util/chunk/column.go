@@ -49,6 +49,11 @@ func (c *Column) AppendJSON(j json.BinaryJSON) {
 	c.finishAppendVar()
 }
 
+// AppendJSON appends a Set value into this Column.
+func (c *Column) AppendSet(set types.Set) {
+	c.appendNameValue(set.Name, set.Value)
+}
+
 // Column stores one column of data in Apache Arrow format.
 // See https://arrow.apache.org/docs/memory_layout.html
 type Column struct {
