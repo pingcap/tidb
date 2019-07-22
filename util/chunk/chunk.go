@@ -635,6 +635,16 @@ func (c *Chunk) Column(colIdx int) *Column {
 	return c.columns[colIdx]
 }
 
+// Sel returns Sel of this Chunk.
+func (c *Chunk) Sel() Sel {
+	return c.sel
+}
+
+// SetSel sets a Sel for this Chunk.
+func (c *Chunk) SetSel(sel Sel) {
+	c.sel = sel
+}
+
 func writeTime(buf []byte, t types.Time) {
 	binary.BigEndian.PutUint16(buf, uint16(t.Time.Year()))
 	buf[2] = uint8(t.Time.Month())
