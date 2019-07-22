@@ -264,8 +264,15 @@ func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) err
 		}
 	}
 	for k, cols := range p.schema.TblID2Handle {
-		if p.schema.ColumnIndex(cols[0]) == -1 {
+		for i := len(cols) - 1; i >= 0; i-- {
+			if p.schema.ColumnIndex(cols[i]) == -1 {
+				cols = append(cols[:i], cols[i+1:]...)
+			}
+		}
+		if len(cols) == 0 {
 			delete(p.schema.TblID2Handle, k)
+		} else {
+			p.schema.TblID2Handle[k] = cols
 		}
 	}
 	return nil

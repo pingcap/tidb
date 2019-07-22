@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -2294,7 +2294,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 	if err != nil {
 		return nil, err
 	}
-	if txn.Valid() && !txn.IsReadOnly() {
+	if txn.Valid() && !txn.IsReadOnly() && !isMemDB {
 		us := LogicalUnionScan{}.Init(b.ctx)
 		us.SetChildren(ds)
 		result = us
@@ -2375,7 +2375,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 // we add a projection on the original DataSource, and calculate those columns in the projection
 // so that plans above it can reference generated columns by their name.
 func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) (*LogicalProjection, error) {
-	var hasVirtualGeneratedColumn = false
+	hasVirtualGeneratedColumn := false
 	for _, column := range columns {
 		if column.IsGenerated() && !column.GeneratedStored {
 			hasVirtualGeneratedColumn = true
@@ -2385,7 +2385,7 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 	if !hasVirtualGeneratedColumn {
 		return nil, nil
 	}
-	var proj = LogicalProjection{
+	proj := LogicalProjection{
 		Exprs:            make([]expression.Expression, 0, len(columns)),
 		calculateGenCols: true,
 	}.Init(b.ctx)
@@ -2430,9 +2430,7 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
-	b.optFlag = b.optFlag | flagPredicatePushDown
-	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagDecorrelate
+	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.Init(b.ctx)
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
@@ -2444,9 +2442,7 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) (LogicalPlan, error) {
-	b.optFlag = b.optFlag | flagPredicatePushDown
-	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagDecorrelate
+	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
 
 	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	if err != nil {
@@ -2581,7 +2577,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	updt := Update{OrderedList: orderedList}.Init(b.ctx)
 	updt.SetSchema(p.Schema())
-	updt.SelectPlan, err = DoOptimize(ctx, b.optFlag, p)
+	// We cannot apply projection elimination when building the subplan, because
+	// columns in orderedList cannot be resolved.
+	updt.SelectPlan, err = DoOptimize(ctx, b.optFlag&^flagEliminateProjection, p)
 	if err != nil {
 		return nil, err
 	}

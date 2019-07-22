@@ -180,7 +180,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		param.InExecute = false
 	}
 	var p plannercore.Plan
-	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
+	p, err = plannercore.BuildLogicalPlan(ctx, e.ctx, stmt, e.is)
 	if err != nil {
 		return err
 	}

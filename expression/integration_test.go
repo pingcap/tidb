@@ -920,6 +920,10 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("aaa文 ba aaa ba"))
 	result = tk.MustQuery(`select insert("bb", NULL, 1, "aa"), insert("bb", 1, NULL, "aa"), insert(NULL, 1, 1, "aaa"), insert("bb", 1, 1, NULL);`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`SELECT INSERT("bb", 0, 1, NULL), INSERT("bb", 0, NULL, "aaa");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery(`SELECT INSERT("中文", 0, 1, NULL), INSERT("中文", 0, NULL, "aaa");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
 
 	// for export_set
 	result = tk.MustQuery(`select export_set(7, "1", "0", ",", 65);`)
@@ -1438,13 +1442,46 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 	result = tk.MustQuery("select addtime('2017-01-01', 1), addtime('2017-01-01 01:01:01', 1), addtime(cast('2017-01-01' as date), 1)")
 	result.Check(testkit.Rows("2017-01-01 00:00:01 2017-01-01 01:01:02 00:00:01"))
-
 	result = tk.MustQuery("select subtime(a, e), subtime(b, e), subtime(c, e), subtime(d, e) from t")
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery("select subtime('2017-01-01 01:01:01', 0b1), subtime('2017-01-01', b'1'), subtime('01:01:01', 0b1011)")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 	result = tk.MustQuery("select subtime('2017-01-01', 1), subtime('2017-01-01 01:01:01', 1), subtime(cast('2017-01-01' as date), 1)")
 	result.Check(testkit.Rows("2016-12-31 23:59:59 2017-01-01 01:01:00 -00:00:01"))
+
+	result = tk.MustQuery("select addtime(-32073, 0), addtime(0, -32073);")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
+	result = tk.MustQuery("select addtime(-32073, c), addtime(c, -32073) from t;")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
+	result = tk.MustQuery("select addtime(a, -32073), addtime(b, -32073), addtime(d, -32073) from t;")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
+
+	result = tk.MustQuery("select subtime(-32073, 0), subtime(0, -32073);")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
+	result = tk.MustQuery("select subtime(-32073, c), subtime(c, -32073) from t;")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
+	result = tk.MustQuery("select subtime(a, -32073), subtime(b, -32073), subtime(d, -32073) from t;")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'",
+		"Warning|1292|Truncated incorrect time value: '-32073'"))
 
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
@@ -1798,9 +1835,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for convert_tz
 	result = tk.MustQuery(`select convert_tz("2004-01-01 12:00:00", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00.01", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00.01234567", "+00:00", "+10:32");`)
 	result.Check(testkit.Rows("2004-01-01 22:32:00 2004-01-01 22:32:00.01 2004-01-01 22:32:00.012346"))
-	// TODO: release the following test after fix #4462
-	//result = tk.MustQuery(`select convert_tz(20040101, "+00:00", "+10:32"), convert_tz(20040101.01, "+00:00", "+10:32"), convert_tz(20040101.01234567, "+00:00", "+10:32");`)
-	//result.Check(testkit.Rows("2004-01-01 10:32:00 2004-01-01 10:32:00.00 2004-01-01 10:32:00.000000"))
+	result = tk.MustQuery(`select convert_tz(20040101, "+00:00", "+10:32"), convert_tz(20040101.01, "+00:00", "+10:32"), convert_tz(20040101.01234567, "+00:00", "+10:32");`)
+	result.Check(testkit.Rows("2004-01-01 10:32:00 2004-01-01 10:32:00.00 2004-01-01 10:32:00.000000"))
+	result = tk.MustQuery(`select convert_tz(NULL, "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00", NULL, "+10:32"), convert_tz("2004-01-01 12:00:00", "+00:00", NULL);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery(`select convert_tz("a", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00", "a", "+10:32"), convert_tz("2004-01-01 12:00:00", "+00:00", "a");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery(`select convert_tz("", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00", "", "+10:32"), convert_tz("2004-01-01 12:00:00", "+00:00", "");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery(`select convert_tz("0", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00", "0", "+10:32"), convert_tz("2004-01-01 12:00:00", "+00:00", "0");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 
 	// for from_unixtime
 	tk.MustExec(`set @@session.time_zone = "+08:00"`)
@@ -2828,7 +2872,10 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(18446744073709551615 - -1)'")
 	c.Assert(rs.Close(), IsNil)
+	tk.MustQuery(`select cast(-3 as unsigned) - cast(-1 as signed);`).Check(testkit.Rows("18446744073709551614"))
+	tk.MustQuery("select 1.11 - 1.11;").Check(testkit.Rows("0.00"))
 
+	// for multiply
 	tk.MustQuery("select 1234567890 * 1234567890").Check(testkit.Rows("1524157875019052100"))
 	rs, err = tk.Exec("select 1234567890 * 12345671890")
 	c.Assert(err, IsNil)
@@ -2855,8 +2902,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
 	c.Assert(rs.Close(), IsNil)
-	result = tk.MustQuery(`select cast(-3 as unsigned) - cast(-1 as signed);`)
-	result.Check(testkit.Rows("18446744073709551614"))
+	tk.MustQuery("select 0.0 * -1;").Check(testkit.Rows("0.0"))
 
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));")
@@ -2926,6 +2972,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec("INSERT IGNORE INTO t VALUE(12 MOD 0);")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
 	tk.MustQuery("select v from t;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 0.000 % 0.11234500000000000000;").Check(testkit.Rows("0.00000000000000000000"))
 
 	_, err = tk.Exec("INSERT INTO t VALUE(12 MOD 0);")
 	c.Assert(terror.ErrorEqual(err, expression.ErrDivisionByZero), IsTrue)
@@ -3859,24 +3906,25 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		},
 	}
 
+	ctx := context.Background()
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := tk.Se.(sessionctx.Context)
-		sc := ctx.GetSessionVars().StmtCtx
-		stmts, err := session.Parse(ctx, sql)
+		sctx := tk.Se.(sessionctx.Context)
+		sc := sctx.GetSessionVars().StmtCtx
+		stmts, err := session.Parse(sctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = plannercore.Preprocess(ctx, stmts[0], is)
+		is := domain.GetDomain(sctx).InfoSchema()
+		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(ctx, cond, false))
+			conds = append(conds, expression.PushDownNot(sctx, cond, false))
 		}
-		afterFunc := expression.ExtractFiltersFromDNFs(ctx, conds)
+		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
 			return bytes.Compare(afterFunc[i].HashCode(sc), afterFunc[j].HashCode(sc)) < 0
 		})
@@ -4119,6 +4167,10 @@ func (s *testIntegrationSuite) TestFuncNameConst(c *C) {
 	r.Check(testkit.Rows("2"))
 	r = tk.MustQuery("SELECT concat('hello', name_const('test_string', 'world')) FROM t;")
 	r.Check(testkit.Rows("helloworld"))
+	r = tk.MustQuery("SELECT NAME_CONST('come', -1);")
+	r.Check(testkit.Rows("-1"))
+	r = tk.MustQuery("SELECT NAME_CONST('come', -1.0);")
+	r.Check(testkit.Rows("-1.0"))
 	err := tk.ExecToErr(`select name_const(a,b) from t;`)
 	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const(a,"hello") from t;`)
@@ -4434,4 +4486,162 @@ func (s *testIntegrationSuite) TestInvalidEndingStatement(c *C) {
 	assertParseErr("drop table if exists t`")
 	assertParseErr(`drop table if exists t'`)
 	assertParseErr(`drop table if exists t"`)
+}
+
+func (s *testIntegrationSuite) TestIssue10675(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a int);`)
+	tk.MustExec(`insert into t values(1);`)
+	tk.MustQuery(`select * from t where a < -184467440737095516167.1;`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a > -184467440737095516167.1;`).Check(
+		testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a < 184467440737095516167.1;`).Check(
+		testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a > 184467440737095516167.1;`).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestDatetimeMicrosecond(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For int
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 SECOND_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 MINUTE_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 HOUR_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 DAY_MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.800000"))
+
+	// For Decimal
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MINUTE);`).Check(
+		testkit.Rows("2007-03-29 00:10:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:10:30"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR_MONTH);`).Check(
+		testkit.Rows("2009-05-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_HOUR);`).Check(
+		testkit.Rows("2007-03-31 00:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_MINUTE);`).Check(
+		testkit.Rows("2007-03-29 00:10:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:10:30"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:10:30"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:30.200000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR);`).Check(
+		testkit.Rows("2009-03-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 QUARTER);`).Check(
+		testkit.Rows("2007-09-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MONTH);`).Check(
+		testkit.Rows("2007-05-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 WEEK);`).Check(
+		testkit.Rows("2007-04-11 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY);`).Check(
+		testkit.Rows("2007-03-30 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR);`).Check(
+		testkit.Rows("2007-03-29 00:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE);`).Check(
+		testkit.Rows("2007-03-28 22:10:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:28.000002"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 HOUR_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MINUTE_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 YEAR_MONTH);`).Check(
+		testkit.Rows("2005-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY_HOUR);`).Check(
+		testkit.Rows("2007-03-26 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 HOUR_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 SECOND);`).Check(
+	//		testkit.Rows("2007-03-28 22:08:25.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 YEAR);`).Check(
+		testkit.Rows("2005-03-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 QUARTER);`).Check(
+		testkit.Rows("2006-09-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MONTH);`).Check(
+		testkit.Rows("2007-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 WEEK);`).Check(
+		testkit.Rows("2007-03-14 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY);`).Check(
+		testkit.Rows("2007-03-26 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 HOUR);`).Check(
+		testkit.Rows("2007-03-28 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MINUTE);`).Check(
+		testkit.Rows("2007-03-28 22:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.999998"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" HOUR_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" MINUTE_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" YEAR_MONTH);`).Check(
+		testkit.Rows("2005-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" DAY_HOUR);`).Check(
+		testkit.Rows("2007-03-26 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" DAY_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" DAY_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" HOUR_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" SECOND);`).Check(
+	//		testkit.Rows("2007-03-28 22:08:25.800000"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" YEAR);`).Check(
+		testkit.Rows("2005-03-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" QUARTER);`).Check(
+		testkit.Rows("2006-09-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" MONTH);`).Check(
+		testkit.Rows("2007-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" WEEK);`).Check(
+		testkit.Rows("2007-03-14 22:08:28"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" DAY);`).Check(
+	//		testkit.Rows("2007-03-26 22:08:28"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" HOUR);`).Check(
+	//		testkit.Rows("2007-03-28 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" MINUTE);`).Check(
+		testkit.Rows("2007-03-28 22:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.2" MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.999998"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" HOUR_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" MINUTE_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" YEAR_MONTH);`).Check(
+		testkit.Rows("2005-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" DAY_HOUR);`).Check(
+		testkit.Rows("2007-03-26 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" DAY_MINUTE);`).Check(
+		testkit.Rows("2007-03-28 20:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" DAY_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" HOUR_SECOND);`).Check(
+		testkit.Rows("2007-03-28 22:06:26"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" SECOND);`).Check(
+	//		testkit.Rows("2007-03-28 22:08:26"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" YEAR);`).Check(
+		testkit.Rows("2005-03-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" QUARTER);`).Check(
+		testkit.Rows("2006-09-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" MONTH);`).Check(
+		testkit.Rows("2007-01-28 22:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" WEEK);`).Check(
+		testkit.Rows("2007-03-14 22:08:28"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" DAY);`).Check(
+	//		testkit.Rows("2007-03-26 22:08:28"))
+	//	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" HOUR);`).Check(
+	//		testkit.Rows("2007-03-28 20:08:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" MINUTE);`).Check(
+		testkit.Rows("2007-03-28 22:06:28"))
+	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" MICROSECOND);`).Check(
+		testkit.Rows("2007-03-28 22:08:27.999998"))
+
 }

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -43,13 +43,11 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	b := &PlanBuilder{
-		ctx:       sctx,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
+	var is infoschema.InfoSchema
+	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
+		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
-	if is := sctx.GetSessionVars().TxnCtx.InfoSchema; is != nil {
-		b.is = is.(infoschema.InfoSchema)
-	}
+	b := NewPlanBuilder(sctx, is)
 	fakePlan := LogicalTableDual{}.Init(sctx)
 	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
 	if err != nil {
@@ -1130,7 +1128,11 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	if leftEt == types.ETInt {
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
-				args[i], _ = expression.RefineComparedConstant(er.sctx, mysql.HasUnsignedFlag(leftFt.Flag), c, opcode.EQ)
+				var isExceptional bool
+				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
+				if isExceptional {
+					args[i] = c
+				}
 			}
 		}
 	}

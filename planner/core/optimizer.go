@@ -72,15 +72,11 @@ type logicalOptRule interface {
 }
 
 // BuildLogicalPlan used to build logical plan from ast.Node.
-func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
-	ctx.GetSessionVars().PlanID = 0
-	ctx.GetSessionVars().PlanColumnID = 0
-	builder := &PlanBuilder{
-		ctx:       ctx,
-		is:        is,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
-	}
-	p, err := builder.Build(context.TODO(), node)
+func BuildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+	sctx.GetSessionVars().PlanID = 0
+	sctx.GetSessionVars().PlanColumnID = 0
+	builder := NewPlanBuilder(sctx, is)
+	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, err
 	}

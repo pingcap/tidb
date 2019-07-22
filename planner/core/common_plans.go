@@ -358,7 +358,7 @@ type Deallocate struct {
 
 // Show represents a show plan.
 type Show struct {
-	baseSchemaProducer
+	physicalSchemaProducer
 
 	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName      string
@@ -370,8 +370,6 @@ type Show struct {
 	User        *auth.UserIdentity   // Used for show grants.
 	Roles       []*auth.RoleIdentity // Used for show grants.
 	IfNotExists bool                 // Used for `show create database if not exists`
-
-	Conditions []expression.Expression
 
 	GlobalScope bool // Used by show variables
 }

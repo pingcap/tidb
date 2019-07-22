@@ -1122,33 +1122,56 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
+	mockTablePlan := LogicalTableDual{placeHolder: true}.Init(b.ctx)
 	mockTablePlan.SetSchema(p.schema)
+	var err error
+	var np LogicalPlan
+	np = mockTablePlan
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
 		}
-		expr, _, err := b.rewrite(ctx, show.Pattern, mockTablePlan, nil, false)
+		np, err = b.buildSelection(ctx, np, show.Pattern, nil)
 		if err != nil {
 			return nil, err
 		}
-		p.Conditions = append(p.Conditions, expr)
 	}
 	if show.Where != nil {
-		conds := splitWhere(show.Where)
-		for _, cond := range conds {
-			expr, _, err := b.rewrite(ctx, cond, mockTablePlan, nil, false)
-			if err != nil {
-				return nil, err
-			}
-			p.Conditions = append(p.Conditions, expr)
-		}
-		err := p.ResolveIndices()
+		np, err = b.buildSelection(ctx, np, show.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
+	if np != mockTablePlan {
+		fieldsLen := len(mockTablePlan.schema.Columns)
+		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx)
+		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
+		for _, col := range mockTablePlan.schema.Columns {
+			proj.Exprs = append(proj.Exprs, col)
+			newCol := col.Clone().(*expression.Column)
+			newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+			schema.Append(newCol)
+		}
+		proj.SetSchema(schema)
+		proj.SetChildren(np)
+		physical, err := DoOptimize(ctx, b.optFlag|flagEliminateProjection, proj)
+		if err != nil {
+			return nil, err
+		}
+		return substitutePlaceHolderDual(physical, p), nil
+	}
 	return p, nil
+}
+
+func substitutePlaceHolderDual(src PhysicalPlan, dst PhysicalPlan) PhysicalPlan {
+	if dual, ok := src.(*PhysicalTableDual); ok && dual.placeHolder {
+		return dst
+	}
+	for i, child := range src.Children() {
+		newChild := substitutePlaceHolderDual(child, dst)
+		src.SetChild(i, newChild)
+	}
+	return src
 }
 
 func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
