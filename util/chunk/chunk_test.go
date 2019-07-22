@@ -964,7 +964,7 @@ func (b *benchChunkGrowCase) String() string {
 	if b.reuse {
 		buff.WriteString("renew,")
 	} else {
-		buff.WriteString("Reset,")
+		buff.WriteString("reset,")
 	}
 	buff.WriteString("cntPerCall:" + strconv.Itoa(b.cntPerCall) + ",")
 	buff.WriteString("cap from:" + strconv.Itoa(b.initCap) + " to " + strconv.Itoa(b.maxCap) + ",")
