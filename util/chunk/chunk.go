@@ -66,12 +66,7 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	}
 
 	for _, f := range fields {
-		elemLen := getFixedLen(f)
-		if elemLen == varElemLen {
-			chk.columns = append(chk.columns, newVarLenColumn(chk.capacity, nil))
-		} else {
-			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, chk.capacity))
-		}
+		chk.columns = append(chk.columns, NewColumn(f, chk.capacity))
 	}
 
 	return chk
@@ -310,7 +305,7 @@ func (c *Chunk) AppendRow(row Row) {
 func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
-		chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+		chkCol.appendNullBitmap(!rowCol.IsNull(row.idx))
 		if rowCol.isFixed() {
 			elemLen := len(rowCol.elemBuf)
 			offset := row.idx * elemLen
@@ -338,7 +333,7 @@ func (c *Chunk) PreAlloc(row Row) (rowIdx uint32) {
 	rowIdx = uint32(c.NumRows())
 	for i, srcCol := range row.c.columns {
 		dstCol := c.columns[i]
-		dstCol.appendNullBitmap(!srcCol.isNull(row.idx))
+		dstCol.appendNullBitmap(!srcCol.IsNull(row.idx))
 		elemLen := len(srcCol.elemBuf)
 		if !srcCol.isFixed() {
 			elemLen = int(srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx])
@@ -421,7 +416,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 			}
 		}
 		for i := begin; i < end; i++ {
-			dst.appendNullBitmap(!src.isNull(i))
+			dst.appendNullBitmap(!src.IsNull(i))
 			dst.length++
 		}
 	}
@@ -439,7 +434,7 @@ func (c *Chunk) TruncateTo(numRows int) {
 			col.offsets = col.offsets[:numRows+1]
 		}
 		for i := numRows; i < col.length; i++ {
-			if col.isNull(i) {
+			if col.IsNull(i) {
 				col.nullCount--
 			}
 		}
@@ -476,7 +471,7 @@ func (c *Chunk) AppendUint64(colIdx int, u uint64) {
 
 // AppendFloat32 appends a float32 value to the chunk.
 func (c *Chunk) AppendFloat32(colIdx int, f float32) {
-	c.columns[colIdx].appendFloat32(f)
+	c.columns[colIdx].AppendFloat32(f)
 }
 
 // AppendFloat64 appends a float64 value to the chunk.
@@ -553,6 +548,11 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 	case types.KindMysqlJSON:
 		c.AppendJSON(colIdx, d.GetMysqlJSON())
 	}
+}
+
+// Column returns the specific column.
+func (c *Chunk) Column(colIdx int) *Column {
+	return c.columns[colIdx]
 }
 
 func writeTime(buf []byte, t types.Time) {
