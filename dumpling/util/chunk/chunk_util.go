@@ -47,7 +47,7 @@ func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selec
 				if !selected[i] {
 					continue
 				}
-				dstCol.appendNullBitmap(!srcCol.isNull(i))
+				dstCol.appendNullBitmap(!srcCol.IsNull(i))
 				dstCol.length++
 
 				elemLen := len(srcCol.elemBuf)
@@ -59,7 +59,7 @@ func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selec
 				if !selected[i] {
 					continue
 				}
-				dstCol.appendNullBitmap(!srcCol.isNull(i))
+				dstCol.appendNullBitmap(!srcCol.IsNull(i))
 				dstCol.length++
 
 				start, end := srcCol.offsets[i], srcCol.offsets[i+1]
@@ -86,7 +86,7 @@ func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, 
 	}
 	for i, srcCol := range srcCols {
 		dstCol := dst.columns[outerColOffset+i]
-		dstCol.appendMultiSameNullBitmap(!srcCol.isNull(row.idx), numRows)
+		dstCol.appendMultiSameNullBitmap(!srcCol.IsNull(row.idx), numRows)
 		dstCol.length += numRows
 		if srcCol.isFixed() {
 			elemLen := len(srcCol.elemBuf)
