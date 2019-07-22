@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -945,6 +946,10 @@ func (cc *clientConn) flush() error {
 
 func (cc *clientConn) writeOK() error {
 	msg := cc.ctx.LastMessage()
+	return cc.writeOkWith(msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount())
+}
+
+func (cc *clientConn) writeOkWith(msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16) error {
 	enclen := 0
 	if len(msg) > 0 {
 		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
@@ -952,11 +957,11 @@ func (cc *clientConn) writeOK() error {
 
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
 	data = append(data, mysql.OKHeader)
-	data = dumpLengthEncodedInt(data, cc.ctx.AffectedRows())
-	data = dumpLengthEncodedInt(data, cc.ctx.LastInsertID())
+	data = dumpLengthEncodedInt(data, affectedRows)
+	data = dumpLengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dumpUint16(data, cc.ctx.Status())
-		data = dumpUint16(data, cc.ctx.WarningCount())
+		data = dumpUint16(data, status)
+		data = dumpUint16(data, warnCnt)
 	}
 	if enclen > 0 {
 		// although MySQL manual says the info message is string<EOF>(https://dev.mysql.com/doc/internals/en/packet-OK_Packet.html),
@@ -1042,12 +1047,16 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 	var err error
 	var reachLimit bool
 	for {
-		prevData, reachLimit, err = loadDataInfo.InsertData(prevData, curData)
+		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
 		if err != nil {
 			return nil, err
 		}
 		if !reachLimit {
 			break
+		}
+		err := loadDataInfo.CheckAndInsertOneBatch()
+		if err != nil {
+			return nil, err
 		}
 		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
 			return nil, err
@@ -1113,7 +1122,10 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if err != nil {
 		loadDataInfo.Ctx.StmtRollback()
 	} else {
-		err = loadDataInfo.Ctx.StmtCommit()
+		err = loadDataInfo.CheckAndInsertOneBatch()
+		if err == nil {
+			err = loadDataInfo.Ctx.StmtCommit()
+		}
 	}
 
 	var txn kv.Transaction
@@ -1176,9 +1188,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 	status := atomic.LoadInt32(&cc.status)
-	if status == connStatusShutdown || status == connStatusWaitShutdown {
+	if rs != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
 		killConn(cc)
-		return errors.New("killed by another connection")
+		return executor.ErrQueryInterrupted
 	}
 	if rs != nil {
 		if len(rs) == 1 {
@@ -1396,12 +1408,27 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 }
 
 func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {
-	for _, rs := range rss {
-		if err := cc.writeResultset(ctx, rs, binary, mysql.ServerMoreResultsExists, 0); err != nil {
+	for i, rs := range rss {
+		lastRs := i == len(rss)-1
+		if r, ok := rs.(*tidbResultSet).recordSet.(sqlexec.MultiQueryNoDelayResult); ok {
+			status := r.Status()
+			if !lastRs {
+				status |= mysql.ServerMoreResultsExists
+			}
+			if err := cc.writeOkWith(r.LastMessage(), r.AffectedRows(), r.LastInsertID(), status, r.WarnCount()); err != nil {
+				return err
+			}
+			continue
+		}
+		status := uint16(0)
+		if !lastRs {
+			status |= mysql.ServerMoreResultsExists
+		}
+		if err := cc.writeResultset(ctx, rs, binary, status, 0); err != nil {
 			return err
 		}
 	}
-	return cc.writeOK()
+	return nil
 }
 
 func (cc *clientConn) setConn(conn net.Conn) {
@@ -1457,7 +1484,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			connInfo := cc.ctx.GetSessionVars().ConnectionInfo
-			err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: connInfo.Host}, plugin.ChangeUser, connInfo)
+			err = authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
 			if err != nil {
 				return err
 			}

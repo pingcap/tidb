@@ -234,6 +234,8 @@ type PhysicalIndexJoin struct {
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
+	// IdxColLens stores the length of each index column.
+	IdxColLens []int
 	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
 	// e.g. select * from t where t.a = t1.a and t.b > t1.b and t.b < t1.b+10
 	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b=10
@@ -380,6 +382,10 @@ type PhysicalTableDual struct {
 	physicalSchemaProducer
 
 	RowCount int
+	// placeHolder indicates if this dual plan is a place holder in query optimization
+	// for data sources like `Show`, if true, the dual plan would be substituted by
+	// `Show` in the final plan.
+	placeHolder bool
 }
 
 // PhysicalWindow is the physical operator of window function.

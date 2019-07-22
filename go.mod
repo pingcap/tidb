@@ -15,7 +15,7 @@ require (
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/go-ole/go-ole v1.2.1 // indirect
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
-	github.com/gogo/protobuf v1.2.0 // indirect
+	github.com/gogo/protobuf v1.2.0
 	github.com/golang/protobuf v1.2.0
 	github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c
 	github.com/google/uuid v1.1.1
@@ -34,18 +34,16 @@ require (
 	github.com/ngaut/log v0.0.0-20180314031856-b8e36e7ba5ac
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/onsi/ginkgo v1.7.0 // indirect
-	github.com/onsi/gomega v1.4.3 // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20190619024611-a4759dfe3753
+	github.com/pingcap/kvproto v0.0.0-20190703131923-d9830856b531
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
-	github.com/pingcap/parser v0.0.0-20190701123046-5768e68c1e65
-	github.com/pingcap/pd v0.0.0-20190617100349-293d4b5189bf
+	github.com/pingcap/parser v0.0.0-20190719041739-ff945b25f903
+	github.com/pingcap/pd v0.0.0-20190712044914-75a1f9f3062b
 	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
 	github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330
 	github.com/prometheus/client_golang v0.9.0

@@ -16,7 +16,8 @@ package gcworker
 import (
 	"bytes"
 	"context"
-	"errors"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"math"
 	"sort"
 	"strconv"
@@ -24,11 +25,12 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -96,6 +98,83 @@ func (s *testGCWorkerSuite) TearDownTest(c *C) {
 
 func (s *testGCWorkerSuite) timeEqual(c *C, t1, t2 time.Time, epsilon time.Duration) {
 	c.Assert(math.Abs(float64(t1.Sub(t2))), Less, float64(epsilon))
+}
+
+func (s *testGCWorkerSuite) mustPut(c *C, key, value string) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte(key), []byte(value))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSuite) mustGet(c *C, key string, ts uint64) string {
+	snap, err := s.store.GetSnapshot(kv.Version{Ver: ts})
+	c.Assert(err, IsNil)
+	value, err := snap.Get([]byte(key))
+	c.Assert(err, IsNil)
+	return string(value)
+}
+
+func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
+	snap, err := s.store.GetSnapshot(kv.Version{Ver: ts})
+	c.Assert(err, IsNil)
+	_, err = snap.Get([]byte(key))
+	c.Assert(err, Equals, kv.ErrNotExist)
+}
+
+func (s *testGCWorkerSuite) mustAllocTs(c *C) uint64 {
+	ts, err := s.oracle.GetTimestamp(context.Background())
+	c.Assert(err, IsNil)
+	return ts
+}
+
+func (s *testGCWorkerSuite) mustGetSafePointFromPd(c *C) uint64 {
+	// UpdateGCSafePoint returns the newest safePoint after the updating, which can be used to check whether the
+	// safePoint is successfully uploaded.
+	safePoint, err := s.pdClient.UpdateGCSafePoint(context.Background(), 0)
+	c.Assert(err, IsNil)
+	return safePoint
+}
+
+// gcProbe represents a key that contains multiple versions, one of which should be collected. Execution of GC with
+// greater ts will be detected, but it may not work properly if there are newer versions of the key.
+// This is not used to check the correctness of GC algorithm, but only for checking whether GC has been executed on the
+// specified key. Create this using `s.createGCProbe`.
+type gcProbe struct {
+	key string
+	// The ts that can see the version that should be deleted.
+	v1Ts uint64
+	// The ts that can see the version that should be kept.
+	v2Ts uint64
+}
+
+// createGCProbe creates gcProbe on specified key.
+func (s *testGCWorkerSuite) createGCProbe(c *C, key string) *gcProbe {
+	s.mustPut(c, key, "v1")
+	ts1 := s.mustAllocTs(c)
+	s.mustPut(c, key, "v2")
+	ts2 := s.mustAllocTs(c)
+	p := &gcProbe{
+		key:  key,
+		v1Ts: ts1,
+		v2Ts: ts2,
+	}
+	s.checkNotCollected(c, p)
+	return p
+}
+
+// checkCollected asserts the gcProbe has been correctly collected.
+func (s *testGCWorkerSuite) checkCollected(c *C, p *gcProbe) {
+	s.mustGetNone(c, p.key, p.v1Ts)
+	c.Assert(s.mustGet(c, p.key, p.v2Ts), Equals, "v2")
+}
+
+// checkNotCollected asserts the gcProbe has not been collected.
+func (s *testGCWorkerSuite) checkNotCollected(c *C, p *gcProbe) {
+	c.Assert(s.mustGet(c, p.key, p.v1Ts), Equals, "v1")
+	c.Assert(s.mustGet(c, p.key, p.v2Ts), Equals, "v2")
 }
 
 func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
@@ -236,33 +315,32 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
-	var successRegions int32
-	var failedRegions int32
-	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
-
 	ctx := context.Background()
 	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+
+	p := s.createGCProbe(c, "k1")
+	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
-	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
+	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
@@ -296,26 +374,20 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 
 	gcSafePointCacheInterval = 1
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency))
+	p := s.createGCProbe(c, "k1")
+	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcDefaultConcurrency)
 	c.Assert(err, IsNil)
-	concurrency, err := s.gcWorker.loadGCConcurrencyWithDefault()
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20, concurrency)
-	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency))
+	p = s.createGCProbe(c, "k1")
+	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcMinConcurrency)
 	c.Assert(err, IsNil)
-	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20, concurrency)
-	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency))
+	p = s.createGCProbe(c, "k1")
+	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcMaxConcurrency)
 	c.Assert(err, IsNil)
-	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20, concurrency)
-	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
 }
 
 func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
@@ -403,16 +475,15 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		sendReqCh <- SentReq{req, addr}
 		resp := &tikvrpc.Response{
-			Type:               tikvrpc.CmdUnsafeDestroyRange,
-			UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeResponse{},
+			Resp: &kvrpcpb.UnsafeDestroyRangeResponse{},
 		}
-		if bytes.Equal(req.UnsafeDestroyRange.GetStartKey(), failKey) && addr == failStore.GetAddress() {
+		if bytes.Equal(req.UnsafeDestroyRange().GetStartKey(), failKey) && addr == failStore.GetAddress() {
 			if failType == failRPCErr {
 				return nil, errors.New("error")
 			} else if failType == failNilResp {
-				resp.UnsafeDestroyRange = nil
+				resp.Resp = nil
 			} else if failType == failErrResp {
-				resp.UnsafeDestroyRange.Error = "error"
+				(resp.Resp.(*kvrpcpb.UnsafeDestroyRangeResponse)).Error = "error"
 			} else {
 				panic("unreachable")
 			}
@@ -492,7 +563,7 @@ Loop:
 	}
 
 	sort.Slice(sentReq, func(i, j int) bool {
-		cmp := bytes.Compare(sentReq[i].req.UnsafeDestroyRange.StartKey, sentReq[j].req.UnsafeDestroyRange.StartKey)
+		cmp := bytes.Compare(sentReq[i].req.UnsafeDestroyRange().StartKey, sentReq[j].req.UnsafeDestroyRange().StartKey)
 		return cmp < 0 || (cmp == 0 && sentReq[i].addr < sentReq[j].addr)
 	})
 
@@ -505,8 +576,8 @@ Loop:
 		for storeIndex := range expectedStores {
 			i := rangeIndex*len(expectedStores) + storeIndex
 			c.Assert(sentReq[i].addr, Equals, expectedStores[storeIndex].Address)
-			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetStartKey(), DeepEquals, sortedRanges[rangeIndex].StartKey)
-			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetEndKey(), DeepEquals, sortedRanges[rangeIndex].EndKey)
+			c.Assert(sentReq[i].req.UnsafeDestroyRange().GetStartKey(), DeepEquals, sortedRanges[rangeIndex].StartKey)
+			c.Assert(sentReq[i].req.UnsafeDestroyRange().GetEndKey(), DeepEquals, sortedRanges[rangeIndex].EndKey)
 		}
 	}
 }
@@ -526,33 +597,163 @@ func (c *testGCWorkerClient) SendRequest(ctx context.Context, addr string, req *
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
+func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
+	gcSafePointCacheInterval = 0
+
+	veryLong := gcDefaultLifeTime * 10
+	// Avoid failing at interval check. `lastFinish` is checked by os time.
+	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
+	// Use central mode to do this test.
+	err := s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
+	c.Assert(err, IsNil)
+	p := s.createGCProbe(c, "k1")
+	s.oracle.AddOffset(gcDefaultLifeTime * 2)
+
+	// Skip if GC is running.
+	s.gcWorker.gcIsRunning = true
+	err = s.gcWorker.leaderTick(context.Background())
+	c.Assert(err, IsNil)
+	s.checkNotCollected(c, p)
+	s.gcWorker.gcIsRunning = false
+	// Reset GC last run time
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
+
+	// Skip if prepare failed (disabling GC will make prepare returns ok = false).
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
+	c.Assert(err, IsNil)
+	err = s.gcWorker.leaderTick(context.Background())
+	c.Assert(err, IsNil)
+	s.checkNotCollected(c, p)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
+	c.Assert(err, IsNil)
+	// Reset GC last run time
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
+
+	// Skip if gcWaitTime not exceeded.
+	s.gcWorker.lastFinish = time.Now()
+	err = s.gcWorker.leaderTick(context.Background())
+	c.Assert(err, IsNil)
+	s.checkNotCollected(c, p)
+	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
+	// Reset GC last run time
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
+
+	// Continue GC if all those checks passed.
+	err = s.gcWorker.leaderTick(context.Background())
+	c.Assert(err, IsNil)
+	// Wait for GC finish
+	select {
+	case err = <-s.gcWorker.done:
+		s.gcWorker.gcIsRunning = false
+		break
+	case <-time.After(time.Second * 10):
+		err = errors.New("receive from s.gcWorker.done timeout")
+	}
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
+
+	// Test again to ensure the synchronization between goroutines is correct.
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
+	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
+	p = s.createGCProbe(c, "k1")
+	s.oracle.AddOffset(gcDefaultLifeTime * 2)
+
+	err = s.gcWorker.leaderTick(context.Background())
+	c.Assert(err, IsNil)
+	// Wait for GC finish
+	select {
+	case err = <-s.gcWorker.done:
+		s.gcWorker.gcIsRunning = false
+		break
+	case <-time.After(time.Second * 10):
+		err = errors.New("receive from s.gcWorker.done timeout")
+	}
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
+
+	// No more signals in the channel
+	select {
+	case err = <-s.gcWorker.done:
+		err = errors.Errorf("received signal s.gcWorker.done which shouldn't exist: %v", err)
+		break
+	case <-time.After(time.Second):
+		break
+	}
+	c.Assert(err, IsNil)
+}
+
 func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	gcSafePointCacheInterval = 0
-	err := RunGCJob(context.Background(), s.store, 0, "mock", 1)
+
+	// Test distributed mode
+	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
-	gcWorker, err := NewGCWorker(s.store, s.pdClient)
-	c.Assert(err, IsNil)
-	gcWorker.Start()
-	useDistributedGC, err := gcWorker.(*GCWorker).checkUseDistributedGC()
 	c.Assert(useDistributedGC, IsTrue)
+	safePoint := s.mustAllocTs(c)
+	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
 	c.Assert(err, IsNil)
-	safePoint := uint64(time.Now().Unix())
-	gcWorker.(*GCWorker).runGCJob(context.Background(), safePoint, 1)
-	getSafePoint, err := loadSafePoint(gcWorker.(*GCWorker).store.GetSafePointKV())
+
+	pdSafePoint := s.mustGetSafePointFromPd(c)
+	c.Assert(pdSafePoint, Equals, safePoint)
+
+	etcdSafePoint := s.loadEtcdSafePoint(c)
+	c.Assert(etcdSafePoint, Equals, safePoint)
+
+	// Test distributed mode with safePoint regressing (although this is impossible)
+	err = s.gcWorker.runGCJob(context.Background(), safePoint-1, 1)
+	c.Assert(err, NotNil)
+
+	// Test central mode
+	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	c.Assert(err, IsNil)
-	c.Assert(getSafePoint, Equals, safePoint)
-	gcWorker.Close()
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, IsFalse)
+
+	p := s.createGCProbe(c, "k1")
+	safePoint = s.mustAllocTs(c)
+	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
+
+	etcdSafePoint = s.loadEtcdSafePoint(c)
+	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
-func loadSafePoint(kv tikv.SafePointKV) (uint64, error) {
-	val, err := kv.Get(tikv.GcSavedSafePoint)
-	if err != nil {
-		return 0, err
-	}
-	return strconv.ParseUint(val, 10, 64)
+func (s *testGCWorkerSuite) TestRunGCJobAPI(c *C) {
+	gcSafePointCacheInterval = 0
+
+	p := s.createGCProbe(c, "k1")
+	safePoint := s.mustAllocTs(c)
+	err := RunGCJob(context.Background(), s.store, safePoint, "mock", 1)
+	c.Assert(err, IsNil)
+	s.checkCollected(c, p)
+	etcdSafePoint := s.loadEtcdSafePoint(c)
+	c.Assert(err, IsNil)
+	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
-func (s *testGCWorkerSuite) TestRunDistGCJob(c *C) {
-	err := RunDistributedGCJob(context.Background(), s.store, s.pdClient, 0, "mock", 1)
+func (s *testGCWorkerSuite) TestRunDistGCJobAPI(c *C) {
+	gcSafePointCacheInterval = 0
+
+	safePoint := s.mustAllocTs(c)
+	err := RunDistributedGCJob(context.Background(), s.store, s.pdClient, safePoint, "mock", 1)
 	c.Assert(err, IsNil)
+	pdSafePoint := s.mustGetSafePointFromPd(c)
+	c.Assert(pdSafePoint, Equals, safePoint)
+	etcdSafePoint := s.loadEtcdSafePoint(c)
+	c.Assert(err, IsNil)
+	c.Assert(etcdSafePoint, Equals, safePoint)
+}
+
+func (s *testGCWorkerSuite) loadEtcdSafePoint(c *C) uint64 {
+	val, err := s.gcWorker.store.GetSafePointKV().Get(tikv.GcSavedSafePoint)
+	c.Assert(err, IsNil)
+	res, err := strconv.ParseUint(val, 10, 64)
+	c.Assert(err, IsNil)
+	return res
 }

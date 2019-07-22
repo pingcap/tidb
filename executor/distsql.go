@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -123,36 +122,6 @@ func closeAll(objs ...Closeable) error {
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-// statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
-func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
-	var flags uint64
-	if sc.InInsertStmt {
-		flags |= model.FlagInInsertStmt
-	} else if sc.InUpdateStmt || sc.InDeleteStmt {
-		flags |= model.FlagInUpdateOrDeleteStmt
-	} else if sc.InSelectStmt {
-		flags |= model.FlagInSelectStmt
-	}
-	if sc.IgnoreTruncate {
-		flags |= model.FlagIgnoreTruncate
-	} else if sc.TruncateAsWarning {
-		flags |= model.FlagTruncateAsWarning
-	}
-	if sc.OverflowAsWarning {
-		flags |= model.FlagOverflowAsWarning
-	}
-	if sc.IgnoreZeroInDate {
-		flags |= model.FlagIgnoreZeroInDate
-	}
-	if sc.DividedByZeroAsWarning {
-		flags |= model.FlagDividedByZeroAsWarning
-	}
-	if sc.PadCharToFullLength {
-		flags |= model.FlagPadCharToFullLength
-	}
-	return flags
 }
 
 // handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
