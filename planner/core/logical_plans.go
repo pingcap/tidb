@@ -223,7 +223,7 @@ type LogicalProjection struct {
 	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
 	CalculateNoDelay bool
 
-	// AvoidColumnRef is a temporary variable which is ONLY used to avoid
+	// AvoidColumnEvaluator is a temporary variable which is ONLY used to avoid
 	// building columnEvaluator for the expressions of Projection which is
 	// built by buildProjection4Union.
 	// This can be removed after column pool being supported.

@@ -55,7 +55,7 @@ type jrNode struct {
 }
 
 func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
-	return s.optimizeRecursive(p.Context(), p)
+	return s.optimizeRecursive(p.SessCtx(), p)
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
