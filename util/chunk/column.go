@@ -222,58 +222,45 @@ const (
 	sizeMyDecimal = int(unsafe.Sizeof(types.MyDecimal{}))
 )
 
+func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
+	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
+	header.Data = h.Data
+	header.Len = c.length
+	header.Cap = h.Cap / typeSize
+}
+
 // Int64s returns an int64 slice stored in this Column.
 func (c *Column) Int64s() []int64 {
-	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
 	var res []int64
-	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
-	s.Data = h.Data
-	s.Len = c.length
-	s.Cap = h.Cap / sizeInt64
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeInt64)
 	return res
 }
 
 // Uint64s returns a uint64 slice stored in this Column.
 func (c *Column) Uint64s() []uint64 {
-	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
 	var res []uint64
-	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
-	s.Data = h.Data
-	s.Len = c.length
-	s.Cap = h.Cap / sizeUint64
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeUint64)
 	return res
 }
 
 // Float32s returns a float32 slice stored in this Column.
 func (c *Column) Float32s() []float32 {
-	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
 	var res []float32
-	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
-	s.Data = h.Data
-	s.Len = c.length
-	s.Cap = h.Cap / sizeFloat32
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat32)
 	return res
 }
 
 // Float64s returns a float64 slice stored in this Column.
 func (c *Column) Float64s() []float64 {
-	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
 	var res []float64
-	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
-	s.Data = h.Data
-	s.Len = c.length
-	s.Cap = h.Cap / sizeFloat64
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat64)
 	return res
 }
 
 // MyDecimals returns a MyDecimal slice stored in this Column.
 func (c *Column) MyDecimals() []types.MyDecimal {
-	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
 	var res []types.MyDecimal
-	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
-	s.Data = h.Data
-	s.Len = c.length
-	s.Cap = h.Cap / sizeMyDecimal
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeMyDecimal)
 	return res
 }
 
