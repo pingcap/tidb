@@ -366,7 +366,7 @@ type IndexLookUpExecutor struct {
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
 
-	// isCheckOp is used to determine whether we need to check the consistency of the index data.
+	// checkIndexValue is used to check the consistency of the index data.
 	checkIndexValue
 
 	corColInIdxSide bool
@@ -650,7 +650,7 @@ type indexWorker struct {
 	maxBatchSize int
 	maxChunkSize int
 
-	// isCheckOp is used to determine whether we need to check the consistency of the index data.
+	// checkIndexValue is used to check the consistency of the index data.
 	checkIndexValue
 }
 
@@ -707,6 +707,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	if w.isCheckOp {
 		chk = chunk.NewChunkWithCapacity(w.tps, w.maxChunkSize)
 	}
+	handleOffset := chk.NumCols() - 1
 	handles = make([]int64, 0, w.batchSize)
 	for len(handles) < w.batchSize {
 		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
@@ -718,7 +719,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			h := chk.GetRow(i).GetInt64(chk.NumCols() - 1)
+			h := chk.GetRow(i).GetInt64(handleOffset)
 			handles = append(handles, h)
 		}
 		if w.isCheckOp {
@@ -766,7 +767,7 @@ type tableWorker struct {
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
 
-	// isCheckOp is used to determine whether we need to check the consistency of the index data.
+	// checkIndexValue is used to check the consistency of the index data.
 	checkIndexValue
 }
 

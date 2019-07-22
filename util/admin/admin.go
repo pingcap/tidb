@@ -16,6 +16,7 @@ package admin
 import (
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"time"
 
@@ -461,7 +462,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	startKey := t.RecordKey(0)
+	startKey := t.RecordKey(math.MinInt64)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]

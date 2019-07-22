@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"strings"
 
 	"github.com/cznic/mathutil"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
 )
 
 type visitInfo struct {
