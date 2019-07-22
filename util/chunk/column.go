@@ -49,7 +49,7 @@ func (c *Column) AppendJSON(j json.BinaryJSON) {
 	c.finishAppendVar()
 }
 
-// AppendJSON appends a Set value into this Column.
+// AppendSet appends a Set value into this Column.
 func (c *Column) AppendSet(set types.Set) {
 	c.appendNameValue(set.Name, set.Value)
 }
@@ -70,9 +70,8 @@ func NewColumn(ft *types.FieldType, cap int) *Column {
 	typeSize := getFixedLen(ft)
 	if typeSize == varElemLen {
 		return newVarLenColumn(cap, nil)
-	} else {
-		return newFixedLenColumn(typeSize, cap)
 	}
+	return newFixedLenColumn(typeSize, cap)
 }
 
 func (c *Column) isFixed() bool {
@@ -283,7 +282,7 @@ func (c *Column) GetString(rowID int) string {
 	return string(hack.String(c.data[c.offsets[rowID]:c.offsets[rowID+1]]))
 }
 
-// GetString returns the JSON in the specific row.
+// GetJSON returns the JSON in the specific row.
 func (c *Column) GetJSON(rowID int) json.BinaryJSON {
 	start := c.offsets[rowID]
 	return json.BinaryJSON{TypeCode: c.data[start], Value: c.data[start+1 : c.offsets[rowID+1]]}
@@ -317,7 +316,6 @@ func (c *Column) GetDuration(rowID int, fillFsp int) types.Duration {
 	return types.Duration{Duration: time.Duration(dur), Fsp: fillFsp}
 }
 
-// GetString returns the byte slice in the specific row.
 func (c *Column) getNameValue(rowID int) (string, uint64) {
 	start, end := c.offsets[rowID], c.offsets[rowID+1]
 	if start == end {
