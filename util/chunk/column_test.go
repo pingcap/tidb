@@ -296,3 +296,27 @@ func (s *testChunkSuite) TestEnumColumn(c *check.C) {
 		i++
 	}
 }
+
+func (s *testChunkSuite) TestNullsColumn(c *check.C) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
+	col := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		if i%2 == 0 {
+			col.AppendNull()
+			continue
+		}
+		col.AppendInt64(int64(i))
+	}
+
+	it := NewIterator4Chunk(chk)
+	var i int
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		if i%2 == 0 {
+			c.Assert(row.IsNull(0), check.Equals, true)
+			c.Assert(col.IsNull(i), check.Equals, true)
+		} else {
+			c.Assert(row.GetInt64(0), check.Equals, int64(i))
+		}
+		i++
+	}
+}

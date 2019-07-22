@@ -91,7 +91,8 @@ func (c *Column) Reset() {
 	c.data = c.data[:0]
 }
 
-func (c *Column) isNull(rowIdx int) bool {
+// IsNull returns if this row is null.
+func (c *Column) IsNull(rowIdx int) bool {
 	nullByte := c.nullBitmap[rowIdx/8]
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
