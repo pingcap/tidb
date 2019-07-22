@@ -149,7 +149,7 @@ func (c *Column) AppendInt64(i int64) {
 	c.finishAppendFixed()
 }
 
-// AppendUint64 appends an uint64 value into this Column.
+// AppendUint64 appends a uint64 value into this Column.
 func (c *Column) AppendUint64(u uint64) {
 	*(*uint64)(unsafe.Pointer(&c.elemBuf[0])) = u
 	c.finishAppendFixed()
