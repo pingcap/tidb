@@ -148,7 +148,7 @@ func (s *testChunkSuite) TestMyDecimal(c *check.C) {
 		col.AppendMyDecimal(d)
 	}
 
-	ds := col.MyDecimals()
+	ds := col.Decimals()
 	for i := 0; i < 1024; i++ {
 		d := new(types.MyDecimal)
 		if err := d.FromFloat64(float64(i) * 1.1); err != nil {

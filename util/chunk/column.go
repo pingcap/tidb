@@ -223,10 +223,9 @@ const (
 )
 
 func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
-	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
-	header.Data = h.Data
+	header.Data = uintptr(unsafe.Pointer(&c.data[0]))
 	header.Len = c.length
-	header.Cap = h.Cap / typeSize
+	header.Cap = cap(c.data) / typeSize
 }
 
 // Int64s returns an int64 slice stored in this Column.
@@ -257,8 +256,8 @@ func (c *Column) Float64s() []float64 {
 	return res
 }
 
-// MyDecimals returns a MyDecimal slice stored in this Column.
-func (c *Column) MyDecimals() []types.MyDecimal {
+// Decimals returns a MyDecimal slice stored in this Column.
+func (c *Column) Decimals() []types.MyDecimal {
 	var res []types.MyDecimal
 	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeMyDecimal)
 	return res
