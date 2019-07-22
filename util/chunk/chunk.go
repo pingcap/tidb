@@ -66,12 +66,7 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	}
 
 	for _, f := range fields {
-		elemLen := getFixedLen(f)
-		if elemLen == varElemLen {
-			chk.columns = append(chk.columns, newVarLenColumn(chk.capacity, nil))
-		} else {
-			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, chk.capacity))
-		}
+		chk.columns = append(chk.columns, NewColumn(f, chk.capacity))
 	}
 
 	return chk
@@ -553,6 +548,11 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 	case types.KindMysqlJSON:
 		c.AppendJSON(colIdx, d.GetMysqlJSON())
 	}
+}
+
+// Column returns the specific column.
+func (c *Chunk) Column(colID int) *Column {
+	return c.columns[colID]
 }
 
 func writeTime(buf []byte, t types.Time) {

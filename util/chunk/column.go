@@ -14,10 +14,12 @@
 package chunk
 
 import (
+	"reflect"
 	"unsafe"
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // AppendDuration appends a duration value into this Column.
@@ -55,6 +57,16 @@ type Column struct {
 	offsets    []int64
 	data       []byte
 	elemBuf    []byte
+}
+
+// NewColumn creates a new column with the specific length and capacity.
+func NewColumn(ft *types.FieldType, cap int) *Column {
+	typeSize := getFixedLen(ft)
+	if typeSize == varElemLen {
+		return newFixedLenColumn(typeSize, cap)
+	} else {
+		return newVarLenColumn(cap, nil)
+	}
 }
 
 func (c *Column) isFixed() bool {
@@ -189,4 +201,128 @@ func (c *Column) AppendBytes(b []byte) {
 func (c *Column) AppendTime(t types.Time) {
 	writeTime(c.elemBuf, t)
 	c.finishAppendFixed()
+}
+
+const (
+	sizeInt64     = int(unsafe.Sizeof(int64(0)))
+	sizeUint64    = int(unsafe.Sizeof(uint64(0)))
+	sizeFloat32   = int(unsafe.Sizeof(float32(0)))
+	sizeFloat64   = int(unsafe.Sizeof(float64(0)))
+	sizeTime      = int(unsafe.Sizeof(types.Time{}))
+	sizeDuration  = int(unsafe.Sizeof(types.Duration{}))
+	sizeMyDecimal = int(unsafe.Sizeof(types.MyDecimal{}))
+)
+
+// Int64s returns a int64 slice stored in this Column.
+func (c *Column) Int64s() []int64 {
+	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
+	var res []int64
+	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
+	s.Data = h.Data
+	s.Len = c.length
+	s.Cap = h.Cap / sizeInt64
+	return res
+}
+
+// Uint64s returns a uint64 slice stored in this Column.
+func (c *Column) Uint64s() []uint64 {
+	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
+	var res []uint64
+	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
+	s.Data = h.Data
+	s.Len = c.length
+	s.Cap = h.Cap / sizeUint64
+	return res
+}
+
+// Float32s returns a float32 slice stored in this Column.
+func (c *Column) Float32s() []float32 {
+	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
+	var res []float32
+	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
+	s.Data = h.Data
+	s.Len = c.length
+	s.Cap = h.Cap / sizeFloat32
+	return res
+}
+
+// Float64s returns a float64 slice stored in this Column.
+func (c *Column) Float64s() []float64 {
+	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
+	var res []float64
+	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
+	s.Data = h.Data
+	s.Len = c.length
+	s.Cap = h.Cap / sizeFloat64
+	return res
+}
+
+// Times returns a Time slice stored in this Column.
+func (c *Column) Times() []types.Time {
+	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
+	var res []types.Time
+	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
+	s.Data = h.Data
+	s.Len = c.length
+	s.Cap = h.Cap / sizeTime
+	return res
+}
+
+// Durations returns a Duration slice stored in this Column.
+func (c *Column) Durations() []types.Duration {
+	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
+	var res []types.Duration
+	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
+	s.Data = h.Data
+	s.Len = c.length
+	s.Cap = h.Cap / sizeDuration
+	return res
+}
+
+// MyDecimals returns a MyDecimal slice stored in this Column.
+func (c *Column) MyDecimals() []types.MyDecimal {
+	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
+	var res []types.MyDecimal
+	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
+	s.Data = h.Data
+	s.Len = c.length
+	s.Cap = h.Cap / sizeMyDecimal
+	return res
+}
+
+// GetString returns the string in the specific row.
+func (c *Column) GetString(rowID int) string {
+	return string(hack.String(c.data[c.offsets[rowID]:c.offsets[rowID+1]]))
+}
+
+// GetString returns the JSON in the specific row.
+func (c *Column) GetJSON(rowID int) json.BinaryJSON {
+	start := c.offsets[rowID]
+	return json.BinaryJSON{TypeCode: c.data[start], Value: c.data[start+1 : c.offsets[rowID+1]]}
+}
+
+// GetBytes returns the byte slice in the specific row.
+func (c *Column) GetBytes(rowID int) []byte {
+	return c.data[c.offsets[rowID]:c.offsets[rowID+1]]
+}
+
+// GetEnum returns the Enum in the specific row.
+func (c *Column) GetEnum(rowID int) types.Enum {
+	name, val := c.getNameValue(rowID)
+	return types.Enum{Name: name, Value: val}
+}
+
+// GetSet returns the Set in the specific row.
+func (c *Column) GetSet(rowID int) types.Set {
+	name, val := c.getNameValue(rowID)
+	return types.Set{Name: name, Value: val}
+}
+
+// GetString returns the byte slice in the specific row.
+func (c *Column) getNameValue(rowID int) (string, uint64) {
+	start, end := c.offsets[rowID], c.offsets[rowID+1]
+	if start == end {
+		return "", 0
+	}
+	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
 }
