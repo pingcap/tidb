@@ -473,6 +473,7 @@ type OnDeleteUpdateDef struct {
 	week		"WEEK"
 	yearType	"YEAR"
 	x509		"X509"
+	enforced	"ENFORCED"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate			"ADDDATE"
@@ -996,6 +997,9 @@ type OnDeleteUpdateDef struct {
 	TableOptimizerHintOpt	"Table level optimizer hint"
 	TableOptimizerHints	"Table level optimizer hints"
 	TableOptimizerHintList	"Table level optimizer hint list"
+	EnforcedOrNot		"{ENFORCED|NOT ENFORCED}"
+	EnforcedOrNotOpt	"Optional {ENFORCED|NOT ENFORCED}"
+	EnforcedOrNotOrNotNullOpt	"{[ENFORCED|NOT ENFORCED|NOT NULL]}"
 
 %type	<ident>
 	AsOpt			"AS or EmptyString"
@@ -1084,6 +1088,7 @@ type OnDeleteUpdateDef struct {
 %left 	'*' '/' '%' div mod
 %left 	'^'
 %left 	'~' neg
+%precedence lowerThanNot
 %right 	not not2
 %right	collate
 
@@ -1291,6 +1296,18 @@ AlterTableSpec:
 			NewColumns:	[]*ast.ColumnDef{colDef},
 		}
 	}
+|	"ALTER" ColumnKeywordOpt ColumnName "SET" "DEFAULT" '(' Expression ')'
+	{
+		option := &ast.ColumnOption{Expr: $7}
+		colDef := &ast.ColumnDef{
+			Name: 	 $3.(*ast.ColumnName),
+			Options: []*ast.ColumnOption{option},
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp:		ast.AlterTableAlterColumn,
+			NewColumns:	[]*ast.ColumnDef{colDef},
+		}
+	}
 |	"ALTER" ColumnKeywordOpt ColumnName "DROP" "DEFAULT"
 	{
 		colDef := &ast.ColumnDef{
@@ -1371,28 +1388,37 @@ AlterAlgorithm:
 	{
 		$$ = ast.AlterAlgorithmInstant
 	}
-
+|	identifier
+	{
+		yylex.AppendError(ErrUnknownAlterAlgorithm.GenWithStackByArgs($1))
+		return 1
+	}
 
 LockClauseOpt:
 	{}
 | 	LockClause {}
 
 LockClause:
-	"LOCK" eq "NONE"
+	"LOCK" EqOpt "NONE"
 	{
 		$$ = ast.LockTypeNone
 	}
-|	"LOCK" eq "DEFAULT"
+|	"LOCK" EqOpt "DEFAULT"
 	{
 		$$ = ast.LockTypeDefault
 	}
-|	"LOCK" eq "SHARED"
+|	"LOCK" EqOpt "SHARED"
 	{
 		$$ = ast.LockTypeShared
 	}
-|	"LOCK" eq "EXCLUSIVE"
+|	"LOCK" EqOpt "EXCLUSIVE"
 	{
 		$$ = ast.LockTypeExclusive
+	}
+|	"LOCK" EqOpt identifier
+	{
+		yylex.AppendError(ErrUnknownAlterLock.GenWithStackByArgs($3))
+		return 1
 	}
 
 KeyOrIndex: "KEY" | "INDEX"
@@ -1787,6 +1813,42 @@ PrimaryOpt:
 	{}
 | "PRIMARY"
 
+EnforcedOrNot:
+	"ENFORCED"
+	{
+		$$ = true
+	}
+|	"NOT" "ENFORCED"
+	{
+		$$ = false
+	}
+
+EnforcedOrNotOpt:
+	{
+		$$ = true
+	} %prec lowerThanNot
+|	EnforcedOrNot
+	{
+		$$ = $1
+	}
+
+EnforcedOrNotOrNotNullOpt:
+//	 This branch is needed to workaround the need of a lookahead of 2 for the grammar:
+//
+//	  { [NOT] NULL | CHECK(...) [NOT] ENFORCED } ...
+	"NOT" "NULL"
+	{
+		$$ = 0
+	}
+|	EnforcedOrNotOpt
+	{
+		if ($1.(bool)) {
+			$$ = 1
+		} else {
+			$$ = 2
+		}
+	}
+
 ColumnOption:
 	"NOT" "NULL"
 	{
@@ -1827,11 +1889,30 @@ ColumnOption:
 	{
 		$$ =  &ast.ColumnOption{Tp: ast.ColumnOptionComment, Expr: ast.NewValueExpr($2)}
 	}
-|	"CHECK" '(' Expression ')'
+|	"CHECK" '(' Expression ')' EnforcedOrNotOrNotNullOpt
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		// The CHECK clause is parsed but ignored by all storage engines.
-		$$ = &ast.ColumnOption{}
+		// See the branch named `EnforcedOrNotOrNotNullOpt`.
+
+		optionCheck := &ast.ColumnOption{
+			Tp: ast.ColumnOptionCheck,
+			Expr: $3,
+			Enforced: true,
+		}
+		switch $5.(int) {
+		case 0:
+			$$ = []*ast.ColumnOption{optionCheck, {Tp: ast.ColumnOptionNotNull}}
+		case 1:
+			optionCheck.Enforced = true
+			$$ = optionCheck
+		case 2:
+			optionCheck.Enforced = false
+			$$ = optionCheck
+		default:
+		}
+		yylex.AppendError(yylex.Errorf("The CHECK clause is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 |	GeneratedAlways "AS" '(' Expression ')' VirtualOrStored
 	{
@@ -1876,11 +1957,19 @@ VirtualOrStored:
 ColumnOptionList:
 	ColumnOption
 	{
-		$$ = []*ast.ColumnOption{$1.(*ast.ColumnOption)}
+		if columnOption,ok := $1.(*ast.ColumnOption); ok {
+			$$ = []*ast.ColumnOption{columnOption}
+		} else {
+			$$ = $1
+		}
 	}
 |	ColumnOptionList ColumnOption
 	{
-		$$ = append($1.([]*ast.ColumnOption), $2.(*ast.ColumnOption))
+		if columnOption,ok := $2.(*ast.ColumnOption); ok {
+			$$ = append($1.([]*ast.ColumnOption), columnOption)
+		} else {
+			$$ = append($1.([]*ast.ColumnOption), $2.([]*ast.ColumnOption)...)
+		}
 	}
 
 ColumnOptionListOpt:
@@ -1968,6 +2057,16 @@ ConstraintElem:
 			Name:		$4.(string),
 			Refer:		$8.(*ast.ReferenceDef),
 		}
+	}
+|	"CHECK" '(' Expression ')' EnforcedOrNotOpt
+	{
+		$$ = &ast.Constraint{
+			Tp:		ast.ConstraintCheck,
+			Expr:		$3.(ast.ExprNode),
+			Enforced:	$5.(bool),
+		}
+		yylex.AppendError(yylex.Errorf("The CHECK clause is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 
 ReferDef:
@@ -3528,7 +3627,7 @@ identifier | UnReservedKeyword | NotKeywordToken | TiDBKeyword
 UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CLEANUP" | "CHARSET" %prec charsetKwd
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "CURRENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
-| "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ERRORS" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FOLLOWING" | "FORMAT" | "FULL" |"GLOBAL"
+| "DYNAMIC"| "END" | "ENFORCED" | "ENGINE" | "ENGINES" | "ENUM" | "ERRORS" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FOLLOWING" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "LESS" | "LOCAL" | "LAST" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
 | "ROLE" |"ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "OPEN"| "SUBPARTITIONS" | "SUBPARTITION" | "TABLES" | "TABLESPACE" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken
 | "TIMESTAMP" %prec lowerThanStringLitToken | "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNBOUNDED" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
@@ -7305,11 +7404,6 @@ TableElement:
 |	Constraint
 	{
 		$$ = $1.(*ast.Constraint)
-	}
-|	"CHECK" '(' Expression ')'
-	{
-		/* Nothing to do now */
-		$$ = nil
 	}
 
 TableElementList:
