@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"strings"
 
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -43,7 +42,7 @@ func LoadOptRuleBlacklist(ctx sessionctx.Context) (err error) {
 	}
 	newDisabledLogicalRules := set.NewStringSet()
 	for _, row := range rows {
-		name := strings.ToLower(row.GetString(0))
+		name := row.GetString(0)
 		newDisabledLogicalRules.Insert(name)
 	}
 	plannercore.DefaultDisabledLogicalRulesList.Store(newDisabledLogicalRules)

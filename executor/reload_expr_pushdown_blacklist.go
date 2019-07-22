@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"strings"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -42,7 +41,7 @@ func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 	}
 	newBlacklist := make(map[string]struct{})
 	for _, row := range rows {
-		name := strings.ToLower(row.GetString(0))
+		name := row.GetString(0)
 		newBlacklist[name] = struct{}{}
 	}
 	expression.DefaultExprPushdownBlacklist.Store(newBlacklist)
