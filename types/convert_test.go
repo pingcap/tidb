@@ -712,7 +712,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.TruncateAsWarning = true
-	sc.ConvertStrToIntStrict = true
+	sc.CastStrToIntStrict = true
 	warningCount := 0
 	for _, tt := range tests {
 		prefix, err := getValidIntPrefix(sc, tt.origin)
@@ -751,7 +751,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 		{"123de", "123", true},
 	}
 	sc.TruncateAsWarning = false
-	sc.ConvertStrToIntStrict = false
+	sc.CastStrToIntStrict = false
 	for _, tt := range tests2 {
 		prefix, err := getValidIntPrefix(sc, tt.origin)
 		if tt.warning {
