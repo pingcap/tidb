@@ -143,13 +143,13 @@ func (c *Column) finishAppendFixed() {
 	c.length++
 }
 
-// AppendInt64 appends a int64 value into this Column.
+// AppendInt64 appends an int64 value into this Column.
 func (c *Column) AppendInt64(i int64) {
 	*(*int64)(unsafe.Pointer(&c.elemBuf[0])) = i
 	c.finishAppendFixed()
 }
 
-// AppendUint64 appends a uint64 value into this Column.
+// AppendUint64 appends an uint64 value into this Column.
 func (c *Column) AppendUint64(u uint64) {
 	*(*uint64)(unsafe.Pointer(&c.elemBuf[0])) = u
 	c.finishAppendFixed()
