@@ -1495,3 +1495,12 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 	_, err = tk.Exec("alter table test_1465 partition by hash(a)")
 	c.Assert(err, ErrorMatches, ".*alter table partition is unsupported")
 }
+
+func (s *testIntegrationSuite8) TestTruncateTableWithPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists test_4414;")
+	tk.MustExec("create table test_4414(a int, b int) partition by hash(a) partitions 10;")
+	tk.MustExec("truncate table test_4414;")
+	tk.MustQuery("select * from test_4414 partition (p0)").Check(testkit.Rows())
+}
