@@ -17,7 +17,7 @@ import (
 	"github.com/pingcap/check"
 )
 
-func equalColumn(c1, c2 *column) bool {
+func equalColumn(c1, c2 *Column) bool {
 	if c1.length != c2.length ||
 		c1.nullCount != c2.nullCount {
 		return false
@@ -54,7 +54,7 @@ func equalColumn(c1, c2 *column) bool {
 func (s *testChunkSuite) TestColumnCopy(c *check.C) {
 	col := newFixedLenColumn(8, 10)
 	for i := 0; i < 10; i++ {
-		col.appendInt64(int64(i))
+		col.AppendInt64(int64(i))
 	}
 
 	c1 := col.copyConstruct()
