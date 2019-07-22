@@ -807,6 +807,8 @@ func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk.MustExec("insert into t (a) values (1)")
 	tk.MustExec("create index idx on t (c)")
 	tk.MustQuery("select * from t where c > 1").Check(testkit.Rows("1 2 3"))
+	res := tk.MustQuery("select * from t use index(idx) where c > 1")
+	tk.MustQuery("select * from t ignore index(idx) where c > 1").Check(res.Rows())
 	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t")
@@ -814,6 +816,8 @@ func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk.MustExec("insert into t (a) values (1)")
 	tk.MustExec("create index idx on t (d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 3 4"))
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
 	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t")
@@ -821,6 +825,8 @@ func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk.MustExec("insert into t (a) values (1)")
 	tk.MustExec("create index idx on t (d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 4 25"))
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
 	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t")
@@ -828,6 +834,8 @@ func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk.MustExec("insert into t (a) values ('adorable')")
 	tk.MustExec("create index idx on t (d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("adorable 131 le 577")) // 131+131-7+1-3+3*108
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
 	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t")
@@ -835,6 +843,8 @@ func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk.MustExec("insert into t (a) values (1)")
 	tk.MustExec("create index idx on t (d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 1 2 4 8"))
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
 	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t")
@@ -845,6 +855,8 @@ func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk.MustExec("alter table t add column(d bigint as (c+1) virtual)")
 	tk.MustExec("alter table t add index idx_d(d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 3 4"))
+	res = tk.MustQuery("select * from t use index(idx_d) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx_d) where d > 2").Check(res.Rows())
 	tk.MustExec("admin check table t")
 }
 

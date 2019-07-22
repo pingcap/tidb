@@ -14,6 +14,7 @@
 package decoder
 
 import (
+	"github.com/pingcap/errors"
 	"sort"
 	"time"
 
@@ -136,6 +137,45 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 	return row, nil
 }
 
+// BuildFullDecodeColMap build a map that contains [columnID -> struct{*table.Column, expression.Expression}] from
+// indexed columns and all of its depending columns. `genExprProducer` is used to produce a generated expression based on a table.Column.
+func BuildFullDecodeColMap(indexedCols []*table.Column, t table.Table, genExprProducer func(*table.Column) (expression.Expression, error)) (map[int64]Column, error) {
+	pendingCols := make([]*table.Column, len(indexedCols))
+	copy(pendingCols, indexedCols)
+	decodeColMap := make(map[int64]Column, len(pendingCols))
+
+	for i := 0; i < len(pendingCols); i++ {
+		col := pendingCols[i]
+		if _, ok := decodeColMap[col.ID]; ok {
+			continue // already discovered
+		}
+
+		if col.IsGenerated() && !col.GeneratedStored {
+			// Find depended columns and put them into pendingCols. For example, idx(c) with column definition `c int as (a + b)`,
+			// depended columns of `c` is `a` and `b`, and both of them will be put into the pendingCols, waiting for next traversal.
+			for _, c := range t.Cols() {
+				if _, ok := col.Dependences[c.Name.L]; ok {
+					pendingCols = append(pendingCols, c)
+				}
+			}
+
+			e, err := genExprProducer(col)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			decodeColMap[col.ID] = Column{
+				Col:     col,
+				GenExpr: e,
+			}
+		} else {
+			decodeColMap[col.ID] = Column{
+				Col: col,
+			}
+		}
+	}
+	return decodeColMap, nil
+}
+
 // SubstituteGenColsInDecodeColMap substitutes generated columns in every expression
 // with non-generated one by looking up decodeColMap.
 func SubstituteGenColsInDecodeColMap(decodeColMap map[int64]Column) {
@@ -150,7 +190,7 @@ func SubstituteGenColsInDecodeColMap(decodeColMap map[int64]Column) {
 	}
 	sort.Slice(orderedCols, func(i, j int) bool { return orderedCols[i].colOffset < orderedCols[j].colOffset })
 
-	// Iterate over decodeColMap, the substitution only happens once because
+	// Iterate over decodeColMap, the substitution only happens once for each virtual column because
 	// columns with smaller offset can not refer to those with larger ones.
 	for _, pair := range orderedCols {
 		colID := pair.colID
@@ -172,7 +212,7 @@ func SubstituteGenColsInDecodeColMap(decodeColMap map[int64]Column) {
 func substituteGeneratedColumn(expr expression.Expression, decodeColMap map[int64]Column) expression.Expression {
 	switch v := expr.(type) {
 	case *expression.Column:
-		if c, ok := decodeColMap[v.ID]; ok && c.GenExpr != nil {
+		if c, ok := decodeColMap[v.ID]; c.GenExpr != nil && ok {
 			return c.GenExpr
 		}
 		return v

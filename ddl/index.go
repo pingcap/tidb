@@ -909,47 +909,25 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
 	cols := t.Cols()
 	indexedCols := make([]*table.Column, len(indexInfo.Columns))
+	var containsVirtualCol bool
+
 	for i, v := range indexInfo.Columns {
 		indexedCols[i] = cols[v.Offset]
+		if indexedCols[i].IsGenerated() && !indexedCols[i].GeneratedStored {
+			containsVirtualCol = true
+		}
 	}
 
-	decodeColMap, err := buildFullDecodeColMap(indexedCols, sessCtx, t)
+	decodeColMap, err := decoder.BuildFullDecodeColMap(indexedCols, t, func(genCol *table.Column) (expression.Expression, error) {
+		return expression.ParseSimpleExprCastWithTableInfo(sessCtx, genCol.GeneratedExprString, t.Meta(), &genCol.FieldType)
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	decoder.SubstituteGenColsInDecodeColMap(decodeColMap)
-	decoder.RemoveUnusedVirtualCols(decodeColMap, indexedCols)
-
-	return decodeColMap, nil
-}
-
-func buildFullDecodeColMap(indexedCols []*table.Column, sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
-	pendingCols := make([]*table.Column, len(indexedCols))
-	copy(pendingCols, indexedCols)
-	decodeColMap := make(map[int64]decoder.Column, len(pendingCols))
-	for i := 0; i < len(pendingCols); i++ {
-		col := pendingCols[i]
-		if col.IsGenerated() && !col.GeneratedStored {
-			// Find depended columns and put them into pendingCols.
-			for _, c := range t.Cols() {
-				if _, ok := col.Dependences[c.Name.L]; ok {
-					pendingCols = append(pendingCols, c)
-				}
-			}
-			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta(), &col.FieldType)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			decodeColMap[col.ID] = decoder.Column{
-				Col:     col,
-				GenExpr: e,
-			}
-		} else {
-			decodeColMap[col.ID] = decoder.Column{
-				Col: col,
-			}
-		}
+	if containsVirtualCol {
+		decoder.SubstituteGenColsInDecodeColMap(decodeColMap)
+		decoder.RemoveUnusedVirtualCols(decodeColMap, indexedCols)
 	}
 	return decodeColMap, nil
 }
