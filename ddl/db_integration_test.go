@@ -782,6 +782,33 @@ func (s *testIntegrationSuite10) TestChangingTableCharset(c *C) {
 
 }
 
+func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	errMsg := "[ddl:203]" // unsupported modify column with references
+	assertErrCode := func(sql string, errCodeStr string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error()[:len(errCodeStr)], Equals, errCodeStr)
+	}
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (b char(1) default null) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_general_ci")
+	tk.MustExec("alter table t1 modify column b char(1) character set utf8mb4 collate utf8mb4_general_ci")
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (b char(1) collate utf8mb4_general_ci)")
+	tk.MustExec("alter table t1 modify b char(1) character set utf8mb4 collate utf8mb4_general_ci")
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (b int, c int)")
+	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
+}
+
 func (s *testIntegrationSuite7) TestCaseInsensitiveCharsetAndCollate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
