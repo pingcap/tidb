@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -262,9 +263,10 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				if err1 == nil {
 					break
 				}
-				if err2 := b.Backoff(boTiKVRPC, err1); err2 != nil {
-					logutil.BgLogger().Error("backoff error", zap.Error(err2))
-				}
+				err2 := b.Backoff(boTiKVRPC, err1)
+				// As timeout is set to math.MaxUint32, err2 should always be nil.
+				// This line is added to make the 'make errcheck' pass.
+				terror.Log(err2)
 			}
 			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
 			continue
