@@ -334,7 +334,6 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollate string
 				tp.Charset = derivedCollation.CharsetName
 				tp.Collate = derivedCollation.Name
 			}
-
 		} else {
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
@@ -385,14 +384,9 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollate string
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
-	// The specified collate is in colDef.Options, but the charset is in colDef.Tp.
-	specifiedCollate := ""
-	for _, op := range colDef.Options {
-		if op.Tp == ast.ColumnOptionCollate {
-			specifiedCollate = op.StrValue
-			break
-		}
-	}
+	// The specified collate is in colDef.Options, but the charset is in colDef.Tp. We should handle them together
+	specifiedCollate := extractCollateFromOption(colDef)
+
 	// When we set charset and collate here, we should take the collate in colDef.Option into consideration.
 	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollate, tblCharset, dbCharset); err != nil {
 		return nil, nil, errors.Trace(err)
@@ -2634,19 +2628,8 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 	// Same to create table, since collate info is in colDef.Option, when setting charset and collate here we
 	// should take the collate in colDef.Option into consideration rather than handling it separately
-	specifiedCollate := ""
-	collateIndex := -1
-	for i, op := range specNewColumn.Options {
-		if op.Tp == ast.ColumnOptionCollate {
-			specifiedCollate = op.StrValue
-			collateIndex = i
-			break
-		}
-	}
-	// We will handle it now, so remove it in options
-	if collateIndex != -1 {
-		specNewColumn.Options = append(specNewColumn.Options[:collateIndex], specNewColumn.Options[collateIndex+1:]...)
-	}
+	specifiedCollate := extractCollateFromOption(specNewColumn)
+
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollate, t.Meta().Charset, schema.Charset)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -3632,4 +3615,24 @@ type lockTablesArg struct {
 	IndexOfUnlock int
 	SessionInfo   model.SessionInfo
 	IsCleanup     bool
+}
+
+// When handle charset and collate of a column, we should take collate in option into consideration
+// rather than handling it separately. Then the following option processing logic should ignores this
+// cause we will delete it from option here
+func extractCollateFromOption(def *ast.ColumnDef) string {
+	specifiedCollate := ""
+	collateIndex := -1
+	for i, op := range def.Options {
+		if op.Tp == ast.ColumnOptionCollate {
+			specifiedCollate = op.StrValue
+			collateIndex = i
+			break
+		}
+	}
+	// We will handle it now, so remove it in options
+	if collateIndex != -1 {
+		def.Options = append(def.Options[:collateIndex], def.Options[collateIndex+1:]...)
+	}
+	return specifiedCollate
 }
