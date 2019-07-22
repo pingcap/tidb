@@ -20,11 +20,11 @@ import (
 	"github.com/pingcap/tidb/types/json"
 )
 
-func (c *Column) appendDuration(dur types.Duration) {
-	c.appendInt64(int64(dur.Duration))
+func (c *Column) AppendDuration(dur types.Duration) {
+	c.AppendInt64(int64(dur.Duration))
 }
 
-func (c *Column) appendMyDecimal(dec *types.MyDecimal) {
+func (c *Column) AppendMyDecimal(dec *types.MyDecimal) {
 	*(*types.MyDecimal)(unsafe.Pointer(&c.elemBuf[0])) = *dec
 	c.finishAppendFixed()
 }
@@ -37,7 +37,7 @@ func (c *Column) appendNameValue(name string, val uint64) {
 	c.finishAppendVar()
 }
 
-func (c *Column) appendJSON(j json.BinaryJSON) {
+func (c *Column) AppendJSON(j json.BinaryJSON) {
 	c.data = append(c.data, j.TypeCode)
 	c.data = append(c.data, j.Value...)
 	c.finishAppendVar()
@@ -56,7 +56,7 @@ func (c *Column) isFixed() bool {
 	return c.elemBuf != nil
 }
 
-func (c *Column) reset() {
+func (c *Column) Reset() {
 	c.length = 0
 	c.nullCount = 0
 	c.nullBitmap = c.nullBitmap[:0]
@@ -120,7 +120,7 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 	c.nullBitmap[len(c.nullBitmap)-1] &= bitMask
 }
 
-func (c *Column) appendNull() {
+func (c *Column) AppendNull() {
 	c.appendNullBitmap(false)
 	if c.isFixed() {
 		c.data = append(c.data, c.elemBuf...)
@@ -136,12 +136,12 @@ func (c *Column) finishAppendFixed() {
 	c.length++
 }
 
-func (c *Column) appendInt64(i int64) {
+func (c *Column) AppendInt64(i int64) {
 	*(*int64)(unsafe.Pointer(&c.elemBuf[0])) = i
 	c.finishAppendFixed()
 }
 
-func (c *Column) appendUint64(u uint64) {
+func (c *Column) AppendUint64(u uint64) {
 	*(*uint64)(unsafe.Pointer(&c.elemBuf[0])) = u
 	c.finishAppendFixed()
 }
@@ -151,7 +151,7 @@ func (c *Column) appendFloat32(f float32) {
 	c.finishAppendFixed()
 }
 
-func (c *Column) appendFloat64(f float64) {
+func (c *Column) AppendFloat64(f float64) {
 	*(*float64)(unsafe.Pointer(&c.elemBuf[0])) = f
 	c.finishAppendFixed()
 }
@@ -162,17 +162,17 @@ func (c *Column) finishAppendVar() {
 	c.length++
 }
 
-func (c *Column) appendString(str string) {
+func (c *Column) AppendString(str string) {
 	c.data = append(c.data, str...)
 	c.finishAppendVar()
 }
 
-func (c *Column) appendBytes(b []byte) {
+func (c *Column) AppendBytes(b []byte) {
 	c.data = append(c.data, b...)
 	c.finishAppendVar()
 }
 
-func (c *Column) appendTime(t types.Time) {
+func (c *Column) AppendTime(t types.Time) {
 	writeTime(c.elemBuf, t)
 	c.finishAppendFixed()
 }
