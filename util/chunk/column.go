@@ -20,10 +20,12 @@ import (
 	"github.com/pingcap/tidb/types/json"
 )
 
+// AppendDuration appends a duration value into this Column.
 func (c *Column) AppendDuration(dur types.Duration) {
 	c.AppendInt64(int64(dur.Duration))
 }
 
+// AppendMyDecimal appends a MyDecimal value into this Column.
 func (c *Column) AppendMyDecimal(dec *types.MyDecimal) {
 	*(*types.MyDecimal)(unsafe.Pointer(&c.elemBuf[0])) = *dec
 	c.finishAppendFixed()
@@ -37,12 +39,15 @@ func (c *Column) appendNameValue(name string, val uint64) {
 	c.finishAppendVar()
 }
 
+// AppendJSON appends a BinaryJSON value into this Column.
 func (c *Column) AppendJSON(j json.BinaryJSON) {
 	c.data = append(c.data, j.TypeCode)
 	c.data = append(c.data, j.Value...)
 	c.finishAppendVar()
 }
 
+// Column stores one column of data in Apache Arrow format.
+// See https://arrow.apache.org/docs/memory_layout.html
 type Column struct {
 	length     int
 	nullCount  int
@@ -56,6 +61,7 @@ func (c *Column) isFixed() bool {
 	return c.elemBuf != nil
 }
 
+// Reset resets this Column.
 func (c *Column) Reset() {
 	c.length = 0
 	c.nullCount = 0
@@ -120,6 +126,7 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 	c.nullBitmap[len(c.nullBitmap)-1] &= bitMask
 }
 
+// AppendNull appends a null value into this Column.
 func (c *Column) AppendNull() {
 	c.appendNullBitmap(false)
 	if c.isFixed() {
@@ -136,21 +143,25 @@ func (c *Column) finishAppendFixed() {
 	c.length++
 }
 
+// AppendInt64 appends a int64 value into this Column.
 func (c *Column) AppendInt64(i int64) {
 	*(*int64)(unsafe.Pointer(&c.elemBuf[0])) = i
 	c.finishAppendFixed()
 }
 
+// AppendUint64 appends a uint64 value into this Column.
 func (c *Column) AppendUint64(u uint64) {
 	*(*uint64)(unsafe.Pointer(&c.elemBuf[0])) = u
 	c.finishAppendFixed()
 }
 
+// appendFloat32 appends a float32 value into this Column.
 func (c *Column) appendFloat32(f float32) {
 	*(*float32)(unsafe.Pointer(&c.elemBuf[0])) = f
 	c.finishAppendFixed()
 }
 
+// AppendFloat64 appends a float64 value into this Column.
 func (c *Column) AppendFloat64(f float64) {
 	*(*float64)(unsafe.Pointer(&c.elemBuf[0])) = f
 	c.finishAppendFixed()
@@ -162,16 +173,19 @@ func (c *Column) finishAppendVar() {
 	c.length++
 }
 
+// AppendString appends a string value into this Column.
 func (c *Column) AppendString(str string) {
 	c.data = append(c.data, str...)
 	c.finishAppendVar()
 }
 
+// AppendBytes appends a byte slice into this Column.
 func (c *Column) AppendBytes(b []byte) {
 	c.data = append(c.data, b...)
 	c.finishAppendVar()
 }
 
+// AppendTime appends a time value into this Column.
 func (c *Column) AppendTime(t types.Time) {
 	writeTime(c.elemBuf, t)
 	c.finishAppendFixed()
