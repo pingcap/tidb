@@ -250,6 +250,7 @@ var tokenMap = map[string]int{
 	"ENABLE":                   enable,
 	"ENCLOSED":                 enclosed,
 	"END":                      end,
+	"ENFORCED":                 enforced,
 	"ENGINE":                   engine,
 	"ENGINES":                  engines,
 	"ENUM":                     enum,
