@@ -121,13 +121,23 @@ func (s *testSuite3) TestCreateTable(c *C) {
 		}
 	}
 
-	// only collate column option is specified, it should derived the charset from the collate rather than use the table's collate
-	tk.MustExec("drop table if exists test_only_column_collate;")
-	tk.MustExec("create table test_only_column_collate (a char(1) collate utf8_bin) charset utf8mb4 collate utf8mb4_bin")
-	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_only_column_collate"))
+	// only multiple collate column option is specified, it should derived the charset from the collate rather than use the table's collate
+	tk.MustExec("drop table if exists test_multiple_column_collate;")
+	tk.MustExec("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
 	c.Assert(err, IsNil)
 	c.Assert(t.Cols()[0].Charset, Equals, "utf8")
-	c.Assert(t.Cols()[0].Collate, Equals, "utf8_bin")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8_general_ci")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
+	// multiple collate column option is specified, charset is specified too
+	tk.MustExec("drop table if exists test_multiple_column_collate;")
+	tk.MustExec("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8_general_ci")
 	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
 	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
 
@@ -333,12 +343,24 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
 
-	// Test collate modification in column
-	tk.MustExec("drop table if exists modify_only_column_collate;")
-	tk.MustExec("create table modify_only_column_collate (a char(1) collate utf8_bin) charset utf8mb4 collate utf8mb4_bin")
-	_, err = tk.Exec("alter table modify_only_column_collate modify column a char(1) collate utf8mb4_bin;")
+	// Test multiple collate modification in column
+	tk.MustExec("drop table if exists modify_column_multiple_collate")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) collate utf8mb4_bin;")
 	c.Assert(err, IsNil)
-	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_only_column_collate"))
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8mb4")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8mb4_bin")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
+	// Test charset and multiple collate modification in column
+	tk.MustExec("drop table if exists modify_column_multiple_collate;")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
+	c.Assert(err, IsNil)
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
 	c.Assert(err, IsNil)
 	c.Assert(t.Cols()[0].Charset, Equals, "utf8mb4")
 	c.Assert(t.Cols()[0].Collate, Equals, "utf8mb4_bin")
