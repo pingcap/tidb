@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// Pool is the column pool.
+// Pool is the Column pool.
 // NOTE: Pool is non-copyable.
 type Pool struct {
 	initCap int
@@ -47,19 +47,19 @@ func NewPool(initCap int) *Pool {
 func (p *Pool) GetChunk(fields []*types.FieldType) *Chunk {
 	chk := new(Chunk)
 	chk.capacity = p.initCap
-	chk.columns = make([]*column, len(fields))
+	chk.columns = make([]*Column, len(fields))
 	for i, f := range fields {
 		switch elemLen := getFixedLen(f); elemLen {
 		case varElemLen:
-			chk.columns[i] = p.varLenColPool.Get().(*column)
+			chk.columns[i] = p.varLenColPool.Get().(*Column)
 		case 4:
-			chk.columns[i] = p.fixLenColPool4.Get().(*column)
+			chk.columns[i] = p.fixLenColPool4.Get().(*Column)
 		case 8:
-			chk.columns[i] = p.fixLenColPool8.Get().(*column)
+			chk.columns[i] = p.fixLenColPool8.Get().(*Column)
 		case 16:
-			chk.columns[i] = p.fixLenColPool16.Get().(*column)
+			chk.columns[i] = p.fixLenColPool16.Get().(*Column)
 		case 40:
-			chk.columns[i] = p.fixLenColPool40.Get().(*column)
+			chk.columns[i] = p.fixLenColPool40.Get().(*Column)
 		}
 	}
 	return chk
@@ -81,5 +81,5 @@ func (p *Pool) PutChunk(fields []*types.FieldType, chk *Chunk) {
 			p.fixLenColPool40.Put(chk.columns[i])
 		}
 	}
-	chk.columns = nil // release the column references.
+	chk.columns = nil // release the Column references.
 }
