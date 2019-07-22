@@ -14,10 +14,10 @@
 package decoder
 
 import (
-	"github.com/pingcap/errors"
 	"sort"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"

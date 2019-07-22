@@ -589,9 +589,10 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 }
 
 func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
-	decodeColsMap, _ := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
+	decodeColsMap, ignore := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
 		return genExpr[model.TableColumnID{TableID: t.Meta().ID, ColumnID: genCol.ID}], nil
 	})
+	_ = ignore
 
 	decoder.SubstituteGenColsInDecodeColMap(decodeColsMap)
 	decoder.RemoveUnusedVirtualCols(decodeColsMap, decodeCol)
