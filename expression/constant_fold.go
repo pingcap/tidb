@@ -105,17 +105,21 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 		isDeferredConst = isDeferredConst || isDeferred
 	}
 
-	if l%2 == 1 && !hasNonConstCondition {
-		// If the number of arguments in casewhen is odd, and the previous conditions
-		// is const and false, then the folded else execution body is returned. otherwise
-		// the execution body of the else are folded and replaced.
+	if l%2 == 0 {
+		return expr, isDeferredConst
+	}
+
+	// If the number of arguments in casewhen is odd, and the previous conditions
+	// is const and false, then the folded else execution body is returned. otherwise
+	// the execution body of the else are folded and replaced.
+	if !hasNonConstCondition {
 		foldedExpr, isDeferred := foldConstant(args[l-1])
 		isDeferredConst = isDeferredConst || isDeferred
 		return BuildCastFunction(expr.GetCtx(), foldedExpr, expr.GetType()), isDeferredConst
-	} else if l%2 == 1 {
-		expr.GetArgs()[l-1], isDeferred = foldConstant(args[l-1])
-		isDeferredConst = isDeferredConst || isDeferred
 	}
+
+	expr.GetArgs()[l-1], isDeferred = foldConstant(args[l-1])
+	isDeferredConst = isDeferredConst || isDeferred
 
 	return expr, isDeferredConst
 }
