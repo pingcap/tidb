@@ -15,6 +15,7 @@ package chunk
 
 import (
 	"reflect"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/types"
@@ -167,8 +168,8 @@ func (c *Column) AppendUint64(u uint64) {
 	c.finishAppendFixed()
 }
 
-// appendFloat32 appends a float32 value into this Column.
-func (c *Column) appendFloat32(f float32) {
+// AppendFloat32 appends a float32 value into this Column.
+func (c *Column) AppendFloat32(f float32) {
 	*(*float32)(unsafe.Pointer(&c.elemBuf[0])) = f
 	c.finishAppendFixed()
 }
@@ -213,7 +214,7 @@ const (
 	sizeMyDecimal = int(unsafe.Sizeof(types.MyDecimal{}))
 )
 
-// Int64s returns a int64 slice stored in this Column.
+// Int64s returns an int64 slice stored in this Column.
 func (c *Column) Int64s() []int64 {
 	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
 	var res []int64
@@ -257,28 +258,6 @@ func (c *Column) Float64s() []float64 {
 	return res
 }
 
-// Times returns a Time slice stored in this Column.
-func (c *Column) Times() []types.Time {
-	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
-	var res []types.Time
-	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
-	s.Data = h.Data
-	s.Len = c.length
-	s.Cap = h.Cap / sizeTime
-	return res
-}
-
-// Durations returns a Duration slice stored in this Column.
-func (c *Column) Durations() []types.Duration {
-	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
-	var res []types.Duration
-	s := (*reflect.SliceHeader)(unsafe.Pointer(&res))
-	s.Data = h.Data
-	s.Len = c.length
-	s.Cap = h.Cap / sizeDuration
-	return res
-}
-
 // MyDecimals returns a MyDecimal slice stored in this Column.
 func (c *Column) MyDecimals() []types.MyDecimal {
 	h := (*reflect.SliceHeader)(unsafe.Pointer(&c.data))
@@ -316,6 +295,17 @@ func (c *Column) GetEnum(rowID int) types.Enum {
 func (c *Column) GetSet(rowID int) types.Set {
 	name, val := c.getNameValue(rowID)
 	return types.Set{Name: name, Value: val}
+}
+
+// GetTime returns the Time in the specific row.
+func (c *Column) GetTime(rowID int) types.Time {
+	return readTime(c.data[rowID*16:])
+}
+
+// GetDuration returns the Duration in the specific row.
+func (c *Column) GetDuration(rowID int, fillFsp int) types.Duration {
+	dur := *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
+	return types.Duration{Duration: time.Duration(dur), Fsp: fillFsp}
 }
 
 // GetString returns the byte slice in the specific row.
