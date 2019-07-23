@@ -346,7 +346,7 @@ func (c *Column) reconstruct(sel Sel) {
 			idx := dst >> 3
 			pos := uint16(dst & 7)
 			if c.IsNull(int(src)) {
-				nullCnt ++
+				nullCnt++
 				c.nullBitmap[idx] &= ^byte(1 << pos)
 			} else {
 				copy(c.data[int(dst)*elemLen:int(dst)*elemLen+elemLen], c.data[int(src)*elemLen:int(src)*elemLen+elemLen])
@@ -360,7 +360,7 @@ func (c *Column) reconstruct(sel Sel) {
 			idx := dst >> 3
 			pos := uint16(dst & 7)
 			if c.IsNull(int(src)) {
-				nullCnt ++
+				nullCnt++
 				c.nullBitmap[idx] &= ^byte(1 << pos)
 				c.offsets[dst+1] = int64(tail)
 			} else {
