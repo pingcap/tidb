@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 )
 
+// ErrSelShouldBeNil is used when a Chunk with Sel is used in a method which is not compatible with Sel.
 var ErrSelShouldBeNil = errors.New("Sel should be nil")
 
 // Chunk stores multiple rows of data in Apache Arrow format.
