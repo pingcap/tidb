@@ -151,12 +151,9 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 			return nil, errors.Trace(err)
 		}
 
-		tikvReq := &tikvrpc.Request{
-			Type: tikvrpc.CmdMvccGetByStartTs,
-			MvccGetByStartTs: &kvrpcpb.MvccGetByStartTsRequest{
-				StartTs: startTS,
-			},
-		}
+		tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByStartTs, &kvrpcpb.MvccGetByStartTsRequest{
+			StartTs: startTS,
+		})
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := t.Store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
 		if err != nil {
@@ -170,7 +167,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 				zap.Error(err))
 			return nil, errors.Trace(err)
 		}
-		data := kvResp.MvccGetByStartTS
+		data := kvResp.Resp.(*kvrpcpb.MvccGetByStartTsResponse)
 		if err := data.GetRegionError(); err != nil {
 			logutil.BgLogger().Warn("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
@@ -826,8 +823,8 @@ func (h tableHandler) addScatterSchedule(startKey, endKey []byte, name string) e
 	}
 	input := map[string]string{
 		"name":       "scatter-range",
-		"start_key":  string(startKey),
-		"end_key":    string(endKey),
+		"start_key":  url.QueryEscape(string(startKey)),
+		"end_key":    url.QueryEscape(string(endKey)),
 		"range_name": name,
 	}
 	v, err := json.Marshal(input)
