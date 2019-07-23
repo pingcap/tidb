@@ -762,6 +762,10 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func resetStmtContext(ctx sessionctx.Context) {
+	ctx.GetSessionVars().StmtCtx.ResetNowTs()
+}
+
 func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	defer testleak.AfterTest(c)()
 
