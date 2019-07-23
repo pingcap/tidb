@@ -263,6 +263,31 @@ func (c *Column) Decimals() []types.MyDecimal {
 	return res
 }
 
+// GetInt64 returns the int64 in the specific row.
+func (c *Column) GetInt64(rowID int) int64 {
+	return *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
+}
+
+// GetUint64 returns the uint64 in the specific row.
+func (c *Column) GetUint64(rowID int) uint64 {
+	return *(*uint64)(unsafe.Pointer(&c.data[rowID*8]))
+}
+
+// GetFloat32 returns the float32 in the specific row.
+func (c *Column) GetFloat32(rowID int) float32 {
+	return *(*float32)(unsafe.Pointer(&c.data[rowID*4]))
+}
+
+// GetFloat64 returns the float64 in the specific row.
+func (c *Column) GetFloat64(rowID int) float64 {
+	return *(*float64)(unsafe.Pointer(&c.data[rowID*8]))
+}
+
+// GetDecimal returns the decimal in the specific row.
+func (c *Column) GetDecimal(rowID int) types.MyDecimal {
+	return *(*types.MyDecimal)(unsafe.Pointer(&c.data[rowID*types.MyDecimalStructSize]))
+}
+
 // GetString returns the string in the specific row.
 func (c *Column) GetString(rowID int) string {
 	return string(hack.String(c.data[c.offsets[rowID]:c.offsets[rowID+1]]))
