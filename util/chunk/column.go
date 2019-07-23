@@ -335,7 +335,7 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
 }
 
-func (c *Column) reconstruct(sel []int16) {
+func (c *Column) reconstruct(sel []int) {
 	if sel == nil {
 		return
 	}
@@ -345,11 +345,11 @@ func (c *Column) reconstruct(sel []int16) {
 		for dst, src := range sel {
 			idx := dst >> 3
 			pos := uint16(dst & 7)
-			if c.IsNull(int(src)) {
+			if c.IsNull(src) {
 				nullCnt++
 				c.nullBitmap[idx] &= ^byte(1 << pos)
 			} else {
-				copy(c.data[int(dst)*elemLen:int(dst)*elemLen+elemLen], c.data[int(src)*elemLen:int(src)*elemLen+elemLen])
+				copy(c.data[dst*elemLen:dst*elemLen+elemLen], c.data[src*elemLen:src*elemLen+elemLen])
 				c.nullBitmap[idx] |= byte(1 << pos)
 			}
 		}
@@ -358,8 +358,8 @@ func (c *Column) reconstruct(sel []int16) {
 		tail := 0
 		for dst, src := range sel {
 			idx := dst >> 3
-			pos := uint16(dst & 7)
-			if c.IsNull(int(src)) {
+			pos := uint(dst & 7)
+			if c.IsNull(src) {
 				nullCnt++
 				c.nullBitmap[idx] &= ^byte(1 << pos)
 				c.offsets[dst+1] = int64(tail)
