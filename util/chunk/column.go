@@ -263,6 +263,31 @@ func (c *Column) Decimals() []types.MyDecimal {
 	return res
 }
 
+// GetInt64 returns the int64 in the specific row.
+func (c *Column) GetInt64(rowID int) int64 {
+	return *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
+}
+
+// GetUint64 returns the uint64 in the specific row.
+func (c *Column) GetUint64(rowID int) uint64 {
+	return *(*uint64)(unsafe.Pointer(&c.data[rowID*8]))
+}
+
+// GetFloat32 returns the float32 in the specific row.
+func (c *Column) GetFloat32(rowID int) float32 {
+	return *(*float32)(unsafe.Pointer(&c.data[rowID*4]))
+}
+
+// GetFloat64 returns the float64 in the specific row.
+func (c *Column) GetFloat64(rowID int) float64 {
+	return *(*float64)(unsafe.Pointer(&c.data[rowID*8]))
+}
+
+// GetDecimal returns the decimal in the specific row.
+func (c *Column) GetDecimal(rowID int) *types.MyDecimal {
+	return (*types.MyDecimal)(unsafe.Pointer(&c.data[rowID*types.MyDecimalStructSize]))
+}
+
 // GetString returns the string in the specific row.
 func (c *Column) GetString(rowID int) string {
 	return string(hack.String(c.data[c.offsets[rowID]:c.offsets[rowID+1]]))
@@ -308,4 +333,56 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 		return "", 0
 	}
 	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
+}
+
+// reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
+func (c *Column) reconstruct(sel []int) {
+	if sel == nil {
+		return
+	}
+	nullCnt := 0
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		for dst, src := range sel {
+			idx := dst >> 3
+			pos := uint16(dst & 7)
+			if c.IsNull(src) {
+				nullCnt++
+				c.nullBitmap[idx] &= ^byte(1 << pos)
+			} else {
+				copy(c.data[dst*elemLen:dst*elemLen+elemLen], c.data[src*elemLen:src*elemLen+elemLen])
+				c.nullBitmap[idx] |= byte(1 << pos)
+			}
+		}
+		c.data = c.data[:len(sel)*elemLen]
+	} else {
+		tail := 0
+		for dst, src := range sel {
+			idx := dst >> 3
+			pos := uint(dst & 7)
+			if c.IsNull(src) {
+				nullCnt++
+				c.nullBitmap[idx] &= ^byte(1 << pos)
+				c.offsets[dst+1] = int64(tail)
+			} else {
+				start, end := c.offsets[src], c.offsets[src+1]
+				copy(c.data[tail:], c.data[start:end])
+				tail += int(end - start)
+				c.offsets[dst+1] = int64(tail)
+				c.nullBitmap[idx] |= byte(1 << pos)
+			}
+		}
+		c.data = c.data[:tail]
+		c.offsets = c.offsets[:len(sel)+1]
+	}
+	c.length = len(sel)
+	c.nullCount = nullCnt
+
+	// clean nullBitmap
+	c.nullBitmap = c.nullBitmap[:(len(sel)+7)>>3]
+	idx := len(sel) >> 3
+	if idx < len(c.nullBitmap) {
+		pos := uint16(len(sel) & 7)
+		c.nullBitmap[idx] &= byte((1 << pos) - 1)
+	}
 }
