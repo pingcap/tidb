@@ -324,9 +324,9 @@ func waitScatterRegionFinish(sctx sessionctx.Context, ctxWithTimeout context.Con
 	for _, regionID := range regionIDs {
 		if isCtxDone(ctxWithTimeout) {
 			// Do not break here for checking remain regions scatter finished with a very short backoff time.
-			// Consider this situation, split region 1,2,3, and timeout on wait region 1 scatter finish,
-			// but region 2 and region 3 was already scatter finished,
-			// then we should return result finished scatter region num 2, instead of finished scatter region num 0.
+			// Consider this situation -  Regions 1, 2, and 3 are to be split.
+			// Region 1 times out before scattering finishes, while Region 2 and Region 3 have finished scattering.
+			// In this case, we should return 2 Regions, instead of 0, have finished scattering.
 			remainMillisecond = checkScatterRegionFinishBackOff
 		} else {
 			remainMillisecond = int((sctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
