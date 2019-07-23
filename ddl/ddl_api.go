@@ -1727,15 +1727,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	return nil
 }
 
-func hasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
-	for _, col := range tbInfo.Columns {
-		if mysql.HasAutoIncrementFlag(col.Flag) {
-			return true, col.Name.L
-		}
-	}
-	return false, ""
-}
-
 // isIgnorableSpec checks if the spec type is ignorable.
 // Some specs are parsed by ignored. This is for compatibility.
 func isIgnorableSpec(tp ast.AlterTableType) bool {
@@ -2642,7 +2633,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	if err = checkColumnFieldLength(newCol); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
+	}
+
+	if err = checkColumnWithIndexConstraint(t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
+		return nil, err
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
@@ -2658,6 +2653,43 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp},
 	}
 	return job, nil
+}
+
+// checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.
+// Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
+// will cause index idx to break the max-prefix-length constraint.
+func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+	var columns []*model.ColumnInfo
+	for _, indexInfo := range tbInfo.Indices {
+		containColumn := false
+		for _, col := range indexInfo.Columns {
+			if col.Name.L == originalCol.Name.L {
+				containColumn = true
+				break
+			}
+		}
+		if containColumn == false {
+			continue
+		}
+		if columns == nil {
+			columns = make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
+			columns = append(columns, tbInfo.Columns...)
+			// replace old column with new column.
+			for i, col := range columns {
+				if col.Name.L != originalCol.Name.L {
+					continue
+				}
+				columns[i] = newCol.Clone()
+				columns[i].Name = originalCol.Name
+				break
+			}
+		}
+		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ChangeColumn renames an existing column and modifies the column's definition,
@@ -3263,13 +3295,21 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo == nil {
+	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	if indexInfo == nil {
 		err = ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		if ifExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
 		return err
+	}
+
+	cols := t.Cols()
+	for _, idxCol := range indexInfo.Columns {
+		if mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) {
+			return autoid.ErrWrongAutoKey
+		}
 	}
 
 	job := &model.Job{
