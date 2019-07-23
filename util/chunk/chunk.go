@@ -30,7 +30,7 @@ import (
 type Chunk struct {
 	// sel indicates which rows are selected.
 	// If it is nil, all rows are selected.
-	sel []int16
+	sel []int
 
 	columns []*Column
 	// numVirtualRows indicates the number of virtual rows, which have zero Column.
@@ -264,7 +264,7 @@ func (c *Chunk) CopyConstruct() *Chunk {
 		newChk.columns[i] = c.columns[i].copyConstruct()
 	}
 	if c.sel != nil {
-		newChk.sel = make([]int16, len(c.sel))
+		newChk.sel = make([]int, len(c.sel))
 		copy(newChk.sel, c.sel)
 	}
 	return newChk
@@ -578,7 +578,7 @@ func (c *Chunk) AppendJSON(colIdx int, j json.BinaryJSON) {
 
 func (c *Chunk) appendSel(colIdx int) {
 	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
+		c.sel = append(c.sel, c.columns[0].length)
 	}
 }
 
@@ -618,12 +618,12 @@ func (c *Chunk) Column(colIdx int) *Column {
 }
 
 // Sel returns Sel of this Chunk.
-func (c *Chunk) Sel() []int16 {
+func (c *Chunk) Sel() []int {
 	return c.sel
 }
 
 // SetSel sets a Sel for this Chunk.
-func (c *Chunk) SetSel(sel []int16) {
+func (c *Chunk) SetSel(sel []int) {
 	c.sel = sel
 }
 
