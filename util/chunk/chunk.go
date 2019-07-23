@@ -331,11 +331,8 @@ func (c *Chunk) AppendRow(row Row) {
 
 // AppendPartialRow appends a row to the chunk.
 func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
+	c.appendSel(colIdx)
 	for i, rowCol := range row.c.columns {
-		if colIdx == 0 && c.sel != nil { // use column 0 as standard
-			c.sel = append(c.sel, int16(c.columns[0].length))
-		}
-
 		chkCol := c.columns[colIdx+i]
 		chkCol.appendNullBitmap(!rowCol.IsNull(row.idx))
 		if rowCol.isFixed() {
@@ -449,9 +446,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 			}
 		}
 		for i := begin; i < end; i++ {
-			if colID == 0 && c.sel != nil { // use column 0 as standard
-				c.sel = append(c.sel, int16(c.columns[0].length))
-			}
+			c.appendSel(colID)
 			dst.appendNullBitmap(!src.IsNull(i))
 			dst.length++
 		}
@@ -493,107 +488,87 @@ func (c *Chunk) TruncateTo(numRows int) {
 
 // AppendNull appends a null value to the chunk.
 func (c *Chunk) AppendNull(colIdx int) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendNull()
 }
 
 // AppendInt64 appends a int64 value to the chunk.
 func (c *Chunk) AppendInt64(colIdx int, i int64) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendInt64(i)
 }
 
 // AppendUint64 appends a uint64 value to the chunk.
 func (c *Chunk) AppendUint64(colIdx int, u uint64) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendUint64(u)
 }
 
 // AppendFloat32 appends a float32 value to the chunk.
 func (c *Chunk) AppendFloat32(colIdx int, f float32) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendFloat32(f)
 }
 
 // AppendFloat64 appends a float64 value to the chunk.
 func (c *Chunk) AppendFloat64(colIdx int, f float64) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendFloat64(f)
 }
 
 // AppendString appends a string value to the chunk.
 func (c *Chunk) AppendString(colIdx int, str string) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendString(str)
 }
 
 // AppendBytes appends a bytes value to the chunk.
 func (c *Chunk) AppendBytes(colIdx int, b []byte) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendBytes(b)
 }
 
 // AppendTime appends a Time value to the chunk.
 // TODO: change the time structure so it can be directly written to memory.
 func (c *Chunk) AppendTime(colIdx int, t types.Time) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendTime(t)
 }
 
 // AppendDuration appends a Duration value to the chunk.
 func (c *Chunk) AppendDuration(colIdx int, dur types.Duration) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendDuration(dur)
 }
 
 // AppendMyDecimal appends a MyDecimal value to the chunk.
 func (c *Chunk) AppendMyDecimal(colIdx int, dec *types.MyDecimal) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendMyDecimal(dec)
 }
 
 // AppendEnum appends an Enum value to the chunk.
 func (c *Chunk) AppendEnum(colIdx int, enum types.Enum) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].appendNameValue(enum.Name, enum.Value)
 }
 
 // AppendSet appends a Set value to the chunk.
 func (c *Chunk) AppendSet(colIdx int, set types.Set) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
-		c.sel = append(c.sel, int16(c.columns[0].length))
-	}
+	c.appendSel(colIdx)
 	c.columns[colIdx].appendNameValue(set.Name, set.Value)
 }
 
 // AppendJSON appends a JSON value to the chunk.
 func (c *Chunk) AppendJSON(colIdx int, j json.BinaryJSON) {
+	c.appendSel(colIdx)
+	c.columns[colIdx].AppendJSON(j)
+}
+
+func (c *Chunk) appendSel(colIdx int) {
 	if colIdx == 0 && c.sel != nil { // use column 0 as standard
 		c.sel = append(c.sel, int16(c.columns[0].length))
 	}
-	c.columns[colIdx].AppendJSON(j)
 }
 
 // AppendDatum appends a datum into the chunk.
