@@ -107,8 +107,7 @@ func (r Row) GetSet(colIdx int) types.Set {
 
 // GetMyDecimal returns the MyDecimal value with the colIdx.
 func (r Row) GetMyDecimal(colIdx int) *types.MyDecimal {
-	v := r.c.columns[colIdx].GetDecimal(r.idx)
-	return &v
+	return r.c.columns[colIdx].GetDecimal(r.idx)
 }
 
 // GetJSON returns the JSON value with the colIdx.

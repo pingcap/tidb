@@ -284,8 +284,8 @@ func (c *Column) GetFloat64(rowID int) float64 {
 }
 
 // GetDecimal returns the decimal in the specific row.
-func (c *Column) GetDecimal(rowID int) types.MyDecimal {
-	return *(*types.MyDecimal)(unsafe.Pointer(&c.data[rowID*types.MyDecimalStructSize]))
+func (c *Column) GetDecimal(rowID int) *types.MyDecimal {
+	return (*types.MyDecimal)(unsafe.Pointer(&c.data[rowID*types.MyDecimalStructSize]))
 }
 
 // GetString returns the string in the specific row.
