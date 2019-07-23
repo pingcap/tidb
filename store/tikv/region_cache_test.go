@@ -244,7 +244,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	c.Assert(addr == s.storeAddr(s.store1) || len(addr) == 0, IsTrue)
 	addr2 := s.getAddr(c, []byte("a"), kv.ReplicaReadFollower)
 	c.Assert(addr2 == s.storeAddr(s.store1) || len(addr2) == 0, IsTrue)
-	c.Assert(addr, Not(Equals), addr2)
+	c.Assert((len(addr2) == 0 && len(addr) == 0) || addr != addr2, IsTrue)
 }
 
 func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
