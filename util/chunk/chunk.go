@@ -462,10 +462,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 }
 
 // TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
-func (c *Chunk) TruncateTo(numRows int) error {
-	if c.sel != nil {
-		return errors.Trace(ErrSelShouldBeNil)
-	}
+func (c *Chunk) TruncateTo(numRows int) {
 	for _, col := range c.columns {
 		if col.isFixed() {
 			elemLen := len(col.elemBuf)
@@ -493,7 +490,6 @@ func (c *Chunk) TruncateTo(numRows int) error {
 		}
 	}
 	c.numVirtualRows = numRows
-	return nil
 }
 
 // AppendNull appends a null value to the chunk.

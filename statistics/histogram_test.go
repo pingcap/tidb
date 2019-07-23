@@ -125,8 +125,8 @@ func (s *testStatisticsSuite) TestTruncateHistogram(c *C) {
 	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLonglong), 1, 0)
 	low, high := types.NewIntDatum(0), types.NewIntDatum(1)
 	hist.AppendBucket(&low, &high, 0, 1)
-	newHist := hist.TruncateHistogram(1)
+	newHist, _ := hist.TruncateHistogram(1)
 	c.Assert(HistogramEqual(hist, newHist, true), IsTrue)
-	newHist = hist.TruncateHistogram(0)
+	newHist, _ = hist.TruncateHistogram(0)
 	c.Assert(newHist.Len(), Equals, 0)
 }
