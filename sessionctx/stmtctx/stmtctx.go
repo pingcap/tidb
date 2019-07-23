@@ -119,8 +119,8 @@ type StatementContext struct {
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexIDs         []int64
-	NowTs            time.Time
-	SysTs            time.Time
+	nowTs            time.Time // use this variable for now/current_timestamp calculation/cache for one stmt
+	stmtTimeCached   bool
 	StmtType         string
 	OriginalSQL      string
 	digestMemo       struct {
@@ -129,6 +129,21 @@ type StatementContext struct {
 		digest     string
 	}
 	Tables []TableEntry
+}
+
+// GetNowTsCached getter for nowTs, if not set get now time and cache it
+func (sc *StatementContext) GetNowTsCached() time.Time {
+	if !sc.stmtTimeCached {
+		now := time.Now()
+		sc.nowTs = now
+		sc.stmtTimeCached = true
+	}
+	return sc.nowTs
+}
+
+// ResetNowTs resetter for nowTs, clear cached time flag
+func (sc *StatementContext) ResetNowTs() {
+	sc.stmtTimeCached = false
 }
 
 // SQLDigest gets normalized and digest for provided sql.
