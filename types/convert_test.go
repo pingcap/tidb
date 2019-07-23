@@ -734,6 +734,7 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{".5", "1"},
 		{"123.456789e5", "12345679"},
 		{"123.456784e5", "12345678"},
+		{"+999.9999e2", "+100000"},
 	}
 	for _, t := range tests2 {
 		str, err := floatStrToIntStr(sc, t.origin, t.origin)
