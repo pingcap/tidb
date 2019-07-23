@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -23,8 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-
-	"fmt"
 )
 
 func TestT(t *testing.T) {
