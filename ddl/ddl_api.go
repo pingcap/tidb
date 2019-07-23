@@ -3276,7 +3276,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	cols := t.Cols()
 	for _, idxCol := range indexInfo.Columns {
 		if mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) {
-			return errors.Trace(autoid.ErrWrongAutoKey)
+			return autoid.ErrWrongAutoKey
 		}
 	}
 
