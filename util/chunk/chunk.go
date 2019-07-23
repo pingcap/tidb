@@ -319,8 +319,8 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	}
 }
 
-// PreAlloc pre-allocates the memory space in a Chunk to store the Row.
-// NOTE:
+// preAlloc pre-allocates the memory space in a Chunk to store the Row.
+// NOTE: only used in test.
 // 1. The Chunk must be empty or holds no useful data.
 // 2. The schema of the Row must be the same with the Chunk.
 // 3. This API is paired with the `Insert()` function, which inserts all the
@@ -329,7 +329,7 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 //    when the Insert() function is called parallelly, the data race on a byte
 //    can not be avoided although the manipulated bits are different inside a
 //    byte.
-func (c *Chunk) PreAlloc(row Row) (rowIdx uint32) {
+func (c *Chunk) preAlloc(row Row) (rowIdx uint32) {
 	rowIdx = uint32(c.NumRows())
 	for i, srcCol := range row.c.columns {
 		dstCol := c.columns[i]
@@ -379,10 +379,11 @@ func (c *Chunk) PreAlloc(row Row) (rowIdx uint32) {
 	return
 }
 
-// Insert inserts `row` on the position specified by `rowIdx`.
+// insert inserts `row` on the position specified by `rowIdx`.
+// NOTE: only used in test.
 // Note: Insert will cover the origin data, it should be called after
 // PreAlloc.
-func (c *Chunk) Insert(rowIdx int, row Row) {
+func (c *Chunk) insert(rowIdx int, row Row) {
 	for i, srcCol := range row.c.columns {
 		if row.IsNull(i) {
 			continue
