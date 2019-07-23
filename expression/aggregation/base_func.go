@@ -186,7 +186,7 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 	a.RetTp = a.Args[0].GetType()
 	if (a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin) && !a.RetTp.Hybrid() {
 		a.RetTp = a.Args[0].GetType().Clone()
-		a.RetTp.Flag ^= mysql.NotNullFlag
+		a.RetTp.Flag &^= mysql.NotNullFlag
 	}
 	if a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet {
 		a.RetTp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}

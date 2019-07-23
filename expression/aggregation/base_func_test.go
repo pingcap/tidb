@@ -48,5 +48,5 @@ func (s *testBaseFuncSuite) TestMaxMin(c *check.C) {
 	col.RetType.Flag |= mysql.NotNullFlag
 	desc, err := newBaseFuncDesc(s.ctx, ast.AggFuncMax, []expression.Expression{col})
 	c.Assert(err, check.IsNil)
-	c.Assert(desc.RetTp.Flag == mysql.NotNullFlag, check.IsFalse)
+	c.Assert(mysql.HasNotNullFlag(desc.RetTp.Flag), check.IsFalse)
 }
