@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/parser/ast"
 	"sort"
 	"strings"
 	"testing"
@@ -559,6 +560,38 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 		c.Assert(leftConds, Equals, ca.left, comment)
 		c.Assert(rightConds, Equals, ca.right, comment)
 	}
+}
+
+func buildLogicPlan4GroupBy(s *testPlanSuite, c *C, sql string) (Plan, error) {
+	sqlMode := s.ctx.GetSessionVars().SQLMode
+	mockedTableInfo := MockSignedTable()
+	// mock the table info here for later use
+	// enable only full group by
+	s.ctx.GetSessionVars().SQLMode = sqlMode | mysql.ModeOnlyFullGroupBy
+	defer func() { s.ctx.GetSessionVars().SQLMode = sqlMode }() // restore it
+	comment := Commentf("for %s", sql)
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil, comment)
+
+	stmt.(*ast.SelectStmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).TableInfo = mockedTableInfo
+
+	return BuildLogicalPlan(s.ctx, stmt, s.is)
+}
+
+func (s *testPlanSuite) TestGroupByWhenNotExistCols(c *C) {
+	sql := "select a from t group by b"
+	p, err := buildLogicPlan4GroupBy(s, c, sql)
+	c.Assert(err, NotNil)
+	c.Assert(p, IsNil)
+	c.Assert(err, ErrorMatches, ".*contains nonaggregated column 'test\\.t\\.a'.*")
+}
+
+func (s *testPlanSuite) TestGroupByWhenNotExistColsHasAs(c *C) {
+	sql := "select a as tempField from t group by b"
+	p, err := buildLogicPlan4GroupBy(s, c, sql)
+	c.Assert(err, NotNil)
+	c.Assert(p, IsNil)
+	c.Assert(err, ErrorMatches, ".*contains nonaggregated column 'test\\.t\\.a'.*")
 }
 
 func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {

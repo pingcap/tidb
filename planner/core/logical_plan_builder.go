@@ -1768,7 +1768,14 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 		}
 		switch errExprLoc.Loc {
 		case ErrExprInSelect:
-			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.Fields.Fields[errExprLoc.Offset].Text())
+			var errText string
+			selectField := sel.Fields.Fields[errExprLoc.Offset]
+			if colExpr, ok := selectField.Expr.(*ast.ColumnNameExpr); ok && len(schema.Columns) > 0 {
+				errText = fmt.Sprintf("%s.%s.%s", schema.Columns[0].DBName.L, tblInfo.Name.L, colExpr.Name.Name.L)
+			} else {
+				errText = selectField.Text()
+			}
+			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, errText)
 		case ErrExprInOrderBy:
 			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.OrderBy.Items[errExprLoc.Offset].Expr.Text())
 		}
