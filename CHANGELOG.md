@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Add the `SHOW TABLE REGIONS` statement to query the Region distribution of a table through SQL statements [#11238](https://github.com/pingcap/tidb/pull/11238)
 * Fix the issue that columns are wrongly pruned because the `SELECT` subquery fails to correctly parse the column in the `UPDATE` expression [#11254](https://github.com/pingcap/tidb/pull/11254)
 * Add the `ADMIN PLUGINS ENABLE``/`ADMIN PLUGINS DISABLE` SQL statement to dynamically enable or disable plugins [#11189](https://github.com/pingcap/tidb/pull/11189)
-* Add the session connection information in the Audit plugin [#11189](https://github.com/pingcap/tidb/pull/11189)
+* Add the session connection information in the audit plugins [#11189](https://github.com/pingcap/tidb/pull/11189)
 * Fix the panic issue that happens when a column is queried on multiple times and the returned result is `NULL` during point queries [#11227](https://github.com/pingcap/tidb/pull/11227)
 * Add the `tidb_scatter_region` configuration item to scatter table Regions when creating a table [#11213](https://github.com/pingcap/tidb/pull/11213)
 * Fix the data race issue caused by non-thread safe `rand.Rand` when using the `RAND` function [#11170](https://github.com/pingcap/tidb/pull/11170)
