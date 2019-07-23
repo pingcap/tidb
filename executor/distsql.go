@@ -417,7 +417,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 
-	tracker := memory.NewTracker(stringutil.StringerStr("InnerWorker"), e.ctx.GetSessionVars().MemQuotaIndexLookupReader)
+	tracker := memory.NewTracker(stringutil.StringerStr("IndexWorker"), e.ctx.GetSessionVars().MemQuotaIndexLookupReader)
 	tracker.AttachTo(e.memTracker)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
@@ -488,7 +488,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:      e.keepOrder,
 			handleIdx:      e.handleIdx,
 			isCheckOp:      e.isCheckOp,
-			memTracker: memory.NewTracker(stringutil.StringerStr(fmt.Sprintf("worker_%v", i)),
+			memTracker: memory.NewTracker(stringutil.StringerStr(fmt.Sprintf("TableWorker_%v", i)),
 				e.ctx.GetSessionVars().MemQuotaIndexLookupReader),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
