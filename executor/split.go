@@ -117,7 +117,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
-	e.finishScatterNum = waitScatterRegionFinish(e.ctx, ctxWithTimeout, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
+	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
 	return nil
 }
 
@@ -311,11 +311,11 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 		return nil
 	}
 
-	e.finishScatterNum = waitScatterRegionFinish(e.ctx, ctxWithTimeout, start, s, regionIDs, e.tableInfo.Name.L, "")
+	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, "")
 	return nil
 }
 
-func waitScatterRegionFinish(sctx sessionctx.Context, ctxWithTimeout context.Context, startTime time.Time, store kv.SplitableStore, regionIDs []uint64, tableName, indexName string) int {
+func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Context, startTime time.Time, store kv.SplitableStore, regionIDs []uint64, tableName, indexName string) int {
 	remainMillisecond := 0
 	finishScatterNum := 0
 	for _, regionID := range regionIDs {
