@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -802,4 +804,26 @@ func (s *testIntegrationSuite) TestChangingDBCharset(c *C) {
 
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
+}
+
+func (s *testIntegrationSuite) TestDropAutoIncrementIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	assertErrorCode := func(sql string, errCodeStr int) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error()[:len(strconv.Itoa(errCodeStr))], Equals, errCodeStr)
+	}
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int auto_increment, unique key (a))")
+	dropIndexSQL := "alter table t1 drop index a"
+	assertErrorCode(dropIndexSQL, mysql.ErrWrongAutoKey)
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
+	dropIndexSQL = "alter table t1 drop index a"
+	assertErrorCode(dropIndexSQL, mysql.ErrWrongAutoKey)
 }
