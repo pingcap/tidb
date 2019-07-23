@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -182,6 +184,37 @@ func fetchMorePendingRequests(
 	}
 }
 
+type tryLock struct {
+	sync.RWMutex
+	reCreating bool
+}
+
+func (l *tryLock) tryLockForSend() bool {
+	l.RLock()
+	if l.reCreating {
+		l.RUnlock()
+		return false
+	}
+	return true
+}
+
+func (l *tryLock) unlockForSend() {
+	l.RUnlock()
+}
+
+func (l *tryLock) lockForRecreate() {
+	l.Lock()
+	l.reCreating = true
+	l.Unlock()
+
+}
+
+func (l *tryLock) unlockForRecreate() {
+	l.Lock()
+	l.reCreating = false
+	l.Unlock()
+}
+
 type batchCommandsClient struct {
 	*batchConn
 	conn *grpc.ClientConn
@@ -190,15 +223,11 @@ type batchCommandsClient struct {
 	batched sync.Map
 	idAlloc uint64
 
-	// clientLock protects `client` and `batched` when re-create the streaming.
-	clientLock sync.Mutex
+	// tryLock protects client when re-create the streaming.
+	tryLock
 }
 
 func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries []*batchCommandsEntry) {
-	// Use the lock to protect the stream client won't be replaced by RecvLoop,
-	// and new added request won't be removed by `failPendingRequests`.
-	c.clientLock.Lock()
-	defer c.clientLock.Unlock()
 	for i, requestID := range request.RequestIds {
 		c.batched.Store(requestID, entries[i])
 	}
@@ -233,10 +262,7 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 	})
 }
 
-func (c *batchCommandsClient) reCreateStreamingClient(err error) bool {
-	// Hold the lock to forbid batchSendLoop using the old client.
-	c.clientLock.Lock()
-	defer c.clientLock.Unlock()
+func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) error {
 	c.failPendingRequests(err) // fail all pending requests.
 
 	// Re-establish a application layer stream. TCP layer is handled by gRPC.
@@ -248,14 +274,14 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) bool {
 			zap.String("target", c.target),
 		)
 		c.client = streamClient
-		return true
+		return nil
 	}
 	logutil.BgLogger().Warn(
 		"batchRecvLoop re-create streaming fail",
 		zap.String("target", c.target),
 		zap.Error(err),
 	)
-	return false
+	return err
 }
 
 func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
@@ -274,22 +300,8 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 		resp, err := c.recv()
 		if err != nil {
 			now := time.Now()
-			for { // try to re-create the streaming in the loop.
-				if c.isStopped() {
-					return
-				}
-				logutil.BgLogger().Warn(
-					"batchRecvLoop error when receive",
-					zap.String("target", c.target),
-					zap.Error(err),
-				)
-
-				if c.reCreateStreamingClient(err) {
-					break
-				}
-
-				// TODO: Use a more smart backoff strategy.
-				time.Sleep(time.Second)
+			if stopped := c.reCreateStreamingClient(err); stopped {
+				return
 			}
 			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
 			continue
@@ -318,6 +330,29 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 			atomic.StoreUint64(&c.tikvTransportLayerLoad, tikvTransportLayerLoad)
 		}
 	}
+}
+
+func (c *batchCommandsClient) reCreateStreamingClient(err error) (stopped bool) {
+	// Forbids the batchSendLoop using the old client.
+	c.lockForRecreate()
+	defer c.unlockForRecreate()
+
+	b := NewBackoffer(context.Background(), math.MaxInt32)
+	for { // try to re-create the streaming in the loop.
+		if c.isStopped() {
+			return true
+		}
+		err1 := c.reCreateStreamingClientOnce(err)
+		if err1 == nil {
+			break
+		}
+
+		err2 := b.Backoff(boTiKVRPC, err1)
+		// As timeout is set to math.MaxUint32, err2 should always be nil.
+		// This line is added to make the 'make errcheck' pass.
+		terror.Log(err2)
+	}
+	return false
 }
 
 type batchCommandsEntry struct {
@@ -389,19 +424,36 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 		if length == 0 {
 			continue // All requests are canceled.
 		}
-		maxBatchID := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
-		for i := 0; i < length; i++ {
-			requestID := uint64(i) + maxBatchID - uint64(length)
-			requestIDs = append(requestIDs, requestID)
-		}
 
-		req := &tikvpb.BatchCommandsRequest{
-			Requests:   requests,
-			RequestIds: requestIDs,
-		}
-
-		batchCommandsClient.send(req, entries)
+		a.getClientAndSend(entries, requests, requestIDs)
 	}
+}
+
+func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*tikvpb.BatchCommandsRequest_Request, requestIDs []uint64) {
+	// Choose a connection by round-robbin.
+	var cli *batchCommandsClient
+	for {
+		a.index = (a.index + 1) % uint32(len(a.batchCommandsClients))
+		cli = a.batchCommandsClients[a.index]
+		// The lock protects the batchCommandsClient from been closed while it's inuse.
+		if cli.tryLockForSend() {
+			break
+		}
+	}
+	defer cli.unlockForSend()
+
+	maxBatchID := atomic.AddUint64(&cli.idAlloc, uint64(len(requests)))
+	for i := 0; i < len(requests); i++ {
+		requestID := uint64(i) + maxBatchID - uint64(len(requests))
+		requestIDs = append(requestIDs, requestID)
+	}
+	req := &tikvpb.BatchCommandsRequest{
+		Requests:   requests,
+		RequestIds: requestIDs,
+	}
+
+	cli.send(req, entries)
+	return
 }
 
 func (a *batchConn) Close() {

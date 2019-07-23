@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -310,8 +310,17 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 	return
 }
 
+// extractTableAlias returns table alias of the LogicalPlan's columns.
+// It will return nil when there are multiple table alias, because the alias is only used to check if
+// the logicalPlan match some optimizer hints, and hints are not expected to take effect in this case.
 func extractTableAlias(p LogicalPlan) *model.CIStr {
 	if p.Schema().Len() > 0 && p.Schema().Columns[0].TblName.L != "" {
+		tblName := p.Schema().Columns[0].TblName.L
+		for _, column := range p.Schema().Columns {
+			if column.TblName.L != tblName {
+				return nil
+			}
+		}
 		return &(p.Schema().Columns[0].TblName)
 	}
 	return nil
@@ -591,12 +600,10 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
-func (b *PlanBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
-	if astCol, ok := getInnerFromParenthesesAndUnaryPlus(field.Expr).(*ast.ColumnNameExpr); ok {
-		origColName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
-	}
-	if field.AsName.L != "" {
-		colName = field.AsName
+func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
+	origColName, tblName, dbName = colNameField.Name.Name, colNameField.Name.Table, colNameField.Name.Schema
+	if origField.AsName.L != "" {
+		colName = origField.AsName
 	} else {
 		colName = origColName
 	}
@@ -677,9 +684,13 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) (*expression.Column, error) {
 	var origTblName, tblName, origColName, colName, dbName model.CIStr
-	if c, ok := expr.(*expression.Column); ok && !c.IsReferenced {
+	innerNode := getInnerFromParenthesesAndUnaryPlus(field.Expr)
+	col, isCol := expr.(*expression.Column)
+	// Correlated column won't affect the final output names. So we can put it in any of the three logic block.
+	// Don't put it into the first block just for simplifying the codes.
+	if colNameField, ok := innerNode.(*ast.ColumnNameExpr); ok && isCol {
 		// Field is a column reference.
-		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, c)
+		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, colNameField, col)
 	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
@@ -2374,7 +2385,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 // we add a projection on the original DataSource, and calculate those columns in the projection
 // so that plans above it can reference generated columns by their name.
 func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) (*LogicalProjection, error) {
-	var hasVirtualGeneratedColumn = false
+	hasVirtualGeneratedColumn := false
 	for _, column := range columns {
 		if column.IsGenerated() && !column.GeneratedStored {
 			hasVirtualGeneratedColumn = true
@@ -2384,7 +2395,7 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 	if !hasVirtualGeneratedColumn {
 		return nil, nil
 	}
-	var proj = LogicalProjection{
+	proj := LogicalProjection{
 		Exprs:            make([]expression.Expression, 0, len(columns)),
 		calculateGenCols: true,
 	}.Init(b.ctx)
@@ -2429,9 +2440,7 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
-	b.optFlag = b.optFlag | flagPredicatePushDown
-	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagDecorrelate
+	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.Init(b.ctx)
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
@@ -2443,9 +2452,7 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) (LogicalPlan, error) {
-	b.optFlag = b.optFlag | flagPredicatePushDown
-	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagDecorrelate
+	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
 
 	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	if err != nil {
@@ -2580,7 +2587,9 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 
 	updt := Update{OrderedList: orderedList}.Init(b.ctx)
 	updt.SetSchema(p.Schema())
-	updt.SelectPlan, err = DoOptimize(b.optFlag, p)
+	// We cannot apply projection elimination when building the subplan, because
+	// columns in orderedList cannot be resolved.
+	updt.SelectPlan, err = DoOptimize(b.optFlag&^flagEliminateProjection, p)
 	if err != nil {
 		return nil, err
 	}

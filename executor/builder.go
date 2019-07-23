@@ -1265,8 +1265,9 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 }
 
 func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor {
-	base := newBaseExecutor(b.ctx, nil, v.ExplainID())
-	base.initCap = chunk.ZeroCapacity
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = 1
+	base.maxChunkSize = 1
 	if v.IndexInfo != nil {
 		return &SplitIndexRegionExec{
 			baseExecutor: base,
@@ -1400,6 +1401,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, maxNumBuckets uint64, autoAnalyze string) *analyzeTask {
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
+	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeIndexExec{
 		ctx:             b.ctx,
 		physicalTableID: task.PhysicalTableID,
@@ -1408,7 +1410,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			StartTs:        math.MaxUint64,
-			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
 		maxNumBuckets: maxNumBuckets,
@@ -1466,6 +1468,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	}
 
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
+	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeColumnsExec{
 		ctx:             b.ctx,
 		physicalTableID: task.PhysicalTableID,
@@ -1475,7 +1478,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			StartTs:        math.MaxUint64,
-			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
 		maxNumBuckets: maxNumBuckets,
@@ -1658,7 +1661,7 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dag
 	}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Flags = sc.PushDownFlags()
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
 	return dagReq, streaming, err
 }
@@ -1731,6 +1734,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
+	hasPrefixCol := false
+	for _, l := range v.IdxColLens {
+		if l != types.UnspecifiedLength {
+			hasPrefixCol = true
+			break
+		}
+	}
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 		outerCtx: outerCtx{
@@ -1740,6 +1750,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
 			rowTypes:      innerTypes,
+			colLens:       v.IdxColLens,
+			hasPrefixCol:  hasPrefixCol,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),

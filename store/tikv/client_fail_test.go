@@ -46,10 +46,7 @@ func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop"), IsNil)
 	time.Sleep(time.Second)
 
-	req := &tikvrpc.Request{
-		Type:  tikvrpc.CmdEmpty,
-		Empty: &tikvpb.BatchCommandsEmptyRequest{},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{})
 	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second)
 	c.Assert(err, IsNil)
 	server.Stop()
