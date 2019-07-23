@@ -21,12 +21,14 @@ import (
 // Error instances.
 var (
 	ErrAutoincReadFailed = terror.ClassAutoid.New(mysql.ErrAutoincReadFailed, mysql.MySQLErrName[mysql.ErrAutoincReadFailed])
+	ErrWrongAutoKey      = terror.ClassAutoid.New(mysql.ErrWrongAutoKey, mysql.MySQLErrName[mysql.ErrWrongAutoKey])
 )
 
 func init() {
 	// Map error codes to mysql error codes.
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
 		mysql.ErrAutoincReadFailed: mysql.ErrAutoincReadFailed,
+		mysql.ErrWrongAutoKey:      mysql.ErrWrongAutoKey,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassAutoid] = tableMySQLErrCodes
 }
