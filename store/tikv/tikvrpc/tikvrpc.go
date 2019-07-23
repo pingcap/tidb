@@ -756,6 +756,7 @@ func (resp *CopStreamResponse) Close() {
 // CheckStreamTimeoutLoop runs periodically to check is there any stream request timeouted.
 // Lease is an object to track stream requests, call this function with "go CheckStreamTimeoutLoop()"
 // It is not guaranteed to call every Lease.Cancel() putting into channel when exits.
+// If grpc-go supports SetDeadline(https://github.com/grpc/grpc-go/issues/2917), we can stop using this method.
 func CheckStreamTimeoutLoop(ch <-chan *Lease, done <-chan struct{}) {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
