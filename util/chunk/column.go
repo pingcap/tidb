@@ -339,9 +339,9 @@ func (c *Column) reconstruct(sel Sel) {
 	if sel == nil {
 		return
 	}
+	nullCnt := 0
 	if c.isFixed() {
 		elemLen := len(c.elemBuf)
-		nullCnt := 0
 		for dst, src := range sel {
 			idx := dst >> 3
 			pos := uint16(dst & 7)
@@ -353,11 +353,8 @@ func (c *Column) reconstruct(sel Sel) {
 				c.nullBitmap[idx] |= byte(1 << pos)
 			}
 		}
-		c.length = len(sel)
-		c.nullCount = nullCnt
 		c.data = c.data[:c.length*elemLen]
 	} else {
-		nullCnt := 0
 		tail := 0
 		for dst, src := range sel {
 			idx := dst >> 3
@@ -370,11 +367,21 @@ func (c *Column) reconstruct(sel Sel) {
 				copy(c.data[tail:], c.data[start:end])
 				tail += int(end - start)
 				c.offsets[dst+1] = int64(tail)
+				c.nullBitmap[idx] |= byte(1 << pos)
 			}
 		}
-		c.length = len(sel)
-		c.nullCount = nullCnt
 		c.data = c.data[:tail]
 		c.offsets = c.offsets[:c.length+1]
 	}
+	c.length = len(sel)
+	c.nullCount = nullCnt
+
+	// clean nullBitmap
+	c.nullBitmap = c.nullBitmap[:(len(sel)+7)>>3]
+	idx := len(sel) >> 3
+	if idx < len(c.nullBitmap) {
+		pos := uint16(len(sel) & 7)
+		c.nullBitmap[idx] &= byte((1 << pos) - 1)
+	}
+
 }
