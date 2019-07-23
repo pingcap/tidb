@@ -334,4 +334,3 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 	}
 	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
 }
-
