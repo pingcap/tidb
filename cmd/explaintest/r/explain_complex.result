@@ -244,18 +244,18 @@ explain SELECT d.id, d.ctx, d.name, d.left_value, d.right_value, d.depth, d.lead
 id	count	task	operator info
 Sort_10	1.00	root	test.d.left_value:asc
 └─HashAgg_15	1.00	root	group by:test.d.id, funcs:firstrow(test.d.id), firstrow(test.d.ctx), firstrow(test.d.name), firstrow(test.d.left_value), firstrow(test.d.right_value), firstrow(test.d.depth), firstrow(test.d.leader_id), firstrow(test.d.status), firstrow(test.d.created_on), firstrow(test.d.updated_on)
-  └─Selection_22	0.01	root	or(eq(test.ep.user_id, 62), or(eq(test.d.id, 20), eq(test.d.id, 20)))
-    └─HashLeftJoin_23	0.02	root	left outer join, inner:TableReader_58, equal:[eq(test.p.id, test.ep.position_id)]
-      ├─IndexJoin_32	0.01	root	left outer join, inner:IndexLookUp_31, outer key:test.d.id, inner key:test.p.department_id
-      │ ├─IndexLookUp_48	0.01	root	
-      │ │ ├─IndexScan_45	10.00	cop	table:d, index:ctx, range:[1,1], keep order:false, stats:pseudo
-      │ │ └─Selection_47	0.01	cop	eq(test.d.status, 1000)
-      │ │   └─TableScan_46	10.00	cop	table:org_department, keep order:false, stats:pseudo
-      │ └─IndexLookUp_31	0.01	root	
-      │   ├─Selection_29	9.99	cop	not(isnull(test.p.department_id))
-      │   │ └─IndexScan_27	10.00	cop	table:p, index:department_id, range: decided by [eq(test.p.department_id, test.d.id)], keep order:false, stats:pseudo
-      │   └─Selection_30	0.01	cop	eq(test.p.status, 1000)
-      │     └─TableScan_28	9.99	cop	table:org_position, keep order:false, stats:pseudo
-      └─TableReader_58	9.99	root	data:Selection_57
-        └─Selection_57	9.99	cop	eq(test.ep.status, 1000), not(isnull(test.ep.position_id))
-          └─TableScan_56	10000.00	cop	table:ep, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─Selection_20	0.01	root	or(eq(test.ep.user_id, 62), or(eq(test.d.id, 20), eq(test.d.id, 20)))
+    └─HashLeftJoin_21	0.02	root	left outer join, inner:TableReader_55, equal:[eq(test.p.id, test.ep.position_id)]
+      ├─IndexJoin_29	0.01	root	left outer join, inner:IndexLookUp_28, outer key:test.d.id, inner key:test.p.department_id
+      │ ├─IndexLookUp_45	0.01	root	
+      │ │ ├─IndexScan_42	10.00	cop	table:d, index:ctx, range:[1,1], keep order:false, stats:pseudo
+      │ │ └─Selection_44	0.01	cop	eq(test.d.status, 1000)
+      │ │   └─TableScan_43	10.00	cop	table:org_department, keep order:false, stats:pseudo
+      │ └─IndexLookUp_28	0.01	root	
+      │   ├─Selection_26	9.99	cop	not(isnull(test.p.department_id))
+      │   │ └─IndexScan_24	10.00	cop	table:p, index:department_id, range: decided by [eq(test.p.department_id, test.d.id)], keep order:false, stats:pseudo
+      │   └─Selection_27	0.01	cop	eq(test.p.status, 1000)
+      │     └─TableScan_25	9.99	cop	table:org_position, keep order:false, stats:pseudo
+      └─TableReader_55	9.99	root	data:Selection_54
+        └─Selection_54	9.99	cop	eq(test.ep.status, 1000), not(isnull(test.ep.position_id))
+          └─TableScan_53	10000.00	cop	table:ep, range:[-inf,+inf], keep order:false, stats:pseudo
