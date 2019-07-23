@@ -112,7 +112,7 @@ func (a *connArray) Init(addr string, security config.Security, eventCh chan<- *
 
 	allowBatch := cfg.TiKVClient.MaxBatchSize > 0
 	if allowBatch {
-		a.batchConn = newBatchConn(uint(len(a.v)), cfg.TiKVClient.MaxBatchSize)
+		a.batchConn = newBatchConn(uint(len(a.v)), cfg.TiKVClient.MaxBatchSize, addr)
 		a.pendingRequests = metrics.TiKVPendingBatchRequests.WithLabelValues(a.target)
 	}
 	keepAlive := cfg.TiKVClient.GrpcKeepAliveTime

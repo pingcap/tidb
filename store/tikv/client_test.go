@@ -88,7 +88,7 @@ func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
 
 func (s *testClientSuite) TestCancelTimeoutRetErr(c *C) {
 	req := new(tikvpb.BatchCommandsRequest_Request)
-	a := newBatchConn(1, 1)
+	a := newBatchConn(1, 1, "")
 
 	var cli rpcClient
 	cli.eventCh = make(chan *eventMSG)

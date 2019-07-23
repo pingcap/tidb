@@ -35,6 +35,7 @@ import (
 )
 
 type batchConn struct {
+	addr  string
 	index uint32
 	// batchCommandsCh used for batch commands.
 	batchCommandsCh        chan *batchCommandsEntry
@@ -48,8 +49,9 @@ type batchConn struct {
 	pendingRequests prometheus.Gauge
 }
 
-func newBatchConn(connCount, maxBatchSize uint) *batchConn {
+func newBatchConn(connCount, maxBatchSize uint, addr string) *batchConn {
 	return &batchConn{
+		addr:                   addr,
 		batchCommandsCh:        make(chan *batchCommandsEntry, maxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, connCount),
 		tikvTransportLayerLoad: 0,
@@ -64,7 +66,6 @@ func (a *batchConn) fetchAllPendingRequests(
 	maxBatchSize int,
 	entries *[]*batchCommandsEntry,
 	requests *[]*tikvpb.BatchCommandsRequest_Request,
-	addr string,
 	eventCh chan<- *eventMSG,
 ) {
 	// Block on the first element.
@@ -81,7 +82,7 @@ func (a *batchConn) fetchAllPendingRequests(
 		// SendRequest is never called and this operation blocks here.
 		eventCh <- &eventMSG{
 			tp:   eventConnIdle,
-			addr: addr,
+			addr: a.addr,
 		}
 		return
 	case <-a.closed:
@@ -377,7 +378,7 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient, addr string, eventCh ch
 		requestIDs = requestIDs[:0]
 
 		a.pendingRequests.Set(float64(len(a.batchCommandsCh)))
-		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests, addr, eventCh)
+		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests, eventCh)
 
 		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
 			// If the target TiKV is overload, wait a while to collect more requests.
