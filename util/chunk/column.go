@@ -335,6 +335,7 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
 }
 
+// reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
 func (c *Column) reconstruct(sel []int) {
 	if sel == nil {
 		return
