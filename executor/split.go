@@ -74,7 +74,7 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 	return nil
 }
 
-// checkScatterRegionFinishBackOff is the back off that uses to check region scatter finished when split region timeout.
+// checkScatterRegionFinishBackOff is the back off time that used to check if a region has finished scattering before split region timeout.
 const checkScatterRegionFinishBackOff = 50
 
 // splitIndexRegion uses to split index regions.
