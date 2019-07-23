@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"context"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -283,7 +281,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 		s.insertCol(col)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
-		logutil.Logger(context.Background()).Warn("too many columns in a single CNF",
+		logutil.BgLogger().Warn("too many columns in a single CNF",
 			zap.Int("numCols", len(s.columns)),
 			zap.Int("maxNumCols", MaxPropagateColsCnt),
 		)
@@ -534,7 +532,7 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 		s.insertCol(col)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
-		logutil.Logger(context.Background()).Warn("too many columns",
+		logutil.BgLogger().Warn("too many columns",
 			zap.Int("numCols", len(s.columns)),
 			zap.Int("maxNumCols", MaxPropagateColsCnt),
 		)

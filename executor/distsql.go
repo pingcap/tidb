@@ -24,7 +24,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -122,36 +120,6 @@ func closeAll(objs ...Closeable) error {
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-// statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
-func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
-	var flags uint64
-	if sc.InInsertStmt {
-		flags |= model.FlagInInsertStmt
-	} else if sc.InUpdateStmt || sc.InDeleteStmt {
-		flags |= model.FlagInUpdateOrDeleteStmt
-	} else if sc.InSelectStmt {
-		flags |= model.FlagInSelectStmt
-	}
-	if sc.IgnoreTruncate {
-		flags |= model.FlagIgnoreTruncate
-	} else if sc.TruncateAsWarning {
-		flags |= model.FlagTruncateAsWarning
-	}
-	if sc.OverflowAsWarning {
-		flags |= model.FlagOverflowAsWarning
-	}
-	if sc.IgnoreZeroInDate {
-		flags |= model.FlagIgnoreZeroInDate
-	}
-	if sc.DividedByZeroAsWarning {
-		flags |= model.FlagDividedByZeroAsWarning
-	}
-	if sc.PadCharToFullLength {
-		flags |= model.FlagPadCharToFullLength
-	}
-	return flags
 }
 
 // handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
@@ -268,16 +236,8 @@ func (e *IndexReaderExecutor) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tableReader.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
-	err := e.result.Next(ctx, req.Chunk)
+func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	err := e.result.Next(ctx, req)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
@@ -330,7 +290,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return err
 	}
-	e.result, err = e.SelectResult(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+	e.result, err = e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		e.feedback.Invalidate()
 		return err
@@ -581,7 +541,7 @@ func (e *IndexLookUpExecutor) Close() error {
 }
 
 // Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -794,8 +754,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
-		chk := tableReader.newFirstChunk()
-		err = tableReader.Next(ctx, chunk.NewRecordBatch(chk))
+		chk := newFirstChunk(tableReader)
+		err = tableReader.Next(ctx, chk)
 		if err != nil {
 			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
 			return err
@@ -839,6 +799,17 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 
 		if len(w.idxLookup.tblPlans) == 1 {
+			obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
+			for _, row := range task.rows {
+				handle := row.GetInt64(w.handleIdx)
+				obtainedHandlesMap[handle] = struct{}{}
+			}
+
+			logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
+				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
+				zap.Int64s("missing_handles", GetLackHandles(task.handles, obtainedHandlesMap)),
+				zap.Int64s("total_handles", task.handles))
+
 			// table scan in double read can never has conditions according to convertToIndexScan.
 			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
 			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",

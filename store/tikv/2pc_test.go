@@ -237,19 +237,16 @@ func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGet,
-		Get: &kvrpcpb.GetRequest{
-			Key:     key,
-			Version: ver.Ver,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
+		Key:     key,
+		Version: ver.Ver,
+	})
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Get, NotNil)
-	keyErr := resp.Get.GetError()
+	c.Assert(resp.Resp, NotNil)
+	keyErr := (resp.Resp.(*kvrpcpb.GetResponse)).GetError()
 	return keyErr.GetLocked() != nil
 }
 
@@ -455,6 +452,38 @@ func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	batch.keys = append(batch.keys, []byte("t1"))
 	batch.region = RegionVerID{1, 1, 1}
 	req := commiter.buildPrewriteRequest(batch)
-	c.Assert(len(req.Prewrite.IsPessimisticLock), Greater, 0)
-	c.Assert(req.Prewrite.ForUpdateTs, Equals, uint64(100))
+	c.Assert(len(req.Prewrite().IsPessimisticLock), Greater, 0)
+	c.Assert(req.Prewrite().ForUpdateTs, Equals, uint64(100))
+}
+
+func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
+	// This test checks that the isPessimisticLock field is set in the request even when no keys are pessimistic lock.
+	key := kv.Key("key")
+	txn := s.begin(c)
+	c.Assert(txn.Set(key, key), IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+
+	txn = s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+	txn.SetOption(kv.PresumeKeyNotExists, nil)
+	_, _ = txn.us.Get(key)
+	c.Assert(txn.Set(key, key), IsNil)
+	txn.DelOption(kv.PresumeKeyNotExists)
+	err := txn.LockKeys(context.Background(), txn.startTS, key)
+	c.Assert(err, NotNil)
+	c.Assert(txn.Delete(key), IsNil)
+	key2 := kv.Key("key2")
+	c.Assert(txn.Set(key2, key2), IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+}
+
+func (s *testCommitterSuite) TestPessimisticLockedKeysDedup(c *C) {
+	txn := s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+	err := txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	c.Assert(err, IsNil)
+	err = txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	c.Assert(err, IsNil)
+	c.Assert(txn.lockKeys, HasLen, 2)
 }

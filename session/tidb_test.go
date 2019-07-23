@@ -20,12 +20,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -65,43 +65,6 @@ func (s *testMainSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
 }
 
-// Testcase for arg type.
-func (s *testMainSuite) TestCheckArgs(c *C) {
-	checkArgs(nil, true, false, int8(1), int16(1), int32(1), int64(1), 1,
-		uint8(1), uint16(1), uint32(1), uint64(1), uint(1), float32(1), float64(1),
-		"abc", []byte("abc"), time.Now(), time.Hour, time.Local)
-}
-
-func (s *testMainSuite) TestIsQuery(c *C) {
-	tbl := []struct {
-		sql string
-		ok  bool
-	}{
-		{"/*comment*/ select 1;", true},
-		{"/*comment*/ /*comment*/ select 1;", true},
-		{"select /*comment*/ 1 /*comment*/;", true},
-		{"(select /*comment*/ 1 /*comment*/);", true},
-	}
-	for _, t := range tbl {
-		c.Assert(IsQuery(t.sql), Equals, t.ok, Commentf(t.sql))
-	}
-}
-
-func (s *testMainSuite) TestTrimSQL(c *C) {
-	tbl := []struct {
-		sql    string
-		target string
-	}{
-		{"/*comment*/ select 1; ", "select 1;"},
-		{"/*comment*/ /*comment*/ select 1;", "select 1;"},
-		{"select /*comment*/ 1 /*comment*/;", "select /*comment*/ 1 /*comment*/;"},
-		{"/*comment select 1; ", "/*comment select 1;"},
-	}
-	for _, t := range tbl {
-		c.Assert(trimSQL(t.sql), Equals, t.target, Commentf(t.sql))
-	}
-}
-
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	store, dom := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
 	defer dom.Close()
@@ -122,6 +85,18 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 		}(se)
 	}
 	wg.Wait()
+}
+
+func (s *testMainSuite) TestParseErrorWarn(c *C) {
+	ctx := core.MockContext()
+
+	nodes, err := Parse(ctx, "select /*+ adf */ 1")
+	c.Assert(err, IsNil)
+	c.Assert(len(nodes), Equals, 1)
+	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 1)
+
+	_, err = Parse(ctx, "select")
+	c.Assert(err, NotNil)
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
@@ -168,7 +143,11 @@ func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error
 	if err != nil {
 		return nil, err
 	}
-	rs, err := se.ExecutePreparedStmt(ctx, stmtID, args...)
+	params := make([]types.Datum, len(args))
+	for i := 0; i < len(params); i++ {
+		params[i] = types.NewDatum(args[i])
+	}
+	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return nil, err
 	}

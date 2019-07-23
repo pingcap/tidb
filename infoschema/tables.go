@@ -44,6 +44,7 @@ const (
 	tableSchemata                           = "SCHEMATA"
 	tableTables                             = "TABLES"
 	tableColumns                            = "COLUMNS"
+	tableColumnStatistics                   = "COLUMN_STATISTICS"
 	tableStatistics                         = "STATISTICS"
 	tableCharacterSets                      = "CHARACTER_SETS"
 	tableCollations                         = "COLLATIONS"
@@ -187,6 +188,13 @@ var columnsCols = []columnInfo{
 	{"PRIVILEGES", mysql.TypeVarchar, 80, 0, nil, nil},
 	{"COLUMN_COMMENT", mysql.TypeVarchar, 1024, 0, nil, nil},
 	{"GENERATION_EXPRESSION", mysql.TypeBlob, 589779, mysql.NotNullFlag, nil, nil},
+}
+
+var columnStatisticsCols = []columnInfo{
+	{"SCHEMA_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"COLUMN_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"HISTOGRAM", mysql.TypeJSON, 51, 0, nil, nil},
 }
 
 var statisticsCols = []columnInfo{
@@ -538,11 +546,12 @@ var tableProcesslistCols = []columnInfo{
 	{"ID", mysql.TypeLonglong, 21, mysql.NotNullFlag, 0, nil},
 	{"USER", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
 	{"HOST", mysql.TypeVarchar, 64, mysql.NotNullFlag, "", nil},
-	{"DB", mysql.TypeVarchar, 64, mysql.NotNullFlag, "", nil},
+	{"DB", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"COMMAND", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
 	{"TIME", mysql.TypeLong, 7, mysql.NotNullFlag, 0, nil},
 	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
 	{"INFO", mysql.TypeString, 512, 0, nil, nil},
+	{"MEM", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -563,6 +572,7 @@ var tableTiDBHotRegionsCols = []columnInfo{
 	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"INDEX_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"MAX_HOT_DEGREE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
@@ -685,18 +695,18 @@ func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, er
 			row[0].SetInt64(regionStat.ID)
 			row[1].SetInt64(peer.ID)
 			row[2].SetInt64(peer.StoreID)
-			if peer.ID == regionStat.Leader.ID {
+			if peer.IsLearner {
 				row[3].SetInt64(1)
 			} else {
 				row[3].SetInt64(0)
 			}
-			if peer.IsLearner {
+			if peer.ID == regionStat.Leader.ID {
 				row[4].SetInt64(1)
 			} else {
-				row[4].SetInt64(0)
+				row[3].SetInt64(0)
 			}
 			if pendingPeerIDSet.Exist(peer.ID) {
-				row[5].SetString(pendingPeer)
+				row[4].SetString(pendingPeer)
 			} else if downSec, ok := downPeerMap[peer.ID]; ok {
 				row[5].SetString(downPeer)
 				row[6].SetInt64(downSec)
@@ -861,7 +871,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 			continue
 		}
 
-		rows := pi.ToRow(true)
+		rows := pi.ToRow()
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
@@ -1072,26 +1082,12 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
-	hasAutoIncID := false
-	for _, col := range tblInfo.Cols() {
-		if mysql.HasAutoIncrementFlag(col.Flag) {
-			hasAutoIncID = true
-			break
-		}
+	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
+	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
+	if err != nil {
+		return 0, err
 	}
-	autoIncID := tblInfo.AutoIncID
-	if hasAutoIncID {
-		is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
-		tbl, err := is.TableByName(schema.Name, tblInfo.Name)
-		if err != nil {
-			return 0, err
-		}
-		autoIncID, err = tbl.Allocator(ctx).NextGlobalAutoID(tblInfo.ID)
-		if err != nil {
-			return 0, err
-		}
-	}
-	return autoIncID, nil
+	return tbl.Allocator(ctx).Base() + 1, nil
 }
 
 func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
@@ -1162,10 +1158,15 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
 				}
-				autoIncID, err := getAutoIncrementID(ctx, schema, table)
-				if err != nil {
-					return nil, err
+				var autoIncID interface{}
+				hasAutoIncID, _ := HasAutoIncrementColumn(table)
+				if hasAutoIncID {
+					autoIncID, err = getAutoIncrementID(ctx, schema, table)
+					if err != nil {
+						return nil, err
+					}
 				}
+
 				rowCount := tableRowsMap[table.ID]
 				dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
 				avgRowLength := uint64(0)
@@ -1663,9 +1664,9 @@ func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err
 	return records, nil
 }
 
-func dataForHotRegionByMetrics(metrics map[helper.TblIndex]helper.RegionMetric, tp string) [][]types.Datum {
+func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(metrics))
-	for tblIndex, regionMetric := range metrics {
+	for _, tblIndex := range metrics {
 		row := make([]types.Datum, len(tableTiDBHotRegionsCols))
 		if tblIndex.IndexName != "" {
 			row[1].SetInt64(tblIndex.IndexID)
@@ -1677,10 +1678,16 @@ func dataForHotRegionByMetrics(metrics map[helper.TblIndex]helper.RegionMetric, 
 		row[0].SetInt64(tblIndex.TableID)
 		row[2].SetString(tblIndex.DbName)
 		row[3].SetString(tblIndex.TableName)
-		row[5].SetString(tp)
-		row[6].SetInt64(int64(regionMetric.MaxHotDegree))
-		row[7].SetInt64(int64(regionMetric.Count))
-		row[8].SetUint64(regionMetric.FlowBytes)
+		row[5].SetUint64(tblIndex.RegionID)
+		row[6].SetString(tp)
+		if tblIndex.RegionMetric == nil {
+			row[7].SetNull()
+			row[8].SetNull()
+		} else {
+			row[7].SetInt64(int64(tblIndex.RegionMetric.MaxHotDegree))
+			row[8].SetInt64(int64(tblIndex.RegionMetric.Count))
+		}
+		row[9].SetUint64(tblIndex.RegionMetric.FlowBytes)
 		rows = append(rows, row)
 	}
 	return rows
@@ -1714,6 +1721,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
+	tableColumnStatistics:                   columnStatisticsCols,
 	tableStatistics:                         statisticsCols,
 	tableCharacterSets:                      charsetCols,
 	tableCollations:                         collationsCols,
@@ -1948,7 +1956,7 @@ func (it *infoschemaTable) RecordKey(h int64) kv.Key {
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
@@ -1960,11 +1968,6 @@ func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h int64, r []typ
 // UpdateRecord implements table.Table UpdateRecord interface.
 func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
-}
-
-// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
-func (it *infoschemaTable) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
-	return 0, table.ErrUnsupportedOp
 }
 
 // AllocHandle implements table.Table AllocHandle interface.
@@ -2070,7 +2073,7 @@ func (vt *VirtualTable) RecordKey(h int64) kv.Key {
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
@@ -2082,11 +2085,6 @@ func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.
 // UpdateRecord implements table.Table UpdateRecord interface.
 func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
-}
-
-// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
-func (vt *VirtualTable) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
-	return 0, table.ErrUnsupportedOp
 }
 
 // AllocHandle implements table.Table AllocHandle interface.

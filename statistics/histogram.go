@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -109,25 +108,34 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	return &d
 }
 
-// AvgColSize is the average column size of the histogram.
-func (c *Column) AvgColSize(count int64) float64 {
+// AvgColSize is the average column size of the histogram. These sizes are derived from function `encode`
+// and `Datum::ConvertTo`, so we need to update them if those 2 functions are changed.
+func (c *Column) AvgColSize(count int64, isKey bool) float64 {
 	if count == 0 {
 		return 0
 	}
-	switch c.Histogram.Tp.Tp {
-	case mysql.TypeFloat:
-		return 4
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeDouble, mysql.TypeYear:
+	// Note that, if the handle column is encoded as value, instead of key, i.e,
+	// when the handle column is in a unique index, the real column size may be
+	// smaller than 8 because it is encoded using `EncodeVarint`. Since we don't
+	// know the exact value size now, use 8 as approximation.
+	if c.IsHandle {
 		return 8
-	case mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		return 16
-	case mysql.TypeNewDecimal:
-		return types.MyDecimalStructSize
-	default:
-		// Keep two decimal place.
-		return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
 	}
+	histCount := c.TotalRowCount()
+	notNullRatio := 1.0
+	if histCount > 0 {
+		notNullRatio = 1.0 - float64(c.NullCount)/histCount
+	}
+	switch c.Histogram.Tp.Tp {
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return 8 * notNullRatio
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
+		if isKey {
+			return 8 * notNullRatio
+		}
+	}
+	// Keep two decimal place.
+	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
 }
 
 // AppendBucket appends a bucket into `hg`.
@@ -966,7 +974,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			}
 			newIdxHist, err := idxHist.newIndexBySelectivity(sc, node)
 			if err != nil {
-				logutil.Logger(context.Background()).Warn("[Histogram-in-plan]: error happened when calculating row count, failed to build histogram for index %v of table %v",
+				logutil.BgLogger().Warn("[Histogram-in-plan]: error happened when calculating row count, failed to build histogram for index %v of table %v",
 					zap.String("index", idxHist.Info.Name.O), zap.String("table", idxHist.Info.Table.O), zap.Error(err))
 				continue
 			}
@@ -987,7 +995,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 		var err error
 		splitRanges, ok := oldCol.Histogram.SplitRange(sc, node.Ranges, false)
 		if !ok {
-			logutil.Logger(context.Background()).Warn("[Histogram-in-plan]: the type of histogram and ranges mismatch")
+			logutil.BgLogger().Warn("[Histogram-in-plan]: the type of histogram and ranges mismatch")
 			continue
 		}
 		// Deal with some corner case.
@@ -1008,7 +1016,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByColumnRanges)
 		}
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("[Histogram-in-plan]: error happened when calculating row count", zap.Error(err))
+			logutil.BgLogger().Warn("[Histogram-in-plan]: error happened when calculating row count", zap.Error(err))
 			continue
 		}
 		newColl.Columns[node.ID] = newCol

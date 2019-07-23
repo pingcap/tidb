@@ -244,8 +244,14 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
-	// TiDBWaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
-	TiDBWaitTableSplitFinish = "tidb_wait_table_split_finish"
+	// tidb_scatter_region will scatter the regions for DDLs when it is ON.
+	TiDBScatterRegion = "tidb_scatter_region"
+
+	// TiDBWaitSplitRegionFinish defines the split region behaviour is sync or async.
+	TiDBWaitSplitRegionFinish = "tidb_wait_split_region_finish"
+
+	// TiDBWaitSplitRegionTimeout uses to set the split and scatter region back off time.
+	TiDBWaitSplitRegionTimeout = "tidb_wait_split_region_timeout"
 
 	// tidb_force_priority defines the operations priority of all statements.
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
@@ -274,6 +280,12 @@ const (
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
+
+	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
+	TiDBEnableIndexMerge = "tidb_enable_index_merge"
+
+	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
+	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
 )
 
 // Default TiDB system variable values.
@@ -328,13 +340,16 @@ const (
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
-	DefEnableWindowFunction            = false
+	DefEnableWindowFunction            = true
 	DefTiDBOptJoinReorderThreshold     = 0
 	DefTiDBDDLSlowOprThreshold         = 300
 	DefTiDBUseFastAnalyze              = false
 	DefTiDBSkipIsolationLevelCheck     = false
-	DefTiDBWaitTableSplitFinish        = false
 	DefTiDBExpensiveQueryTimeThreshold = 60 // 60s
+	DefTiDBScatterRegion               = false
+	DefTiDBWaitSplitRegionFinish       = true
+	DefWaitSplitRegionTimeout          = 300 // 300s
+	DefTiDBEnableNoopFuncs             = false
 )
 
 // Process global variables.
@@ -348,9 +363,10 @@ var (
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold         uint32 = DefTiDBDDLSlowOprThreshold
-	ForcePriority                      = int32(DefTiDBForcePriority)
-	ServerHostname, _                  = os.Hostname()
-	MaxOfMaxAllowedPacket       uint64 = 1073741824
-	ExpensiveQueryTimeThreshold uint64 = DefTiDBExpensiveQueryTimeThreshold
+	DDLSlowOprThreshold            uint32 = DefTiDBDDLSlowOprThreshold
+	ForcePriority                         = int32(DefTiDBForcePriority)
+	ServerHostname, _                     = os.Hostname()
+	MaxOfMaxAllowedPacket          uint64 = 1073741824
+	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
+	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 )

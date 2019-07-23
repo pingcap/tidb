@@ -16,17 +16,19 @@ package executor_test
 import (
 	"context"
 
-	"github.com/pingcap/tidb/planner/core"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -134,6 +136,15 @@ func (s *testSuite3) TestRole(c *C) {
 	grantRoleSQL = `GRANT 'r_1'@'localhost' TO 'r_3'@'localhost', 'r_4'@'localhost';`
 	_, err = tk.Exec(grantRoleSQL)
 	c.Check(err, NotNil)
+
+	// Test grant role for current_user();
+	sessionVars := tk.Se.GetSessionVars()
+	originUser := sessionVars.User
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "%"}
+	tk.MustExec("grant 'r_1'@'localhost' to current_user();")
+	tk.MustExec("revoke 'r_1'@'localhost' from 'root'@'%';")
+	sessionVars.User = originUser
+
 	result = tk.MustQuery(`SELECT FROM_USER FROM mysql.role_edges WHERE TO_USER="r_3" and TO_HOST="localhost"`)
 	result.Check(nil)
 
@@ -150,13 +161,19 @@ func (s *testSuite3) TestRole(c *C) {
 	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('localhost','test','%','root')")
 	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','root')")
 	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','root')")
+	tk.MustExec("flush privileges")
+	tk.MustExec("SET DEFAULT ROLE r_1, r_2 TO root")
 	_, err = tk.Exec("revoke test@localhost, r_1 from root;")
 	c.Check(err, IsNil)
 	_, err = tk.Exec("revoke `r_2`@`%` from root, u_2;")
 	c.Check(err, NotNil)
 	_, err = tk.Exec("revoke `r_2`@`%` from root;")
 	c.Check(err, IsNil)
+	_, err = tk.Exec("revoke `r_1`@`%` from root;")
+	c.Check(err, IsNil)
 	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE DEFAULT_ROLE_USER="test" and DEFAULT_ROLE_HOST="localhost"`)
+	result.Check(nil)
+	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE USER="root" and HOST="%"`)
 	result.Check(nil)
 	dropRoleSQL = `DROP ROLE 'test'@'localhost', r_1, r_2;`
 	tk.MustExec(dropRoleSQL)
@@ -394,6 +411,36 @@ func (s *testSuite3) TestFlushPrivileges(c *C) {
 	// After flush.
 	_, err = se.Execute(ctx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, IsNil)
+
+}
+
+type testFlushSuite struct{}
+
+func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
+	// Run in a separate suite because this test need to set SkipGrantTable config.
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	mvccStore := mocktikv.MustNewMVCCStore()
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
+	)
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	saveConf := config.GetGlobalConfig()
+	conf := config.NewConfig()
+	conf.Security.SkipGrantTable = true
+	config.StoreGlobalConfig(conf)
+
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("FLUSH PRIVILEGES")
+
+	config.StoreGlobalConfig(saveConf)
 }
 
 func (s *testSuite3) TestDropStats(c *C) {
@@ -412,7 +459,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	testKit.MustExec("drop stats t")
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 
@@ -422,7 +469,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t")
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	h.SetLease(0)

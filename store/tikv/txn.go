@@ -59,6 +59,7 @@ type tikvTxn struct {
 	commitTS  uint64
 	valid     bool
 	lockKeys  [][]byte
+	lockedMap map[string]struct{}
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	dirty     bool
 	setCnt    int64
@@ -66,7 +67,11 @@ type tikvTxn struct {
 	committer *twoPhaseCommitter
 
 	// For data consistency check.
+	// assertions[:confirmed] is the assertion of current transaction.
+	// assertions[confirmed:len(assertions)] is the assertions of current statement.
+	// StmtCommit/StmtRollback may change the confirmed position.
 	assertions []assertionPair
+	confirmed  int
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -85,6 +90,7 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	return &tikvTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
+		lockedMap: map[string]struct{}{},
 		store:     store,
 		startTS:   startTS,
 		startTime: time.Now(),
@@ -104,7 +110,17 @@ func (a assertionPair) String() string {
 
 // SetAssertion sets a assertion for the key operation.
 func (txn *tikvTxn) SetAssertion(key kv.Key, assertion kv.AssertionType) {
-	txn.assertions = append(txn.assertions, assertionPair{key, assertion})
+	// Deep copy the key since it's memory is referenced from union store and overwrite change later.
+	key1 := append([]byte{}, key...)
+	txn.assertions = append(txn.assertions, assertionPair{key1, assertion})
+}
+
+func (txn *tikvTxn) ConfirmAssertions(succ bool) {
+	if succ {
+		txn.confirmed = len(txn.assertions)
+	} else {
+		txn.assertions = txn.assertions[:txn.confirmed]
+	}
 }
 
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
@@ -224,6 +240,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.syncLog = val.(bool)
 	case kv.KeyOnly:
 		txn.snapshot.keyOnly = val.(bool)
+	case kv.SnapshotTS:
+		txn.snapshot.version.Ver = val.(uint64)
 	}
 }
 
@@ -327,11 +345,11 @@ func (txn *tikvTxn) Rollback() error {
 	if txn.IsPessimistic() && txn.committer != nil {
 		err := txn.rollbackPessimisticLocks()
 		if err != nil {
-			logutil.Logger(context.Background()).Error(err.Error())
+			logutil.BgLogger().Error(err.Error())
 		}
 	}
 	txn.close()
-	logutil.Logger(context.Background()).Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
+	logutil.BgLogger().Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
 	tikvTxnCmdCountWithRollback.Inc()
 
 	return nil
@@ -344,7 +362,16 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 	return txn.committer.pessimisticRollbackKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), txn.lockKeys)
 }
 
-func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keys ...kv.Key) error {
+func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput ...kv.Key) error {
+	// Exclude keys that are already locked.
+	keys := make([][]byte, 0, len(keysInput))
+	txn.mu.Lock()
+	for _, key := range keysInput {
+		if _, ok := txn.lockedMap[string(key)]; !ok {
+			keys = append(keys, key)
+		}
+	}
+	txn.mu.Unlock()
 	if len(keys) == 0 {
 		return nil
 	}
@@ -362,21 +389,24 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keys ...kv
 			if err != nil {
 				return err
 			}
+		}
+		var assignedPrimaryKey bool
+		if txn.committer.primaryKey == nil {
 			txn.committer.primaryKey = keys[0]
+			assignedPrimaryKey = true
 		}
 
 		bo := NewBackoffer(ctx, pessimisticLockMaxBackoff).WithVars(txn.vars)
-		keys1 := make([][]byte, len(keys))
-		for i, key := range keys {
-			keys1[i] = key
-		}
 		txn.committer.forUpdateTS = forUpdateTS
-		// If the number of keys1 greater than 1, it can be on different region,
+		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
-		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys1) == 1
-		err := txn.committer.pessimisticLockKeys(bo, keys1)
+		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
+		err := txn.committer.pessimisticLockKeys(bo, keys)
 		if err != nil {
-			wg := txn.asyncPessimisticRollback(ctx, keys1)
+			for _, key := range keys {
+				txn.us.DeleteConditionPair(key)
+			}
+			wg := txn.asyncPessimisticRollback(ctx, keys)
 			if dl, ok := errors.Cause(err).(*ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
 				dl.IsRetryable = true
 				// Wait for the pessimistic rollback to finish before we retry the statement.
@@ -384,12 +414,17 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keys ...kv
 				// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
 				time.Sleep(time.Millisecond * 5)
 			}
+			if assignedPrimaryKey {
+				// unset the primary key if we assigned primary key when failed to lock it.
+				txn.committer.primaryKey = nil
+			}
 			return err
 		}
 	}
 	txn.mu.Lock()
+	txn.lockKeys = append(txn.lockKeys, keys...)
 	for _, key := range keys {
-		txn.lockKeys = append(txn.lockKeys, key)
+		txn.lockedMap[string(key)] = struct{}{}
 	}
 	txn.dirty = true
 	txn.mu.Unlock()
@@ -417,7 +452,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	return wg
 }
 
-func hashInKeys(deadlockKeyHash uint64, keys []kv.Key) bool {
+func hashInKeys(deadlockKeyHash uint64, keys [][]byte) bool {
 	for _, key := range keys {
 		if farm.Fingerprint64(key) == deadlockKeyHash {
 			return true

@@ -15,7 +15,6 @@ package core
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 
@@ -322,8 +321,15 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
-func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, outerIdx int, innerPlan PhysicalPlan,
-	ranges []*ranger.Range, keyOff2IdxOff []int, compareFilters *ColWithCmpFuncManager) []PhysicalPlan {
+func (p *LogicalJoin) constructIndexJoin(
+	prop *property.PhysicalProperty,
+	outerIdx int,
+	innerPlan PhysicalPlan,
+	ranges []*ranger.Range,
+	keyOff2IdxOff []int,
+	lens []int,
+	compareFilters *ColWithCmpFuncManager,
+) []PhysicalPlan {
 	joinType := p.JoinType
 	outerSchema := p.children[outerIdx].Schema()
 	var (
@@ -373,6 +379,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, outerI
 		DefaultValues:   p.DefaultValues,
 		innerPlan:       innerPlan,
 		KeyOff2IdxOff:   newKeyOff,
+		IdxColLens:      lens,
 		Ranges:          ranges,
 		CompareFilters:  compareFilters,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
@@ -431,7 +438,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			innerPlan := p.constructInnerTableScan(ds, pkCol, outerJoinKeys, us)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
-			return p.constructIndexJoin(prop, outerIdx, innerPlan, nil, keyOff2IdxOff, nil)
+			return p.constructIndexJoin(prop, outerIdx, innerPlan, nil, keyOff2IdxOff, nil, nil)
 		}
 	}
 	helper := &indexJoinBuildHelper{join: p}
@@ -442,7 +449,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		indexInfo := path.index
 		err := helper.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("build index join failed", zap.Error(err))
+			logutil.BgLogger().Warn("build index join failed", zap.Error(err))
 		}
 	}
 	if helper.chosenIndexInfo != nil {
@@ -455,10 +462,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 				keyOff2IdxOff[keyOff] = idxOff
 			}
 		}
-		idxCols, _ := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
+		idxCols, lens := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
 		rangeInfo := helper.buildRangeDecidedByInformation(idxCols, outerJoinKeys)
 		innerPlan := p.constructInnerIndexScan(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
-		return p.constructIndexJoin(prop, outerIdx, innerPlan, helper.chosenRanges, keyOff2IdxOff, helper.lastColManager)
+		return p.constructIndexJoin(prop, outerIdx, innerPlan, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
 	}
 	return nil
 }
@@ -597,7 +604,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	if len(indexConds) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, indexConds)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
 		path.countAfterIndex = rowCount * selectivity
@@ -1022,15 +1029,19 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		}
 
 		if leftJoins != nil && lhsCardinality < rhsCardinality {
-			return leftJoins, hasIndexJoinHint
+			return leftJoins, leftOuter
 		}
 
 		if rightJoins != nil && rhsCardinality < lhsCardinality {
-			return rightJoins, hasIndexJoinHint
+			return rightJoins, rightOuter
 		}
 
+		canForceLeft := leftJoins != nil && leftOuter
+		canForceRight := rightJoins != nil && rightOuter
+		forced = canForceLeft || canForceRight
+
 		joins := append(leftJoins, rightJoins...)
-		return joins, hasIndexJoinHint && len(joins) != 0
+		return joins, forced
 	}
 
 	return nil, false

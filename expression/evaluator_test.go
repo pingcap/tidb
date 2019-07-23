@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = Suite(&testEvaluatorSuite{})
+var _ = SerialSuites(&testEvaluatorSuite{})
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -176,23 +177,21 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	sub := time.Since(start)
 	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
 
-	// quit when context canceled.
-	// TODO: recover it.
-	// d[0].SetFloat64(2)
-	// f, err = fc.getFunction(ctx, s.datumsToConstants(d))
-	// c.Assert(err, IsNil)
-	// start = time.Now()
-	// go func() {
-	// 	time.Sleep(1 * time.Second)
-	// 	ctx.Cancel()
-	// }()
-	// ret, isNull, err = f.evalInt(chunk.Row{})
-	// sub = time.Since(start)
-	// c.Assert(err, IsNil)
-	// c.Assert(isNull, IsFalse)
-	// c.Assert(ret, Equals, int64(1))
-	// c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
-	// c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
+	d[0].SetFloat64(3)
+	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
+	start = time.Now()
+	go func() {
+		time.Sleep(1 * time.Second)
+		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
+	}()
+	ret, isNull, err = f.evalInt(chunk.Row{})
+	sub = time.Since(start)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(ret, Equals, int64(1))
+	c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
 }
 
 func (s *testEvaluatorSuite) TestBinopComparison(c *C) {

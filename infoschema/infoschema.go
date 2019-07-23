@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 )
 
 var (
@@ -60,6 +61,16 @@ var (
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 	// ErrTooManyKeyParts returns for too many key parts.
 	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
+	// ErrTableNotLockedForWrite returns for write tables when only hold the table read lock.
+	ErrTableNotLockedForWrite = terror.ClassSchema.New(codeErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
+	// ErrTableNotLocked returns when session has explicitly lock tables, then visit unlocked table will return this error.
+	ErrTableNotLocked = terror.ClassSchema.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
+	// ErrNonuniqTable returns when none unique tables errors.
+	ErrNonuniqTable = terror.ClassSchema.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrNonuniqTable])
+	// ErrTableLocked returns when the table was locked by other session.
+	ErrTableLocked = terror.ClassSchema.New(codeTableLocked, mysql.MySQLErrName[mysql.ErrTableLocked])
+	// ErrAccessDenied return when the user doesn't have the permission to access the table.
+	ErrAccessDenied = terror.ClassSchema.New(codeErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -86,7 +97,8 @@ type InfoSchema interface {
 
 // Information Schema Name.
 const (
-	Name = "INFORMATION_SCHEMA"
+	Name      = util.InformationSchemaName
+	LowerName = util.InformationSchemaLowerName
 )
 
 type sortedTables []table.Table
@@ -292,6 +304,11 @@ func (h *Handle) Get() InfoSchema {
 	return schema
 }
 
+// IsValid uses to check whether handle value is valid.
+func (h *Handle) IsValid() bool {
+	return h.value.Load() != nil
+}
+
 // EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
 func (h *Handle) EmptyClone() *Handle {
 	newHandle := &Handle{
@@ -321,27 +338,38 @@ const (
 	codeTooManyKeyParts  = 1070
 	codeKeyNameDuplicate = 1061
 	codeKeyNotExists     = 1176
+
+	codeErrTableNotLockedForWrite = mysql.ErrTableNotLockedForWrite
+	codeErrTableNotLocked         = mysql.ErrTableNotLocked
+	codeErrNonuniqTable           = mysql.ErrNonuniqTable
+	codeErrAccessDenied           = mysql.ErrAccessDenied
+	codeTableLocked               = mysql.ErrTableLocked
 )
 
 func init() {
 	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDBDropExists:        mysql.ErrDBDropExists,
-		codeDatabaseNotExists:   mysql.ErrBadDB,
-		codeTableNotExists:      mysql.ErrNoSuchTable,
-		codeColumnNotExists:     mysql.ErrBadField,
-		codeCannotAddForeign:    mysql.ErrCannotAddForeign,
-		codeWrongFkDef:          mysql.ErrWrongFkDef,
-		codeForeignKeyNotExists: mysql.ErrCantDropFieldOrKey,
-		codeDatabaseExists:      mysql.ErrDBCreateExists,
-		codeTableExists:         mysql.ErrTableExists,
-		codeBadTable:            mysql.ErrBadTable,
-		codeBadUser:             mysql.ErrBadUser,
-		codeColumnExists:        mysql.ErrDupFieldName,
-		codeIndexExists:         mysql.ErrDupIndex,
-		codeMultiplePriKey:      mysql.ErrMultiplePriKey,
-		codeTooManyKeyParts:     mysql.ErrTooManyKeyParts,
-		codeKeyNameDuplicate:    mysql.ErrDupKeyName,
-		codeKeyNotExists:        mysql.ErrKeyDoesNotExist,
+		codeDBDropExists:              mysql.ErrDBDropExists,
+		codeDatabaseNotExists:         mysql.ErrBadDB,
+		codeTableNotExists:            mysql.ErrNoSuchTable,
+		codeColumnNotExists:           mysql.ErrBadField,
+		codeCannotAddForeign:          mysql.ErrCannotAddForeign,
+		codeWrongFkDef:                mysql.ErrWrongFkDef,
+		codeForeignKeyNotExists:       mysql.ErrCantDropFieldOrKey,
+		codeDatabaseExists:            mysql.ErrDBCreateExists,
+		codeTableExists:               mysql.ErrTableExists,
+		codeBadTable:                  mysql.ErrBadTable,
+		codeBadUser:                   mysql.ErrBadUser,
+		codeColumnExists:              mysql.ErrDupFieldName,
+		codeIndexExists:               mysql.ErrDupIndex,
+		codeMultiplePriKey:            mysql.ErrMultiplePriKey,
+		codeTooManyKeyParts:           mysql.ErrTooManyKeyParts,
+		codeKeyNameDuplicate:          mysql.ErrDupKeyName,
+		codeKeyNotExists:              mysql.ErrKeyDoesNotExist,
+		codeErrTableNotLockedForWrite: mysql.ErrTableNotLockedForWrite,
+		codeErrTableNotLocked:         mysql.ErrTableNotLocked,
+		codeErrNonuniqTable:           mysql.ErrNonuniqTable,
+		mysql.ErrAccessDenied:         mysql.ErrAccessDenied,
+		codeTableLocked:               mysql.ErrTableLocked,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()
@@ -382,4 +410,14 @@ func IsMemoryDB(dbName string) bool {
 		}
 	}
 	return false
+}
+
+// HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
+func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
+	for _, col := range tbInfo.Columns {
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			return true, col.Name.L
+		}
+	}
+	return false, ""
 }

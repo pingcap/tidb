@@ -303,6 +303,9 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
 		vars = append(vars, newExpr)
 	}
 	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID}
+	if v.BinaryArgs != nil {
+		exe.PrepareParams = v.BinaryArgs.([]types.Datum)
+	}
 	return exe, nil
 }
 
@@ -670,6 +673,10 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		ret = p
 	case ast.AdminReloadExprPushdownBlacklist:
 		return &ReloadExprPushdownBlacklist{}, nil
+	case ast.AdminPluginEnable:
+		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
+	case ast.AdminPluginDisable:
+		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -983,6 +990,25 @@ func buildShowDDLJobsFields() *expression.Schema {
 	return schema
 }
 
+func buildTableRegionsSchema() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema.Append(buildColumn("", "REGION_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "START_KEY", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_Key", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "LEADER_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "LEADER_STORE_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "PEERS", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCATTERING", mysql.TypeTiny, 1))
+	return schema
+}
+
+func buildSplitRegionsSchema() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
+	schema.Append(buildColumn("", "TOTAL_SPLIT_REGION", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "SCATTER_FINISH_RATIO", mysql.TypeDouble, 8))
+	return schema
+}
+
 func buildShowDDLJobQueriesFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
 	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
@@ -1070,6 +1096,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		DBName:      show.DBName,
 		Table:       show.Table,
 		Column:      show.Column,
+		IndexName:   show.IndexName,
 		Flag:        show.Flag,
 		Full:        show.Full,
 		User:        show.User,
@@ -1077,68 +1104,80 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		IfNotExists: show.IfNotExists,
 		GlobalScope: show.GlobalScope,
 	}.Init(b.ctx)
-	switch showTp := show.Tp; showTp {
-	case ast.ShowProcedureStatus:
-		p.SetSchema(buildShowProcedureSchema())
-	case ast.ShowTriggers:
-		p.SetSchema(buildShowTriggerSchema())
-	case ast.ShowEvents:
-		p.SetSchema(buildShowEventsSchema())
-	case ast.ShowWarnings, ast.ShowErrors:
-		p.SetSchema(buildShowWarningsSchema())
-	default:
-		isView := false
-		switch showTp {
-		case ast.ShowTables, ast.ShowTableStatus:
-			if p.DBName == "" {
-				return nil, ErrNoDB
-			}
-		case ast.ShowCreateTable:
-			user := b.ctx.GetSessionVars().User
-			var err error
-			if user != nil {
-				err = ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
-			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
-			if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
-				isView = table.Meta().IsView()
-			}
-		case ast.ShowCreateView:
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	isView := false
+	switch show.Tp {
+	case ast.ShowTables, ast.ShowTableStatus:
+		if p.DBName == "" {
+			return nil, ErrNoDB
 		}
-		p.SetSchema(buildShowSchema(show, isView))
+	case ast.ShowCreateTable:
+		user := b.ctx.GetSessionVars().User
+		var err error
+		if user != nil {
+			err = ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
+		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
+			isView = table.Meta().IsView()
+		}
+	case ast.ShowCreateView:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 	}
+	p.SetSchema(buildShowSchema(show, isView))
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
+	mockTablePlan := LogicalTableDual{placeHolder: true}.Init(b.ctx)
 	mockTablePlan.SetSchema(p.schema)
+	var err error
+	var np LogicalPlan
+	np = mockTablePlan
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
 		}
-		expr, _, err := b.rewrite(show.Pattern, mockTablePlan, nil, false)
+		np, err = b.buildSelection(np, show.Pattern, nil)
 		if err != nil {
 			return nil, err
 		}
-		p.Conditions = append(p.Conditions, expr)
 	}
 	if show.Where != nil {
-		conds := splitWhere(show.Where)
-		for _, cond := range conds {
-			expr, _, err := b.rewrite(cond, mockTablePlan, nil, false)
-			if err != nil {
-				return nil, err
-			}
-			p.Conditions = append(p.Conditions, expr)
-		}
-		err := p.ResolveIndices()
+		np, err = b.buildSelection(np, show.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
+	if np != mockTablePlan {
+		fieldsLen := len(mockTablePlan.schema.Columns)
+		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx)
+		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
+		for _, col := range mockTablePlan.schema.Columns {
+			proj.Exprs = append(proj.Exprs, col)
+			newCol := col.Clone().(*expression.Column)
+			newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+			schema.Append(newCol)
+		}
+		proj.SetSchema(schema)
+		proj.SetChildren(np)
+		physical, err := DoOptimize(b.optFlag|flagEliminateProjection, proj)
+		if err != nil {
+			return nil, err
+		}
+		return substitutePlaceHolderDual(physical, p), nil
+	}
 	return p, nil
+}
+
+func substitutePlaceHolderDual(src PhysicalPlan, dst PhysicalPlan) PhysicalPlan {
+	if dual, ok := src.(*PhysicalTableDual); ok && dual.placeHolder {
+		return dst
+	}
+	for i, child := range src.Children() {
+		newChild := substitutePlaceHolderDual(child, dst)
+		src.SetChild(i, newChild)
+	}
+	return src
 }
 
 func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
@@ -1645,6 +1684,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 		TableInfo: tblInfo,
 		IndexInfo: indexInfo,
 	}
+	p.SetSchema(buildSplitRegionsSchema())
 	// Split index regions by user specified value lists.
 	if len(node.SplitOpt.ValueLists) > 0 {
 		indexValues := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
@@ -1759,6 +1799,7 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	p := &SplitRegion{
 		TableInfo: tblInfo,
 	}
+	p.SetSchema(buildSplitRegionsSchema())
 	if len(node.SplitOpt.ValueLists) > 0 {
 		values := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
 		for i, valuesItem := range node.SplitOpt.ValueLists {
@@ -1973,6 +2014,11 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	case *ast.RecoverTableStmt:
 		// Recover table command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	case *ast.LockTablesStmt, *ast.UnlockTablesStmt:
+		// TODO: add Lock Table privilege check.
+	case *ast.CleanupTableLockStmt:
+		// This command can only be executed by administrator.
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	}
 	p := &DDL{Statement: node}
 	return p, nil
@@ -1982,12 +2028,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
-	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok && trace.Format == "row" {
-		return nil, errors.New("trace only supports select query when format is row")
-	}
-
 	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
-
 	switch trace.Format {
 	case "row":
 		retFields := []string{"operation", "duration", "spanID"}
@@ -2138,6 +2179,16 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 	var names []string
 	var ftypes []byte
 	switch s.Tp {
+	case ast.ShowProcedureStatus:
+		return buildShowProcedureSchema()
+	case ast.ShowTriggers:
+		return buildShowTriggerSchema()
+	case ast.ShowEvents:
+		return buildShowEventsSchema()
+	case ast.ShowWarnings, ast.ShowErrors:
+		return buildShowWarningsSchema()
+	case ast.ShowRegions:
+		return buildTableRegionsSchema()
 	case ast.ShowEngines:
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
 	case ast.ShowDatabases:
@@ -2161,9 +2212,6 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowColumns:
 		names = table.ColDescFieldNames(s.Full)
-	case ast.ShowWarnings, ast.ShowErrors:
-		names = []string{"Level", "Code", "Message"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
 	case ast.ShowCharset:
 		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
