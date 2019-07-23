@@ -457,7 +457,7 @@ func (s *testSuite) TestInsertWithAutoidSchema(c *C) {
 
 }
 
-func (s *testSuite3) TestPartitionInsertOnDuplicate(c *C) {
+func (s *testSuite) TestPartitionInsertOnDuplicate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int,primary key(a,b)) partition by range(a) (partition p0 values less than (100),partition p1 values less than (1000))`)
