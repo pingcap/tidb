@@ -96,6 +96,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 
 		close(r.results)
 		duration := time.Since(startTime)
+		// TODO: Add a label to distinguish between success or failure
 		metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())
 	}()
 	for {
