@@ -88,9 +88,10 @@ func (s *testChunkSuite) TestI64Column(c *check.C) {
 	}
 
 	it := NewIterator4Chunk(chk)
-	var i int64
+	var i int
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		c.Assert(row.GetInt64(0), check.Equals, int64(i+1))
+		c.Assert(col.GetInt64(i), check.Equals, int64(i+1))
 		i++
 	}
 }
@@ -112,6 +113,7 @@ func (s *testChunkSuite) TestF64Column(c *check.C) {
 	var i int64
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		c.Assert(row.GetFloat64(0), check.Equals, float64(i)/2)
+		c.Assert(col.GetFloat64(int(i)), check.Equals, float64(i)/2)
 		i++
 	}
 }
@@ -133,6 +135,7 @@ func (s *testChunkSuite) TestF32Column(c *check.C) {
 	var i int64
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		c.Assert(row.GetFloat32(0), check.Equals, float32(i)/2)
+		c.Assert(col.GetFloat32(int(i)), check.Equals, float32(i)/2)
 		i++
 	}
 }
