@@ -98,6 +98,9 @@ func (r *RegionStore) initFollowers() {
 // return next follower store's index
 func (r *RegionStore) nextFollower() int32 {
 	followers := r.followers
+	if len(followers) == 0 {
+		return r.workStoreIdx
+	}
 	nextFollower := atomic.AddUint32(&r.nextFollowerStore, 1)
 	return followers[nextFollower%uint32(len(followers))]
 }

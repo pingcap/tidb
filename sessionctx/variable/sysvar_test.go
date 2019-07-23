@@ -46,6 +46,9 @@ func (*testSysVarSuite) TestSysVar(c *C) {
 
 	f = GetSysVar("tidb_low_resolution_tso")
 	c.Assert(f.Value, Equals, "0")
+
+	f = GetSysVar("tidb_replica_read")
+	c.Assert(f.Value, Equals, "leader")
 }
 
 func (*testSysVarSuite) TestTxnMode(c *C) {

@@ -2796,3 +2796,15 @@ func (s *testSessionSuite) TestLoadClientInteractive(c *C) {
 	tk.Se.GetSessionVars().ClientCapability = tk.Se.GetSessionVars().ClientCapability | mysql.ClientInteractive
 	tk.MustQuery("select @@wait_timeout").Check(testkit.Rows("28800"))
 }
+
+func (s *testSessionSuite) TestReplicaRead(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadLeader)
+	tk.MustExec("set @@tidb_replica_read = 'follower';")
+	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadFollower)
+	tk.MustExec("set @@tidb_replica_read = 'leader';")
+	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadLeader)
+}
