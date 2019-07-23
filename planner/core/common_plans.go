@@ -274,8 +274,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 }
 
 func (e *Execute) rebuildRange(p Plan) error {
-	sctx := p.SessCtx()
-	sc := p.SessCtx().GetSessionVars().StmtCtx
+	sctx := p.SCtx()
+	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
 	case *PhysicalTableReader:

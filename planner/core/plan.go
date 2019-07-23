@@ -40,7 +40,7 @@ type Plan interface {
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
-	SessCtx() sessionctx.Context
+	SCtx() sessionctx.Context
 
 	// property.StatsInfo will return the property.StatsInfo for this plan.
 	statsInfo() *property.StatsInfo
@@ -313,7 +313,7 @@ func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 }
 
 // Context implements Plan Context interface.
-func (p *basePlan) SessCtx() sessionctx.Context {
+func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
 }
 

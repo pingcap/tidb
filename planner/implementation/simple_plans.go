@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,27 +15,14 @@ package implementation
 
 import (
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/planner/memo"
 )
 
-type baseImpl struct {
-	cost float64
-	plan plannercore.PhysicalPlan
+// ProjectionImpl implementation of PhysicalProjection.
+type ProjectionImpl struct {
+	baseImpl
 }
 
-func (impl *baseImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
-	impl.cost = childCosts[0]
-	return impl.cost
-}
-
-func (impl *baseImpl) SetCost(cost float64) {
-	impl.cost = cost
-}
-
-func (impl *baseImpl) GetCost() float64 {
-	return impl.cost
-}
-
-func (impl *baseImpl) GetPlan() plannercore.PhysicalPlan {
-	return impl.plan
+// NewProjectionImpl creates a new projection Implementation.
+func NewProjectionImpl(proj *plannercore.PhysicalProjection) *ProjectionImpl {
+	return &ProjectionImpl{baseImpl{plan: proj}}
 }

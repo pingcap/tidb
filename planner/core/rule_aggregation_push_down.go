@@ -316,7 +316,7 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 }
 
 func (a *aggregationPushDownSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
-	if !p.SessCtx().GetSessionVars().AllowAggPushDown {
+	if !p.SCtx().GetSessionVars().AllowAggPushDown {
 		return p, nil
 	}
 	return a.aggPushDown(p)

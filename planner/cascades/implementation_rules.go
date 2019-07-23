@@ -69,7 +69,7 @@ func (r *ImplTableDual) Match(expr *memo.GroupExpr, prop *property.PhysicalPrope
 func (r *ImplTableDual) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicDual := expr.ExprNode.(*plannercore.LogicalTableDual)
-	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SessCtx(), logicProp.Stats)
+	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats)
 	dual.SetSchema(logicProp.Schema)
 	return impl.NewTableDualImpl(dual), nil
 }
@@ -95,7 +95,7 @@ func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phy
 		Exprs:                logicProj.Exprs,
 		CalculateNoDelay:     logicProj.CalculateNoDelay,
 		AvoidColumnEvaluator: logicProj.AvoidColumnEvaluator,
-	}.Init(logicProj.SessCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), childProp)
+	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), childProp)
 	proj.SetSchema(logicProp.Schema)
 	return impl.NewProjectionImpl(proj), nil
 }

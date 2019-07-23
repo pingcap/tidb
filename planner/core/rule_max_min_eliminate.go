@@ -46,7 +46,7 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 		}
 
 		child := p.Children()[0]
-		ctx := p.SessCtx()
+		ctx := p.SCtx()
 
 		// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should NULL if the below is empty.
 		if len(expression.ExtractColumns(f.Args[0])) > 0 {

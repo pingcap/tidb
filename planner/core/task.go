@@ -351,7 +351,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
-	copIterWorkers := float64(t.plan().SessCtx().GetSessionVars().DistSQLScanConcurrency)
+	copIterWorkers := float64(t.plan().SCtx().GetSessionVars().DistSQLScanConcurrency)
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
@@ -371,12 +371,12 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		indexRows := t.indexPlan.statsInfo().RowCount
 		newTask.cst += indexRows * cpuFactor
 		// Add cost of worker goroutines in index lookup.
-		numTblWorkers := float64(t.indexPlan.SessCtx().GetSessionVars().IndexLookupConcurrency)
+		numTblWorkers := float64(t.indexPlan.SCtx().GetSessionVars().IndexLookupConcurrency)
 		newTask.cst += (numTblWorkers + 1) * concurrencyFactor
 		// When building table reader executor for each batch, we would sort the handles. CPU
 		// cost of sort is:
 		// cpuFactor * batchSize * Log2(batchSize) * (indexRows / batchSize)
-		indexLookupSize := float64(t.indexPlan.SessCtx().GetSessionVars().IndexLookupSize)
+		indexLookupSize := float64(t.indexPlan.SCtx().GetSessionVars().IndexLookupSize)
 		batchSize := math.Min(indexLookupSize, indexRows)
 		if batchSize > 2 {
 			sortCPUCost := (indexRows * math.Log2(batchSize) * cpuFactor) / numTblWorkers
