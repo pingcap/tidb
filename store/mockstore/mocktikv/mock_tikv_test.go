@@ -201,6 +201,10 @@ func (s *testMockTiKVSuite) mustBatchResolveLock(c *C, txnInfos map[uint64]uint6
 	c.Assert(s.store.BatchResolveLock(nil, nil, txnInfos), IsNil)
 }
 
+func (s *testMockTiKVSuite) mustGC(c *C, safePoint uint64) {
+	c.Assert(s.store.GC(nil, nil, safePoint), IsNil)
+}
+
 func (s *testMockTiKVSuite) mustDeleteRange(c *C, startKey, endKey string) {
 	err := s.store.DeleteRange([]byte(startKey), []byte(endKey))
 	c.Assert(err, IsNil)
@@ -486,6 +490,50 @@ func (s *testMockTiKVSuite) TestBatchResolveLock(c *C) {
 	}
 	s.mustBatchResolveLock(c, txnInfos)
 	s.mustScanLock(c, 30, nil)
+}
+
+func (s *testMockTiKVSuite) TestGC(c *C) {
+	var safePoint uint64 = 100
+
+	// Prepare data
+	s.mustPutOK(c, "k1", "v1", 1, 2)
+	s.mustPutOK(c, "k1", "v2", 11, 12)
+
+	s.mustPutOK(c, "k2", "v1", 1, 2)
+	s.mustPutOK(c, "k2", "v2", 11, 12)
+	s.mustPutOK(c, "k2", "v3", 101, 102)
+
+	s.mustPutOK(c, "k3", "v1", 1, 2)
+	s.mustPutOK(c, "k3", "v2", 11, 12)
+	s.mustDeleteOK(c, "k3", 101, 102)
+
+	s.mustPutOK(c, "k4", "v1", 1, 2)
+	s.mustDeleteOK(c, "k4", 11, 12)
+
+	// Check prepared data
+	s.mustGetOK(c, "k1", 5, "v1")
+	s.mustGetOK(c, "k1", 15, "v2")
+	s.mustGetOK(c, "k2", 5, "v1")
+	s.mustGetOK(c, "k2", 15, "v2")
+	s.mustGetOK(c, "k2", 105, "v3")
+	s.mustGetOK(c, "k3", 5, "v1")
+	s.mustGetOK(c, "k3", 15, "v2")
+	s.mustGetNone(c, "k3", 105)
+	s.mustGetOK(c, "k4", 5, "v1")
+	s.mustGetNone(c, "k4", 105)
+
+	s.mustGC(c, safePoint)
+
+	s.mustGetNone(c, "k1", 5)
+	s.mustGetOK(c, "k1", 15, "v2")
+	s.mustGetNone(c, "k2", 5)
+	s.mustGetOK(c, "k2", 15, "v2")
+	s.mustGetOK(c, "k2", 105, "v3")
+	s.mustGetNone(c, "k3", 5)
+	s.mustGetOK(c, "k3", 15, "v2")
+	s.mustGetNone(c, "k3", 105)
+	s.mustGetNone(c, "k4", 5)
+	s.mustGetNone(c, "k4", 105)
 }
 
 func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {

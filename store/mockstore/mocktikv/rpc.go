@@ -443,6 +443,18 @@ func (h *rpcHandler) handleKvResolveLock(req *kvrpcpb.ResolveLockRequest) *kvrpc
 	return &kvrpcpb.ResolveLockResponse{}
 }
 
+func (h *rpcHandler) handleKvGC(req *kvrpcpb.GCRequest) *kvrpcpb.GCResponse {
+	startKey := MvccKey(h.startKey).Raw()
+	endKey := MvccKey(h.endKey).Raw()
+	err := h.mvccStore.GC(startKey, endKey, req.GetSafePoint())
+	if err != nil {
+		return &kvrpcpb.GCResponse{
+			Error: convertToKeyError(err),
+		}
+	}
+	return &kvrpcpb.GCResponse{}
+}
+
 func (h *rpcHandler) handleKvDeleteRange(req *kvrpcpb.DeleteRangeRequest) *kvrpcpb.DeleteRangeResponse {
 	if !h.checkKeyInRegion(req.StartKey) {
 		panic("KvDeleteRange: key not in region")
@@ -773,7 +785,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			resp.Resp = &kvrpcpb.GCResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = &kvrpcpb.GCResponse{}
+		resp.Resp = handler.handleKvGC(r)
 	case tikvrpc.CmdDeleteRange:
 		r := req.DeleteRange()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
