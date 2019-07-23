@@ -523,6 +523,8 @@ var tokenMap = map[string]int{
 	"TIDB_HJ":                  tidbHJ,
 	"TIDB_INLJ":                tidbINLJ,
 	"TIDB_SMJ":                 tidbSMJ,
+	"TIDB_HASHAGG":             tidbHASHAGG,
+	"TIDB_STREAMAGG":           tidbSTREAMAGG,
 	"TIME":                     timeType,
 	"TIMESTAMP":                timestampType,
 	"TIMESTAMPADD":             timestampAdd,
