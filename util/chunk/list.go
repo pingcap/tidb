@@ -145,13 +145,13 @@ func (l *List) Reset() {
 	l.consumedIdx = -1
 }
 
-// PreAlloc4Row pre-allocates the storage memory for a Row.
+// preAlloc4Row pre-allocates the storage memory for a Row.
 // NOTE:
 // 1. The List must be empty or holds no useful data.
 // 2. The schema of the Row must be the same with the List.
 // 3. This API is paired with the `Insert()` function, which inserts all the
 //    rows data into the List after the pre-allocation.
-func (l *List) PreAlloc4Row(row Row) (ptr RowPtr) {
+func (l *List) preAlloc4Row(row Row) (ptr RowPtr) {
 	chkIdx := len(l.chunks) - 1
 	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() {
 		newChk := l.allocChunk()
@@ -163,16 +163,16 @@ func (l *List) PreAlloc4Row(row Row) (ptr RowPtr) {
 		chkIdx++
 	}
 	chk := l.chunks[chkIdx]
-	rowIdx := chk.PreAlloc(row)
+	rowIdx := chk.preAlloc(row)
 	l.length++
 	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
 }
 
-// Insert inserts `row` on the position specified by `ptr`.
+// insert inserts `row` on the position specified by `ptr`.
 // Note: Insert will cover the origin data, it should be called after
 // PreAlloc.
-func (l *List) Insert(ptr RowPtr, row Row) {
-	l.chunks[ptr.ChkIdx].Insert(int(ptr.RowIdx), row)
+func (l *List) insert(ptr RowPtr, row Row) {
+	l.chunks[ptr.ChkIdx].insert(int(ptr.RowIdx), row)
 }
 
 // ListWalkFunc is used to walk the list.
