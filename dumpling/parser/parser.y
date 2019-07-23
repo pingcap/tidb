@@ -528,7 +528,9 @@ type OnDeleteUpdateDef struct {
 	admin		"ADMIN"
 	buckets		"BUCKETS"
 	cancel		"CANCEL"
+	cmSketch	"CMSKETCH"
 	ddl		"DDL"
+	depth		"DEPTH"
 	drainer		"DRAINER"
 	jobs		"JOBS"
 	job		"JOB"
@@ -547,8 +549,10 @@ type OnDeleteUpdateDef struct {
 	tidbSMJ		"TIDB_SMJ"
 	tidbINLJ	"TIDB_INLJ"
 	tidbHASHAGG 	"TIDB_HASHAGG"
-	tidbSTREAMAGG	"TIDB_STREAMAGG" 
+	tidbSTREAMAGG	"TIDB_STREAMAGG"
+	topn		"TOPN"
 	split		"SPLIT"
+	width		"WIDTH"
 	regions         "REGIONS"
 
 	builtinAddDate
@@ -695,6 +699,9 @@ type OnDeleteUpdateDef struct {
 	AlterTableSpec			"Alter table specification"
 	AlterTableSpecList		"Alter table specification list"
 	AlterTableSpecListOpt		"Alter table specification list optional"
+	AnalyzeOption			"Analyze option"
+	AnalyzeOptionList		"Analyze option list"
+	AnalyzeOptionListOpt		"Optional analyze option list"
 	AnyOrAll			"Any or All for subquery"
 	Assignment			"assignment"
 	AssignmentList			"assignment list"
@@ -798,7 +805,6 @@ type OnDeleteUpdateDef struct {
 	LoadDataSetItem			"Single load data specification"
 	LocalOpt			"Local opt"
 	LockClause         		"Alter table lock clause"
-	MaxNumBuckets			"Max number of buckets"
 	NumLiteral			"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt 	"NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType			"Grant statement object type"
@@ -1127,18 +1133,18 @@ AlterTableStmt:
 			Specs: specs,
 		}
 	}
-|	"ALTER" IgnoreOptional "TABLE" TableName "ANALYZE" "PARTITION" PartitionNameList MaxNumBuckets
+|	"ALTER" IgnoreOptional "TABLE" TableName "ANALYZE" "PARTITION" PartitionNameList AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, PartitionNames: $7.([]model.CIStr), MaxNumBuckets: $8.(uint64),}
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, PartitionNames: $7.([]model.CIStr), AnalyzeOpts: $8.([]ast.AnalyzeOpt),}
 	}
-|	"ALTER" IgnoreOptional "TABLE" TableName "ANALYZE" "PARTITION" PartitionNameList "INDEX" IndexNameList MaxNumBuckets
+|	"ALTER" IgnoreOptional "TABLE" TableName "ANALYZE" "PARTITION" PartitionNameList "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames: []*ast.TableName{$4.(*ast.TableName)},
 			PartitionNames: $7.([]model.CIStr),
 			IndexNames: $9.([]model.CIStr),
 			IndexFlag: true,
-			MaxNumBuckets: $10.(uint64),
+			AnalyzeOpts: $10.([]ast.AnalyzeOpt),
 		}
 	}
 
@@ -1607,33 +1613,33 @@ SplitOption:
 /*******************************************************************************************/
 
 AnalyzeTableStmt:
-	"ANALYZE" "TABLE" TableNameList MaxNumBuckets
+	"ANALYZE" "TABLE" TableNameList AnalyzeOptionListOpt
 	 {
-		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), MaxNumBuckets: $4.(uint64)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), AnalyzeOpts: $4.([]ast.AnalyzeOpt),}
 	 }
-|	"ANALYZE" "TABLE" TableName "INDEX" IndexNameList MaxNumBuckets
+|	"ANALYZE" "TABLE" TableName "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true, MaxNumBuckets: $6.(uint64)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true, AnalyzeOpts: $6.([]ast.AnalyzeOpt),}
 	}
-|	"ANALYZE" "INCREMENTAL" "TABLE" TableName "INDEX" IndexNameList MaxNumBuckets
+|	"ANALYZE" "INCREMENTAL" "TABLE" TableName "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, IndexNames: $6.([]model.CIStr), IndexFlag: true, Incremental: true, MaxNumBuckets: $7.(uint64)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, IndexNames: $6.([]model.CIStr), IndexFlag: true, Incremental: true, AnalyzeOpts: $7.([]ast.AnalyzeOpt),}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList MaxNumBuckets
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), MaxNumBuckets: $6.(uint64),}
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), AnalyzeOpts: $6.([]ast.AnalyzeOpt),}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList MaxNumBuckets
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames: []*ast.TableName{$3.(*ast.TableName)},
 			PartitionNames: $5.([]model.CIStr),
 			IndexNames: $7.([]model.CIStr),
 			IndexFlag: true,
-			MaxNumBuckets: $8.(uint64),
+			AnalyzeOpts: $8.([]ast.AnalyzeOpt),
 		}
 	}
-|	"ANALYZE" "INCREMENTAL" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList MaxNumBuckets
+|	"ANALYZE" "INCREMENTAL" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames: []*ast.TableName{$4.(*ast.TableName)},
@@ -1641,17 +1647,45 @@ AnalyzeTableStmt:
 			IndexNames: $8.([]model.CIStr),
 			IndexFlag: true,
 			Incremental: true,
-			MaxNumBuckets: $9.(uint64),
+			AnalyzeOpts: $9.([]ast.AnalyzeOpt),
 		}
 	}
 
-MaxNumBuckets:
+AnalyzeOptionListOpt:
 	{
-		$$ = uint64(0)
+		$$ = []ast.AnalyzeOpt{}
 	}
-|	"WITH" NUM "BUCKETS"
+|	"WITH" AnalyzeOptionList
 	{
-		$$ = getUint64FromNUM($2)
+		$$ = $2.([]ast.AnalyzeOpt)
+	}
+
+AnalyzeOptionList:
+	AnalyzeOption
+	{
+		$$ = []ast.AnalyzeOpt{$1.(ast.AnalyzeOpt)}
+	}
+|	AnalyzeOptionList ',' AnalyzeOption
+	{
+		$$ = append($1.([]ast.AnalyzeOpt), $3.(ast.AnalyzeOpt))
+	}
+
+AnalyzeOption:
+	NUM "BUCKETS"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumBuckets, Value: getUint64FromNUM($1)}
+	}
+|	NUM "TOPN"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumTopN, Value: getUint64FromNUM($1)}
+	}
+|	NUM "CMSKETCH" "DEPTH"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptCMSketchDepth, Value: getUint64FromNUM($1)}
+	}
+|	NUM "CMSKETCH" "WIDTH"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptCMSketchWidth, Value: getUint64FromNUM($1)}
 	}
 
 /*******************************************************************************************/
@@ -3645,8 +3679,8 @@ UnReservedKeyword:
 
 
 TiDBKeyword:
- "ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ"
-| "TIDB_SMJ" | "TIDB_INLJ" | "TIDB_HASHAGG" | "TIDB_STREAMAGG" | "SPLIT" | "OPTIMISTIC" | "PESSIMISTIC" | "REGIONS"
+ "ADMIN" | "BUCKETS" | "CANCEL" | "CMSKETCH" | "DDL" | "DEPTH" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ"
+| "TIDB_SMJ" | "TIDB_INLJ" | "TIDB_HASHAGG" | "TIDB_STREAMAGG" | "TOPN" | "SPLIT" | "OPTIMISTIC" | "PESSIMISTIC" | "WIDTH" | "REGIONS"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
