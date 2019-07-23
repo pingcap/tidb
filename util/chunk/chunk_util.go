@@ -25,7 +25,7 @@ func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, select
 		return false, nil
 	}
 	if src.sel != nil || dst.sel != nil {
-		return false, errors.Trace(ErrSelShouldBeNil)
+		return false, errors.Trace(errors.New(msgErrSelNotNil))
 	}
 
 	numSelected := copySelectedInnerRows(innerColOffset, outerColOffset, src, selected, dst)

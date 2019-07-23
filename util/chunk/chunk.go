@@ -24,8 +24,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 )
 
-// ErrSelShouldBeNil is used when a Chunk with Sel is used in a method which is not compatible with Sel.
-var ErrSelShouldBeNil = errors.New("Sel should be nil")
+var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
 
 // Chunk stores multiple rows of data in Apache Arrow format.
 // See https://arrow.apache.org/docs/memory_layout.html
@@ -175,7 +174,7 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 // MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
 func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
 	if c.sel != nil || src.sel != nil {
-		return errors.Trace(ErrSelShouldBeNil)
+		return errors.Trace(errors.New(msgErrSelNotNil))
 	}
 	c.columns[dstColIdx] = src.columns[srcColIdx]
 	return nil
@@ -186,7 +185,7 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
 // swapped, we need to re-build the reference.
 func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) error {
 	if c.sel != nil || other.sel != nil {
-		return errors.Trace(ErrSelShouldBeNil)
+		return errors.Trace(errors.New(msgErrSelNotNil))
 	}
 	// Find the leftmost Column of the reference which is the actual Column to
 	// be swapped.
