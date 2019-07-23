@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Fix the issue that the `DATE_ADD` function returns wrong results due to incorrect alignment when dealing with microseconds
 [#11289](https://github.com/pingcap/tidb/pull/11289)
 * Fix the issue that an error is reported when the empty value in the string column is compared with `FLOAT` or `INT` [#11279](https://github.com/pingcap/tidb/pull/11279)
-* Fix the issue that the `INSERT` function fails to correctly return the `NULL` value when a parameter is `NULL` [#11249](https://github.com/pingcap/tidb/pull/11249)
+* Fix the issue that the `INSERT` function fails to return the `NULL` value when a parameter is `NULL` [#11249](https://github.com/pingcap/tidb/pull/11249)
 * Fix the issue that an error occurs when indexing the column of the non-string type and `0` length [#11215](https://github.com/pingcap/tidb/pull/11215)
 * Add the `SHOW TABLE REGIONS` statement to query the Region distribution of a table through SQL statements [#11238](https://github.com/pingcap/tidb/pull/11238)
 * Fix the issue that columns are wrongly pruned because the `SELECT` subquery fails to correctly parse the column in the `UPDATE` expression [#11254](https://github.com/pingcap/tidb/pull/11254)
