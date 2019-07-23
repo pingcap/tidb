@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -53,10 +53,10 @@ type copTask struct {
 	doubleReadNeedProj bool
 	// tableStats stores the original stats of DataSource, it is used to get
 	// average row width when computing network cost.
-	tableStats *property.StatsInfo
-	// tableCols store the original columns of DataSource before being pruned, it
+	tblColHists *statistics.HistColl
+	// tblCols stores the original columns of DataSource before being pruned, it
 	// is used to compute average row width when computing scan cost.
-	tableCols []*expression.Column
+	tblCols []*expression.Column
 }
 
 func (t *copTask) invalid() bool {
@@ -119,13 +119,13 @@ func (t *copTask) finishIndexPlan() {
 	cnt := t.count()
 	t.indexPlanFinished = true
 	// Network cost of transferring rows of index scan to TiDB.
-	t.cst += cnt * netWorkFactor * t.tableStats.HistColl.GetAvgRowSize(t.indexPlan.Schema().Columns, true)
+	t.cst += cnt * netWorkFactor * t.tblColHists.GetAvgRowSize(t.indexPlan.Schema().Columns, true)
 	if t.tablePlan == nil {
 		return
 	}
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
-	rowSize := t.tableStats.HistColl.GetAvgRowSize(t.tableCols, false)
+	rowSize := t.tblColHists.GetAvgRowSize(t.tblCols, false)
 	t.cst += cnt * rowSize * scanFactor
 }
 
@@ -355,7 +355,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
-		t.cst += t.count() * netWorkFactor * t.tableStats.HistColl.GetAvgRowSize(t.tablePlan.Schema().Columns, false)
+		t.cst += t.count() * netWorkFactor * t.tblColHists.GetAvgRowSize(t.tablePlan.Schema().Columns, false)
 	}
 	t.cst /= copIterWorkers
 	newTask := &rootTask{

@@ -789,9 +789,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table}.Init(b.ctx)
 	ts.SetSchema(tblSchema)
 	cop := &copTask{
-		indexPlan:  is,
-		tablePlan:  ts,
-		tableStats: is.stats,
+		indexPlan:   is,
+		tablePlan:   ts,
+		tblColHists: is.stats.HistColl,
 	}
 	ts.HandleIdx = pkOffset
 	is.initSchema(id, idx, true)

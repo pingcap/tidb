@@ -489,9 +489,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	}
 	rowCount := path.countAfterAccess
 	cop := &copTask{
-		indexPlan:  is,
-		tableStats: ds.tableStats,
-		tableCols:  ds.tableCols,
+		indexPlan:   is,
+		tblColHists: ds.tblColHists,
+		tblCols:     ds.tblCols,
 	}
 	if !candidate.isSingleScan {
 		// On this way, it's double read case.
@@ -552,7 +552,7 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 	} else {
 		scanCols = is.schema.Columns
 	}
-	return ds.tableStats.HistColl.GetAvgRowSize(scanCols, true)
+	return ds.tblColHists.GetAvgRowSize(scanCols, true)
 }
 
 // TODO: refactor this part, we should not call Clone in fact.
@@ -818,7 +818,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
-		tableStats:        ds.tableStats,
+		tblColHists:       ds.tblColHists,
 	}
 	task = copTask
 	// Adjust number of rows we actually need to scan if prop.ExpectedCnt is smaller than the count we calculated.
@@ -845,7 +845,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	rowSize := ds.tableStats.HistColl.GetAvgRowSize(ds.tableCols, false)
+	rowSize := ds.tblColHists.GetAvgRowSize(ds.tblCols, false)
 	copTask.cst = rowCount * rowSize * scanFactor
 	if candidate.isMatchProp {
 		if prop.Items[0].Desc {
