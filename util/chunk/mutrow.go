@@ -203,7 +203,7 @@ func makeMutRowBytesColumn(bin []byte) *Column {
 func (mr MutRow) SetRow(row Row) {
 	for colIdx, rCol := range row.c.columns {
 		mrCol := mr.c.columns[colIdx]
-		if rCol.isNull(row.idx) {
+		if rCol.IsNull(row.idx) {
 			mrCol.nullBitmap[0] = 0
 			continue
 		}
@@ -351,7 +351,7 @@ func setMutRowJSON(col *Column, j json.BinaryJSON) {
 func (mr MutRow) ShallowCopyPartialRow(colIdx int, row Row) {
 	for i, srcCol := range row.c.columns {
 		dstCol := mr.c.columns[colIdx+i]
-		if !srcCol.isNull(row.idx) {
+		if !srcCol.IsNull(row.idx) {
 			// MutRow only contains one row, so we can directly set the whole byte.
 			dstCol.nullBitmap[0] = 1
 		} else {
