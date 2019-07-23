@@ -174,7 +174,7 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 // MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
 func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
 	if c.sel != nil || src.sel != nil {
-		return errors.Trace(errors.New(msgErrSelNotNil))
+		return errors.New(msgErrSelNotNil)
 	}
 	c.columns[dstColIdx] = src.columns[srcColIdx]
 	return nil
@@ -185,7 +185,7 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
 // swapped, we need to re-build the reference.
 func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) error {
 	if c.sel != nil || other.sel != nil {
-		return errors.Trace(errors.New(msgErrSelNotNil))
+		return errors.New(msgErrSelNotNil)
 	}
 	// Find the leftmost Column of the reference which is the actual Column to
 	// be swapped.
