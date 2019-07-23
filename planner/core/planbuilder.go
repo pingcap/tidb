@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -916,13 +917,13 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, erro
 	return p, nil
 }
 
-const cmSketchSizeLimit = (6 * 1024 * 1024) / binary.MaxVarintLen32
+var cmSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    1024,
 	ast.AnalyzeOptNumTopN:       1024,
-	ast.AnalyzeOptCMSketchWidth: cmSketchSizeLimit,
-	ast.AnalyzeOptCMSketchDepth: cmSketchSizeLimit,
+	ast.AnalyzeOptCMSketchWidth: uint64(cmSketchSizeLimit),
+	ast.AnalyzeOptCMSketchDepth: uint64(cmSketchSizeLimit),
 }
 
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
@@ -938,12 +939,18 @@ func handleAnalyzeOptions(p *Analyze, opts []ast.AnalyzeOpt) error {
 		p.Opts[key] = val
 	}
 	for _, opt := range opts {
-		if opt.Value == 0 || opt.Value > analyzeOptionLimit[opt.Type] {
-			return errors.Errorf("value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
+		if opt.Type == ast.AnalyzeOptNumTopN {
+			if opt.Value > analyzeOptionLimit[opt.Type] {
+				return errors.Errorf("value of analyze option %s should not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
+			}
+		} else {
+			if opt.Value == 0 || opt.Value > analyzeOptionLimit[opt.Type] {
+				return errors.Errorf("value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
+			}
 		}
 		p.Opts[opt.Type] = opt.Value
 	}
-	if p.Opts[ast.AnalyzeOptCMSketchWidth]*p.Opts[ast.AnalyzeOptCMSketchDepth] > cmSketchSizeLimit {
+	if p.Opts[ast.AnalyzeOptCMSketchWidth]*p.Opts[ast.AnalyzeOptCMSketchDepth] > uint64(cmSketchSizeLimit) {
 		return errors.Errorf("cm sketch size(depth * width) should not larger than %d", cmSketchSizeLimit)
 	}
 	return nil

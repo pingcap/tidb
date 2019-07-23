@@ -123,7 +123,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
-	tk.MustExec(fmt.Sprintf("insert into t values (19), (19), (19)"))
+	tk.MustExec("insert into t values (19), (19), (19)")
 
 	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
 	executor.MaxSampleSize = 30
