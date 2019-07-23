@@ -117,8 +117,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
-	finishScatterNum := waitScatterRegionFinish(e.ctx, ctxWithTimeout, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
-	e.finishScatterNum = finishScatterNum
+	e.finishScatterNum = waitScatterRegionFinish(e.ctx, ctxWithTimeout, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
 	return nil
 }
 
@@ -269,7 +268,6 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 	return nil
 }
 
-// splitTableRegion is used to split table regions.
 func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
 	s, ok := store.(kv.SplitableStore)
@@ -313,8 +311,7 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 		return nil
 	}
 
-	finishScatterNum := waitScatterRegionFinish(e.ctx, ctxWithTimeout, start, s, regionIDs, e.tableInfo.Name.L, "")
-	e.finishScatterNum = finishScatterNum
+	e.finishScatterNum = waitScatterRegionFinish(e.ctx, ctxWithTimeout, start, s, regionIDs, e.tableInfo.Name.L, "")
 	return nil
 }
 
