@@ -730,11 +730,11 @@ func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
 func (s *testChunkSuite) TestAppendSel(c *check.C) {
 	tll := &types.FieldType{Tp: mysql.TypeLonglong}
 	chk := NewChunkWithCapacity([]*types.FieldType{tll}, 1024)
-	sel := make(Sel, 0, 1024/2)
+	sel := make([]int16, 0, 1024/2)
 	for i := 0; i < 1024/2; i++ {
 		chk.AppendInt64(0, int64(i))
 		if i%2 == 0 {
-			sel = append(sel, uint16(i))
+			sel = append(sel, int16(i))
 		}
 	}
 	chk.SetSel(sel)
@@ -742,7 +742,7 @@ func (s *testChunkSuite) TestAppendSel(c *check.C) {
 	chk.AppendInt64(0, int64(1))
 	c.Assert(chk.NumRows(), check.Equals, 1024/2/2+1)
 	sel = chk.Sel()
-	c.Assert(sel[len(sel)-1], check.Equals, uint16(1024/2))
+	c.Assert(sel[len(sel)-1], check.Equals, int16(1024/2))
 }
 
 func (s *testChunkSuite) TestMakeRefTo(c *check.C) {

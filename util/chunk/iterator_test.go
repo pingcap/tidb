@@ -22,11 +22,11 @@ import (
 func (s *testChunkSuite) TestIteratorOnSel(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
-	sel := make(Sel, 0, 1024)
+	sel := make([]int16, 0, 1024)
 	for i := 0; i < 1024; i++ {
 		chk.AppendInt64(0, int64(i))
 		if i%2 == 0 {
-			sel = append(sel, uint16(i))
+			sel = append(sel, int16(i))
 		}
 	}
 	chk.SetSel(sel)

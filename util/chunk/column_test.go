@@ -330,10 +330,10 @@ func (s *testChunkSuite) TestReconstructFixedLen(c *check.C) {
 	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
 	results := make([]int64, 0, 1024)
 	nulls := make([]bool, 0, 1024)
-	sel := make(Sel, 0, 1024)
+	sel := make([]int16, 0, 1024)
 	for i := 0; i < 1024; i++ {
 		if rand.Intn(10) < 6 {
-			sel = append(sel, uint16(i))
+			sel = append(sel, int16(i))
 		}
 
 		if rand.Intn(10) < 2 {
@@ -386,10 +386,10 @@ func (s *testChunkSuite) TestReconstructVarLen(c *check.C) {
 	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
 	results := make([]string, 0, 1024)
 	nulls := make([]bool, 0, 1024)
-	sel := make(Sel, 0, 1024)
+	sel := make([]int16, 0, 1024)
 	for i := 0; i < 1024; i++ {
 		if rand.Intn(10) < 6 {
-			sel = append(sel, uint16(i))
+			sel = append(sel, int16(i))
 		}
 
 		if rand.Intn(10) < 2 {
