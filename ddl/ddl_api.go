@@ -1727,15 +1727,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	return nil
 }
 
-func hasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
-	for _, col := range tbInfo.Columns {
-		if mysql.HasAutoIncrementFlag(col.Flag) {
-			return true, col.Name.L
-		}
-	}
-	return false, ""
-}
-
 // isIgnorableSpec checks if the spec type is ignorable.
 // Some specs are parsed by ignored. This is for compatibility.
 func isIgnorableSpec(tp ast.AlterTableType) bool {
