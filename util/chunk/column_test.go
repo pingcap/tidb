@@ -15,7 +15,6 @@ package chunk
 
 import (
 	"fmt"
-	"math/rand"
 	"time"
 
 	"github.com/pingcap/check"
@@ -323,117 +322,5 @@ func (s *testChunkSuite) TestNullsColumn(c *check.C) {
 			c.Assert(row.GetInt64(0), check.Equals, int64(i))
 		}
 		i++
-	}
-}
-
-func (s *testChunkSuite) TestReconstructFixedLen(c *check.C) {
-	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
-	results := make([]int64, 0, 1024)
-	nulls := make([]bool, 0, 1024)
-	sel := make([]int16, 0, 1024)
-	for i := 0; i < 1024; i++ {
-		if rand.Intn(10) < 6 {
-			sel = append(sel, int16(i))
-		}
-
-		if rand.Intn(10) < 2 {
-			col.AppendNull()
-			nulls = append(nulls, true)
-			results = append(results, 0)
-			continue
-		}
-
-		v := rand.Int63()
-		col.AppendInt64(v)
-		results = append(results, v)
-		nulls = append(nulls, false)
-	}
-
-	col.reconstruct(sel)
-	nullCnt := 0
-	for n, i := range sel {
-		if nulls[i] {
-			nullCnt++
-			c.Assert(col.IsNull(n), check.Equals, true)
-		} else {
-			c.Assert(col.GetInt64(n), check.Equals, results[i])
-		}
-	}
-	c.Assert(nullCnt, check.Equals, col.nullCount)
-	c.Assert(col.length, check.Equals, len(sel))
-
-	for i := 0; i < 128; i++ {
-		if i%2 == 0 {
-			col.AppendNull()
-		} else {
-			col.AppendInt64(int64(i * i * i))
-		}
-	}
-
-	c.Assert(col.length, check.Equals, len(sel)+128)
-	c.Assert(col.nullCount, check.Equals, nullCnt+128/2)
-	for i := 0; i < 128; i++ {
-		if i%2 == 0 {
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, true)
-		} else {
-			c.Assert(col.GetInt64(len(sel)+i), check.Equals, int64(i*i*i))
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, false)
-		}
-	}
-}
-
-func (s *testChunkSuite) TestReconstructVarLen(c *check.C) {
-	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
-	results := make([]string, 0, 1024)
-	nulls := make([]bool, 0, 1024)
-	sel := make([]int16, 0, 1024)
-	for i := 0; i < 1024; i++ {
-		if rand.Intn(10) < 6 {
-			sel = append(sel, int16(i))
-		}
-
-		if rand.Intn(10) < 2 {
-			col.AppendNull()
-			nulls = append(nulls, true)
-			results = append(results, "")
-			continue
-		}
-
-		v := fmt.Sprintf("%v", rand.Int63())
-		col.AppendString(v)
-		results = append(results, v)
-		nulls = append(nulls, false)
-	}
-
-	col.reconstruct(sel)
-	nullCnt := 0
-	for n, i := range sel {
-		if nulls[i] {
-			nullCnt++
-			c.Assert(col.IsNull(n), check.Equals, true)
-		} else {
-			c.Assert(col.GetString(n), check.Equals, results[i])
-		}
-	}
-	c.Assert(nullCnt, check.Equals, col.nullCount)
-	c.Assert(col.length, check.Equals, len(sel))
-
-	for i := 0; i < 128; i++ {
-		if i%2 == 0 {
-			col.AppendNull()
-		} else {
-			col.AppendString(fmt.Sprintf("%v", i*i*i))
-		}
-	}
-
-	c.Assert(col.length, check.Equals, len(sel)+128)
-	c.Assert(col.nullCount, check.Equals, nullCnt+128/2)
-	for i := 0; i < 128; i++ {
-		if i%2 == 0 {
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, true)
-		} else {
-			c.Assert(col.GetString(len(sel)+i), check.Equals, fmt.Sprintf("%v", i*i*i))
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, false)
-		}
 	}
 }

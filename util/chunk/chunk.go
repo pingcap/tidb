@@ -616,17 +616,6 @@ func (c *Chunk) SetSel(sel []int16) {
 	c.sel = sel
 }
 
-// Reconstruct removes all unselected rows according to Sel.
-func (c *Chunk) Reconstruct() {
-	if c.sel == nil {
-		return
-	}
-	for _, col := range c.columns {
-		col.reconstruct(c.sel)
-	}
-	c.sel = nil
-}
-
 func writeTime(buf []byte, t types.Time) {
 	binary.BigEndian.PutUint16(buf, uint16(t.Time.Year()))
 	buf[2] = uint8(t.Time.Month())
