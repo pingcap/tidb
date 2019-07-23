@@ -2714,6 +2714,7 @@ func (s *testSuite1) SetUpSuite(c *C) {
 		mockstore.WithHijackClient(hijackClient),
 	)
 	c.Assert(err, IsNil)
+	session.SetStatsLease(0)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
