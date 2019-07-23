@@ -3127,8 +3127,16 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo == nil {
+	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	if indexInfo == nil {
 		return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+	}
+
+	cols := t.Cols()
+	for _, idxCol := range indexInfo.Columns {
+		if mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) {
+			return autoid.ErrWrongAutoKey
+		}
 	}
 
 	job := &model.Job{
