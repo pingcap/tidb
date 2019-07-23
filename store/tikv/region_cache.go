@@ -282,10 +282,6 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 
 	storeFailEpoch := atomic.LoadUint32(&store.fail)
 	if storeFailEpoch != regionStore.storeFails[regionStore.workStoreIdx] {
-		newRegionStore := regionStore.clone()
-		newRegionStore.workStoreIdx = regionStore.workStoreIdx
-		newRegionStore.storeFails[newRegionStore.workStoreIdx] = storeFailEpoch
-		cachedRegion.compareAndSwapStore(regionStore, newRegionStore)
 		cachedRegion.invalidate()
 		logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 			zap.Uint64("region", id.GetID()),
