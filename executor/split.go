@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -116,29 +117,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
-	remainMillisecond := 0
-	finishScatterNum := 0
-	for _, regionID := range regionIDs {
-		if isCtxDone(ctxWithTimeout) {
-			// Do not break here for checking remain region scatter finished with a very short back off time.
-			// Imagine this situation, we split region 1,2,3, and timeout on wait region 1 scatter,
-			// but region 2 and region 3 is already scatter finish, then we should return result finish scatter region num 2,
-			// instead of finish scatter region num 0.
-			remainMillisecond = checkScatterRegionFinishBackOff
-		} else {
-			remainMillisecond = int((e.ctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(start).Seconds()) * 1000)
-		}
-		err := s.WaitScatterRegionFinish(regionID, remainMillisecond)
-		if err == nil {
-			finishScatterNum++
-		} else {
-			logutil.BgLogger().Warn("wait scatter region failed",
-				zap.Uint64("regionID", regionID),
-				zap.String("table", e.tableInfo.Name.L),
-				zap.String("index", e.indexInfo.Name.L),
-				zap.Error(err))
-		}
-	}
+	finishScatterNum := waitScatterRegionFinish(e.ctx, ctxWithTimeout, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
 	e.finishScatterNum = finishScatterNum
 	return nil
 }
@@ -334,31 +313,44 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 		return nil
 	}
 
+	finishScatterNum := waitScatterRegionFinish(e.ctx, ctxWithTimeout, start, s, regionIDs, e.tableInfo.Name.L, "")
+	e.finishScatterNum = finishScatterNum
+	return nil
+}
+
+func waitScatterRegionFinish(sctx sessionctx.Context, ctxWithTimeout context.Context, startTime time.Time, store kv.SplitableStore, regionIDs []uint64, tableName, indexName string) int {
 	remainMillisecond := 0
 	finishScatterNum := 0
 	for _, regionID := range regionIDs {
 		if isCtxDone(ctxWithTimeout) {
 			// Do not break here for checking remain regions scatter finished with a very short backoff time.
-			// Imagine this situation, we split region 1,2,3, and timeout when wait region 1 scatter finish,
-			// but region 2 and region 3 was already scatter finished, then we should return the result that finish scatter region num 2,
-			// instead of finish scatter region num 0.
+			// Consider this situation, split region 1,2,3, and timeout on wait region 1 scatter finish,
+			// but region 2 and region 3 was already scatter finished,
+			// then we should return result finished scatter region num 2, instead of finished scatter region num 0.
 			remainMillisecond = checkScatterRegionFinishBackOff
 		} else {
-			remainMillisecond = int((e.ctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(start).Seconds()) * 1000)
+			remainMillisecond = int((sctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
 		}
 
-		err := s.WaitScatterRegionFinish(regionID, remainMillisecond)
+		err := store.WaitScatterRegionFinish(regionID, remainMillisecond)
 		if err == nil {
 			finishScatterNum++
 		} else {
-			logutil.BgLogger().Warn("wait scatter region failed",
-				zap.Uint64("regionID", regionID),
-				zap.String("table", e.tableInfo.Name.L),
-				zap.Error(err))
+			if len(indexName) == 0 {
+				logutil.BgLogger().Warn("wait scatter region failed",
+					zap.Uint64("regionID", regionID),
+					zap.String("table", tableName),
+					zap.Error(err))
+			} else {
+				logutil.BgLogger().Warn("wait scatter region failed",
+					zap.Uint64("regionID", regionID),
+					zap.String("table", tableName),
+					zap.String("index", indexName),
+					zap.Error(err))
+			}
 		}
 	}
-	e.finishScatterNum = finishScatterNum
-	return nil
+	return finishScatterNum
 }
 
 func appendSplitRegionResultToChunk(chk *chunk.Chunk, totalRegions, finishScatterNum int) {
