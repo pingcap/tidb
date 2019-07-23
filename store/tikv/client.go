@@ -152,16 +152,15 @@ func (a *connArray) Init(addr string, security config.Security, eventCh chan<- *
 				return errors.Trace(err)
 			}
 			batchClient := &batchCommandsClient{
-				target:                 a.target,
-				conn:                   conn,
-				client:                 streamClient,
-				batched:                sync.Map{},
-				idAlloc:                0,
-				tikvTransportLayerLoad: &a.tikvTransportLayerLoad,
-				closed:                 0,
+				target:  a.target,
+				conn:    conn,
+				client:  streamClient,
+				batched: sync.Map{},
+				idAlloc: 0,
+				closed:  0,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
-			go batchClient.batchRecvLoop(cfg.TiKVClient)
+			go batchClient.batchRecvLoop(cfg.TiKVClient, &a.tikvTransportLayerLoad)
 		}
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
