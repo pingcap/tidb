@@ -463,6 +463,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 
 // TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
 func (c *Chunk) TruncateTo(numRows int) {
+	c.Reconstruct()
 	for _, col := range c.columns {
 		if col.isFixed() {
 			elemLen := len(col.elemBuf)
