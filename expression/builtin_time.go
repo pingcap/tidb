@@ -2662,26 +2662,38 @@ func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, a
 	}
 
 	switch strings.ToUpper(unit) {
-	case "HOUR_MINUTE", "MINUTE_SECOND":
-		interval = strings.Replace(interval, ".", ":", -1)
-	case "YEAR_MONTH":
-		interval = strings.Replace(interval, ".", "-", -1)
-	case "DAY_HOUR":
-		interval = strings.Replace(interval, ".", " ", -1)
-	case "DAY_MINUTE":
-		interval = "0 " + strings.Replace(interval, ".", ":", -1)
-	case "DAY_SECOND":
-		interval = "0 00:" + strings.Replace(interval, ".", ":", -1)
-	case "DAY_MICROSECOND":
-		interval = "0 00:00:" + interval
-	case "HOUR_MICROSECOND":
-		interval = "00:00:" + interval
-	case "HOUR_SECOND":
-		interval = "00:" + strings.Replace(interval, ".", ":", -1)
-	case "MINUTE_MICROSECOND":
-		interval = "00:" + interval
-	case "SECOND_MICROSECOND":
-		/* keep interval as original decimal */
+	case "HOUR_MINUTE", "MINUTE_SECOND", "YEAR_MONTH", "DAY_HOUR", "DAY_MINUTE",
+		"DAY_SECOND", "DAY_MICROSECOND", "HOUR_MICROSECOND", "HOUR_SECOND", "MINUTE_MICROSECOND", "SECOND_MICROSECOND":
+		neg := false
+		if interval != "" && interval[0] == '-' {
+			neg = true
+			interval = interval[1:]
+		}
+		switch strings.ToUpper(unit) {
+		case "HOUR_MINUTE", "MINUTE_SECOND":
+			interval = strings.Replace(interval, ".", ":", -1)
+		case "YEAR_MONTH":
+			interval = strings.Replace(interval, ".", "-", -1)
+		case "DAY_HOUR":
+			interval = strings.Replace(interval, ".", " ", -1)
+		case "DAY_MINUTE":
+			interval = "0 " + strings.Replace(interval, ".", ":", -1)
+		case "DAY_SECOND":
+			interval = "0 00:" + strings.Replace(interval, ".", ":", -1)
+		case "DAY_MICROSECOND":
+			interval = "0 00:00:" + interval
+		case "HOUR_MICROSECOND":
+			interval = "00:00:" + interval
+		case "HOUR_SECOND":
+			interval = "00:" + strings.Replace(interval, ".", ":", -1)
+		case "MINUTE_MICROSECOND":
+			interval = "00:" + interval
+		case "SECOND_MICROSECOND":
+			/* keep interval as original decimal */
+		}
+		if neg {
+			interval = "-" + interval
+		}
 	case "SECOND":
 		// Decimal's EvalString is like %f format.
 		interval, isNull, err = args[1].EvalString(ctx, row)
@@ -4788,6 +4800,10 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(row chunk.Row) (types.Time, bo
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg1, err := types.ParseDuration(sc, s, types.GetFsp(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return types.ZeroDatetime, true, nil
+		}
 		return types.ZeroDatetime, true, err
 	}
 	result, err := arg0.Add(sc, arg1)
@@ -4862,8 +4878,13 @@ func (b *builtinAddDurationAndStringSig) evalDuration(row chunk.Row) (types.Dura
 	if !isDuration(s) {
 		return types.ZeroDuration, true, nil
 	}
-	arg1, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, types.GetFsp(s))
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1, err := types.ParseDuration(sc, s, types.GetFsp(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return types.ZeroDuration, true, nil
+		}
 		return types.ZeroDuration, true, err
 	}
 	result, err := arg0.Add(arg1)
@@ -4918,6 +4939,10 @@ func (b *builtinAddStringAndDurationSig) evalString(row chunk.Row) (result strin
 	if isDuration(arg0) {
 		result, err = strDurationAddDuration(sc, arg0, arg1)
 		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				return "", true, nil
+			}
 			return "", true, err
 		}
 		return result, false, nil
@@ -4958,11 +4983,19 @@ func (b *builtinAddStringAndStringSig) evalString(row chunk.Row) (result string,
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg1, err = types.ParseDuration(sc, arg1Str, getFsp4TimeAddSub(arg1Str))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return "", true, nil
+		}
 		return "", true, err
 	}
 	if isDuration(arg0) {
 		result, err = strDurationAddDuration(sc, arg0, arg1)
 		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				return "", true, nil
+			}
 			return "", true, err
 		}
 		return result, false, nil
@@ -5020,8 +5053,13 @@ func (b *builtinAddDateAndStringSig) evalString(row chunk.Row) (string, bool, er
 	if !isDuration(s) {
 		return "", true, nil
 	}
-	arg1, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, getFsp4TimeAddSub(s))
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1, err := types.ParseDuration(sc, s, getFsp4TimeAddSub(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return "", true, nil
+		}
 		return "", true, err
 	}
 	result, err := arg0.Add(arg1)
@@ -5693,6 +5731,10 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row chunk.Row) (types.Time, bo
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg1, err := types.ParseDuration(sc, s, types.GetFsp(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return types.ZeroDatetime, true, nil
+		}
 		return types.ZeroDatetime, true, err
 	}
 	arg1time, err := arg1.ConvertToTime(sc, mysql.TypeDatetime)
@@ -5749,6 +5791,10 @@ func (b *builtinSubStringAndDurationSig) evalString(row chunk.Row) (result strin
 	if isDuration(arg0) {
 		result, err = strDurationSubDuration(sc, arg0, arg1)
 		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				return "", true, nil
+			}
 			return "", true, err
 		}
 		return result, false, nil
@@ -5786,14 +5832,22 @@ func (b *builtinSubStringAndStringSig) evalString(row chunk.Row) (result string,
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	arg1, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, getFsp4TimeAddSub(s))
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1, err = types.ParseDuration(sc, s, getFsp4TimeAddSub(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return "", true, nil
+		}
 		return "", true, err
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
 	if isDuration(arg0) {
 		result, err = strDurationSubDuration(sc, arg0, arg1)
 		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				return "", true, nil
+			}
 			return "", true, err
 		}
 		return result, false, nil
@@ -5870,8 +5924,13 @@ func (b *builtinSubDurationAndStringSig) evalDuration(row chunk.Row) (types.Dura
 	if !isDuration(s) {
 		return types.ZeroDuration, true, nil
 	}
-	arg1, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, types.GetFsp(s))
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1, err := types.ParseDuration(sc, s, types.GetFsp(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return types.ZeroDuration, true, nil
+		}
 		return types.ZeroDuration, true, err
 	}
 	result, err := arg0.Sub(arg1)
@@ -5943,8 +6002,13 @@ func (b *builtinSubDateAndStringSig) evalString(row chunk.Row) (string, bool, er
 	if !isDuration(s) {
 		return "", true, nil
 	}
-	arg1, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, getFsp4TimeAddSub(s))
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1, err := types.ParseDuration(sc, s, getFsp4TimeAddSub(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return "", true, nil
+		}
 		return "", true, err
 	}
 	result, err := arg0.Sub(arg1)
