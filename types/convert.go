@@ -369,13 +369,20 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error)
 	return floatStrToIntStr(sc, floatPrefix, str)
 }
 
-// roundIntStr is to round int string base on the number following dot.
+// roundIntStr is to round a **valid int string** base on the number following dot.
 func roundIntStr(numNextDot byte, intStr string) string {
 	if numNextDot < '5' {
 		return intStr
 	}
 	retStr := []byte(intStr)
 	for i := len(intStr) - 1; i >= 0; i-- {
+		if !isDigit(intStr[i]) {
+			// because this is a valid int str,
+			// and intStr[i] is not digit, so intStr[i+1] must be a digit
+			retStr[i+1] = '1'
+			retStr = append(retStr, '0')
+			break
+		}
 		if retStr[i] != '9' {
 			retStr[i]++
 			break
@@ -432,6 +439,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		}
 		return intStr, nil
 	}
+	// intCnt and digits contain the prefix `+/-` if validFloat[0] is `+/-`
 	var intCnt int
 	digits := make([]byte, 0, len(validFloat))
 	if dotIdx == -1 {
@@ -457,7 +465,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	}
 	if intCnt <= 0 {
 		intStr = "0"
-		if intCnt == 0 && len(digits) > 0 {
+		if intCnt == 0 && len(digits) > 0 && isDigit(digits[0]) {
 			intStr = roundIntStr(digits[0], intStr)
 		}
 		return intStr, nil
