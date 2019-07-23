@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/pingcap/tidb/kv"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -79,7 +80,7 @@ func (r *RegionStore) clone() *RegionStore {
 	return &RegionStore{
 		workStoreIdx:      r.workStoreIdx,
 		stores:            r.stores,
-		nextFollowerStore: 0,
+		nextFollowerStore: rand.Uint32(),
 		followers:         r.followers,
 	}
 }
@@ -108,7 +109,7 @@ func (r *Region) init(c *RegionCache) {
 	rs := &RegionStore{
 		workStoreIdx:      0,
 		stores:            make([]*Store, 0, len(r.meta.Peers)),
-		nextFollowerStore: 0,
+		nextFollowerStore: rand.Uint32(),
 		followers:         make([]int32, 0, len(r.meta.Peers)-1),
 	}
 	for i, p := range r.meta.Peers {
