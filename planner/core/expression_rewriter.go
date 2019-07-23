@@ -623,7 +623,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
 		return v, true
 	}
-	np, err := er.buildSubquery(context.TODO(), subq)
+	np, err := er.buildSubquery(ctx, subq)
 	if err != nil {
 		er.err = err
 		return v, true
@@ -636,7 +636,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		}
 		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
 	} else {
-		physicalPlan, err := DoOptimize(context.TODO(), er.b.optFlag, np)
+		physicalPlan, err := DoOptimize(ctx, er.b.optFlag, np)
 		if err != nil {
 			er.err = err
 			return v, true
@@ -803,7 +803,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		}
 		return v, true
 	}
-	physicalPlan, err := DoOptimize(context.TODO(), er.b.optFlag, np)
+	physicalPlan, err := DoOptimize(ctx, er.b.optFlag, np)
 	if err != nil {
 		er.err = err
 		return v, true
