@@ -1003,7 +1003,7 @@ func buildTableRegionsSchema() *expression.Schema {
 }
 
 func buildSplitRegionsSchema() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
 	schema.Append(buildColumn("", "TOTAL_SPLIT_REGION", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "SCATTER_FINISH_RATIO", mysql.TypeDouble, 8))
 	return schema

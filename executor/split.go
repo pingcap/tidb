@@ -290,7 +290,7 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// splitTableRegion is used to split table regions.
 func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
 	s, ok := store.(kv.SplitableStore)
