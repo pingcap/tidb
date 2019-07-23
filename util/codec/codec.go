@@ -93,7 +93,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = append(b, uintFlag)
 			b, err = EncodeMySQLTime(sc, vals[i], mysql.TypeUnspecified, b)
 			if err != nil {
-				return nil, err
+				return b, err
 			}
 		case types.KindMysqlDuration:
 			// duration may have negative value, so we cannot use String to encode directly.
@@ -107,7 +107,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				var bin []byte
 				bin, err = dec.ToHashKey()
 				if err != nil {
-					return nil, errors.Trace(err)
+					return b, errors.Trace(err)
 				}
 				b = append(b, bin...)
 			} else {
@@ -140,7 +140,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 		case types.KindMaxValue:
 			b = append(b, maxFlag)
 		default:
-			return nil, errors.Errorf("unsupport encode type %d", vals[i].Kind())
+			return b, errors.Errorf("unsupport encode type %d", vals[i].Kind())
 		}
 	}
 
