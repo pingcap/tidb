@@ -299,8 +299,6 @@ func (p *basePhysicalPlan) SetChildren(children ...PhysicalPlan) {
 	p.children = children
 }
 
-<<<<<<< HEAD
-=======
 // SetChild implements LogicalPlan SetChild interface.
 func (p *baseLogicalPlan) SetChild(i int, child LogicalPlan) {
 	p.children[i] = child
@@ -311,7 +309,6 @@ func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 	p.children[i] = child
 }
 
->>>>>>> address comments
 func (p *basePlan) context() sessionctx.Context {
 	return p.ctx
 }
