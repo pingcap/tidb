@@ -300,7 +300,7 @@ func (s *testChunkSuite) TestChunkSizeControl(c *check.C) {
 }
 
 // newChunk creates a new chunk and initialize columns with element length.
-// 0 adds an varlen column, positive len add a fixed length column, negative len adds a interface column.
+// 0 adds an varlen Column, positive len add a fixed length Column, negative len adds a interface Column.
 func newChunk(elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
@@ -646,7 +646,7 @@ func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
 	// Test Chunk.PreAlloc.
 	for i := 0; i < srcChk.NumRows(); i++ {
 		c.Assert(destChk.NumRows(), check.Equals, i)
-		destChk.PreAlloc(srcChk.GetRow(i))
+		destChk.preAlloc(srcChk.GetRow(i))
 	}
 	for i, srcCol := range srcChk.columns {
 		destCol := destChk.columns[i]
@@ -673,7 +673,7 @@ func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
 
 	// Test Chunk.Insert.
 	for i := srcChk.NumRows() - 1; i >= 0; i-- {
-		destChk.Insert(i, srcChk.GetRow(i))
+		destChk.insert(i, srcChk.GetRow(i))
 	}
 	for i, srcCol := range srcChk.columns {
 		destCol := destChk.columns[i]
@@ -697,14 +697,14 @@ func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
 	startWg, endWg := &sync.WaitGroup{}, &sync.WaitGroup{}
 	startWg.Add(1)
 	for i := 0; i < srcChk.NumRows(); i++ {
-		destChk.PreAlloc(srcChk.GetRow(i))
+		destChk.preAlloc(srcChk.GetRow(i))
 		endWg.Add(1)
 		go func(rowIdx int) {
 			defer func() {
 				endWg.Done()
 			}()
 			startWg.Wait()
-			destChk.Insert(rowIdx, srcChk.GetRow(rowIdx))
+			destChk.insert(rowIdx, srcChk.GetRow(rowIdx))
 		}(i)
 	}
 	startWg.Done()
