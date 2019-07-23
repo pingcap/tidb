@@ -764,8 +764,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 }
 
 func resetStmtContext(ctx sessionctx.Context) {
-	ctx.GetSessionVars().StmtCtx.NowTs = time.Time{}
-	ctx.GetSessionVars().StmtCtx.SysTs = time.Time{}
+	ctx.GetSessionVars().StmtCtx.ResetNowTs()
 }
 
 func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
