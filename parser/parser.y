@@ -546,6 +546,8 @@ type OnDeleteUpdateDef struct {
 	tidbHJ		"TIDB_HJ"
 	tidbSMJ		"TIDB_SMJ"
 	tidbINLJ	"TIDB_INLJ"
+	tidbHASHAGG 	"TIDB_HASHAGG"
+	tidbSTREAMAGG	"TIDB_STREAMAGG" 
 	split		"SPLIT"
 	regions         "REGIONS"
 
@@ -3644,7 +3646,7 @@ UnReservedKeyword:
 
 TiDBKeyword:
  "ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ"
-| "TIDB_SMJ" | "TIDB_INLJ" | "SPLIT" | "OPTIMISTIC" | "PESSIMISTIC" | "REGIONS"
+| "TIDB_SMJ" | "TIDB_INLJ" | "TIDB_HASHAGG" | "TIDB_STREAMAGG" | "SPLIT" | "OPTIMISTIC" | "PESSIMISTIC" | "REGIONS"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
@@ -5905,6 +5907,14 @@ TableOptimizerHintOpt:
 |	tidbHJ '(' HintTableList ')'
 	{
 		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), Tables: $3.([]model.CIStr)}
+	}
+|	tidbHASHAGG '(' ')'
+	{
+		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1)}
+	}
+|	tidbSTREAMAGG '(' ')'
+	{
+		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1)}
 	}
 |	maxExecutionTime '(' NUM ')'
 	{

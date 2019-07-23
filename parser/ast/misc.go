@@ -2032,9 +2032,10 @@ type TableOptimizerHint struct {
 func (n *TableOptimizerHint) Restore(ctx *RestoreCtx) error {
 	ctx.WriteKeyWord(n.HintName.String())
 	ctx.WritePlain("(")
-	if n.HintName.L == "max_execution_time" {
+	switch n.HintName.L {
+	case "max_execution_time":
 		ctx.WritePlainf("%d", n.MaxExecutionTime)
-	} else {
+	case "tidb_hj", "tidb_smj", "tidb_inlj":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")
