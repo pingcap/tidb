@@ -49,10 +49,7 @@ type DDLExec struct {
 
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
 func (e *DDLExec) toErr(err error) error {
-	// Before the DDL job is ready, it encouters an error that may be due to the outdated schema information.
-	// After the DDL job is ready, the ErrInfoSchemaChanged error won't happen because we are getting the schema directly from storage.
-	// So we needn't to consider this condition.
-	// Here we distinguish the ErrInfoSchemaChanged error from other errors.
+	// The err may be cause by schema changed, here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
 	txn, err1 := e.ctx.Txn(true)
