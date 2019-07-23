@@ -19,15 +19,22 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
+
+var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
 
 // Chunk stores multiple rows of data in Apache Arrow format.
 // See https://arrow.apache.org/docs/memory_layout.html
 // Values are appended in compact format and can be directly accessed without decoding.
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 type Chunk struct {
+	// sel indicates which rows are selected.
+	// If it is nil, all rows are selected.
+	sel []int
+
 	columns []*Column
 	// numVirtualRows indicates the number of virtual rows, which have zero Column.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
@@ -165,14 +172,21 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 }
 
 // MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
-func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) {
+func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
+	if c.sel != nil || src.sel != nil {
+		return errors.New(msgErrSelNotNil)
+	}
 	c.columns[dstColIdx] = src.columns[srcColIdx]
+	return nil
 }
 
 // SwapColumn swaps Column "c.columns[colIdx]" with Column
 // "other.columns[otherIdx]". If there exists columns refer to the Column to be
 // swapped, we need to re-build the reference.
-func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
+func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) error {
+	if c.sel != nil || other.sel != nil {
+		return errors.New(msgErrSelNotNil)
+	}
 	// Find the leftmost Column of the reference which is the actual Column to
 	// be swapped.
 	for i := 0; i < colIdx; i++ {
@@ -210,10 +224,12 @@ func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
 	for _, i := range refColsIdx4Other {
 		other.MakeRef(otherIdx, i)
 	}
+	return nil
 }
 
 // SwapColumns swaps columns with another Chunk.
 func (c *Chunk) SwapColumns(other *Chunk) {
+	c.sel, other.sel = other.sel, c.sel
 	c.columns, other.columns = other.columns, c.columns
 	c.numVirtualRows, other.numVirtualRows = other.numVirtualRows, c.numVirtualRows
 }
@@ -227,6 +243,7 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
+	c.sel = nil
 	if c.columns == nil {
 		return
 	}
@@ -242,6 +259,10 @@ func (c *Chunk) CopyConstruct() *Chunk {
 	for i := range c.columns {
 		newChk.columns[i] = c.columns[i].copyConstruct()
 	}
+	if c.sel != nil {
+		newChk.sel = make([]int, len(c.sel))
+		copy(newChk.sel, c.sel)
+	}
 	return newChk
 }
 
@@ -249,6 +270,7 @@ func (c *Chunk) CopyConstruct() *Chunk {
 // The doubled capacity should not be larger than maxChunkSize.
 // TODO: this method will be used in following PR.
 func (c *Chunk) GrowAndReset(maxChunkSize int) {
+	c.sel = nil
 	if c.columns == nil {
 		return
 	}
@@ -284,6 +306,9 @@ func (c *Chunk) NumCols() int {
 
 // NumRows returns the number of rows in the chunk.
 func (c *Chunk) NumRows() int {
+	if c.sel != nil {
+		return len(c.sel)
+	}
 	if c.NumCols() == 0 {
 		return c.numVirtualRows
 	}
@@ -292,6 +317,16 @@ func (c *Chunk) NumRows() int {
 
 // GetRow gets the Row in the chunk with the row index.
 func (c *Chunk) GetRow(idx int) Row {
+	if c.sel != nil {
+		// mapping the logical RowIdx to the actual physical RowIdx;
+		// for example, if the Sel is [1, 5, 6], then
+		//	logical 0 -> physical 1,
+		//	logical 1 -> physical 5,
+		//	logical 2 -> physical 6.
+		// Then when we iterate this Chunk according to Row, only selected rows will be
+		// accessed while all filtered rows will be ignored.
+		return Row{c: c, idx: int(c.sel[idx])}
+	}
 	return Row{c: c, idx: idx}
 }
 
@@ -303,6 +338,7 @@ func (c *Chunk) AppendRow(row Row) {
 
 // AppendPartialRow appends a row to the chunk.
 func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
+	c.appendSel(colIdx)
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
 		chkCol.appendNullBitmap(!rowCol.IsNull(row.idx))
@@ -417,6 +453,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 			}
 		}
 		for i := begin; i < end; i++ {
+			c.appendSel(colID)
 			dst.appendNullBitmap(!src.IsNull(i))
 			dst.length++
 		}
@@ -426,6 +463,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 
 // TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
 func (c *Chunk) TruncateTo(numRows int) {
+	c.Reconstruct()
 	for _, col := range c.columns {
 		if col.isFixed() {
 			elemLen := len(col.elemBuf)
@@ -457,68 +495,87 @@ func (c *Chunk) TruncateTo(numRows int) {
 
 // AppendNull appends a null value to the chunk.
 func (c *Chunk) AppendNull(colIdx int) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendNull()
 }
 
 // AppendInt64 appends a int64 value to the chunk.
 func (c *Chunk) AppendInt64(colIdx int, i int64) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendInt64(i)
 }
 
 // AppendUint64 appends a uint64 value to the chunk.
 func (c *Chunk) AppendUint64(colIdx int, u uint64) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendUint64(u)
 }
 
 // AppendFloat32 appends a float32 value to the chunk.
 func (c *Chunk) AppendFloat32(colIdx int, f float32) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendFloat32(f)
 }
 
 // AppendFloat64 appends a float64 value to the chunk.
 func (c *Chunk) AppendFloat64(colIdx int, f float64) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendFloat64(f)
 }
 
 // AppendString appends a string value to the chunk.
 func (c *Chunk) AppendString(colIdx int, str string) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendString(str)
 }
 
 // AppendBytes appends a bytes value to the chunk.
 func (c *Chunk) AppendBytes(colIdx int, b []byte) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendBytes(b)
 }
 
 // AppendTime appends a Time value to the chunk.
 // TODO: change the time structure so it can be directly written to memory.
 func (c *Chunk) AppendTime(colIdx int, t types.Time) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendTime(t)
 }
 
 // AppendDuration appends a Duration value to the chunk.
 func (c *Chunk) AppendDuration(colIdx int, dur types.Duration) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendDuration(dur)
 }
 
 // AppendMyDecimal appends a MyDecimal value to the chunk.
 func (c *Chunk) AppendMyDecimal(colIdx int, dec *types.MyDecimal) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendMyDecimal(dec)
 }
 
 // AppendEnum appends an Enum value to the chunk.
 func (c *Chunk) AppendEnum(colIdx int, enum types.Enum) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].appendNameValue(enum.Name, enum.Value)
 }
 
 // AppendSet appends a Set value to the chunk.
 func (c *Chunk) AppendSet(colIdx int, set types.Set) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].appendNameValue(set.Name, set.Value)
 }
 
 // AppendJSON appends a JSON value to the chunk.
 func (c *Chunk) AppendJSON(colIdx int, j json.BinaryJSON) {
+	c.appendSel(colIdx)
 	c.columns[colIdx].AppendJSON(j)
+}
+
+func (c *Chunk) appendSel(colIdx int) {
+	if colIdx == 0 && c.sel != nil { // use column 0 as standard
+		c.sel = append(c.sel, c.columns[0].length)
+	}
 }
 
 // AppendDatum appends a datum into the chunk.
@@ -554,6 +611,28 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 // Column returns the specific column.
 func (c *Chunk) Column(colIdx int) *Column {
 	return c.columns[colIdx]
+}
+
+// Sel returns Sel of this Chunk.
+func (c *Chunk) Sel() []int {
+	return c.sel
+}
+
+// SetSel sets a Sel for this Chunk.
+func (c *Chunk) SetSel(sel []int) {
+	c.sel = sel
+}
+
+// Reconstruct removes all filtered rows in this Chunk.
+func (c *Chunk) Reconstruct() {
+	if c.sel == nil {
+		return
+	}
+	for _, col := range c.columns {
+		col.reconstruct(c.sel)
+	}
+	c.numVirtualRows = len(c.sel)
+	c.sel = nil
 }
 
 func writeTime(buf []byte, t types.Time) {

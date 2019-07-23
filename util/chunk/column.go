@@ -334,3 +334,55 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 	}
 	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
 }
+
+// reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
+func (c *Column) reconstruct(sel []int) {
+	if sel == nil {
+		return
+	}
+	nullCnt := 0
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		for dst, src := range sel {
+			idx := dst >> 3
+			pos := uint16(dst & 7)
+			if c.IsNull(src) {
+				nullCnt++
+				c.nullBitmap[idx] &= ^byte(1 << pos)
+			} else {
+				copy(c.data[dst*elemLen:dst*elemLen+elemLen], c.data[src*elemLen:src*elemLen+elemLen])
+				c.nullBitmap[idx] |= byte(1 << pos)
+			}
+		}
+		c.data = c.data[:len(sel)*elemLen]
+	} else {
+		tail := 0
+		for dst, src := range sel {
+			idx := dst >> 3
+			pos := uint(dst & 7)
+			if c.IsNull(src) {
+				nullCnt++
+				c.nullBitmap[idx] &= ^byte(1 << pos)
+				c.offsets[dst+1] = int64(tail)
+			} else {
+				start, end := c.offsets[src], c.offsets[src+1]
+				copy(c.data[tail:], c.data[start:end])
+				tail += int(end - start)
+				c.offsets[dst+1] = int64(tail)
+				c.nullBitmap[idx] |= byte(1 << pos)
+			}
+		}
+		c.data = c.data[:tail]
+		c.offsets = c.offsets[:len(sel)+1]
+	}
+	c.length = len(sel)
+	c.nullCount = nullCnt
+
+	// clean nullBitmap
+	c.nullBitmap = c.nullBitmap[:(len(sel)+7)>>3]
+	idx := len(sel) >> 3
+	if idx < len(c.nullBitmap) {
+		pos := uint16(len(sel) & 7)
+		c.nullBitmap[idx] &= byte((1 << pos) - 1)
+	}
+}
