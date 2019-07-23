@@ -334,3 +334,47 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 	}
 	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
 }
+
+func (c *Column) reconstruct(sel Sel) {
+	if sel == nil {
+		return
+	}
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		nullCnt := 0
+		for dst, src := range sel {
+			idx := dst >> 3
+			pos := uint16(dst & 7)
+			if c.IsNull(int(src)) {
+				nullCnt ++
+				c.nullBitmap[idx] &= ^byte(1 << pos)
+			} else {
+				copy(c.data[int(dst)*elemLen:int(dst)*elemLen+elemLen], c.data[int(src)*elemLen:int(src)*elemLen+elemLen])
+				c.nullBitmap[idx] |= byte(1 << pos)
+			}
+		}
+		c.length = len(sel)
+		c.nullCount = nullCnt
+		c.data = c.data[:c.length*elemLen]
+	} else {
+		nullCnt := 0
+		tail := 0
+		for dst, src := range sel {
+			idx := dst >> 3
+			pos := uint16(dst & 7)
+			if c.IsNull(int(src)) {
+				nullCnt ++
+				c.nullBitmap[idx] &= ^byte(1 << pos)
+			} else {
+				start, end := c.offsets[src], c.offsets[src+1]
+				copy(c.data[tail:], c.data[start:end])
+				tail += int(end - start)
+				c.offsets[dst+1] = int64(tail)
+			}
+		}
+		c.length = len(sel)
+		c.nullCount = nullCnt
+		c.data = c.data[:tail]
+		c.offsets = c.offsets[:c.length+1]
+	}
+}
