@@ -46,12 +46,12 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 	for _, outerCol := range outerPlan.Schema().Columns {
 		outerUniqueIDs.Insert(outerCol.UniqueID)
 	}
-	matched := o.isColsAllFromOuterTable(outerPlan, parentCols, outerUniqueIDs)
+	matched := o.isColsAllFromOuterTable(parentCols, outerUniqueIDs)
 	if !matched {
 		return p, false, nil
 	}
 	// outer join elimination with duplicate agnostic aggregate functions
-	matched = o.isColsAllFromOuterTable(outerPlan, aggCols, outerUniqueIDs)
+	matched = o.isColsAllFromOuterTable(aggCols, outerUniqueIDs)
 	if matched {
 		return outerPlan, true, nil
 	}
@@ -85,9 +85,9 @@ func (o *outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChild
 }
 
 // check whether the cols all from outer plan
-func (o *outerJoinEliminator) isColsAllFromOuterTable(outerPlan LogicalPlan, cols []*expression.Column, outerUniqueIDs set.Int64Set) bool {
+func (o *outerJoinEliminator) isColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs set.Int64Set) bool {
 	// There are two cases "return false" here:
-	// 1. If cols represents aggCols, then "len(cols) == 0" means no duplicate agnostic aggregate functions before.
+	// 1. If cols represents aggCols, then "len(cols) == 0" means not all aggregate functions are duplicate agnostic before.
 	// 2. If cols represents parentCols, then "len(cols) == 0" means no parent logical plan of this join plan.
 	if len(cols) == 0 {
 		return false
