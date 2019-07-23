@@ -28,8 +28,8 @@ import (
 // Values are appended in compact format and can be directly accessed without decoding.
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 type Chunk struct {
-	columns []*column
-	// numVirtualRows indicates the number of virtual rows, which have zero column.
+	columns []*Column
+	// numVirtualRows indicates the number of virtual rows, which have zero Column.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
 	// capacity indicates the max number of rows this chunk can hold.
@@ -56,7 +56,7 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 //  maxChunkSize: the max limit for the number of rows.
 func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	chk := &Chunk{
-		columns:  make([]*column, 0, len(fields)),
+		columns:  make([]*Column, 0, len(fields)),
 		capacity: mathutil.Min(cap, maxChunkSize),
 		// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
 		// like how we judge whether a chunk is full now, then the statement
@@ -66,12 +66,7 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	}
 
 	for _, f := range fields {
-		elemLen := getFixedLen(f)
-		if elemLen == varElemLen {
-			chk.columns = append(chk.columns, newVarLenColumn(chk.capacity, nil))
-		} else {
-			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, chk.capacity))
-		}
+		chk.columns = append(chk.columns, NewColumn(f, chk.capacity))
 	}
 
 	return chk
@@ -97,8 +92,8 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 
 // renewColumns creates the columns of a Chunk. The capacity of the newly
 // created columns is equal to cap.
-func renewColumns(oldCol []*column, cap int) []*column {
-	columns := make([]*column, 0, len(oldCol))
+func renewColumns(oldCol []*Column, cap int) []*Column {
+	columns := make([]*Column, 0, len(oldCol))
 	for _, col := range oldCol {
 		if col.isFixed() {
 			columns = append(columns, newFixedLenColumn(len(col.elemBuf), cap))
@@ -110,7 +105,7 @@ func renewColumns(oldCol []*column, cap int) []*column {
 }
 
 // MemoryUsage returns the total memory usage of a Chunk in B.
-// We ignore the size of column.length and column.nullCount
+// We ignore the size of Column.length and Column.nullCount
 // since they have little effect of the total memory usage.
 func (c *Chunk) MemoryUsage() (sum int64) {
 	for _, col := range c.columns {
@@ -120,17 +115,17 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 	return
 }
 
-// newFixedLenColumn creates a fixed length column with elemLen and initial data capacity.
-func newFixedLenColumn(elemLen, cap int) *column {
-	return &column{
+// newFixedLenColumn creates a fixed length Column with elemLen and initial data capacity.
+func newFixedLenColumn(elemLen, cap int) *Column {
+	return &Column{
 		elemBuf:    make([]byte, elemLen),
 		data:       make([]byte, 0, cap*elemLen),
 		nullBitmap: make([]byte, 0, cap>>3),
 	}
 }
 
-// newVarLenColumn creates a variable length column with initial data capacity.
-func newVarLenColumn(cap int, old *column) *column {
+// newVarLenColumn creates a variable length Column with initial data capacity.
+func newVarLenColumn(cap int, old *Column) *Column {
 	estimatedElemLen := 8
 	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
 	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
@@ -138,7 +133,7 @@ func newVarLenColumn(cap int, old *column) *column {
 	if old != nil && old.length != 0 {
 		estimatedElemLen = (len(old.data) + len(old.data)/8) / old.length
 	}
-	return &column{
+	return &Column{
 		offsets:    make([]int64, 1, cap+1),
 		data:       make([]byte, 0, cap*estimatedElemLen),
 		nullBitmap: make([]byte, 0, cap>>3),
@@ -164,7 +159,7 @@ func (c *Chunk) IsFull() bool {
 	return c.NumRows() >= c.requiredRows
 }
 
-// MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
+// MakeRef makes Column in "dstColIdx" reference to Column in "srcColIdx".
 func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
 }
@@ -174,11 +169,11 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) {
 	c.columns[dstColIdx] = src.columns[srcColIdx]
 }
 
-// SwapColumn swaps column "c.columns[colIdx]" with column
-// "other.columns[otherIdx]". If there exists columns refer to the column to be
+// SwapColumn swaps Column "c.columns[colIdx]" with Column
+// "other.columns[otherIdx]". If there exists columns refer to the Column to be
 // swapped, we need to re-build the reference.
 func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
-	// Find the leftmost column of the reference which is the actual column to
+	// Find the leftmost Column of the reference which is the actual Column to
 	// be swapped.
 	for i := 0; i < colIdx; i++ {
 		if c.columns[i] == c.columns[colIdx] {
@@ -191,7 +186,7 @@ func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
 		}
 	}
 
-	// Find the columns which refer to the actual column to be swapped.
+	// Find the columns which refer to the actual Column to be swapped.
 	refColsIdx := make([]int, 0, len(c.columns)-colIdx)
 	for i := colIdx; i < len(c.columns); i++ {
 		if c.columns[i] == c.columns[colIdx] {
@@ -224,7 +219,7 @@ func (c *Chunk) SwapColumns(other *Chunk) {
 }
 
 // SetNumVirtualRows sets the virtual row number for a Chunk.
-// It should only be used when there exists no column in the Chunk.
+// It should only be used when there exists no Column in the Chunk.
 func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 	c.numVirtualRows = numVirtualRows
 }
@@ -236,14 +231,14 @@ func (c *Chunk) Reset() {
 		return
 	}
 	for _, col := range c.columns {
-		col.reset()
+		col.Reset()
 	}
 	c.numVirtualRows = 0
 }
 
 // CopyConstruct creates a new chunk and copies this chunk's data into it.
 func (c *Chunk) CopyConstruct() *Chunk {
-	newChk := &Chunk{numVirtualRows: c.numVirtualRows, capacity: c.capacity, columns: make([]*column, len(c.columns))}
+	newChk := &Chunk{numVirtualRows: c.numVirtualRows, capacity: c.capacity, columns: make([]*Column, len(c.columns))}
 	for i := range c.columns {
 		newChk.columns[i] = c.columns[i].copyConstruct()
 	}
@@ -310,7 +305,7 @@ func (c *Chunk) AppendRow(row Row) {
 func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
-		chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+		chkCol.appendNullBitmap(!rowCol.IsNull(row.idx))
 		if rowCol.isFixed() {
 			elemLen := len(rowCol.elemBuf)
 			offset := row.idx * elemLen
@@ -338,7 +333,7 @@ func (c *Chunk) PreAlloc(row Row) (rowIdx uint32) {
 	rowIdx = uint32(c.NumRows())
 	for i, srcCol := range row.c.columns {
 		dstCol := c.columns[i]
-		dstCol.appendNullBitmap(!srcCol.isNull(row.idx))
+		dstCol.appendNullBitmap(!srcCol.IsNull(row.idx))
 		elemLen := len(srcCol.elemBuf)
 		if !srcCol.isFixed() {
 			elemLen = int(srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx])
@@ -421,7 +416,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 			}
 		}
 		for i := begin; i < end; i++ {
-			dst.appendNullBitmap(!src.isNull(i))
+			dst.appendNullBitmap(!src.IsNull(i))
 			dst.length++
 		}
 	}
@@ -439,7 +434,7 @@ func (c *Chunk) TruncateTo(numRows int) {
 			col.offsets = col.offsets[:numRows+1]
 		}
 		for i := numRows; i < col.length; i++ {
-			if col.isNull(i) {
+			if col.IsNull(i) {
 				col.nullCount--
 			}
 		}
@@ -461,53 +456,53 @@ func (c *Chunk) TruncateTo(numRows int) {
 
 // AppendNull appends a null value to the chunk.
 func (c *Chunk) AppendNull(colIdx int) {
-	c.columns[colIdx].appendNull()
+	c.columns[colIdx].AppendNull()
 }
 
 // AppendInt64 appends a int64 value to the chunk.
 func (c *Chunk) AppendInt64(colIdx int, i int64) {
-	c.columns[colIdx].appendInt64(i)
+	c.columns[colIdx].AppendInt64(i)
 }
 
 // AppendUint64 appends a uint64 value to the chunk.
 func (c *Chunk) AppendUint64(colIdx int, u uint64) {
-	c.columns[colIdx].appendUint64(u)
+	c.columns[colIdx].AppendUint64(u)
 }
 
 // AppendFloat32 appends a float32 value to the chunk.
 func (c *Chunk) AppendFloat32(colIdx int, f float32) {
-	c.columns[colIdx].appendFloat32(f)
+	c.columns[colIdx].AppendFloat32(f)
 }
 
 // AppendFloat64 appends a float64 value to the chunk.
 func (c *Chunk) AppendFloat64(colIdx int, f float64) {
-	c.columns[colIdx].appendFloat64(f)
+	c.columns[colIdx].AppendFloat64(f)
 }
 
 // AppendString appends a string value to the chunk.
 func (c *Chunk) AppendString(colIdx int, str string) {
-	c.columns[colIdx].appendString(str)
+	c.columns[colIdx].AppendString(str)
 }
 
 // AppendBytes appends a bytes value to the chunk.
 func (c *Chunk) AppendBytes(colIdx int, b []byte) {
-	c.columns[colIdx].appendBytes(b)
+	c.columns[colIdx].AppendBytes(b)
 }
 
 // AppendTime appends a Time value to the chunk.
 // TODO: change the time structure so it can be directly written to memory.
 func (c *Chunk) AppendTime(colIdx int, t types.Time) {
-	c.columns[colIdx].appendTime(t)
+	c.columns[colIdx].AppendTime(t)
 }
 
 // AppendDuration appends a Duration value to the chunk.
 func (c *Chunk) AppendDuration(colIdx int, dur types.Duration) {
-	c.columns[colIdx].appendDuration(dur)
+	c.columns[colIdx].AppendDuration(dur)
 }
 
 // AppendMyDecimal appends a MyDecimal value to the chunk.
 func (c *Chunk) AppendMyDecimal(colIdx int, dec *types.MyDecimal) {
-	c.columns[colIdx].appendMyDecimal(dec)
+	c.columns[colIdx].AppendMyDecimal(dec)
 }
 
 // AppendEnum appends an Enum value to the chunk.
@@ -522,7 +517,7 @@ func (c *Chunk) AppendSet(colIdx int, set types.Set) {
 
 // AppendJSON appends a JSON value to the chunk.
 func (c *Chunk) AppendJSON(colIdx int, j json.BinaryJSON) {
-	c.columns[colIdx].appendJSON(j)
+	c.columns[colIdx].AppendJSON(j)
 }
 
 // AppendDatum appends a datum into the chunk.
@@ -553,6 +548,11 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 	case types.KindMysqlJSON:
 		c.AppendJSON(colIdx, d.GetMysqlJSON())
 	}
+}
+
+// Column returns the specific column.
+func (c *Chunk) Column(colIdx int) *Column {
+	return c.columns[colIdx]
 }
 
 func writeTime(buf []byte, t types.Time) {
