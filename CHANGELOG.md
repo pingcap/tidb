@@ -16,7 +16,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Fix the data race issue caused by non-thread safe `rand.Rand` when using the `RAND` function [#11170](https://github.com/pingcap/tidb/pull/11170)
 * Fix the issue that the comparison result of integers and non-integers is incorrect in some cases [#11191](https://github.com/pingcap/tidb/pull/11191)
 * Support modifying the collation of a database or a table, but the character set of the database/table has to be UTF-8 or utf8mb4 [#11085](https://github.com/pingcap/tidb/pull/11085)
-* Fix the issue that the precision shown by the `SHOW CREATE TABLE` statement is incomplete when `CURRENT_TIMESTAMP` is used as the default value of the column and the float precision is specified [#11087](https://github.com/pingcap/tidb/pull/11087)
+* Fix the issue that the precision shown by the `SHOW CREATE TABLE` statement is incomplete when `CURRENT_TIMESTAMP` is used as the default value of the column and the decimal precision is specified [#11087](https://github.com/pingcap/tidb/pull/11087)
 
 ## [2.1.14] 2019-07-04
 * Fix wrong query results caused by column pruning in some cases [#11019](https://github.com/pingcap/tidb/pull/11019)
