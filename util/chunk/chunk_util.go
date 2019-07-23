@@ -13,20 +13,25 @@
 
 package chunk
 
+import "github.com/pingcap/errors"
+
 // CopySelectedJoinRows copies the selected joined rows from the source Chunk
 // to the destination Chunk.
 // Return true if at least one joined row was selected.
 //
 // NOTE: All the outer rows in the source Chunk should be the same.
-func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) bool {
+func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) (bool, error) {
 	if src.NumRows() == 0 {
-		return false
+		return false, nil
+	}
+	if src.sel != nil || dst.sel != nil {
+		return false, errors.New(msgErrSelNotNil)
 	}
 
 	numSelected := copySelectedInnerRows(innerColOffset, outerColOffset, src, selected, dst)
 	copyOuterRows(innerColOffset, outerColOffset, src, numSelected, dst)
 	dst.numVirtualRows += numSelected
-	return numSelected > 0
+	return numSelected > 0, nil
 }
 
 // copySelectedInnerRows copies the selected inner rows from the source Chunk
