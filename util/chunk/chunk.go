@@ -19,9 +19,12 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
+
+var ErrSelShouldBeNil = errors.New("Sel should be nil")
 
 // Chunk stores multiple rows of data in Apache Arrow format.
 // See https://arrow.apache.org/docs/memory_layout.html
@@ -42,17 +45,6 @@ type Chunk struct {
 
 	// requiredRows indicates how many rows the parent executor want.
 	requiredRows int
-}
-
-// assertNilSel is used to ensure that Sel is nil when functions not compatible with Sel are called.
-// Some existed methods are not easy to be compatible with Sel, so we use this assertion temporarily.
-// On the other hand, making all existed methods be compatible with Sel at the same time will result in a big PR,
-// which is hard to review.
-// In the next few PRs, we will make all methods be compatible with Sel and finally the assertion will be removed.
-func (c *Chunk) assertNilSel() {
-	if c.sel != nil {
-		panic("assert(Sel == nil)")
-	}
 }
 
 // Capacity constants.
@@ -180,18 +172,21 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 }
 
 // MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
-func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) {
-	src.assertNilSel()
-	c.assertNilSel() // it doesn't reference Sel.
+func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
+	if c.sel != nil || src.sel != nil {
+		return errors.Trace(ErrSelShouldBeNil)
+	}
 	c.columns[dstColIdx] = src.columns[srcColIdx]
+	return nil
 }
 
 // SwapColumn swaps Column "c.columns[colIdx]" with Column
 // "other.columns[otherIdx]". If there exists columns refer to the Column to be
 // swapped, we need to re-build the reference.
-func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
-	other.assertNilSel()
-	c.assertNilSel() // undefined operation to swap columns have Sel
+func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) error {
+	if c.sel != nil || other.sel != nil {
+		return errors.Trace(ErrSelShouldBeNil)
+	}
 	// Find the leftmost Column of the reference which is the actual Column to
 	// be swapped.
 	for i := 0; i < colIdx; i++ {
@@ -229,6 +224,7 @@ func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
 	for _, i := range refColsIdx4Other {
 		other.MakeRef(otherIdx, i)
 	}
+	return nil
 }
 
 // SwapColumns swaps columns with another Chunk.
@@ -466,8 +462,10 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 }
 
 // TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
-func (c *Chunk) TruncateTo(numRows int) {
-	c.assertNilSel()
+func (c *Chunk) TruncateTo(numRows int) error {
+	if c.sel != nil {
+		return errors.Trace(ErrSelShouldBeNil)
+	}
 	for _, col := range c.columns {
 		if col.isFixed() {
 			elemLen := len(col.elemBuf)
@@ -495,6 +493,7 @@ func (c *Chunk) TruncateTo(numRows int) {
 		}
 	}
 	c.numVirtualRows = numRows
+	return nil
 }
 
 // AppendNull appends a null value to the chunk.
