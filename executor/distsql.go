@@ -19,6 +19,7 @@ import (
 	"math"
 	"runtime"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -488,7 +489,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:      e.keepOrder,
 			handleIdx:      e.handleIdx,
 			isCheckOp:      e.isCheckOp,
-			memTracker: memory.NewTracker(stringutil.StringerStr(fmt.Sprintf("TableWorker_%v", i)),
+			memTracker: memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(i) }),
 				e.ctx.GetSessionVars().MemQuotaIndexLookupReader),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
