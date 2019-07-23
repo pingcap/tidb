@@ -14,22 +14,27 @@
 package chunk
 
 import (
+	"reflect"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/hack"
 )
 
-func (c *column) appendDuration(dur types.Duration) {
-	c.appendInt64(int64(dur.Duration))
+// AppendDuration appends a duration value into this Column.
+func (c *Column) AppendDuration(dur types.Duration) {
+	c.AppendInt64(int64(dur.Duration))
 }
 
-func (c *column) appendMyDecimal(dec *types.MyDecimal) {
+// AppendMyDecimal appends a MyDecimal value into this Column.
+func (c *Column) AppendMyDecimal(dec *types.MyDecimal) {
 	*(*types.MyDecimal)(unsafe.Pointer(&c.elemBuf[0])) = *dec
 	c.finishAppendFixed()
 }
 
-func (c *column) appendNameValue(name string, val uint64) {
+func (c *Column) appendNameValue(name string, val uint64) {
 	var buf [8]byte
 	*(*uint64)(unsafe.Pointer(&buf[0])) = val
 	c.data = append(c.data, buf[:]...)
@@ -37,13 +42,21 @@ func (c *column) appendNameValue(name string, val uint64) {
 	c.finishAppendVar()
 }
 
-func (c *column) appendJSON(j json.BinaryJSON) {
+// AppendJSON appends a BinaryJSON value into this Column.
+func (c *Column) AppendJSON(j json.BinaryJSON) {
 	c.data = append(c.data, j.TypeCode)
 	c.data = append(c.data, j.Value...)
 	c.finishAppendVar()
 }
 
-type column struct {
+// AppendSet appends a Set value into this Column.
+func (c *Column) AppendSet(set types.Set) {
+	c.appendNameValue(set.Name, set.Value)
+}
+
+// Column stores one column of data in Apache Arrow format.
+// See https://arrow.apache.org/docs/memory_layout.html
+type Column struct {
 	length     int
 	nullCount  int
 	nullBitmap []byte
@@ -52,11 +65,21 @@ type column struct {
 	elemBuf    []byte
 }
 
-func (c *column) isFixed() bool {
+// NewColumn creates a new column with the specific length and capacity.
+func NewColumn(ft *types.FieldType, cap int) *Column {
+	typeSize := getFixedLen(ft)
+	if typeSize == varElemLen {
+		return newVarLenColumn(cap, nil)
+	}
+	return newFixedLenColumn(typeSize, cap)
+}
+
+func (c *Column) isFixed() bool {
 	return c.elemBuf != nil
 }
 
-func (c *column) reset() {
+// Reset resets this Column.
+func (c *Column) Reset() {
 	c.length = 0
 	c.nullCount = 0
 	c.nullBitmap = c.nullBitmap[:0]
@@ -67,13 +90,14 @@ func (c *column) reset() {
 	c.data = c.data[:0]
 }
 
-func (c *column) isNull(rowIdx int) bool {
+// IsNull returns if this row is null.
+func (c *Column) IsNull(rowIdx int) bool {
 	nullByte := c.nullBitmap[rowIdx/8]
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
-func (c *column) copyConstruct() *column {
-	newCol := &column{length: c.length, nullCount: c.nullCount}
+func (c *Column) copyConstruct() *Column {
+	newCol := &Column{length: c.length, nullCount: c.nullCount}
 	newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
 	newCol.offsets = append(newCol.offsets, c.offsets...)
 	newCol.data = append(newCol.data, c.data...)
@@ -81,7 +105,7 @@ func (c *column) copyConstruct() *column {
 	return newCol
 }
 
-func (c *column) appendNullBitmap(notNull bool) {
+func (c *Column) appendNullBitmap(notNull bool) {
 	idx := c.length >> 3
 	if idx >= len(c.nullBitmap) {
 		c.nullBitmap = append(c.nullBitmap, 0)
@@ -97,7 +121,7 @@ func (c *column) appendNullBitmap(notNull bool) {
 // appendMultiSameNullBitmap appends multiple same bit value to `nullBitMap`.
 // notNull means not null.
 // num means the number of bits that should be appended.
-func (c *column) appendMultiSameNullBitmap(notNull bool, num int) {
+func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 	numNewBytes := ((c.length + num + 7) >> 3) - len(c.nullBitmap)
 	b := byte(0)
 	if notNull {
@@ -120,7 +144,8 @@ func (c *column) appendMultiSameNullBitmap(notNull bool, num int) {
 	c.nullBitmap[len(c.nullBitmap)-1] &= bitMask
 }
 
-func (c *column) appendNull() {
+// AppendNull appends a null value into this Column.
+func (c *Column) AppendNull() {
 	c.appendNullBitmap(false)
 	if c.isFixed() {
 		c.data = append(c.data, c.elemBuf...)
@@ -130,49 +155,157 @@ func (c *column) appendNull() {
 	c.length++
 }
 
-func (c *column) finishAppendFixed() {
+func (c *Column) finishAppendFixed() {
 	c.data = append(c.data, c.elemBuf...)
 	c.appendNullBitmap(true)
 	c.length++
 }
 
-func (c *column) appendInt64(i int64) {
+// AppendInt64 appends an int64 value into this Column.
+func (c *Column) AppendInt64(i int64) {
 	*(*int64)(unsafe.Pointer(&c.elemBuf[0])) = i
 	c.finishAppendFixed()
 }
 
-func (c *column) appendUint64(u uint64) {
+// AppendUint64 appends a uint64 value into this Column.
+func (c *Column) AppendUint64(u uint64) {
 	*(*uint64)(unsafe.Pointer(&c.elemBuf[0])) = u
 	c.finishAppendFixed()
 }
 
-func (c *column) appendFloat32(f float32) {
+// AppendFloat32 appends a float32 value into this Column.
+func (c *Column) AppendFloat32(f float32) {
 	*(*float32)(unsafe.Pointer(&c.elemBuf[0])) = f
 	c.finishAppendFixed()
 }
 
-func (c *column) appendFloat64(f float64) {
+// AppendFloat64 appends a float64 value into this Column.
+func (c *Column) AppendFloat64(f float64) {
 	*(*float64)(unsafe.Pointer(&c.elemBuf[0])) = f
 	c.finishAppendFixed()
 }
 
-func (c *column) finishAppendVar() {
+func (c *Column) finishAppendVar() {
 	c.appendNullBitmap(true)
 	c.offsets = append(c.offsets, int64(len(c.data)))
 	c.length++
 }
 
-func (c *column) appendString(str string) {
+// AppendString appends a string value into this Column.
+func (c *Column) AppendString(str string) {
 	c.data = append(c.data, str...)
 	c.finishAppendVar()
 }
 
-func (c *column) appendBytes(b []byte) {
+// AppendBytes appends a byte slice into this Column.
+func (c *Column) AppendBytes(b []byte) {
 	c.data = append(c.data, b...)
 	c.finishAppendVar()
 }
 
-func (c *column) appendTime(t types.Time) {
+// AppendTime appends a time value into this Column.
+func (c *Column) AppendTime(t types.Time) {
 	writeTime(c.elemBuf, t)
 	c.finishAppendFixed()
+}
+
+// AppendEnum appends a Enum value into this Column.
+func (c *Column) AppendEnum(enum types.Enum) {
+	c.appendNameValue(enum.Name, enum.Value)
+}
+
+const (
+	sizeInt64     = int(unsafe.Sizeof(int64(0)))
+	sizeUint64    = int(unsafe.Sizeof(uint64(0)))
+	sizeFloat32   = int(unsafe.Sizeof(float32(0)))
+	sizeFloat64   = int(unsafe.Sizeof(float64(0)))
+	sizeMyDecimal = int(unsafe.Sizeof(types.MyDecimal{}))
+)
+
+func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
+	header.Data = uintptr(unsafe.Pointer(&c.data[0]))
+	header.Len = c.length
+	header.Cap = cap(c.data) / typeSize
+}
+
+// Int64s returns an int64 slice stored in this Column.
+func (c *Column) Int64s() []int64 {
+	var res []int64
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeInt64)
+	return res
+}
+
+// Uint64s returns a uint64 slice stored in this Column.
+func (c *Column) Uint64s() []uint64 {
+	var res []uint64
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeUint64)
+	return res
+}
+
+// Float32s returns a float32 slice stored in this Column.
+func (c *Column) Float32s() []float32 {
+	var res []float32
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat32)
+	return res
+}
+
+// Float64s returns a float64 slice stored in this Column.
+func (c *Column) Float64s() []float64 {
+	var res []float64
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat64)
+	return res
+}
+
+// Decimals returns a MyDecimal slice stored in this Column.
+func (c *Column) Decimals() []types.MyDecimal {
+	var res []types.MyDecimal
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeMyDecimal)
+	return res
+}
+
+// GetString returns the string in the specific row.
+func (c *Column) GetString(rowID int) string {
+	return string(hack.String(c.data[c.offsets[rowID]:c.offsets[rowID+1]]))
+}
+
+// GetJSON returns the JSON in the specific row.
+func (c *Column) GetJSON(rowID int) json.BinaryJSON {
+	start := c.offsets[rowID]
+	return json.BinaryJSON{TypeCode: c.data[start], Value: c.data[start+1 : c.offsets[rowID+1]]}
+}
+
+// GetBytes returns the byte slice in the specific row.
+func (c *Column) GetBytes(rowID int) []byte {
+	return c.data[c.offsets[rowID]:c.offsets[rowID+1]]
+}
+
+// GetEnum returns the Enum in the specific row.
+func (c *Column) GetEnum(rowID int) types.Enum {
+	name, val := c.getNameValue(rowID)
+	return types.Enum{Name: name, Value: val}
+}
+
+// GetSet returns the Set in the specific row.
+func (c *Column) GetSet(rowID int) types.Set {
+	name, val := c.getNameValue(rowID)
+	return types.Set{Name: name, Value: val}
+}
+
+// GetTime returns the Time in the specific row.
+func (c *Column) GetTime(rowID int) types.Time {
+	return readTime(c.data[rowID*16:])
+}
+
+// GetDuration returns the Duration in the specific row.
+func (c *Column) GetDuration(rowID int, fillFsp int) types.Duration {
+	dur := *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
+	return types.Duration{Duration: time.Duration(dur), Fsp: fillFsp}
+}
+
+func (c *Column) getNameValue(rowID int) (string, uint64) {
+	start, end := c.offsets[rowID], c.offsets[rowID+1]
+	if start == end {
+		return "", 0
+	}
+	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
 }
