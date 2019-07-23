@@ -2664,10 +2664,8 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	return job, nil
 }
 
-// checkColumnWithIndexConstraint uses to check the related index constrain of the modified column.
-// index has a max prefix length constrain. eg: a varchar(100), index idx(a), then if modify column a to a varchar(4000),
 // checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.
-// index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
+// Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
 // will cause index idx to break the max-prefix-length constraint.
 func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
 	var columns []*model.ColumnInfo
