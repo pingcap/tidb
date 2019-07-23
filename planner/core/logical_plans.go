@@ -358,12 +358,12 @@ type DataSource struct {
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
 	handleCol *expression.Column
-	// tblCols contains the original columns of table before being pruned, and it
+	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
-	tblCols []*expression.Column
-	// tblColHists contains the Histogram of all original table columns,
+	TblCols []*expression.Column
+	// TblColHists contains the Histogram of all original table columns,
 	// it is converted from statisticTable, and used for IO/network cost estimating.
-	tblColHists *statistics.HistColl
+	TblColHists *statistics.HistColl
 }
 
 // accessPath indicates the way we access a table: by using single index, or by using multiple indexes,

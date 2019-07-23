@@ -51,7 +51,7 @@ type copTask struct {
 	// In double read case, it may output one more column for handle(row id).
 	// We need to prune it, so we add a project do this.
 	doubleReadNeedProj bool
-	// tableStats stores the original stats of DataSource, it is used to get
+	// tblColHists stores the original stats of DataSource, it is used to get
 	// average row width when computing network cost.
 	tblColHists *statistics.HistColl
 	// tblCols stores the original columns of DataSource before being pruned, it
