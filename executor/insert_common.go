@@ -526,7 +526,7 @@ func getAutoRecordID(d types.Datum, target *types.FieldType) (int64, error) {
 	return recordID, nil
 }
 
-func (e *InsertValues) handleWarning(err error) {
+func (e *InsertValues) handleWarning(err error, logInfo string) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	sc.AppendWarning(err)
 	logutil.Logger(context.Background()).Warn(logInfo)
