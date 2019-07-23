@@ -131,3 +131,46 @@ CREATE TABLE `tbl_008` (`a` int, `b` int);
 CREATE TABLE `tbl_009` (`a` int, `b` int);
 
 explain select sum(a) from (select * from tbl_001 union all select * from tbl_002 union all select * from tbl_003 union all select * from tbl_004 union all select * from tbl_005 union all select * from tbl_006 union all select * from tbl_007 union all select * from tbl_008 union all select * from tbl_009) x group by b;
+
+CREATE TABLE org_department (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  ctx int(11) DEFAULT '0' COMMENT 'organization id',
+  name varchar(128) DEFAULT NULL,
+  left_value int(11) DEFAULT NULL,
+  right_value int(11) DEFAULT NULL,
+  depth int(11) DEFAULT NULL,
+  leader_id bigint(20) DEFAULT NULL,
+  status int(11) DEFAULT '1000',
+  created_on datetime DEFAULT NULL,
+  updated_on datetime DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY org_department_id_uindex (id),
+  KEY org_department_leader_id_index (leader_id),
+  KEY org_department_ctx_index (ctx)
+);
+CREATE TABLE org_position (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  ctx int(11) DEFAULT NULL,
+  name varchar(128) DEFAULT NULL,
+  left_value int(11) DEFAULT NULL,
+  right_value int(11) DEFAULT NULL,
+  depth int(11) DEFAULT NULL,
+  department_id int(11) DEFAULT NULL,
+  status int(2) DEFAULT NULL,
+  created_on datetime DEFAULT NULL,
+  updated_on datetime DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY org_position_id_uindex (id),
+  KEY org_position_department_id_index (department_id)
+) ENGINE=InnoDB AUTO_INCREMENT=22 DEFAULT CHARSET=utf8;
+  CREATE TABLE org_employee_position (
+  hotel_id int(11) DEFAULT NULL,
+  user_id bigint(20) DEFAULT NULL,
+  position_id int(11) DEFAULT NULL,
+  status int(11) DEFAULT NULL,
+  created_on datetime DEFAULT NULL,
+  updated_on datetime DEFAULT NULL,
+  UNIQUE KEY org_employee_position_pk (hotel_id,user_id,position_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+explain SELECT d.id, d.ctx, d.name, d.left_value, d.right_value, d.depth, d.leader_id, d.status, d.created_on, d.updated_on FROM org_department AS d LEFT JOIN org_position AS p ON p.department_id = d.id AND p.status = 1000 LEFT JOIN org_employee_position AS ep ON ep.position_id = p.id AND ep.status = 1000 WHERE (d.ctx = 1 AND (ep.user_id = 62 OR d.id = 20 OR d.id = 20) AND d.status = 1000) GROUP BY d.id ORDER BY d.left_value;
