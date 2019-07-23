@@ -353,7 +353,7 @@ func (c *Column) reconstruct(sel Sel) {
 				c.nullBitmap[idx] |= byte(1 << pos)
 			}
 		}
-		c.data = c.data[:c.length*elemLen]
+		c.data = c.data[:len(sel)*elemLen]
 	} else {
 		tail := 0
 		for dst, src := range sel {
@@ -362,6 +362,7 @@ func (c *Column) reconstruct(sel Sel) {
 			if c.IsNull(int(src)) {
 				nullCnt ++
 				c.nullBitmap[idx] &= ^byte(1 << pos)
+				c.offsets[dst+1] = int64(tail)
 			} else {
 				start, end := c.offsets[src], c.offsets[src+1]
 				copy(c.data[tail:], c.data[start:end])
@@ -371,7 +372,7 @@ func (c *Column) reconstruct(sel Sel) {
 			}
 		}
 		c.data = c.data[:tail]
-		c.offsets = c.offsets[:c.length+1]
+		c.offsets = c.offsets[:len(sel)+1]
 	}
 	c.length = len(sel)
 	c.nullCount = nullCnt
