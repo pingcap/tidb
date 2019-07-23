@@ -29,7 +29,7 @@ import (
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 type Chunk struct {
 	// sel indicates which rows are selected.
-	// if it is nil, all rows are selected.
+	// If it is nil, all rows are selected.
 	sel []int16
 
 	columns []*Column
@@ -44,6 +44,11 @@ type Chunk struct {
 	requiredRows int
 }
 
+// assertNilSel is used to ensure that Sel is nil when functions not compatible with Sel are called.
+// Some existed methods are not easy to be compatible with Sel, so we use this assertion temporarily.
+// On the other hand, making all existed methods be compatible with Sel at the same time will result in a big PR,
+// which is hard to review.
+// In the next few PRs, we will make all methods be compatible with Sel and finally the assertion will be removed.
 func (c *Chunk) assertNilSel() {
 	if c.sel != nil {
 		panic("assert(Sel == nil)")
@@ -317,7 +322,13 @@ func (c *Chunk) NumRows() int {
 // GetRow gets the Row in the chunk with the row index.
 func (c *Chunk) GetRow(idx int) Row {
 	if c.sel != nil {
-		// consistent with NumRows: for i := 0; i < c.NumRows(); i++ { r := c.GetRow(i) }
+		// mapping the logical RowIdx to the actual physical RowIdx;
+		// for example, if the Sel is [1, 5, 6], then
+		//	logical 0 -> physical 1,
+		//	logical 1 -> physical 5,
+		//	logical 2 -> physical 6.
+		// Then when we iterate this Chunk according to Row, only selected rows will be
+		// accessed while all filtered rows will be ignored.
 		return Row{c: c, idx: int(c.sel[idx])}
 	}
 	return Row{c: c, idx: idx}
