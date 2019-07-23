@@ -3263,8 +3263,8 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	var indexInfo *model.IndexInfo
-	if indexInfo = t.Meta().FindIndexByName(indexName.L); indexInfo == nil {
+	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	if indexInfo == nil {
 		err = ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		if ifExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
