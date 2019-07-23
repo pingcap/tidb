@@ -255,6 +255,7 @@ func (s *testExpressionRewriterSuite) TestPatternLikeToExpression(c *C) {
 	tk.MustQuery("select 0 like 'a string';").Check(testkit.Rows("0"))
 	tk.MustQuery("select 0.0 like 'a string';").Check(testkit.Rows("0"))
 	tk.MustQuery("select 0 like '0.00';").Check(testkit.Rows("0"))
+	tk.MustQuery("select cast(\"2011-5-3\" as datetime) like \"2011-05-03\";").Check(testkit.Rows("0"))
 	tk.MustQuery("select 1 like '1';").Check(testkit.Rows("1"))
 	tk.MustQuery("select 0 like '0';").Check(testkit.Rows("1"))
 	tk.MustQuery("select 0.00 like '0.00';").Check(testkit.Rows("1"))

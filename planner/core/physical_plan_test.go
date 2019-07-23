@@ -1162,11 +1162,6 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  `select a from t where c_str like 123`,
 			best: "IndexReader(Index(t.c_d_e_str)[[\"123\",\"123\"]])->Projection",
 		},
-		// c is type int which will be added cast to specified type when building function signature, no index can be used.
-		{
-			sql:  `select a from t where c like '1'`,
-			best: "TableReader(Table(t))->Sel([like(cast(test.t.c), 1, 92)])->Projection",
-		},
 		{
 			sql:  `select a from t where c = 1.9 and d > 3`,
 			best: "Dual",
