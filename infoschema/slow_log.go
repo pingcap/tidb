@@ -15,6 +15,7 @@ package infoschema
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -61,7 +62,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
 	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
-	{variable.SlowLogQuerySQLStr, mysql.TypeVarchar, 4096, 0, nil, nil},
+	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, 4294967295, 0, nil, nil},
 }
 
 func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
@@ -328,6 +329,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		}
 		st.succ = succ
 	case variable.SlowLogQuerySQLStr:
+		fmt.Printf("\n\n----------------------------\n%v\n\n", value)
 		st.sql = value
 	}
 	return nil
