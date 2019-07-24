@@ -2028,6 +2028,15 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "")
 	c.Check(fields[0].TableAsName.L, Equals, "")
 	c.Check(fields[0].DBName.L, Equals, "")
+	rs.Close()
+
+	rs, err = tk.Exec("select if(1,c,c) from t;")
+	c.Check(err, IsNil)
+	fields = rs.Fields()
+	c.Assert(fields[0].Column.Name.L, Equals, "if(1,c,c)")
+	// It's a compatibility issue. Should be empty instead.
+	c.Assert(fields[0].ColumnAsName.L, Equals, "if(1,c,c)")
+	rs.Close()
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
