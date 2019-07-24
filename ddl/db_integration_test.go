@@ -16,7 +16,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -811,19 +809,20 @@ func (s *testIntegrationSuite) TestDropAutoIncrementIndex(c *C) {
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
 
-	assertErrorCode := func(sql string, errCodeStr int) {
+	assertErrMsg := func(sql string) {
 		_, err := tk.Exec(sql)
 		c.Assert(err, NotNil)
-		c.Assert(err.Error()[:len(strconv.Itoa(errCodeStr))], Equals, errCodeStr)
+		errMsg := "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key"
+		c.Assert(err.Error(), Equals, errMsg)
 	}
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int auto_increment, unique key (a))")
 	dropIndexSQL := "alter table t1 drop index a"
-	assertErrorCode(dropIndexSQL, mysql.ErrWrongAutoKey)
+	assertErrMsg(dropIndexSQL)
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
 	dropIndexSQL = "alter table t1 drop index a"
-	assertErrorCode(dropIndexSQL, mysql.ErrWrongAutoKey)
+	assertErrMsg(dropIndexSQL)
 }
