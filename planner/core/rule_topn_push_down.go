@@ -167,3 +167,7 @@ func (p *LogicalJoin) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	}
 	return p.self
 }
+
+func (*pushDownTopNOptimizer) name() string {
+	return "topn_push_down"
+}

@@ -220,3 +220,7 @@ func (ds *DataSource) buildKeyInfo() {
 		}
 	}
 }
+
+func (*buildKeySolver) name() string {
+	return "build_keys"
+}

@@ -414,3 +414,7 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 	}
 	return parentUsedCols
 }
+
+func (*columnPruner) name() string {
+	return "column_prune"
+}

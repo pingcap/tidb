@@ -156,3 +156,7 @@ func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan) (Lo
 	}
 	return p, nil
 }
+
+func (*aggregationEliminator) name() string {
+	return "aggregation_eliminate"
+}
