@@ -448,16 +448,19 @@ type Update struct {
 	OrderedList []*expression.Assignment
 
 	SelectPlan PhysicalPlan
+
+	TblColPosInfos TblColPosInfoSlice
 }
 
 // Delete represents a delete plan.
 type Delete struct {
 	baseSchemaProducer
 
-	Tables       []*ast.TableName
 	IsMultiTable bool
 
 	SelectPlan PhysicalPlan
+
+	TblColPosInfos TblColPosInfoSlice
 }
 
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.
