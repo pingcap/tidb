@@ -1604,7 +1604,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		},
 		{
 			sql:  "select /*+ TIDB_STREAMAGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-			best: "",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->Sort->StreamAgg",
 		},
 	}
 	for i, test := range tests {
