@@ -63,25 +63,28 @@ type Column struct {
 	offsets    []int64
 	data       []byte
 	elemBuf    []byte
-	ft         types.FieldType
 }
 
 // NewColumn creates a new column with the specific length and capacity.
 func NewColumn(ft *types.FieldType, cap int) *Column {
+	return newColumn(getFixedLen(ft), cap)
+}
+
+func newColumn(typeSize, cap int) *Column {
 	var col *Column
-	typeSize := getFixedLen(ft)
 	if typeSize == varElemLen {
 		col = newVarLenColumn(cap, nil)
 	} else {
 		col = newFixedLenColumn(typeSize, cap)
 	}
-	col.ft = *ft
 	return col
 }
 
-// Type returns the type of data stored in this Column.
-func (c *Column) Type() *types.FieldType {
-	return &c.ft
+func (c *Column) typeSize() int {
+	if len(c.elemBuf) > 0 {
+		return len(c.elemBuf)
+	}
+	return varElemLen
 }
 
 func (c *Column) isFixed() bool {
@@ -112,14 +115,13 @@ func (c *Column) CopyConstruct(dst *Column) *Column {
 	if dst != nil {
 		dst.length = c.length
 		dst.nullCount = c.nullCount
-		dst.ft = c.ft
 		dst.nullBitmap = append(dst.nullBitmap[:0], c.nullBitmap...)
 		dst.offsets = append(dst.offsets[:0], c.offsets...)
 		dst.data = append(dst.data[:0], c.data...)
 		dst.elemBuf = append(dst.elemBuf[:0], c.elemBuf...)
 		return dst
 	}
-	newCol := &Column{length: c.length, nullCount: c.nullCount, ft: c.ft}
+	newCol := &Column{length: c.length, nullCount: c.nullCount}
 	newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
 	newCol.offsets = append(newCol.offsets, c.offsets...)
 	newCol.data = append(newCol.data, c.data...)
@@ -417,7 +419,7 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 	}
 
 	if dst == nil {
-		dst = NewColumn(c.Type(), len(sel))
+		dst = newColumn(c.typeSize(), len(sel))
 	} else {
 		dst.Reset()
 	}

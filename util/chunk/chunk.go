@@ -102,7 +102,7 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 func renewColumns(oldCol []*Column, cap int) []*Column {
 	columns := make([]*Column, 0, len(oldCol))
 	for _, col := range oldCol {
-		columns = append(columns, NewColumn(col.Type(), cap))
+		columns = append(columns, newColumn(col.typeSize(), cap))
 	}
 	return columns
 }
