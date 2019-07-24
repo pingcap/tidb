@@ -220,3 +220,7 @@ func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column
 		resolveColumnAndReplace(item.Col, replace)
 	}
 }
+
+func (*projectionEliminater) name() string {
+	return "projection_eliminate"
+}
