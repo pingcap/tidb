@@ -255,3 +255,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	p.SetChildren(newChildren...)
 	return p, nil
 }
+
+func (*decorrelateSolver) name() string {
+	return "decorrelate"
+}
