@@ -1,0 +1,667 @@
+Running in native mode.
+ok  	github.com/pingcap/tidb/bindinfo	0.288s	coverage: 74.3% of statements
+ok  	github.com/pingcap/tidb/config	0.075s	coverage: 60.8% of statements
+ok  	github.com/pingcap/tidb/ddl	10.798s	coverage: 84.6% of statements
+ok  	github.com/pingcap/tidb/ddl/util	0.440s	coverage: 54.5% of statements
+ok  	github.com/pingcap/tidb/distsql	0.032s	coverage: 87.2% of statements
+ok  	github.com/pingcap/tidb/domain	0.970s	coverage: 80.7% of statements
+ok  	github.com/pingcap/tidb/executor	17.907s	coverage: 82.0% of statements
+ok  	github.com/pingcap/tidb/executor/aggfuncs	0.098s	coverage: 87.6% of statements
+ok  	github.com/pingcap/tidb/expression	6.258s	coverage: 87.5% of statements
+ok  	github.com/pingcap/tidb/expression/aggregation	0.033s	coverage: 53.3% of statements
+ok  	github.com/pingcap/tidb/infoschema	0.624s	coverage: 73.2% of statements
+ok  	github.com/pingcap/tidb/infoschema/perfschema	0.143s	coverage: 77.1% of statements
+ok  	github.com/pingcap/tidb/kv	0.196s	coverage: 87.2% of statements
+?   	github.com/pingcap/tidb/lock	[no test files]
+ok  	github.com/pingcap/tidb/meta	0.034s	coverage: 86.0% of statements
+ok  	github.com/pingcap/tidb/meta/autoid	0.137s	coverage: 91.4% of statements
+ok  	github.com/pingcap/tidb/metrics	(cached)	coverage: 100.0% of statements
+
+----------------------------------------------------------------------
+FAIL: fail_test.go:46: testSuite.SetUpSuite
+
+fail_test.go:48:
+    c.Assert(err, IsNil)
+... value *net.OpError = &net.OpError{Op:"listen", Net:"unix", Source:net.Addr(nil), Addr:(*net.UnixAddr)(0xc0002bed40), Err:(*os.SyscallError)(0xc0002bed60)} ("listen unix new_session:12379: bind: address already in use")
+
+
+----------------------------------------------------------------------
+MISS: fail_test.go:65: testSuite.TestFailNewSession
+OOPS: 0 passed, 1 FAILED, 1 MISSED
+--- FAIL: TestT (0.00s)
+2019-08-07 12:27:02.217240 I | integration: launching 8346285800098754673 (unix://localhost:83462858000987546730)
+2019-08-07 12:27:02.301366 I | etcdserver: name = 8346285800098754673
+2019-08-07 12:27:02.301380 I | etcdserver: data dir = /var/folders/rn/4x2_zgxx7qn4lg21xblgvh000000gn/T/etcd614712369
+2019-08-07 12:27:02.301385 I | etcdserver: member dir = /var/folders/rn/4x2_zgxx7qn4lg21xblgvh000000gn/T/etcd614712369/member
+2019-08-07 12:27:02.301390 I | etcdserver: heartbeat = 10ms
+2019-08-07 12:27:02.301393 I | etcdserver: election = 100ms
+2019-08-07 12:27:02.301397 I | etcdserver: snapshot count = 0
+2019-08-07 12:27:02.301406 I | etcdserver: advertise client URLs = unix://127.0.0.1:2100270546
+2019-08-07 12:27:02.301412 I | etcdserver: initial advertise peer URLs = unix://127.0.0.1:2100170546
+2019-08-07 12:27:02.301422 I | etcdserver: initial cluster = 8346285800098754673=unix://127.0.0.1:2100170546
+2019-08-07 12:27:02.371726 I | etcdserver: starting member df8b0e5cf0e0a89b in cluster 18cf93bcbb9afce7
+2019-08-07 12:27:02.371771 I | raft: df8b0e5cf0e0a89b became follower at term 0
+2019-08-07 12:27:02.371791 I | raft: newRaft df8b0e5cf0e0a89b [peers: [], term: 0, commit: 0, applied: 0, lastindex: 0, lastterm: 0]
+2019-08-07 12:27:02.371798 I | raft: df8b0e5cf0e0a89b became follower at term 1
+2019-08-07 12:27:02.416432 W | auth: simple token is not cryptographically signed
+2019-08-07 12:27:02.437699 I | etcdserver: set snapshot count to default 100000
+2019-08-07 12:27:02.437720 I | etcdserver: starting server... [version: 3.3.13, cluster version: to_be_decided]
+2019-08-07 12:27:02.437821 E | etcdserver: cannot monitor file descriptor usage (cannot get FDUsage on darwin)
+2019-08-07 12:27:02.437842 I | etcdserver: df8b0e5cf0e0a89b as single-node; fast-forwarding 9 ticks (election ticks 10)
+2019-08-07 12:27:02.438452 I | etcdserver/membership: added member df8b0e5cf0e0a89b [unix://127.0.0.1:2100170546] to cluster 18cf93bcbb9afce7
+2019-08-07 12:27:02.440655 I | integration: launched 8346285800098754673 (unix://localhost:83462858000987546730)
+2019-08-07 12:27:02.506384 I | raft: df8b0e5cf0e0a89b is starting a new election at term 1
+2019-08-07 12:27:02.506461 I | raft: df8b0e5cf0e0a89b became candidate at term 2
+2019-08-07 12:27:02.506483 I | raft: df8b0e5cf0e0a89b received MsgVoteResp from df8b0e5cf0e0a89b at term 2
+2019-08-07 12:27:02.506493 I | raft: df8b0e5cf0e0a89b became leader at term 2
+2019-08-07 12:27:02.506498 I | raft: raft.node: df8b0e5cf0e0a89b elected leader df8b0e5cf0e0a89b at term 2
+2019-08-07 12:27:02.506620 I | etcdserver: setting up the initial cluster version to 3.3
+2019-08-07 12:27:02.506676 I | etcdserver: published {Name:8346285800098754673 ClientURLs:[unix://127.0.0.1:2100270546]} to cluster 18cf93bcbb9afce7
+2019-08-07 12:27:02.547291 N | etcdserver/membership: set the initial cluster version to 3.3
+2019-08-07 12:27:02.558185 I | etcdserver/api: enabled capabilities for version 3.3
+[2019/08/07 12:27:02.558 +08:00] [INFO] [ddl.go:421] ["[ddl] start DDL"] [ID=83a40f7d-fba5-47c9-9aeb-cd102188863b] [runWorker=true]
+[2019/08/07 12:27:02.559 +08:00] [INFO] [ddl_worker.go:119] ["[ddl] start DDL worker"] [worker="worker 1, tp general"]
+[2019/08/07 12:27:02.559 +08:00] [INFO] [ddl_worker.go:119] ["[ddl] start DDL worker"] [worker="worker 2, tp add index"]
+[2019/08/07 12:27:02.570 +08:00] [INFO] [manager.go:316] ["get owner"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 83a40f7d-fba5-47c9-9aeb-cd102188863b"] [ownerID=83a40f7d-fba5-47c9-9aeb-cd102188863b]
+[2019/08/07 12:27:02.581 +08:00] [WARN] [manager.go:281] ["is not the owner"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 83a40f7d-fba5-47c9-9aeb-cd102188863b"]
+[2019/08/07 12:27:02.581 +08:00] [INFO] [manager.go:239] ["etcd session is done, creates a new one"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 83a40f7d-fba5-47c9-9aeb-cd102188863b"]
+[2019/08/07 12:27:02.581 +08:00] [INFO] [manager.go:243] ["break campaign loop, NewSession failed"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 83a40f7d-fba5-47c9-9aeb-cd102188863b"] [error="context canceled"] [errorVerbose="context canceled\ngithub.com/pingcap/errors.AddStack\n\t/Users/liuzhuomin/.gvm/pkgsets/go1.12/global/pkg/mod/github.com/pingcap/errors@v0.11.4/errors.go:174\ngithub.com/pingcap/errors.Trace\n\t/Users/liuzhuomin/.gvm/pkgsets/go1.12/global/pkg/mod/github.com/pingcap/errors@v0.11.4/juju_adaptor.go:15\ngithub.com/pingcap/tidb/owner.contextDone\n\t/Users/liuzhuomin/go/src/github.com/pingcap/tidb/owner/manager.go:371\ngithub.com/pingcap/tidb/owner.NewSession\n\t/Users/liuzhuomin/go/src/github.com/pingcap/tidb/owner/manager.go:142\ngithub.com/pingcap/tidb/owner.(*ownerManager).campaignLoop\n\t/Users/liuzhuomin/go/src/github.com/pingcap/tidb/owner/manager.go:241\nruntime.goexit\n\t/Users/liuzhuomin/.gvm/gos/go1.12/src/runtime/asm_amd64.s:1337"]
+[2019/08/07 12:27:02.582 +08:00] [INFO] [manager.go:292] ["revoke session"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 83a40f7d-fba5-47c9-9aeb-cd102188863b"] []
+[2019/08/07 12:27:02.598 +08:00] [INFO] [ddl_worker.go:113] ["[ddl] DDL worker closed"] [worker="worker 2, tp add index"] ["take time"=7.985µs]
+[2019/08/07 12:27:02.598 +08:00] [INFO] [ddl_worker.go:113] ["[ddl] DDL worker closed"] [worker="worker 1, tp general"] ["take time"=7.095µs]
+[2019/08/07 12:27:02.598 +08:00] [INFO] [ddl.go:492] ["[ddl] DDL closed"] [ID=83a40f7d-fba5-47c9-9aeb-cd102188863b] ["take time"=402.832µs]
+[2019/08/07 12:27:02.598 +08:00] [INFO] [ddl.go:401] ["[ddl] stop DDL"] [ID=83a40f7d-fba5-47c9-9aeb-cd102188863b]
+2019-08-07 12:27:02.598596 I | integration: terminating 8346285800098754673 (unix://localhost:83462858000987546730)
+2019-08-07 12:27:02.625302 I | integration: terminated 8346285800098754673 (unix://localhost:83462858000987546730)
+2019-08-07 12:27:02.628855 I | integration: launching 6290106642459234010 (unix://localhost:62901066424592340100)
+2019-08-07 12:27:02.628875 I | integration: launching 1993494159844559220 (unix://localhost:19934941598445592200)
+2019-08-07 12:27:02.628905 I | integration: launching 4169002585177382408 (unix://localhost:41690025851773824080)
+2019-08-07 12:27:02.628917 I | integration: launching 616820021699720334 (unix://localhost:6168200216997203340)
+2019-08-07 12:27:02.673006 I | etcdserver: name = 616820021699720334
+2019-08-07 12:27:02.673025 I | etcdserver: data dir = /var/folders/rn/4x2_zgxx7qn4lg21xblgvh000000gn/T/etcd010586588
+2019-08-07 12:27:02.673040 I | etcdserver: name = 6290106642459234010
+2019-08-07 12:27:02.673049 I | etcdserver: data dir = /var/folders/rn/4x2_zgxx7qn4lg21xblgvh000000gn/T/etcd396984309
+2019-08-07 12:27:02.673058 I | etcdserver: name = 4169002585177382408
+2019-08-07 12:27:02.673071 I | etcdserver: data dir = /var/folders/rn/4x2_zgxx7qn4lg21xblgvh000000gn/T/etcd388094318
+2019-08-07 12:27:02.673094 I | etcdserver: member dir = /var/folders/rn/4x2_zgxx7qn4lg21xblgvh000000gn/T/etcd388094318/member
+2019-08-07 12:27:02.673102 I | etcdserver: heartbeat = 10ms
+2019-08-07 12:27:02.673107 I | etcdserver: election = 100ms
+2019-08-07 12:27:02.673114 I | etcdserver: snapshot count = 0
+2019-08-07 12:27:02.673122 I | etcdserver: advertise client URLs = unix://127.0.0.1:2100870546
+2019-08-07 12:27:02.673129 I | etcdserver: initial advertise peer URLs = unix://127.0.0.1:2100770546
+2019-08-07 12:27:02.673135 I | etcdserver: member dir = /var/folders/rn/4x2_zgxx7qn4lg21xblgvh000000gn/T/etcd396984309/member
+2019-08-07 12:27:02.673146 I | etcdserver: initial cluster = 1993494159844559220=unix://127.0.0.1:2100570546,4169002585177382408=unix://127.0.0.1:2100770546,616820021699720334=unix://127.0.0.1:2100370546,6290106642459234010=unix://127.0.0.1:2100970546
+2019-08-07 12:27:02.673152 I | etcdserver: heartbeat = 10ms
+2019-08-07 12:27:02.673160 I | etcdserver: election = 100ms
+2019-08-07 12:27:02.673164 I | etcdserver: snapshot count = 0
+2019-08-07 12:27:02.673171 I | etcdserver: advertise client URLs = unix://127.0.0.1:2101070546
+2019-08-07 12:27:02.673182 I | etcdserver: member dir = /var/folders/rn/4x2_zgxx7qn4lg21xblgvh000000gn/T/etcd010586588/member
+2019-08-07 12:27:02.673192 I | etcdserver: initial advertise peer URLs = unix://127.0.0.1:2100970546
+2019-08-07 12:27:02.673216 I | etcdserver: initial cluster = 1993494159844559220=unix://127.0.0.1:2100570546,4169002585177382408=unix://127.0.0.1:2100770546,616820021699720334=unix://127.0.0.1:2100370546,6290106642459234010=unix://127.0.0.1:2100970546
+2019-08-07 12:27:02.673247 I | etcdserver: heartbeat = 10ms
+2019-08-07 12:27:02.673255 I | etcdserver: election = 100ms
+2019-08-07 12:27:02.673259 I | etcdserver: snapshot count = 0
+2019-08-07 12:27:02.673278 I | etcdserver: advertise client URLs = unix://127.0.0.1:2100470546
+2019-08-07 12:27:02.673286 I | etcdserver: name = 1993494159844559220
+2019-08-07 12:27:02.673294 I | etcdserver: initial advertise peer URLs = unix://127.0.0.1:2100370546
+2019-08-07 12:27:02.673299 I | etcdserver: data dir = /var/folders/rn/4x2_zgxx7qn4lg21xblgvh000000gn/T/etcd446514571
+2019-08-07 12:27:02.673305 I | etcdserver: member dir = /var/folders/rn/4x2_zgxx7qn4lg21xblgvh000000gn/T/etcd446514571/member
+2019-08-07 12:27:02.673309 I | etcdserver: heartbeat = 10ms
+2019-08-07 12:27:02.673313 I | etcdserver: election = 100ms
+2019-08-07 12:27:02.673323 I | etcdserver: initial cluster = 1993494159844559220=unix://127.0.0.1:2100570546,4169002585177382408=unix://127.0.0.1:2100770546,616820021699720334=unix://127.0.0.1:2100370546,6290106642459234010=unix://127.0.0.1:2100970546
+2019-08-07 12:27:02.673330 I | etcdserver: snapshot count = 0
+2019-08-07 12:27:02.673341 I | etcdserver: advertise client URLs = unix://127.0.0.1:2100670546
+2019-08-07 12:27:02.673347 I | etcdserver: initial advertise peer URLs = unix://127.0.0.1:2100570546
+2019-08-07 12:27:02.673360 I | etcdserver: initial cluster = 1993494159844559220=unix://127.0.0.1:2100570546,4169002585177382408=unix://127.0.0.1:2100770546,616820021699720334=unix://127.0.0.1:2100370546,6290106642459234010=unix://127.0.0.1:2100970546
+2019-08-07 12:27:02.909815 I | etcdserver: starting member 86a9bc61612ca551 in cluster 2479885662e2bcbc
+2019-08-07 12:27:02.909860 I | raft: 86a9bc61612ca551 became follower at term 0
+2019-08-07 12:27:02.909876 I | etcdserver: starting member 41b716ec77b939e2 in cluster 2479885662e2bcbc
+2019-08-07 12:27:02.909885 I | raft: newRaft 86a9bc61612ca551 [peers: [], term: 0, commit: 0, applied: 0, lastindex: 0, lastterm: 0]
+2019-08-07 12:27:02.909891 I | raft: 41b716ec77b939e2 became follower at term 0
+2019-08-07 12:27:02.909895 I | raft: 86a9bc61612ca551 became follower at term 1
+2019-08-07 12:27:02.909900 I | raft: newRaft 41b716ec77b939e2 [peers: [], term: 0, commit: 0, applied: 0, lastindex: 0, lastterm: 0]
+2019-08-07 12:27:02.909905 I | raft: 41b716ec77b939e2 became follower at term 1
+2019-08-07 12:27:02.914901 I | etcdserver: starting member 8b9e8a46492295e8 in cluster 2479885662e2bcbc
+2019-08-07 12:27:02.914915 I | raft: 8b9e8a46492295e8 became follower at term 0
+2019-08-07 12:27:02.914939 I | raft: newRaft 8b9e8a46492295e8 [peers: [], term: 0, commit: 0, applied: 0, lastindex: 0, lastterm: 0]
+2019-08-07 12:27:02.914951 I | raft: 8b9e8a46492295e8 became follower at term 1
+2019-08-07 12:27:02.926260 I | etcdserver: starting member 70da1e019eb80d16 in cluster 2479885662e2bcbc
+2019-08-07 12:27:02.926296 I | raft: 70da1e019eb80d16 became follower at term 0
+2019-08-07 12:27:02.926306 I | raft: newRaft 70da1e019eb80d16 [peers: [], term: 0, commit: 0, applied: 0, lastindex: 0, lastterm: 0]
+2019-08-07 12:27:02.926316 I | raft: 70da1e019eb80d16 became follower at term 1
+2019-08-07 12:27:02.970304 W | auth: simple token is not cryptographically signed
+2019-08-07 12:27:02.970812 W | auth: simple token is not cryptographically signed
+2019-08-07 12:27:02.991412 W | auth: simple token is not cryptographically signed
+2019-08-07 12:27:02.995964 W | auth: simple token is not cryptographically signed
+2019-08-07 12:27:03.030860 I | rafthttp: starting peer 70da1e019eb80d16...
+2019-08-07 12:27:03.030895 I | rafthttp: starting peer 41b716ec77b939e2...
+2019-08-07 12:27:03.031034 I | rafthttp: started HTTP pipelining with peer 41b716ec77b939e2
+2019-08-07 12:27:03.031473 I | rafthttp: started HTTP pipelining with peer 70da1e019eb80d16
+2019-08-07 12:27:03.032284 I | rafthttp: started streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:03.032450 I | rafthttp: started streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:03.032473 I | rafthttp: started streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:03.032710 I | rafthttp: started streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:03.033474 I | rafthttp: started peer 70da1e019eb80d16
+2019-08-07 12:27:03.033495 I | rafthttp: added peer 70da1e019eb80d16
+2019-08-07 12:27:03.033504 I | rafthttp: started streaming with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.033514 I | rafthttp: starting peer 86a9bc61612ca551...
+2019-08-07 12:27:03.033527 I | rafthttp: started HTTP pipelining with peer 86a9bc61612ca551
+2019-08-07 12:27:03.033545 I | rafthttp: started streaming with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:03.034496 I | rafthttp: started peer 41b716ec77b939e2
+2019-08-07 12:27:03.034605 I | rafthttp: started streaming with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:03.034649 I | rafthttp: started streaming with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.034687 I | rafthttp: added peer 41b716ec77b939e2
+2019-08-07 12:27:03.034727 I | rafthttp: starting peer 70da1e019eb80d16...
+2019-08-07 12:27:03.034759 I | rafthttp: started HTTP pipelining with peer 70da1e019eb80d16
+2019-08-07 12:27:03.034807 I | rafthttp: started streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:03.035794 I | rafthttp: starting peer 41b716ec77b939e2...
+2019-08-07 12:27:03.035829 I | rafthttp: started HTTP pipelining with peer 41b716ec77b939e2
+2019-08-07 12:27:03.036812 I | rafthttp: started streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:03.036897 I | rafthttp: started streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:03.036913 I | rafthttp: started streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:03.038022 I | rafthttp: started peer 86a9bc61612ca551
+2019-08-07 12:27:03.038043 I | rafthttp: added peer 86a9bc61612ca551
+2019-08-07 12:27:03.038055 I | rafthttp: started streaming with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:03.038068 I | rafthttp: started streaming with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.038086 I | rafthttp: started streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:03.038104 I | rafthttp: starting peer 8b9e8a46492295e8...
+2019-08-07 12:27:03.038118 I | rafthttp: started HTTP pipelining with peer 8b9e8a46492295e8
+2019-08-07 12:27:03.038131 I | rafthttp: started streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:03.039288 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:03.040211 I | rafthttp: started peer 41b716ec77b939e2
+2019-08-07 12:27:03.040228 I | rafthttp: started streaming with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:03.040254 I | rafthttp: started streaming with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.040297 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:03.040306 I | rafthttp: added peer 41b716ec77b939e2
+2019-08-07 12:27:03.040320 I | rafthttp: starting peer 70da1e019eb80d16...
+2019-08-07 12:27:03.040330 I | rafthttp: started peer 70da1e019eb80d16
+2019-08-07 12:27:03.040344 I | rafthttp: started HTTP pipelining with peer 70da1e019eb80d16
+2019-08-07 12:27:03.040375 I | rafthttp: added peer 70da1e019eb80d16
+2019-08-07 12:27:03.040394 I | rafthttp: starting peer 8b9e8a46492295e8...
+2019-08-07 12:27:03.040404 I | rafthttp: started streaming with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.040415 I | rafthttp: started HTTP pipelining with peer 8b9e8a46492295e8
+2019-08-07 12:27:03.040435 I | rafthttp: started streaming with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:03.041487 I | rafthttp: starting peer 41b716ec77b939e2...
+2019-08-07 12:27:03.041517 I | rafthttp: started HTTP pipelining with peer 41b716ec77b939e2
+2019-08-07 12:27:03.041554 I | rafthttp: started streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:03.042870 I | rafthttp: started peer 8b9e8a46492295e8
+2019-08-07 12:27:03.042938 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:03.042957 I | rafthttp: added peer 8b9e8a46492295e8
+2019-08-07 12:27:03.042995 I | etcdserver: set snapshot count to default 100000
+2019-08-07 12:27:03.043030 I | etcdserver: starting server... [version: 3.3.13, cluster version: to_be_decided]
+2019-08-07 12:27:03.043064 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:03.043227 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.043275 I | rafthttp: started streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:03.043431 E | etcdserver: cannot monitor file descriptor usage (cannot get FDUsage on darwin)
+2019-08-07 12:27:03.043517 I | etcdserver/membership: added member 41b716ec77b939e2 [unix://127.0.0.1:2100770546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.043727 I | etcdserver/membership: added member 70da1e019eb80d16 [unix://127.0.0.1:2100970546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.043776 I | rafthttp: started streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:03.043933 I | etcdserver/membership: added member 86a9bc61612ca551 [unix://127.0.0.1:2100570546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.044266 I | integration: launched 4169002585177382408 (unix://localhost:41690025851773824080)
+2019-08-07 12:27:03.044317 I | etcdserver/membership: added member 8b9e8a46492295e8 [unix://127.0.0.1:2100370546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.044943 I | rafthttp: peer 41b716ec77b939e2 became active
+2019-08-07 12:27:03.044969 I | rafthttp: peer 86a9bc61612ca551 became active
+2019-08-07 12:27:03.044991 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream Message writer)
+2019-08-07 12:27:03.045019 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:03.045313 I | rafthttp: started streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:03.045503 I | rafthttp: peer 8b9e8a46492295e8 became active
+2019-08-07 12:27:03.045542 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream Message writer)
+2019-08-07 12:27:03.045560 I | rafthttp: peer 41b716ec77b939e2 became active
+2019-08-07 12:27:03.045580 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.045599 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:03.045630 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.045695 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:03.047691 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.047707 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.048547 I | rafthttp: started peer 70da1e019eb80d16
+2019-08-07 12:27:03.048563 I | rafthttp: started streaming with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.048575 I | rafthttp: added peer 70da1e019eb80d16
+2019-08-07 12:27:03.048592 I | rafthttp: started streaming with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:03.048607 I | rafthttp: started peer 8b9e8a46492295e8
+2019-08-07 12:27:03.048627 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:03.048637 I | rafthttp: starting peer 86a9bc61612ca551...
+2019-08-07 12:27:03.048655 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.048669 I | rafthttp: added peer 8b9e8a46492295e8
+2019-08-07 12:27:03.048683 I | etcdserver: set snapshot count to default 100000
+2019-08-07 12:27:03.048693 I | rafthttp: started HTTP pipelining with peer 86a9bc61612ca551
+2019-08-07 12:27:03.048702 I | etcdserver: starting server... [version: 3.3.13, cluster version: to_be_decided]
+2019-08-07 12:27:03.048754 E | etcdserver: cannot monitor file descriptor usage (cannot get FDUsage on darwin)
+2019-08-07 12:27:03.049124 I | rafthttp: started peer 41b716ec77b939e2
+2019-08-07 12:27:03.049144 I | rafthttp: started streaming with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:03.049163 I | rafthttp: started streaming with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.049177 I | rafthttp: started streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:03.049202 I | rafthttp: added peer 41b716ec77b939e2
+2019-08-07 12:27:03.049224 I | rafthttp: starting peer 86a9bc61612ca551...
+2019-08-07 12:27:03.049239 I | etcdserver/membership: added member 41b716ec77b939e2 [unix://127.0.0.1:2100770546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.049250 I | rafthttp: started HTTP pipelining with peer 86a9bc61612ca551
+2019-08-07 12:27:03.049280 I | rafthttp: started streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:03.049394 I | etcdserver/membership: added member 70da1e019eb80d16 [unix://127.0.0.1:2100970546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.049430 I | rafthttp: started peer 86a9bc61612ca551
+2019-08-07 12:27:03.049449 I | etcdserver/membership: added member 86a9bc61612ca551 [unix://127.0.0.1:2100570546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.049456 I | rafthttp: started streaming with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:03.049469 I | rafthttp: peer 70da1e019eb80d16 became active
+2019-08-07 12:27:03.049477 I | rafthttp: started streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:03.049485 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream Message writer)
+2019-08-07 12:27:03.049492 I | rafthttp: added peer 86a9bc61612ca551
+2019-08-07 12:27:03.049504 I | etcdserver: set snapshot count to default 100000
+2019-08-07 12:27:03.049513 I | etcdserver/membership: added member 8b9e8a46492295e8 [unix://127.0.0.1:2100370546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.049520 I | rafthttp: peer 41b716ec77b939e2 became active
+2019-08-07 12:27:03.049527 I | etcdserver: starting server... [version: 3.3.13, cluster version: to_be_decided]
+2019-08-07 12:27:03.049538 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.049545 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.049581 E | etcdserver: cannot monitor file descriptor usage (cannot get FDUsage on darwin)
+2019-08-07 12:27:03.049608 I | rafthttp: started streaming with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.049644 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:03.049680 I | etcdserver/membership: added member 41b716ec77b939e2 [unix://127.0.0.1:2100770546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.049704 I | rafthttp: started streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:03.049719 I | integration: launched 1993494159844559220 (unix://localhost:19934941598445592200)
+2019-08-07 12:27:03.049762 I | etcdserver/membership: added member 70da1e019eb80d16 [unix://127.0.0.1:2100970546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.049835 I | etcdserver/membership: added member 86a9bc61612ca551 [unix://127.0.0.1:2100570546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.049898 I | etcdserver/membership: added member 8b9e8a46492295e8 [unix://127.0.0.1:2100370546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.049932 I | rafthttp: started peer 86a9bc61612ca551
+2019-08-07 12:27:03.049943 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.049953 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream Message writer)
+2019-08-07 12:27:03.049962 I | rafthttp: started streaming with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:03.049973 I | rafthttp: peer 8b9e8a46492295e8 became active
+2019-08-07 12:27:03.050002 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream Message writer)
+2019-08-07 12:27:03.050011 I | rafthttp: peer 86a9bc61612ca551 became active
+2019-08-07 12:27:03.050018 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.050027 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:03.050044 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.050052 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.050074 I | rafthttp: started streaming with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.050100 I | rafthttp: added peer 86a9bc61612ca551
+2019-08-07 12:27:03.050116 I | rafthttp: starting peer 8b9e8a46492295e8...
+2019-08-07 12:27:03.050125 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:03.050140 I | rafthttp: started HTTP pipelining with peer 8b9e8a46492295e8
+2019-08-07 12:27:03.050208 I | rafthttp: peer 70da1e019eb80d16 became active
+2019-08-07 12:27:03.050218 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream Message writer)
+2019-08-07 12:27:03.050223 I | integration: launched 616820021699720334 (unix://localhost:6168200216997203340)
+2019-08-07 12:27:03.050231 I | rafthttp: peer 86a9bc61612ca551 became active
+2019-08-07 12:27:03.050240 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:03.050315 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:03.050336 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.050367 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.050373 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream Message writer)
+2019-08-07 12:27:03.050398 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:03.050421 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.050429 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream Message writer)
+2019-08-07 12:27:03.050437 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.050447 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:03.050456 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:03.050466 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.050496 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.050654 I | rafthttp: started peer 8b9e8a46492295e8
+2019-08-07 12:27:03.050668 I | rafthttp: added peer 8b9e8a46492295e8
+2019-08-07 12:27:03.050673 I | etcdserver: set snapshot count to default 100000
+2019-08-07 12:27:03.050677 I | etcdserver: starting server... [version: 3.3.13, cluster version: to_be_decided]
+2019-08-07 12:27:03.050705 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:03.050733 I | rafthttp: started streaming with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.050757 E | etcdserver: cannot monitor file descriptor usage (cannot get FDUsage on darwin)
+2019-08-07 12:27:03.050818 I | etcdserver/membership: added member 41b716ec77b939e2 [unix://127.0.0.1:2100770546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.050882 I | etcdserver/membership: added member 70da1e019eb80d16 [unix://127.0.0.1:2100970546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.050933 I | etcdserver/membership: added member 86a9bc61612ca551 [unix://127.0.0.1:2100570546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.050950 I | rafthttp: peer 70da1e019eb80d16 became active
+2019-08-07 12:27:03.050958 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream Message writer)
+2019-08-07 12:27:03.050963 I | rafthttp: peer 8b9e8a46492295e8 became active
+2019-08-07 12:27:03.050971 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:03.050989 I | etcdserver/membership: added member 8b9e8a46492295e8 [unix://127.0.0.1:2100370546] to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.051014 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.051035 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.051250 I | integration: launched 6290106642459234010 (unix://localhost:62901066424592340100)
+2019-08-07 12:27:03.051473 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream Message writer)
+2019-08-07 12:27:03.051508 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:03.051518 I | rafthttp: established a TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.051529 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.051571 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:03.052010 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.052038 I | rafthttp: established a TCP streaming connection with peer 8b9e8a46492295e8 (stream Message writer)
+2019-08-07 12:27:03.052084 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream Message writer)
+2019-08-07 12:27:03.052354 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.052397 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:03.052464 I | rafthttp: established a TCP streaming connection with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:03.052670 I | rafthttp: established a TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 writer)
+2019-08-07 12:27:03.093743 I | etcdserver: 41b716ec77b939e2 initialzed peer connection; fast-forwarding 8 ticks (election ticks 10) with 3 active peer(s)
+2019-08-07 12:27:03.098839 I | etcdserver: 86a9bc61612ca551 initialzed peer connection; fast-forwarding 8 ticks (election ticks 10) with 3 active peer(s)
+2019-08-07 12:27:03.100864 I | etcdserver: 8b9e8a46492295e8 initialzed peer connection; fast-forwarding 8 ticks (election ticks 10) with 3 active peer(s)
+2019-08-07 12:27:03.100907 I | etcdserver: 70da1e019eb80d16 initialzed peer connection; fast-forwarding 8 ticks (election ticks 10) with 3 active peer(s)
+2019-08-07 12:27:03.106695 I | raft: 86a9bc61612ca551 is starting a new election at term 1
+2019-08-07 12:27:03.106729 I | raft: 86a9bc61612ca551 became candidate at term 2
+2019-08-07 12:27:03.106736 I | raft: 86a9bc61612ca551 received MsgVoteResp from 86a9bc61612ca551 at term 2
+2019-08-07 12:27:03.106757 I | raft: 86a9bc61612ca551 [logterm: 1, index: 4] sent MsgVote request to 41b716ec77b939e2 at term 2
+2019-08-07 12:27:03.106769 I | raft: 86a9bc61612ca551 [logterm: 1, index: 4] sent MsgVote request to 70da1e019eb80d16 at term 2
+2019-08-07 12:27:03.106775 I | raft: 86a9bc61612ca551 [logterm: 1, index: 4] sent MsgVote request to 8b9e8a46492295e8 at term 2
+2019-08-07 12:27:03.112493 I | raft: 41b716ec77b939e2 [term: 1] received a MsgVote message with higher term from 86a9bc61612ca551 [term: 2]
+2019-08-07 12:27:03.112523 I | raft: 41b716ec77b939e2 became follower at term 2
+2019-08-07 12:27:03.112536 I | raft: 8b9e8a46492295e8 [term: 1] received a MsgVote message with higher term from 86a9bc61612ca551 [term: 2]
+2019-08-07 12:27:03.112558 I | raft: 8b9e8a46492295e8 became follower at term 2
+2019-08-07 12:27:03.112568 I | raft: 70da1e019eb80d16 [term: 1] received a MsgVote message with higher term from 86a9bc61612ca551 [term: 2]
+2019-08-07 12:27:03.112578 I | raft: 70da1e019eb80d16 became follower at term 2
+2019-08-07 12:27:03.112592 I | raft: 41b716ec77b939e2 [logterm: 1, index: 4, vote: 0] cast MsgVote for 86a9bc61612ca551 [logterm: 1, index: 4] at term 2
+2019-08-07 12:27:03.112619 I | raft: 8b9e8a46492295e8 [logterm: 1, index: 4, vote: 0] cast MsgVote for 86a9bc61612ca551 [logterm: 1, index: 4] at term 2
+2019-08-07 12:27:03.112648 I | raft: 70da1e019eb80d16 [logterm: 1, index: 4, vote: 0] cast MsgVote for 86a9bc61612ca551 [logterm: 1, index: 4] at term 2
+2019-08-07 12:27:03.118086 I | raft: 86a9bc61612ca551 received MsgVoteResp from 41b716ec77b939e2 at term 2
+2019-08-07 12:27:03.118100 I | raft: 86a9bc61612ca551 [quorum:3] has received 2 MsgVoteResp votes and 0 vote rejections
+2019-08-07 12:27:03.118110 I | raft: 86a9bc61612ca551 received MsgVoteResp from 8b9e8a46492295e8 at term 2
+2019-08-07 12:27:03.118118 I | raft: 86a9bc61612ca551 [quorum:3] has received 3 MsgVoteResp votes and 0 vote rejections
+2019-08-07 12:27:03.118130 I | raft: 86a9bc61612ca551 became leader at term 2
+2019-08-07 12:27:03.118139 I | raft: raft.node: 86a9bc61612ca551 elected leader 86a9bc61612ca551 at term 2
+2019-08-07 12:27:03.118263 I | raft: raft.node: 70da1e019eb80d16 elected leader 86a9bc61612ca551 at term 2
+2019-08-07 12:27:03.118272 I | raft: raft.node: 41b716ec77b939e2 elected leader 86a9bc61612ca551 at term 2
+2019-08-07 12:27:03.118283 I | raft: raft.node: 8b9e8a46492295e8 elected leader 86a9bc61612ca551 at term 2
+2019-08-07 12:27:03.135328 I | etcdserver: setting up the initial cluster version to 3.3
+2019-08-07 12:27:03.159936 W | etcdserver: failed to send out heartbeat on time (exceeded the 10ms timeout for 5.573965ms, to 41b716ec77b939e2)
+2019-08-07 12:27:03.159964 W | etcdserver: server is likely overloaded
+2019-08-07 12:27:03.159974 W | etcdserver: failed to send out heartbeat on time (exceeded the 10ms timeout for 5.618488ms, to 8b9e8a46492295e8)
+2019-08-07 12:27:03.159979 W | etcdserver: server is likely overloaded
+2019-08-07 12:27:03.159985 W | etcdserver: failed to send out heartbeat on time (exceeded the 10ms timeout for 5.629052ms, to 70da1e019eb80d16)
+2019-08-07 12:27:03.159989 W | etcdserver: server is likely overloaded
+2019-08-07 12:27:03.160076 I | etcdserver: published {Name:1993494159844559220 ClientURLs:[unix://127.0.0.1:2100670546]} to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.160177 N | etcdserver/membership: set the initial cluster version to 3.3
+2019-08-07 12:27:03.160414 N | etcdserver/membership: set the initial cluster version to 3.3
+2019-08-07 12:27:03.160440 I | etcdserver: published {Name:6290106642459234010 ClientURLs:[unix://127.0.0.1:2101070546]} to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.160450 I | etcdserver: published {Name:616820021699720334 ClientURLs:[unix://127.0.0.1:2100470546]} to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.160461 N | etcdserver/membership: set the initial cluster version to 3.3
+2019-08-07 12:27:03.165199 I | etcdserver: published {Name:4169002585177382408 ClientURLs:[unix://127.0.0.1:2100870546]} to cluster 2479885662e2bcbc
+2019-08-07 12:27:03.165222 N | etcdserver/membership: set the initial cluster version to 3.3
+[2019/08/07 12:27:03.172 +08:00] [INFO] [ddl.go:421] ["[ddl] start DDL"] [ID=607ab00f-d12c-4d2c-b3c1-b63f17d58f57] [runWorker=true]
+[2019/08/07 12:27:03.184 +08:00] [INFO] [ddl_worker.go:119] ["[ddl] start DDL worker"] [worker="worker 3, tp general"]
+[2019/08/07 12:27:03.184 +08:00] [INFO] [ddl_worker.go:119] ["[ddl] start DDL worker"] [worker="worker 4, tp add index"]
+[2019/08/07 12:27:03.196 +08:00] [INFO] [manager.go:316] ["get owner"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 607ab00f-d12c-4d2c-b3c1-b63f17d58f57"] [ownerID=607ab00f-d12c-4d2c-b3c1-b63f17d58f57]
+[2019/08/07 12:27:03.201 +08:00] [INFO] [ddl.go:421] ["[ddl] start DDL"] [ID=2151f0bd-76ba-4c1c-9905-1def466a0172] [runWorker=true]
+[2019/08/07 12:27:03.212 +08:00] [INFO] [ddl_worker.go:119] ["[ddl] start DDL worker"] [worker="worker 6, tp add index"]
+[2019/08/07 12:27:03.212 +08:00] [INFO] [ddl_worker.go:119] ["[ddl] start DDL worker"] [worker="worker 5, tp general"]
+[2019/08/07 12:27:03.245 +08:00] [INFO] [manager.go:347] ["watch failed, owner is deleted"] ["owner info"="[ddl] ownerManager 607ab00f-d12c-4d2c-b3c1-b63f17d58f57 watch owner key /tidb/ddl/fg/owner/15e86c6a54918e03"]
+[2019/08/07 12:27:03.245 +08:00] [WARN] [manager.go:281] ["is not the owner"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 607ab00f-d12c-4d2c-b3c1-b63f17d58f57"]
+[2019/08/07 12:27:03.263 +08:00] [INFO] [manager.go:267] ["failed to campaign"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 607ab00f-d12c-4d2c-b3c1-b63f17d58f57"] [error="context canceled"]
+[2019/08/07 12:27:03.263 +08:00] [INFO] [manager.go:239] ["etcd session is done, creates a new one"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 607ab00f-d12c-4d2c-b3c1-b63f17d58f57"]
+[2019/08/07 12:27:03.263 +08:00] [INFO] [manager.go:243] ["break campaign loop, NewSession failed"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 607ab00f-d12c-4d2c-b3c1-b63f17d58f57"] [error="context canceled"] [errorVerbose="context canceled\ngithub.com/pingcap/errors.AddStack\n\t/Users/liuzhuomin/.gvm/pkgsets/go1.12/global/pkg/mod/github.com/pingcap/errors@v0.11.4/errors.go:174\ngithub.com/pingcap/errors.Trace\n\t/Users/liuzhuomin/.gvm/pkgsets/go1.12/global/pkg/mod/github.com/pingcap/errors@v0.11.4/juju_adaptor.go:15\ngithub.com/pingcap/tidb/owner.contextDone\n\t/Users/liuzhuomin/go/src/github.com/pingcap/tidb/owner/manager.go:371\ngithub.com/pingcap/tidb/owner.NewSession\n\t/Users/liuzhuomin/go/src/github.com/pingcap/tidb/owner/manager.go:142\ngithub.com/pingcap/tidb/owner.(*ownerManager).campaignLoop\n\t/Users/liuzhuomin/go/src/github.com/pingcap/tidb/owner/manager.go:241\nruntime.goexit\n\t/Users/liuzhuomin/.gvm/gos/go1.12/src/runtime/asm_amd64.s:1337"]
+[2019/08/07 12:27:03.291 +08:00] [INFO] [ddl_worker.go:113] ["[ddl] DDL worker closed"] [worker="worker 3, tp general"] ["take time"=6.251µs]
+[2019/08/07 12:27:03.291 +08:00] [INFO] [ddl_worker.go:113] ["[ddl] DDL worker closed"] [worker="worker 4, tp add index"] ["take time"=3.893µs]
+[2019/08/07 12:27:03.291 +08:00] [INFO] [ddl.go:492] ["[ddl] DDL closed"] [ID=607ab00f-d12c-4d2c-b3c1-b63f17d58f57] ["take time"=27.633553ms]
+[2019/08/07 12:27:03.291 +08:00] [INFO] [manager.go:292] ["revoke session"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 607ab00f-d12c-4d2c-b3c1-b63f17d58f57"] []
+[2019/08/07 12:27:03.291 +08:00] [INFO] [ddl.go:401] ["[ddl] stop DDL"] [ID=607ab00f-d12c-4d2c-b3c1-b63f17d58f57]
+[2019/08/07 12:27:03.291 +08:00] [INFO] [ddl.go:421] ["[ddl] start DDL"] [ID=c88d518d-30b0-4d49-8871-535a28fdf4e6] [runWorker=true]
+[2019/08/07 12:27:03.291 +08:00] [INFO] [manager.go:316] ["get owner"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 2151f0bd-76ba-4c1c-9905-1def466a0172"] [ownerID=2151f0bd-76ba-4c1c-9905-1def466a0172]
+[2019/08/07 12:27:03.302 +08:00] [INFO] [ddl_worker.go:119] ["[ddl] start DDL worker"] [worker="worker 7, tp general"]
+[2019/08/07 12:27:03.302 +08:00] [INFO] [ddl_worker.go:119] ["[ddl] start DDL worker"] [worker="worker 8, tp add index"]
+[2019/08/07 12:27:03.309 +08:00] [INFO] [manager.go:267] ["failed to campaign"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager c88d518d-30b0-4d49-8871-535a28fdf4e6"] [error="context canceled"]
+[2019/08/07 12:27:03.309 +08:00] [INFO] [manager.go:248] ["break campaign loop, context is done"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager c88d518d-30b0-4d49-8871-535a28fdf4e6"]
+2019-08-07 12:27:03.331186 W | etcdserver: failed to send out heartbeat on time (exceeded the 10ms timeout for 2.163038ms, to 8b9e8a46492295e8)
+2019-08-07 12:27:03.331202 W | etcdserver: server is likely overloaded
+2019-08-07 12:27:03.331211 W | etcdserver: failed to send out heartbeat on time (exceeded the 10ms timeout for 2.193621ms, to 70da1e019eb80d16)
+2019-08-07 12:27:03.331234 W | etcdserver: server is likely overloaded
+2019-08-07 12:27:03.331246 W | etcdserver: failed to send out heartbeat on time (exceeded the 10ms timeout for 2.226496ms, to 41b716ec77b939e2)
+2019-08-07 12:27:03.331258 W | etcdserver: server is likely overloaded
+[2019/08/07 12:27:03.331 +08:00] [INFO] [ddl_worker.go:113] ["[ddl] DDL worker closed"] [worker="worker 8, tp add index"] ["take time"=4.751µs]
+[2019/08/07 12:27:03.331 +08:00] [INFO] [manager.go:292] ["revoke session"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager c88d518d-30b0-4d49-8871-535a28fdf4e6"] []
+[2019/08/07 12:27:03.331 +08:00] [INFO] [ddl_worker.go:113] ["[ddl] DDL worker closed"] [worker="worker 7, tp general"] ["take time"=5.35µs]
+[2019/08/07 12:27:03.331 +08:00] [INFO] [ddl.go:492] ["[ddl] DDL closed"] [ID=c88d518d-30b0-4d49-8871-535a28fdf4e6] ["take time"=22.624863ms]
+[2019/08/07 12:27:03.331 +08:00] [INFO] [ddl.go:401] ["[ddl] stop DDL"] [ID=c88d518d-30b0-4d49-8871-535a28fdf4e6]
+[2019/08/07 12:27:03.331 +08:00] [WARN] [manager.go:281] ["is not the owner"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 2151f0bd-76ba-4c1c-9905-1def466a0172"]
+[2019/08/07 12:27:03.331 +08:00] [INFO] [manager.go:248] ["break campaign loop, context is done"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 2151f0bd-76ba-4c1c-9905-1def466a0172"]
+[2019/08/07 12:27:03.347 +08:00] [INFO] [ddl_worker.go:113] ["[ddl] DDL worker closed"] [worker="worker 6, tp add index"] ["take time"=5.448µs]
+[2019/08/07 12:27:03.347 +08:00] [INFO] [ddl_worker.go:113] ["[ddl] DDL worker closed"] [worker="worker 5, tp general"] ["take time"=3.072µs]
+[2019/08/07 12:27:03.347 +08:00] [INFO] [ddl.go:492] ["[ddl] DDL closed"] [ID=2151f0bd-76ba-4c1c-9905-1def466a0172] ["take time"=15.954134ms]
+[2019/08/07 12:27:03.347 +08:00] [INFO] [ddl.go:401] ["[ddl] stop DDL"] [ID=2151f0bd-76ba-4c1c-9905-1def466a0172]
+[2019/08/07 12:27:03.352 +08:00] [INFO] [manager.go:292] ["revoke session"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager 2151f0bd-76ba-4c1c-9905-1def466a0172"] []
+2019-08-07 12:27:07.437637 W | etcdserver: failed to send out heartbeat on time (exceeded the 10ms timeout for 69.04004ms, to 8b9e8a46492295e8)
+2019-08-07 12:27:07.437655 W | etcdserver: server is likely overloaded
+2019-08-07 12:27:07.437663 W | etcdserver: failed to send out heartbeat on time (exceeded the 10ms timeout for 69.069771ms, to 70da1e019eb80d16)
+2019-08-07 12:27:07.437682 W | etcdserver: server is likely overloaded
+2019-08-07 12:27:07.437714 W | etcdserver: failed to send out heartbeat on time (exceeded the 10ms timeout for 69.111721ms, to 41b716ec77b939e2)
+2019-08-07 12:27:07.437723 W | etcdserver: server is likely overloaded
+[2019/08/07 12:27:07.438 +08:00] [INFO] [manager.go:312] ["failed to get leader"] ["owner info"="[ddl] /tidb/ddl/fg/owner ownerManager useless id"] [error="election: no leader"]
+[2019/08/07 12:27:07.438 +08:00] [INFO] [ddl.go:401] ["[ddl] stop DDL"] [ID=c88d518d-30b0-4d49-8871-535a28fdf4e6]
+2019-08-07 12:27:07.438783 I | integration: terminating 6290106642459234010 (unix://localhost:62901066424592340100)
+2019-08-07 12:27:07.438807 I | integration: terminating 4169002585177382408 (unix://localhost:41690025851773824080)
+2019-08-07 12:27:07.438828 I | integration: terminating 616820021699720334 (unix://localhost:6168200216997203340)
+2019-08-07 12:27:07.438860 I | integration: terminating 1993494159844559220 (unix://localhost:19934941598445592200)
+2019-08-07 12:27:07.439534 I | rafthttp: stopping peer 41b716ec77b939e2...
+2019-08-07 12:27:07.439547 I | rafthttp: stopping peer 41b716ec77b939e2...
+2019-08-07 12:27:07.439631 I | rafthttp: stopping peer 41b716ec77b939e2...
+2019-08-07 12:27:07.439662 W | rafthttp: lost the TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.439708 W | rafthttp: lost the TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.439746 I | rafthttp: closed the TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.439757 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:07.439765 W | rafthttp: lost the TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.439805 I | rafthttp: closed the TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.439815 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:07.439896 W | rafthttp: lost the TCP streaming connection with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:07.439908 I | rafthttp: closed the TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.439915 W | rafthttp: lost the TCP streaming connection with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:07.439922 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:07.439978 I | rafthttp: closed the TCP streaming connection with peer 41b716ec77b939e2 (stream Message writer)
+2019-08-07 12:27:07.439990 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:07.439996 W | rafthttp: lost the TCP streaming connection with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:07.440013 I | rafthttp: stopped HTTP pipelining with peer 41b716ec77b939e2
+2019-08-07 12:27:07.440054 I | rafthttp: stopping peer 70da1e019eb80d16...
+2019-08-07 12:27:07.440076 I | rafthttp: closed the TCP streaming connection with peer 41b716ec77b939e2 (stream Message writer)
+2019-08-07 12:27:07.440145 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:07.440151 I | rafthttp: closed the TCP streaming connection with peer 41b716ec77b939e2 (stream Message writer)
+2019-08-07 12:27:07.440160 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (writer)
+2019-08-07 12:27:07.440169 I | rafthttp: stopped HTTP pipelining with peer 41b716ec77b939e2
+2019-08-07 12:27:07.440181 I | rafthttp: stopped HTTP pipelining with peer 41b716ec77b939e2
+2019-08-07 12:27:07.440197 W | rafthttp: lost the TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440208 E | rafthttp: failed to read 41b716ec77b939e2 on stream MsgApp v2 (context canceled)
+2019-08-07 12:27:07.440230 I | rafthttp: closed the TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.440240 I | rafthttp: peer 41b716ec77b939e2 became inactive (message send to peer failed)
+2019-08-07 12:27:07.440248 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:07.440254 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440260 W | rafthttp: lost the TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440275 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440288 W | rafthttp: lost the TCP streaming connection with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:07.440300 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:07.440312 I | rafthttp: stopped peer 41b716ec77b939e2
+2019-08-07 12:27:07.440318 I | rafthttp: stopping peer 86a9bc61612ca551...
+2019-08-07 12:27:07.440323 W | rafthttp: lost the TCP streaming connection with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440333 E | rafthttp: failed to read 41b716ec77b939e2 on stream MsgApp v2 (context canceled)
+2019-08-07 12:27:07.440338 I | rafthttp: peer 41b716ec77b939e2 became inactive (message send to peer failed)
+2019-08-07 12:27:07.440345 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440386 W | rafthttp: lost the TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440402 W | rafthttp: lost the TCP streaming connection with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:07.440416 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:07.440432 W | rafthttp: lost the TCP streaming connection with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:07.440440 I | rafthttp: stopped peer 41b716ec77b939e2
+2019-08-07 12:27:07.440446 I | rafthttp: closed the TCP streaming connection with peer 70da1e019eb80d16 (stream Message writer)
+2019-08-07 12:27:07.440457 E | rafthttp: failed to read 41b716ec77b939e2 on stream Message (context canceled)
+2019-08-07 12:27:07.440464 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:07.440473 I | rafthttp: peer 41b716ec77b939e2 became inactive (message send to peer failed)
+2019-08-07 12:27:07.440481 I | rafthttp: closed the TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.440488 I | rafthttp: stopped streaming with peer 41b716ec77b939e2 (stream Message reader)
+2019-08-07 12:27:07.440492 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:07.440497 I | rafthttp: stopped peer 41b716ec77b939e2
+2019-08-07 12:27:07.440510 I | rafthttp: stopping peer 70da1e019eb80d16...
+2019-08-07 12:27:07.440543 I | rafthttp: stopped HTTP pipelining with peer 70da1e019eb80d16
+2019-08-07 12:27:07.440552 I | rafthttp: stopping peer 70da1e019eb80d16...
+2019-08-07 12:27:07.440574 W | rafthttp: lost the TCP streaming connection with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:07.440621 W | rafthttp: lost the TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440656 I | rafthttp: closed the TCP streaming connection with peer 86a9bc61612ca551 (stream Message writer)
+2019-08-07 12:27:07.440666 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:07.440673 W | rafthttp: lost the TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440680 I | rafthttp: stopped HTTP pipelining with peer 86a9bc61612ca551
+2019-08-07 12:27:07.440687 E | rafthttp: failed to dial 70da1e019eb80d16 on stream MsgApp v2 (context canceled)
+2019-08-07 12:27:07.440692 I | rafthttp: peer 70da1e019eb80d16 became inactive (message send to peer failed)
+2019-08-07 12:27:07.440698 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440702 I | rafthttp: closed the TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.440711 E | rafthttp: failed to dial 86a9bc61612ca551 on stream MsgApp v2 (stream reader is stopped)
+2019-08-07 12:27:07.440718 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:07.440725 I | rafthttp: peer 86a9bc61612ca551 became inactive (message send to peer failed)
+2019-08-07 12:27:07.440732 I | rafthttp: closed the TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.440742 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:07.440752 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440792 W | rafthttp: lost the TCP streaming connection with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:07.440823 W | rafthttp: lost the TCP streaming connection with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:07.440834 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:07.440840 I | rafthttp: stopped peer 86a9bc61612ca551
+2019-08-07 12:27:07.440861 I | rafthttp: stopping peer 8b9e8a46492295e8...
+2019-08-07 12:27:07.440874 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:07.440886 I | rafthttp: stopped peer 70da1e019eb80d16
+2019-08-07 12:27:07.440894 I | rafthttp: stopping peer 86a9bc61612ca551...
+2019-08-07 12:27:07.440900 I | rafthttp: closed the TCP streaming connection with peer 70da1e019eb80d16 (stream Message writer)
+2019-08-07 12:27:07.440909 I | rafthttp: closed the TCP streaming connection with peer 70da1e019eb80d16 (stream Message writer)
+2019-08-07 12:27:07.440922 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:07.440931 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (writer)
+2019-08-07 12:27:07.440958 W | rafthttp: lost the TCP streaming connection with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.440970 I | rafthttp: stopped HTTP pipelining with peer 70da1e019eb80d16
+2019-08-07 12:27:07.440983 I | rafthttp: stopped HTTP pipelining with peer 70da1e019eb80d16
+2019-08-07 12:27:07.441000 E | rafthttp: failed to dial 70da1e019eb80d16 on stream MsgApp v2 (stream reader is stopped)
+2019-08-07 12:27:07.441009 I | rafthttp: peer 70da1e019eb80d16 became inactive (message send to peer failed)
+2019-08-07 12:27:07.441015 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.441038 E | rafthttp: failed to dial 70da1e019eb80d16 on stream MsgApp v2 (context canceled)
+2019-08-07 12:27:07.441059 I | rafthttp: peer 70da1e019eb80d16 became inactive (message send to peer failed)
+2019-08-07 12:27:07.441069 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.441075 W | rafthttp: lost the TCP streaming connection with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:07.441089 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:07.441095 I | rafthttp: stopped peer 70da1e019eb80d16
+2019-08-07 12:27:07.441101 I | rafthttp: stopping peer 86a9bc61612ca551...
+2019-08-07 12:27:07.441127 I | rafthttp: closed the TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.441138 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:07.441147 I | rafthttp: closed the TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.441156 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:07.441185 W | rafthttp: lost the TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.441196 I | rafthttp: stopped streaming with peer 70da1e019eb80d16 (stream Message reader)
+2019-08-07 12:27:07.441241 I | rafthttp: stopped peer 70da1e019eb80d16
+2019-08-07 12:27:07.441248 I | rafthttp: stopping peer 8b9e8a46492295e8...
+2019-08-07 12:27:07.441307 I | rafthttp: closed the TCP streaming connection with peer 8b9e8a46492295e8 (stream Message writer)
+2019-08-07 12:27:07.441317 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:07.441338 I | rafthttp: closed the TCP streaming connection with peer 86a9bc61612ca551 (stream Message writer)
+2019-08-07 12:27:07.441346 I | rafthttp: closed the TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.441353 I | rafthttp: stopped HTTP pipelining with peer 8b9e8a46492295e8
+2019-08-07 12:27:07.441395 W | rafthttp: lost the TCP streaming connection with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.441421 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:07.441444 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:07.441454 I | rafthttp: stopped HTTP pipelining with peer 86a9bc61612ca551
+2019-08-07 12:27:07.441486 I | rafthttp: closed the TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.441495 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:07.441504 E | rafthttp: failed to dial 86a9bc61612ca551 on stream MsgApp v2 (context canceled)
+2019-08-07 12:27:07.441538 I | rafthttp: peer 86a9bc61612ca551 became inactive (message send to peer failed)
+2019-08-07 12:27:07.441552 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.441557 W | rafthttp: lost the TCP streaming connection with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:07.441575 W | rafthttp: lost the TCP streaming connection with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:07.441586 E | rafthttp: failed to dial 8b9e8a46492295e8 on stream MsgApp v2 (context canceled)
+2019-08-07 12:27:07.441595 I | rafthttp: peer 8b9e8a46492295e8 became inactive (message send to peer failed)
+2019-08-07 12:27:07.441601 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.441632 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:07.441642 I | rafthttp: closed the TCP streaming connection with peer 86a9bc61612ca551 (stream Message writer)
+2019-08-07 12:27:07.441671 I | rafthttp: closed the TCP streaming connection with peer 8b9e8a46492295e8 (stream Message writer)
+2019-08-07 12:27:07.441679 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:07.441695 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (writer)
+2019-08-07 12:27:07.441710 I | rafthttp: stopped peer 8b9e8a46492295e8
+2019-08-07 12:27:07.441743 I | rafthttp: stopped HTTP pipelining with peer 8b9e8a46492295e8
+2019-08-07 12:27:07.441759 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:07.441781 E | rafthttp: failed to find member 41b716ec77b939e2 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.441816 E | rafthttp: failed to find member 86a9bc61612ca551 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.441839 E | rafthttp: failed to find member 41b716ec77b939e2 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.441874 E | rafthttp: failed to dial 8b9e8a46492295e8 on stream MsgApp v2 (context canceled)
+2019-08-07 12:27:07.441886 I | rafthttp: stopped peer 86a9bc61612ca551
+2019-08-07 12:27:07.441892 I | rafthttp: peer 8b9e8a46492295e8 became inactive (message send to peer failed)
+2019-08-07 12:27:07.441899 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.441906 I | rafthttp: stopping peer 8b9e8a46492295e8...
+2019-08-07 12:27:07.441930 I | rafthttp: stopped HTTP pipelining with peer 86a9bc61612ca551
+2019-08-07 12:27:07.441949 E | rafthttp: failed to find member 86a9bc61612ca551 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.441967 E | rafthttp: failed to dial 86a9bc61612ca551 on stream MsgApp v2 (context canceled)
+2019-08-07 12:27:07.442006 I | rafthttp: peer 86a9bc61612ca551 became inactive (message send to peer failed)
+2019-08-07 12:27:07.442035 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.442043 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:07.442067 I | rafthttp: stopped peer 8b9e8a46492295e8
+2019-08-07 12:27:07.442113 I | rafthttp: stopped streaming with peer 86a9bc61612ca551 (stream Message reader)
+2019-08-07 12:27:07.442125 I | rafthttp: stopped peer 86a9bc61612ca551
+2019-08-07 12:27:07.442130 E | rafthttp: failed to find member 8b9e8a46492295e8 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.442147 I | rafthttp: closed the TCP streaming connection with peer 8b9e8a46492295e8 (stream MsgApp v2 writer)
+2019-08-07 12:27:07.442157 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:07.442165 E | rafthttp: failed to find member 41b716ec77b939e2 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.442174 E | rafthttp: failed to find member 41b716ec77b939e2 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.442180 E | rafthttp: failed to find member 41b716ec77b939e2 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.442200 E | rafthttp: failed to find member 8b9e8a46492295e8 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.442217 E | rafthttp: failed to find member 41b716ec77b939e2 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.442236 E | rafthttp: failed to find member 86a9bc61612ca551 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.442264 E | rafthttp: failed to find member 70da1e019eb80d16 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.442281 E | rafthttp: failed to find member 86a9bc61612ca551 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.442321 I | rafthttp: closed the TCP streaming connection with peer 8b9e8a46492295e8 (stream Message writer)
+2019-08-07 12:27:07.442330 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (writer)
+2019-08-07 12:27:07.442350 E | rafthttp: failed to find member 70da1e019eb80d16 in cluster 2479885662e2bcbc
+2019-08-07 12:27:07.442359 I | rafthttp: stopped HTTP pipelining with peer 8b9e8a46492295e8
+2019-08-07 12:27:07.442376 E | rafthttp: failed to dial 8b9e8a46492295e8 on stream MsgApp v2 (peer 8b9e8a46492295e8 failed to find local node 41b716ec77b939e2)
+2019-08-07 12:27:07.442383 I | rafthttp: peer 8b9e8a46492295e8 became inactive (message send to peer failed)
+2019-08-07 12:27:07.442393 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (stream MsgApp v2 reader)
+2019-08-07 12:27:07.442412 I | rafthttp: stopped streaming with peer 8b9e8a46492295e8 (stream Message reader)
+2019-08-07 12:27:07.442425 I | rafthttp: stopped peer 8b9e8a46492295e8
+2019-08-07 12:27:07.508642 I | integration: terminated 6290106642459234010 (unix://localhost:62901066424592340100)
+2019-08-07 12:27:07.515304 I | integration: terminated 1993494159844559220 (unix://localhost:19934941598445592200)
+2019-08-07 12:27:07.515866 I | integration: terminated 4169002585177382408 (unix://localhost:41690025851773824080)
+2019-08-07 12:27:07.516021 I | integration: terminated 616820021699720334 (unix://localhost:6168200216997203340)
+FAIL
+coverage: 63.6% of statements
+FAIL	github.com/pingcap/tidb/owner	5.360s
+?   	github.com/pingcap/tidb/planner	[no test files]
+ok  	github.com/pingcap/tidb/planner/cascades	0.032s	coverage: 27.3% of statements
+ok  	github.com/pingcap/tidb/planner/core	5.500s	coverage: 81.6% of statements
+ok  	github.com/pingcap/tidb/planner/implementation	0.021s	coverage: 50.0% of statements
+ok  	github.com/pingcap/tidb/planner/memo	0.021s	coverage: 88.2% of statements
+?   	github.com/pingcap/tidb/planner/property	[no test files]
+ok  	github.com/pingcap/tidb/plugin	0.024s	coverage: 61.4% of statements
+ok  	github.com/pingcap/tidb/plugin/conn_ip_example	0.024s	coverage: 0.0% of statements [no tests to run]
+?   	github.com/pingcap/tidb/privilege	[no test files]
+ok  	github.com/pingcap/tidb/privilege/privileges	0.997s	coverage: 82.9% of statements
+ok  	github.com/pingcap/tidb/server	20.025s	coverage: 58.8% of statements
+ok  	github.com/pingcap/tidb/session	14.325s	coverage: 79.7% of statements
+ok  	github.com/pingcap/tidb/sessionctx	0.018s	coverage: 83.3% of statements
+ok  	github.com/pingcap/tidb/sessionctx/binloginfo	1.207s	coverage: 89.5% of statements
+ok  	github.com/pingcap/tidb/sessionctx/stmtctx	(cached)	coverage: 30.6% of statements
+ok  	github.com/pingcap/tidb/sessionctx/variable	0.019s	coverage: 53.1% of statements
+ok  	github.com/pingcap/tidb/statistics	2.797s	coverage: 76.9% of statements
+ok  	github.com/pingcap/tidb/statistics/handle	2.979s	coverage: 86.3% of statements
+ok  	github.com/pingcap/tidb/store	4.047s	coverage: 95.5% of statements
+ok  	github.com/pingcap/tidb/store/helper	1.001s	coverage: 49.3% of statements
+?   	github.com/pingcap/tidb/store/mockoracle	[no test files]
+ok  	github.com/pingcap/tidb/store/mockstore	0.024s	coverage: 74.1% of statements
+ok  	github.com/pingcap/tidb/store/mockstore/mocktikv	0.104s	coverage: 28.5% of statements
+ok  	github.com/pingcap/tidb/store/tikv	35.062s	coverage: 72.8% of statements
+ok  	github.com/pingcap/tidb/store/tikv/gcworker	6.811s	coverage: 72.5% of statements
+ok  	github.com/pingcap/tidb/store/tikv/latch	(cached)	coverage: 95.2% of statements
+?   	github.com/pingcap/tidb/store/tikv/oracle	[no test files]
+ok  	github.com/pingcap/tidb/store/tikv/oracle/oracles	(cached)	coverage: 30.0% of statements
+?   	github.com/pingcap/tidb/store/tikv/tikvrpc	[no test files]
+ok  	github.com/pingcap/tidb/structure	0.023s	coverage: 85.7% of statements
+ok  	github.com/pingcap/tidb/table	0.022s	coverage: 87.1% of statements
+ok  	github.com/pingcap/tidb/table/tables	0.599s	coverage: 82.4% of statements
+ok  	github.com/pingcap/tidb/tablecodec	0.017s	coverage: 79.1% of statements
+?   	github.com/pingcap/tidb/tidb-server	[no test files]
+ok  	github.com/pingcap/tidb/types	0.288s	coverage: 85.5% of statements
+ok  	github.com/pingcap/tidb/types/json	(cached)	coverage: 83.7% of statements
+ok  	github.com/pingcap/tidb/types/parser_driver	(cached)	coverage: 24.7% of statements
+ok  	github.com/pingcap/tidb/util	0.031s	coverage: 86.9% of statements
+ok  	github.com/pingcap/tidb/util/admin	0.311s	coverage: 81.7% of statements
+ok  	github.com/pingcap/tidb/util/arena	(cached)	coverage: 100.0% of statements
+ok  	github.com/pingcap/tidb/util/chunk	(cached)	coverage: 86.3% of statements
+ok  	github.com/pingcap/tidb/util/codec	(cached)	coverage: 85.7% of statements
+ok  	github.com/pingcap/tidb/util/deadlock	(cached)	coverage: 100.0% of statements
+ok  	github.com/pingcap/tidb/util/disjointset	(cached)	coverage: 100.0% of statements
+ok  	github.com/pingcap/tidb/util/encrypt	(cached)	coverage: 95.2% of statements
+ok  	github.com/pingcap/tidb/util/execdetails	(cached)	coverage: 68.3% of statements
+?   	github.com/pingcap/tidb/util/expensivequery	[no test files]
+ok  	github.com/pingcap/tidb/util/filesort	0.647s	coverage: 86.4% of statements
+ok  	github.com/pingcap/tidb/util/format	(cached)	coverage: 83.6% of statements
+?   	github.com/pingcap/tidb/util/gcutil	[no test files]
+ok  	github.com/pingcap/tidb/util/hack	(cached)	coverage: 92.3% of statements
+?   	github.com/pingcap/tidb/util/israce	[no test files]
+ok  	github.com/pingcap/tidb/util/kvcache	(cached)	coverage: 80.0% of statements
+ok  	github.com/pingcap/tidb/util/kvencoder	1.563s	coverage: 88.6% of statements
+ok  	github.com/pingcap/tidb/util/logutil	(cached)	coverage: 85.8% of statements
+ok  	github.com/pingcap/tidb/util/math	(cached)	coverage: 33.3% of statements
+ok  	github.com/pingcap/tidb/util/memory	(cached)	coverage: 67.6% of statements
+ok  	github.com/pingcap/tidb/util/mock	0.016s	coverage: 16.7% of statements
+ok  	github.com/pingcap/tidb/util/mvmap	(cached)	coverage: 86.6% of statements
+?   	github.com/pingcap/tidb/util/pdapi	[no test files]
+ok  	github.com/pingcap/tidb/util/printer	0.016s	coverage: 88.3% of statements
+ok  	github.com/pingcap/tidb/util/ranger	0.479s	coverage: 80.3% of statements
+ok  	github.com/pingcap/tidb/util/rowDecoder	0.026s	coverage: 45.5% of statements
+ok  	github.com/pingcap/tidb/util/set	(cached)	coverage: 100.0% of statements
+?   	github.com/pingcap/tidb/util/signal	[no test files]
+?   	github.com/pingcap/tidb/util/sqlexec	[no test files]
+ok  	github.com/pingcap/tidb/util/stringutil	(cached)	coverage: 95.5% of statements
+ok  	github.com/pingcap/tidb/util/sys/linux	(cached)	coverage: 66.7% of statements
+ok  	github.com/pingcap/tidb/util/systimemon	(cached)	coverage: 100.0% of statements
+ok  	github.com/pingcap/tidb/util/timeutil	(cached)	coverage: 63.3% of statements
+ok  	github.com/pingcap/tidb/util/tracing	(cached)	coverage: 93.3% of statements
