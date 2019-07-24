@@ -102,7 +102,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 			st = &slowQueryTuple{}
 			err = st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
 			if err != nil {
-				return rows, err
+				return rows, errors.Wrap(err, "parse slow log filed `"+variable.SlowLogTimeStr+"` error")
 			}
 			startFlag = true
 			continue
@@ -120,14 +120,14 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 					}
 					err = st.setFieldValue(tz, field, fieldValues[i+1])
 					if err != nil {
-						return rows, err
+						return rows, errors.Wrap(err, "parse slow log filed `"+field+"` error")
 					}
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 				// Get the sql string, and mark the start flag to false.
 				err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)))
 				if err != nil {
-					return rows, err
+					return rows, errors.Wrap(err, "parse slow log filed `"+variable.SlowLogQuerySQLStr+"` error")
 				}
 				rows = append(rows, st.convertToDatumRow())
 				startFlag = false
