@@ -87,11 +87,6 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 	t.parent.Consume(t.BytesConsumed())
 }
 
-// Detach detaches this Tracker from its parent.
-func (t *Tracker) Detach() {
-	t.parent.remove(t)
-}
-
 func (t *Tracker) remove(oldChild *Tracker) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -144,17 +139,13 @@ func (t *Tracker) Consume(bytes int64) {
 			rootExceed = tracker
 		}
 
-		if tracker.parent == nil {
-			// since we only need a total memory usage during execution,
-			// we only record max consumed bytes in root(statement-level) for performance.
-			for {
-				maxNow := atomic.LoadInt64(&tracker.maxConsumed)
-				consumed := atomic.LoadInt64(&tracker.bytesConsumed)
-				if consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed) {
-					continue
-				}
-				break
+		for {
+			maxNow := atomic.LoadInt64(&tracker.maxConsumed)
+			consumed := atomic.LoadInt64(&tracker.bytesConsumed)
+			if consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed) {
+				continue
 			}
+			break
 		}
 	}
 	if rootExceed != nil {
@@ -170,6 +161,21 @@ func (t *Tracker) BytesConsumed() int64 {
 // MaxConsumed returns max number of bytes consumed during execution.
 func (t *Tracker) MaxConsumed() int64 {
 	return atomic.LoadInt64(&t.maxConsumed)
+}
+
+// SearchTracker searches the specific tracker under this tracker.
+func (t *Tracker) SearchTracker(label string) *Tracker {
+	if t.label.String() == label {
+		return t
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, child := range t.mu.children {
+		if result := child.SearchTracker(label); result != nil {
+			return result
+		}
+	}
+	return nil
 }
 
 // String returns the string representation of this Tracker tree.
