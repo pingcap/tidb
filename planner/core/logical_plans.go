@@ -251,7 +251,7 @@ type LogicalAggregation struct {
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
 
-	// preferAggType stores prefered aggregation algorithm type.
+	// preferAggType stores preferred aggregation algorithm type.
 	preferAggType uint
 
 	possibleProperties [][]*expression.Column
