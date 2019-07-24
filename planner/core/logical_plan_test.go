@@ -1197,7 +1197,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		lp, err := logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+		lp, err := logicalOptimize(ctx, flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		checkDataSourceCols(lp, c, tt.ans, comment)
 	}

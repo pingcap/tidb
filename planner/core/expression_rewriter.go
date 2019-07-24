@@ -118,7 +118,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	}()
 
 	if len(b.rewriterPool) < b.rewriterCounter {
-		rewriter = &expressionRewriter{p: p, b: b, sctx: b.ctx}
+		rewriter = &expressionRewriter{p: p, b: b, sctx: b.ctx, ctx: ctx}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
 	}
