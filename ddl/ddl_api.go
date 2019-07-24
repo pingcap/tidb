@@ -2119,7 +2119,8 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	meta := t.Meta()
-	if meta.GetPartitionInfo() == nil {
+	pi := meta.GetPartitionInfo()
+	if pi == nil {
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
@@ -2142,7 +2143,11 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	err = checkAddPartitionValue(meta, partInfo)
+	// partInfo contains only the new added partition, we have to combine it with the
+	// old partitions to check all partitions is strictly increasing.
+	tmp := *partInfo
+	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
+	err = checkCreatePartitionValue(ctx, meta, &tmp, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3381,32 +3386,17 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		Columns: meta.Partition.Columns,
 		Enable:  meta.Partition.Enable,
 	}
+
 	genIDs, err := d.genGlobalIDs(len(spec.PartDefinitions))
 	if err != nil {
 		return nil, err
 	}
-	buf := new(bytes.Buffer)
 	for ith, def := range spec.PartDefinitions {
 		if err := def.Clause.Validate(part.Type, len(part.Columns)); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
-		for _, expr := range clause.Exprs {
-			tp := expr.GetType().Tp
-			if len(part.Columns) == 0 {
-				// Partition by range.
-				if !(tp == mysql.TypeLong || tp == mysql.TypeLonglong) {
-					expr.Format(buf)
-					if strings.EqualFold(buf.String(), "MAXVALUE") {
-						continue
-					}
-					buf.Reset()
-					return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(buf.String(), "partition function")
-				}
-			}
-			// Partition by range columns if len(part.Columns) != 0.
-		}
 		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
