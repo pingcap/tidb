@@ -1072,26 +1072,12 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
-	hasAutoIncID := false
-	for _, col := range tblInfo.Cols() {
-		if mysql.HasAutoIncrementFlag(col.Flag) {
-			hasAutoIncID = true
-			break
-		}
+	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
+	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
+	if err != nil {
+		return 0, err
 	}
-	autoIncID := tblInfo.AutoIncID
-	if hasAutoIncID {
-		is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
-		tbl, err := is.TableByName(schema.Name, tblInfo.Name)
-		if err != nil {
-			return 0, err
-		}
-		autoIncID, err = tbl.Allocator(ctx).NextGlobalAutoID(tblInfo.ID)
-		if err != nil {
-			return 0, err
-		}
-	}
-	return autoIncID, nil
+	return tbl.Allocator(ctx).Base() + 1, nil
 }
 
 func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
@@ -1162,10 +1148,15 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
 				}
-				autoIncID, err := getAutoIncrementID(ctx, schema, table)
-				if err != nil {
-					return nil, err
+				var autoIncID interface{}
+				hasAutoIncID, _ := HasAutoIncrementColumn(table)
+				if hasAutoIncID {
+					autoIncID, err = getAutoIncrementID(ctx, schema, table)
+					if err != nil {
+						return nil, err
+					}
 				}
+
 				rowCount := tableRowsMap[table.ID]
 				dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
 				avgRowLength := uint64(0)

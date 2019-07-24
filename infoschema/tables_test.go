@@ -84,7 +84,21 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 		testkit.Rows("1"))
 	tk.MustExec("insert into t(c, d) values(1, 1)")
 	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("30002"))
+		testkit.Rows("2"))
+
+	tk.MustQuery("show create table t").Check(
+		testkit.Rows("" +
+			"t CREATE TABLE `t` (\n" +
+			"  `c` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  `d` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`c`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002"))
+
+	// Test auto_increment for table without auto_increment column
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (d int)")
+	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("<nil>"))
 
 	tk.MustExec("create user xxx")
 	tk.MustExec("flush privileges")
