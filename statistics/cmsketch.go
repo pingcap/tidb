@@ -408,10 +408,10 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 			c.count = c.count + uint64(counter)
 		}
 	}
+	c.defaultValue = protoSketch.DefaultValue
 	if len(protoSketch.TopN) == 0 {
 		return c
 	}
-	c.defaultValue = protoSketch.DefaultValue
 	c.topN = make(map[uint64][]*TopNMeta)
 	for _, e := range protoSketch.TopN {
 		h1, h2 := murmur3.Sum128(e.Data)
@@ -478,12 +478,7 @@ func (c *CMSketch) TotalCount() uint64 {
 
 // Equal tests if two CM Sketch equal, it is only used for test.
 func (c *CMSketch) Equal(rc *CMSketch) bool {
-	// TODO: Default value are not dumped to storage, we need to fix it.
-	defaultVal := c.defaultValue
-	c.defaultValue = rc.defaultValue
-	res := reflect.DeepEqual(c, rc)
-	c.defaultValue = defaultVal
-	return res
+	return reflect.DeepEqual(c, rc)
 }
 
 // Copy makes a copy for current CMSketch.
