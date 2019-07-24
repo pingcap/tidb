@@ -1585,26 +1585,37 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	c.Assert(err, IsNil)
 
 	tests := []struct {
-		sql  string
-		best string
+		sql     string
+		best    string
+		warning string
 	}{
 		// without Aggregation hints
 		{
-			sql:  "select count(*) from t t1, t t2 where t1.a = t2.b",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
+			sql:     "select count(*) from t t1, t t2 where t1.a = t2.b",
+			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
+			warning: "",
 		},
 		{
-			sql:  "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->HashAgg",
+			sql:     "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
+			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->HashAgg",
+			warning: "",
 		},
 		// with Aggregation hints
 		{
-			sql:  "select /*+ TIDB_HASHAGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->HashAgg",
+			sql:     "select /*+ TIDB_HASHAGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
+			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->HashAgg",
+			warning: "",
 		},
 		{
-			sql:  "select /*+ TIDB_STREAMAGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->Sort->StreamAgg",
+			sql:     "select /*+ TIDB_STREAMAGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
+			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->Sort->StreamAgg",
+			warning: "",
+		},
+		// test conflict warning
+		{
+			sql:     "select /*+ TIDB_HASHAGG() TIDB_STREAMAGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
+			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
+			warning: "[planner:1815]Optimizer aggregation hints are conflicted",
 		},
 	}
 	for i, test := range tests {
@@ -1615,5 +1626,14 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, test.best)
+
+		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+		if test.warning == "" {
+			c.Assert(len(warnings), Equals, 0)
+		} else {
+			c.Assert(len(warnings), Equals, 1)
+			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning)
+			c.Assert(warnings[0].Err.Error(), Equals, test.warning)
+		}
 	}
 }

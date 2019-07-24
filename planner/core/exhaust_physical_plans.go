@@ -1279,12 +1279,12 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 	}
 
 	hashAggs := la.getHashAggs(prop)
-	if hashAggs != nil && preferHash {
+	if hashAggs != nil && preferHash && !preferStream {
 		return hashAggs
 	}
 
 	streamAggs := la.getStreamAggs(prop)
-	if streamAggs != nil && preferStream {
+	if streamAggs != nil && preferStream && !preferHash {
 		for i := range streamAggs {
 			streamAggs[i].(*PhysicalStreamAgg).convert2Enforced()
 		}
