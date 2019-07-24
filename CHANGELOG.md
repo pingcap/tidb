@@ -1,6 +1,23 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.1.15] 2019-07-18
+* Fix the issue that the `DATE_ADD` function returns wrong results due to incorrect alignment when dealing with microseconds
+[#11289](https://github.com/pingcap/tidb/pull/11289)
+* Fix the issue that an error is reported when the empty value in the string column is compared with `FLOAT` or `INT` [#11279](https://github.com/pingcap/tidb/pull/11279)
+* Fix the issue that the `INSERT` function fails to return the `NULL` value when a parameter is `NULL` [#11249](https://github.com/pingcap/tidb/pull/11249)
+* Fix the issue that an error occurs when indexing the column of the non-string type and `0` length [#11215](https://github.com/pingcap/tidb/pull/11215)
+* Add the `SHOW TABLE REGIONS` statement to query the Region distribution of a table through SQL statements [#11238](https://github.com/pingcap/tidb/pull/11238)
+* Fix the issue that columns are wrongly pruned because the `SELECT` subquery fails to correctly parse the column in the `UPDATE` expression [#11254](https://github.com/pingcap/tidb/pull/11254)
+* Add the `ADMIN PLUGINS ENABLE``/`ADMIN PLUGINS DISABLE` SQL statement to dynamically enable or disable plugins [#11189](https://github.com/pingcap/tidb/pull/11189)
+* Add the session connection information in the audit plugins [#11189](https://github.com/pingcap/tidb/pull/11189)
+* Fix the panic issue that happens when a column is queried on multiple times and the returned result is `NULL` during point queries [#11227](https://github.com/pingcap/tidb/pull/11227)
+* Add the `tidb_scatter_region` configuration item to scatter table Regions when creating a table [#11213](https://github.com/pingcap/tidb/pull/11213)
+* Fix the data race issue caused by non-thread safe `rand.Rand` when using the `RAND` function [#11170](https://github.com/pingcap/tidb/pull/11170)
+* Fix the issue that the comparison result of integers and non-integers is incorrect in some cases [#11191](https://github.com/pingcap/tidb/pull/11191)
+* Support modifying the collation of a database or a table, but the character set of the database/table has to be UTF-8 or UTF8MB4 [#11085](https://github.com/pingcap/tidb/pull/11085)
+* Fix the issue that the precision shown by the `SHOW CREATE TABLE` statement is incomplete when `CURRENT_TIMESTAMP` is used as the default value of the column and the decimal precision is specified [#11087](https://github.com/pingcap/tidb/pull/11087)
+
 ## [2.1.14] 2019-07-04
 * Fix wrong query results caused by column pruning in some cases [#11019](https://github.com/pingcap/tidb/pull/11019)
 * Fix the wrongly displayed information in `db` and `info` columns of `show processlist` [#11000](https://github.com/pingcap/tidb/pull/11000)
