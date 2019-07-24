@@ -60,6 +60,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogCopWaitMax, mysql.TypeDouble, 22, 0, nil, nil},
 	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
+	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeVarchar, 4096, 0, nil, nil},
 }
 
@@ -186,6 +187,7 @@ type slowQueryTuple struct {
 	maxWaitTime       float64
 	maxWaitAddress    string
 	memMax            int64
+	succ              bool
 	sql               string
 }
 
@@ -319,6 +321,12 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 			return errors.AddStack(err)
 		}
 		st.memMax = num
+	case variable.SlowLogSucc:
+		succ, err := strconv.ParseBool(value)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.succ = succ
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
 	}
@@ -357,6 +365,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.maxWaitTime))
 	record = append(record, types.NewStringDatum(st.maxWaitAddress))
 	record = append(record, types.NewIntDatum(st.memMax))
+	if st.succ {
+		record = append(record, types.NewIntDatum(1))
+	} else {
+		record = append(record, types.NewIntDatum(0))
+	}
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
 }
