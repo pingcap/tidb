@@ -70,7 +70,8 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
 	startTime := time.Now()
 	resultSubset, err := resp.Next(ctx)
-	// TODO: Add a label to distinguish between success or failure
+	// TODO: Add a label to distinguish between success or failure.
+	// https://github.com/pingcap/tidb/issues/11397
 	metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		return false, err
