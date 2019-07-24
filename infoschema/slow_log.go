@@ -60,7 +60,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
 	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
-	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, 4294967295, 0, nil, nil},
+	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 }
 
 func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
