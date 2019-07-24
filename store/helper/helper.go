@@ -16,9 +16,13 @@ package helper
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -41,6 +45,14 @@ const (
 type Helper struct {
 	Store       tikv.Storage
 	RegionCache *tikv.RegionCache
+}
+
+// NewHelper get a Helper from Storage
+func NewHelper(store tikv.Storage) *Helper {
+	return &Helper{
+		Store:       store,
+		RegionCache: store.GetRegionCache(),
+	}
 }
 
 // GetMvccByEncodedKey get the MVCC value by the specific encoded key.
@@ -393,31 +405,112 @@ type RegionInfo struct {
 	ApproximateKeys int64            `json:"approximate_keys"`
 }
 
+// return true if [startKey, endKey) intersect with r
+func (r *RegionInfo) InKeyRange(startKey, endKey string) bool {
+	if endKey != "" && r.StartKey >= endKey {
+		return false
+	}
+	if r.EndKey != "" && r.EndKey <= startKey {
+		return false
+	}
+	return true
+}
+
 // RegionsInfo stores the information of regions.
 type RegionsInfo struct {
 	Count   int64        `json:"count"`
 	Regions []RegionInfo `json:"regions"`
 }
 
+// GetRegionsInfoByKeyRange gets regions intersecting with a key range
+func (h *Helper) GetRegionsInfoByKeyRange(stKey, edKey []byte) (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	queryParams := url.Values{}
+	queryParams.Set("limit", "128")
+	uri, err := url.Parse(pdapi.Regions + "/key")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// encode method found in pd/server/core/region.go:HexRegionKey()
+	startKey := strings.ToUpper(hex.EncodeToString(stKey))
+	endKey := strings.ToUpper(hex.EncodeToString(edKey))
+
+	logutil.BgLogger().Info("finding [start, end)", zap.String("start", startKey), zap.String("end", endKey), zap.ByteString("raw-start", stKey))
+
+	regions := make([]RegionInfo, 0)
+
+	for startKey < endKey {
+		// encode method found in pd/tools/pd-ctl/pdctl/command/region_command.go:parseKey()
+		queryKey, err := hex.DecodeString(startKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		queryParams.Set("key", string(queryKey))
+		uri.RawQuery = queryParams.Encode()
+		err = h.RequestPD("GET", uri.String(), nil, &regionsInfo)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(regionsInfo.Regions) == 0 {
+			logutil.BgLogger().Info("empty")
+			break
+		}
+
+		for _, region := range regionsInfo.Regions {
+			logutil.BgLogger().Info("found [start, end)", zap.String("start", region.StartKey), zap.String("end", region.EndKey))
+			if region.InKeyRange(startKey, endKey) {
+				logutil.BgLogger().Info("found one")
+				regions = append(regions, region)
+			}
+			if region.EndKey == "" || region.StartKey >= region.EndKey {
+				logutil.BgLogger().Info("edge region", zap.String("start", region.StartKey), zap.String("end", region.EndKey))
+				startKey = endKey
+				break
+			}
+			if region.EndKey > startKey {
+				startKey = region.EndKey
+			}
+			// reach the edge, stop
+		}
+		//logutil.BgLogger().Info("update to [start, end)", zap.String("start", startKey), zap.String("end", endKey))
+	}
+	logutil.BgLogger().Info("stop at [start, end)", zap.String("start", startKey), zap.String("end", endKey))
+
+	return &RegionsInfo{
+		Count:   int64(len(regions)),
+		Regions: regions,
+	}, nil
+}
+
 // GetRegionsInfo gets the region information of current store by using PD's api.
 func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.RequestPD("GET", pdapi.Regions, nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
+// request PD API, decode the response body into res
+func (h *Helper) RequestPD(method, uri string, body io.Reader, res interface{}) error {
 	etcd, ok := h.Store.(tikv.EtcdBackend)
 	if !ok {
-		return nil, errors.WithStack(errors.New("not implemented"))
+		return errors.WithStack(errors.New("not implemented"))
 	}
 	pdHosts := etcd.EtcdAddrs()
 	if len(pdHosts) == 0 {
-		return nil, errors.New("pd unavailable")
+		return errors.New("pd unavailable")
 	}
-	req, err := http.NewRequest("GET", protocol+pdHosts[0]+pdapi.Regions, nil)
+	logutil.BgLogger().Info("url ", zap.String("url", protocol+pdHosts[0]+uri))
+	req, err := http.NewRequest(method, protocol+pdHosts[0]+uri, body)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	timeout, cancelFunc := context.WithTimeout(context.Background(), 5*time.Second)
 	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
 	defer cancelFunc()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	defer func() {
 		err = resp.Body.Close()
@@ -425,12 +518,11 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 			logutil.BgLogger().Error("close body failed", zap.Error(err))
 		}
 	}()
-	var regionsInfo RegionsInfo
-	err = json.NewDecoder(resp.Body).Decode(&regionsInfo)
+	err = json.NewDecoder(resp.Body).Decode(res)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return &regionsInfo, nil
+	return nil
 }
 
 // StoresStat stores all information get from PD's api.
