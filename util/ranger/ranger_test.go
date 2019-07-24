@@ -1052,7 +1052,7 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
 		"Projection_11 2.00 root 9_aux_0",
-		"└─Apply_13 2.00 root left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.e, 7_col_0)",
+		"└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.e, 7_col_0)",
 		"  ├─TableReader_15 2.00 root data:TableScan_14",
 		"  │ └─TableScan_14 2.00 cop table:t, range:[-inf,+inf], keep order:false",
 		"  └─StreamAgg_20 1.00 root funcs:count(1)",
