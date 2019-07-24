@@ -14,23 +14,11 @@
 package domain
 
 import (
-	"context"
-	"testing"
-	"time"
-
 	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
-	dto "github.com/prometheus/client_model/go"
+	"testing"
 )
 
 func TestT(t *testing.T) {
@@ -51,7 +39,7 @@ func sysMockFactory(dom *Domain) (pools.Resource, error) {
 	return nil, nil
 }
 
-func (*testSuite) TestT(c *C) {
+/*func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -167,7 +155,7 @@ func (*testSuite) TestT(c *C) {
 
 	err = store.Close()
 	c.Assert(err, IsNil)
-}
+}*/
 
 func (*testSuite) TestErrorCode(c *C) {
 	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, mysql.ErrUnknown)
