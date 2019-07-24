@@ -109,22 +109,22 @@ func (c *Column) IsNull(rowIdx int) bool {
 // Copy copies this Column to dst.
 // If dst is nil, it creates a new Column and returns it.
 func (c *Column) CopyConstruct(dst *Column) *Column {
-	if dst == nil {
-		newCol := &Column{length: c.length, nullCount: c.nullCount, ft: c.ft}
-		newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
-		newCol.offsets = append(newCol.offsets, c.offsets...)
-		newCol.data = append(newCol.data, c.data...)
-		newCol.elemBuf = append(newCol.elemBuf, c.elemBuf...)
-		return newCol
+	if dst != nil {
+		dst.length = c.length
+		dst.nullCount = c.nullCount
+		dst.ft = c.ft
+		dst.nullBitmap = append(dst.nullBitmap[:0], c.nullBitmap...)
+		dst.offsets = append(dst.offsets[:0], c.offsets...)
+		dst.data = append(dst.data[:0], c.data...)
+		dst.elemBuf = append(dst.elemBuf[:0], c.elemBuf...)
+		return dst
 	}
-	dst.length = c.length
-	dst.nullCount = c.nullCount
-	dst.ft = c.ft
-	dst.nullBitmap = append(dst.nullBitmap[:0], c.nullBitmap...)
-	dst.offsets = append(dst.offsets[:0], c.offsets...)
-	dst.data = append(dst.data[:0], c.data...)
-	dst.elemBuf = append(dst.elemBuf[:0], c.elemBuf...)
-	return dst
+	newCol := &Column{length: c.length, nullCount: c.nullCount, ft: c.ft}
+	newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
+	newCol.offsets = append(newCol.offsets, c.offsets...)
+	newCol.data = append(newCol.data, c.data...)
+	newCol.elemBuf = append(newCol.elemBuf, c.elemBuf...)
+	return newCol
 }
 
 func (c *Column) appendNullBitmap(notNull bool) {
