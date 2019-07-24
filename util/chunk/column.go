@@ -63,15 +63,36 @@ type Column struct {
 	offsets    []int64
 	data       []byte
 	elemBuf    []byte
+	ft         types.FieldType
 }
 
 // NewColumn creates a new column with the specific length and capacity.
 func NewColumn(ft *types.FieldType, cap int) *Column {
+	var col *Column
 	typeSize := getFixedLen(ft)
 	if typeSize == varElemLen {
-		return newVarLenColumn(cap, nil)
+		col = newVarLenColumn(cap, nil)
+	} else {
+		col = newFixedLenColumn(typeSize, cap)
 	}
-	return newFixedLenColumn(typeSize, cap)
+	col.ft = *ft
+	return col
+}
+
+// Type returns the type of data stored in this Column.
+func (c *Column) Type() *types.FieldType {
+	return &c.ft
+}
+
+// Copy copies this Column to dst.
+func (c *Column) Copy(dst *Column) {
+	dst.length = c.length
+	dst.nullCount = c.nullCount
+	dst.ft = c.ft
+	dst.nullBitmap = append(dst.nullBitmap[:0], dst.nullBitmap...)
+	dst.offsets = append(dst.offsets[:0], dst.offsets...)
+	dst.data = append(dst.data[:0], dst.data...)
+	dst.elemBuf = append(dst.elemBuf[:0], dst.elemBuf...)
 }
 
 func (c *Column) isFixed() bool {

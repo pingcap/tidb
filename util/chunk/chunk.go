@@ -102,11 +102,7 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 func renewColumns(oldCol []*Column, cap int) []*Column {
 	columns := make([]*Column, 0, len(oldCol))
 	for _, col := range oldCol {
-		if col.isFixed() {
-			columns = append(columns, newFixedLenColumn(len(col.elemBuf), cap))
-		} else {
-			columns = append(columns, newVarLenColumn(cap, col))
-		}
+		columns = append(columns, NewColumn(col.Type(), cap))
 	}
 	return columns
 }
