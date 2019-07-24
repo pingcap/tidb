@@ -14,7 +14,6 @@
 package infoschema_test
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"strconv"
@@ -486,11 +485,7 @@ select * from t_slim;`))
 	c.Assert(err, IsNil)
 	c.Assert(f.Close(), IsNil)
 	re = tk.MustQuery("select query from information_schema.slow_query order by time desc limit 1")
-	//re.Check(testutil.RowsWithSep("|", sql))
 	rows := re.Rows()
-	resBuff := bytes.NewBufferString("")
-	fmt.Fprintf(resBuff, "%s", rows[0][0])
-	c.Assert(len(resBuff.String()), Equals, len(sql))
 	c.Assert(rows[0][0], Equals, sql)
 }
 
