@@ -4,7 +4,7 @@ create table t1(a bigint, b bigint);
 create table t2(a bigint, b bigint);
 explain select * from t1 where t1.a in (select t1.b + t2.b from t2);
 id	count	task	operator info
-HashLeftJoin_8	8000.00	root	semi join, inner:TableReader_12, other cond:eq(test.t1.a, plus(test.t1.b, test.t2.b))
+HashLeftJoin_8	8000.00	root	CARTESIAN semi join, inner:TableReader_12, other cond:eq(test.t1.a, plus(test.t1.b, test.t2.b))
 ├─TableReader_10	10000.00	root	data:TableScan_9
 │ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 └─TableReader_12	10000.00	root	data:TableScan_11
@@ -16,7 +16,7 @@ analyze table t;
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
 id	count	task	operator info
 Projection_11	5.00	root	9_aux_0
-└─Apply_13	5.00	root	left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, 7_col_0)
+└─Apply_13	5.00	root	CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, 7_col_0)
   ├─TableReader_15	5.00	root	data:TableScan_14
   │ └─TableScan_14	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_20	1.00	root	funcs:count(1)

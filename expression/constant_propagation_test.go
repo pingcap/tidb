@@ -66,7 +66,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 
 	// Positive tests.
 	tk.MustQuery("explain select * from t1 left join t2 on t1.a > t2.a and t1.a = 1;").Check(testkit.Rows(
-		"HashLeftJoin_6 33233333.33 root left outer join, inner:TableReader_11, left cond:[eq(test.t1.a, 1)]",
+		"HashLeftJoin_6 33233333.33 root CARTESIAN left outer join, inner:TableReader_11, left cond:[eq(test.t1.a, 1)]",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
 		"│ └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_11 3323.33 root data:Selection_10",
@@ -74,7 +74,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"    └─TableScan_9 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain select * from t1 left join t2 on t1.a > t2.a where t1.a = 1;").Check(testkit.Rows(
-		"HashLeftJoin_7 33233.33 root left outer join, inner:TableReader_13",
+		"HashLeftJoin_7 33233.33 root CARTESIAN left outer join, inner:TableReader_13",
 		"├─TableReader_10 10.00 root data:Selection_9",
 		"│ └─Selection_9 10.00 cop eq(test.t1.a, 1)",
 		"│   └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -100,7 +100,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"    └─TableScan_11 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain select * from t1 right join t2 on t1.a > t2.a where t2.a = 1;").Check(testkit.Rows(
-		"HashRightJoin_7 33333.33 root right outer join, inner:TableReader_10",
+		"HashRightJoin_7 33333.33 root CARTESIAN right outer join, inner:TableReader_10",
 		"├─TableReader_10 3333.33 root data:Selection_9",
 		"│ └─Selection_9 3333.33 cop gt(test.t1.a, 1)",
 		"│   └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -126,7 +126,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"  └─TableScan_10 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain select * from t1 right join t2 on t1.a > t2.a and t2.a = 1;").Check(testkit.Rows(
-		"HashRightJoin_6 33333333.33 root right outer join, inner:TableReader_9, right cond:eq(test.t2.a, 1)",
+		"HashRightJoin_6 33333333.33 root CARTESIAN right outer join, inner:TableReader_9, right cond:eq(test.t2.a, 1)",
 		"├─TableReader_9 3333.33 root data:Selection_8",
 		"│ └─Selection_8 3333.33 cop gt(test.t1.a, 1)",
 		"│   └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -143,7 +143,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"    └─TableScan_9 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain select * from t1 left join t2 on t1.a > t2.a and t2.a = 1;").Check(testkit.Rows(
-		"HashLeftJoin_6 100000.00 root left outer join, inner:TableReader_11, other cond:gt(test.t1.a, test.t2.a)",
+		"HashLeftJoin_6 100000.00 root CARTESIAN left outer join, inner:TableReader_11, other cond:gt(test.t1.a, test.t2.a)",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
 		"│ └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_11 10.00 root data:Selection_10",
@@ -151,7 +151,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"    └─TableScan_9 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain select * from t1 right join t2 on t1.a > t2.a and t1.a = 1;").Check(testkit.Rows(
-		"HashRightJoin_6 100000.00 root right outer join, inner:TableReader_9, other cond:gt(test.t1.a, test.t2.a)",
+		"HashRightJoin_6 100000.00 root CARTESIAN right outer join, inner:TableReader_9, other cond:gt(test.t1.a, test.t2.a)",
 		"├─TableReader_9 10.00 root data:Selection_8",
 		"│ └─Selection_8 10.00 cop eq(test.t1.a, 1), not(isnull(test.t1.a))",
 		"│   └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -167,14 +167,14 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"  └─TableScan_10 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain select * from t1 left join t2 on t1.a = t1.b and t1.a > 1;").Check(testkit.Rows(
-		"HashLeftJoin_6 100000000.00 root left outer join, inner:TableReader_10, left cond:[eq(test.t1.a, test.t1.b) gt(test.t1.a, 1)]",
+		"HashLeftJoin_6 100000000.00 root CARTESIAN left outer join, inner:TableReader_10, left cond:[eq(test.t1.a, test.t1.b) gt(test.t1.a, 1)]",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
 		"│ └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_10 10000.00 root data:TableScan_9",
 		"  └─TableScan_9 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain select * from t1 left join t2 on t2.a = t2.b and t2.a > 1;").Check(testkit.Rows(
-		"HashLeftJoin_6 26666666.67 root left outer join, inner:TableReader_11",
+		"HashLeftJoin_6 26666666.67 root CARTESIAN left outer join, inner:TableReader_11",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
 		"│ └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_11 2666.67 root data:Selection_10",
@@ -195,7 +195,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"TableDual_8 0.00 root rows:0",
 	))
 	tk.MustQuery("explain select * from t1 left join t2 on true where t1.a = 1 and t1.a = 1;").Check(testkit.Rows(
-		"HashLeftJoin_7 80000.00 root left outer join, inner:TableReader_12",
+		"HashLeftJoin_7 80000.00 root CARTESIAN left outer join, inner:TableReader_12",
 		"├─TableReader_10 10.00 root data:Selection_9",
 		"│ └─Selection_9 10.00 cop eq(test.t1.a, 1)",
 		"│   └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -203,32 +203,32 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"  └─TableScan_11 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain select * from t1 left join t2 on false;").Check(testkit.Rows(
-		"HashLeftJoin_6 80000000.00 root left outer join, inner:TableDual_9",
+		"HashLeftJoin_6 80000000.00 root CARTESIAN left outer join, inner:TableDual_9",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
 		"│ └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableDual_9 8000.00 root rows:0",
 	))
 	tk.MustQuery("explain select * from t1 right join t2 on false;").Check(testkit.Rows(
-		"HashRightJoin_6 80000000.00 root right outer join, inner:TableDual_7",
+		"HashRightJoin_6 80000000.00 root CARTESIAN right outer join, inner:TableDual_7",
 		"├─TableDual_7 8000.00 root rows:0",
 		"└─TableReader_9 10000.00 root data:TableScan_8",
 		"  └─TableScan_8 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain select * from t1 left join t2 on t1.a = 1 and t1.a = 2;").Check(testkit.Rows(
-		"HashLeftJoin_6 80000000.00 root left outer join, inner:TableDual_9",
+		"HashLeftJoin_6 80000000.00 root CARTESIAN left outer join, inner:TableDual_9",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
 		"│ └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableDual_9 8000.00 root rows:0",
 	))
 	tk.MustQuery("explain select * from t1 left join t2 on t1.a =1 where t1.a = 2;").Check(testkit.Rows(
-		"HashLeftJoin_7 80000.00 root left outer join, inner:TableDual_11",
+		"HashLeftJoin_7 80000.00 root CARTESIAN left outer join, inner:TableDual_11",
 		"├─TableReader_10 10.00 root data:Selection_9",
 		"│ └─Selection_9 10.00 cop eq(test.t1.a, 2)",
 		"│   └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableDual_11 8000.00 root rows:0",
 	))
 	tk.MustQuery("explain select * from t1 left join t2 on t2.a = 1 and t2.a = 2;").Check(testkit.Rows(
-		"HashLeftJoin_6 0.00 root left outer join, inner:TableReader_11",
+		"HashLeftJoin_6 0.00 root CARTESIAN left outer join, inner:TableReader_11",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
 		"│ └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_11 0.00 root data:Selection_10",
@@ -237,14 +237,14 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 	))
 	// Constant propagation for DNF in outer join.
 	tk.MustQuery("explain select * from t1 left join t2 on t1.a = 1 or (t1.a = 2 and t1.a = 3);").Check(testkit.Rows(
-		"HashLeftJoin_6 100000000.00 root left outer join, inner:TableReader_10, left cond:[or(eq(test.t1.a, 1), 0)]",
+		"HashLeftJoin_6 100000000.00 root CARTESIAN left outer join, inner:TableReader_10, left cond:[or(eq(test.t1.a, 1), 0)]",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
 		"│ └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_10 10000.00 root data:TableScan_9",
 		"  └─TableScan_9 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain select * from t1 left join t2 on true where t1.a = 1 or (t1.a = 2 and t1.a = 3);").Check(testkit.Rows(
-		"HashLeftJoin_7 80000.00 root left outer join, inner:TableReader_12",
+		"HashLeftJoin_7 80000.00 root CARTESIAN left outer join, inner:TableReader_12",
 		"├─TableReader_10 10.00 root data:Selection_9",
 		"│ └─Selection_9 10.00 cop or(eq(test.t1.a, 1), 0)",
 		"│   └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -255,7 +255,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 	tk.MustQuery("explain select * from t1 where t1.b > 1 or t1.b in (select b from t2);").Check(testkit.Rows(
 		"Projection_7 8000.00 root test.t1.id, test.t1.a, test.t1.b",
 		"└─Selection_8 8000.00 root or(gt(test.t1.b, 1), 5_aux_0)",
-		"  └─HashLeftJoin_9 10000.00 root left outer semi join, inner:TableReader_13, other cond:eq(test.t1.b, test.t2.b)",
+		"  └─HashLeftJoin_9 10000.00 root CARTESIAN left outer semi join, inner:TableReader_13, other cond:eq(test.t1.b, test.t2.b)",
 		"    ├─TableReader_11 10000.00 root data:TableScan_10",
 		"    │ └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"    └─TableReader_13 10000.00 root data:TableScan_12",
