@@ -408,3 +408,35 @@ func (c *Column) reconstruct(sel []int) {
 		c.nullBitmap[idx] &= byte((1 << pos) - 1)
 	}
 }
+
+// CopyReconstruct copies this Column to dst and removes unselected rows.
+// If dst is nil, it creates a new Column and returns it.
+func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
+	if sel == nil {
+		return c.CopyConstruct(dst)
+	}
+
+	if dst == nil {
+		dst = NewColumn(c.Type(), len(sel))
+	} else {
+		dst.Reset()
+	}
+
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		for _, i := range sel {
+			dst.appendNullBitmap(!c.IsNull(i))
+			dst.data = append(dst.data, c.data[i*elemLen:i*elemLen+elemLen]...)
+			dst.length++
+		}
+	} else {
+		for _, i := range sel {
+			dst.appendNullBitmap(!c.IsNull(i))
+			start, end := c.offsets[i], c.offsets[i+1]
+			dst.data = append(dst.data, c.data[start:end]...)
+			dst.offsets = append(dst.offsets, int64(len(dst.data)))
+			dst.length++
+		}
+	}
+	return dst
+}
