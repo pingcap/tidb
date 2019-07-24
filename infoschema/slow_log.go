@@ -15,7 +15,6 @@ package infoschema
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -141,24 +139,34 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
+	var resByte []byte
 	lineByte, isPrefix, err := reader.ReadLine()
-	if err != nil {
-		return lineByte, err
+	if isPrefix {
+		// Need to read more data.
+		resByte = make([]byte, len(lineByte), len(lineByte)*2)
+	} else {
+		resByte = make([]byte, len(lineByte))
 	}
+	// Use copy here to avoid shallow copy problem.
+	copy(resByte, lineByte)
+	if err != nil {
+		return resByte, err
+	}
+
 	var tempLine []byte
 	for isPrefix {
 		tempLine, isPrefix, err = reader.ReadLine()
-		lineByte = append(lineByte, tempLine...)
+		resByte = append(resByte, tempLine...)
 
 		// Use the max value of max_allowed_packet to check the single line length.
-		if len(lineByte) > int(variable.MaxOfMaxAllowedPacket) {
-			return lineByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
+		if len(resByte) > int(variable.MaxOfMaxAllowedPacket) {
+			return resByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
 		}
 		if err != nil {
-			return lineByte, err
+			return resByte, err
 		}
 	}
-	return lineByte, err
+	return resByte, err
 }
 
 type slowQueryTuple struct {
@@ -193,7 +201,6 @@ type slowQueryTuple struct {
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
-	value = stringutil.Copy(value)
 	switch field {
 	case variable.SlowLogTimeStr:
 		t, err := ParseTime(value)
@@ -329,7 +336,6 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		}
 		st.succ = succ
 	case variable.SlowLogQuerySQLStr:
-		fmt.Printf("\n\n----------------------------\n%v\n\n", value)
 		st.sql = value
 	}
 	return nil
