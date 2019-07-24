@@ -64,8 +64,12 @@ func (s *testChunkSuite) TestColumnCopy(c *check.C) {
 		col.AppendInt64(int64(i))
 	}
 
-	c1 := col.copyConstruct()
+	c1 := col.CopyConstruct(nil)
 	c.Check(equalColumn(col, c1), check.IsTrue)
+
+	c2 := newFixedLenColumn(8, 10)
+	c2 = col.CopyConstruct(c2)
+	c.Check(equalColumn(col, c2), check.IsTrue)
 }
 
 func (s *testChunkSuite) TestLargeStringColumnOffset(c *check.C) {

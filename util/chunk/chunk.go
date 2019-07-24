@@ -253,7 +253,7 @@ func (c *Chunk) Reset() {
 func (c *Chunk) CopyConstruct() *Chunk {
 	newChk := &Chunk{numVirtualRows: c.numVirtualRows, capacity: c.capacity, columns: make([]*Column, len(c.columns))}
 	for i := range c.columns {
-		newChk.columns[i] = c.columns[i].copyConstruct()
+		newChk.columns[i] = c.columns[i].CopyConstruct(nil)
 	}
 	if c.sel != nil {
 		newChk.sel = make([]int, len(c.sel))

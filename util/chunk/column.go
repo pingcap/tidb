@@ -84,17 +84,6 @@ func (c *Column) Type() *types.FieldType {
 	return &c.ft
 }
 
-// Copy copies this Column to dst.
-func (c *Column) Copy(dst *Column) {
-	dst.length = c.length
-	dst.nullCount = c.nullCount
-	dst.ft = c.ft
-	dst.nullBitmap = append(dst.nullBitmap[:0], dst.nullBitmap...)
-	dst.offsets = append(dst.offsets[:0], dst.offsets...)
-	dst.data = append(dst.data[:0], dst.data...)
-	dst.elemBuf = append(dst.elemBuf[:0], dst.elemBuf...)
-}
-
 func (c *Column) isFixed() bool {
 	return c.elemBuf != nil
 }
@@ -117,13 +106,25 @@ func (c *Column) IsNull(rowIdx int) bool {
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
-func (c *Column) copyConstruct() *Column {
-	newCol := &Column{length: c.length, nullCount: c.nullCount}
-	newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
-	newCol.offsets = append(newCol.offsets, c.offsets...)
-	newCol.data = append(newCol.data, c.data...)
-	newCol.elemBuf = append(newCol.elemBuf, c.elemBuf...)
-	return newCol
+// Copy copies this Column to dst.
+// If dst is nil, it creates a new Column and returns it.
+func (c *Column) CopyConstruct(dst *Column) *Column {
+	if dst == nil {
+		newCol := &Column{length: c.length, nullCount: c.nullCount, ft: c.ft}
+		newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
+		newCol.offsets = append(newCol.offsets, c.offsets...)
+		newCol.data = append(newCol.data, c.data...)
+		newCol.elemBuf = append(newCol.elemBuf, c.elemBuf...)
+		return newCol
+	}
+	dst.length = c.length
+	dst.nullCount = c.nullCount
+	dst.ft = c.ft
+	dst.nullBitmap = append(dst.nullBitmap[:0], c.nullBitmap...)
+	dst.offsets = append(dst.offsets[:0], c.offsets...)
+	dst.data = append(dst.data[:0], c.data...)
+	dst.elemBuf = append(dst.elemBuf[:0], c.elemBuf...)
+	return dst
 }
 
 func (c *Column) appendNullBitmap(notNull bool) {
