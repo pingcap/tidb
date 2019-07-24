@@ -251,8 +251,7 @@ type LogicalAggregation struct {
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
 
-	// hintInfo stores the aggregation algorithm hint information specified by client.
-	hintInfo      *tableHintInfo
+	// preferAggType stores prefered aggregation algorithm type.
 	preferAggType uint
 
 	possibleProperties [][]*expression.Column

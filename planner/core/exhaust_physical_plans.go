@@ -1263,21 +1263,10 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	return hashAggs
 }
 
-func copyProperties(props []*property.PhysicalProperty) []*property.PhysicalProperty {
-	retProp := make([]*property.PhysicalProperty, 0, len(props))
-	for _, prop := range props {
-		temp := *prop
-		retProp = append(retProp, &temp)
-	}
-	return retProp
-}
-
 func (ps *PhysicalStreamAgg) convert2Enforced() {
-	newProps := copyProperties(ps.childrenReqProps)
-	for i := range newProps {
-		newProps[i].Enforced = true
+	for i := range ps.childrenReqProps {
+		ps.childrenReqProps[i].Enforced = true
 	}
-	ps.childrenReqProps = newProps
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
