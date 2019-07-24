@@ -71,6 +71,9 @@ type lookupTableTask struct {
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
 	// to do table request.
 	indexOrder map[int64]int
+	// duplicatedIndexOrder map likes indexOrder. But it's used when isCheckOp is true and
+	// the same handle of index has multiple values.
+	duplicatedIndexOrder map[int64]int
 
 	// memUsage records the memory usage of this task calculated by table worker.
 	// memTracker is used to release memUsage after task is done and unused.
@@ -644,7 +647,12 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
+	var chk *chunk.Chunk
+	if w.isCheckOp {
+		chk = chunk.NewChunkWithCapacity(w.tps, w.maxChunkSize)
+	} else {
+		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
+	}
 	for {
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result)
 		if err != nil {
@@ -673,9 +681,6 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
 	handles []int64, retChk *chunk.Chunk, err error) {
-	if w.isCheckOp {
-		chk = chunk.NewChunkWithCapacity(w.tps, w.maxChunkSize)
-	}
 	handleOffset := chk.NumCols() - 1
 	handles = make([]int64, 0, w.batchSize)
 	for len(handles) < w.batchSize {
@@ -693,7 +698,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		}
 		if w.isCheckOp {
 			if retChk == nil {
-				retChk = chunk.NewChunkWithCapacity(w.tps, w.maxChunkSize)
+				retChk = chunk.NewChunkWithCapacity(w.tps, w.batchSize)
 			}
 			retChk.Append(chk, 0, chk.NumRows())
 		}
@@ -707,6 +712,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 
 func (w *indexWorker) buildTableTask(handles []int64, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder map[int64]int
+	var duplicatedIndexOrder map[int64]int
 	if w.keepOrder {
 		// Save the index order.
 		indexOrder = make(map[int64]int, len(handles))
@@ -714,10 +720,25 @@ func (w *indexWorker) buildTableTask(handles []int64, retChk *chunk.Chunk) *look
 			indexOrder[h] = i
 		}
 	}
+
+	if w.isCheckOp {
+		// Save the index order.
+		indexOrder = make(map[int64]int, len(handles))
+		duplicatedIndexOrder = make(map[int64]int)
+		for i, h := range handles {
+			if _, ok := indexOrder[h]; ok {
+				duplicatedIndexOrder[h] = i
+			} else {
+				indexOrder[h] = i
+			}
+		}
+	}
+
 	task := &lookupTableTask{
-		handles:    handles,
-		indexOrder: indexOrder,
-		idxRows:    retChk,
+		handles:              handles,
+		indexOrder:           indexOrder,
+		duplicatedIndexOrder: duplicatedIndexOrder,
+		idxRows:              retChk,
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -770,26 +791,10 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	}
 }
 
-func adjustDatumKind(vals1, vals2 []types.Datum) {
-	if len(vals1) != len(vals2) {
-		return
-	}
-
-	for i, val1 := range vals1 {
-		val2 := vals2[i]
-		if val1.Kind() != val2.Kind() {
-			if (val1.Kind() == types.KindBytes || val1.Kind() == types.KindString) &&
-				(val2.Kind() == types.KindBytes || val2.Kind() == types.KindString) {
-				vals1[i].SetBytes(val1.GetBytes())
-				vals2[i].SetBytes(val2.GetBytes())
-			}
-		}
-	}
-}
-
 func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, tableReader Executor) error {
+	chk := newFirstChunk(tableReader)
+	vals := make([]types.Datum, 0, len(w.cols))
 	for {
-		chk := newFirstChunk(tableReader)
 		err := tableReader.Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -803,15 +808,17 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		}
 
 		tblReaderExec := tableReader.(*TableReaderExecutor)
-		i := 0
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle := row.GetInt64(row.Len() - 1)
-			offset := task.indexOrder[handle]
+			offset, ok := task.indexOrder[handle]
+			if !ok {
+				offset = task.duplicatedIndexOrder[handle]
+			}
 			delete(task.indexOrder, handle)
 			idxRow := task.idxRows.GetRow(offset)
-			vals := make([]types.Datum, 0, len(w.cols))
-			for j, col := range w.cols {
+			vals = vals[:0]
+			for i, col := range w.cols {
 				if col.IsGenerated() && !col.GeneratedStored {
 					expr := w.genExprs[model.TableColumnID{TableID: w.tbl.Meta().ID, ColumnID: col.ID}]
 					// Eval the column value
@@ -825,19 +832,18 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 					}
 					vals = append(vals, val)
 				} else {
-					vals = append(vals, row.GetDatum(j, &col.FieldType))
+					vals = append(vals, row.GetDatum(i, &col.FieldType))
 				}
 			}
 			vals = tables.TruncateIndexValuesIfNeeded(w.tbl.Meta(), w.idxInfo, vals)
-			for j, val := range vals {
-				col := w.cols[j]
+			for i, val := range vals {
+				col := w.cols[i]
 				tp := &col.FieldType
-				ret := chunk.Compare(idxRow, j, &val)
+				ret := chunk.Compare(idxRow, i, &val)
 				if ret != 0 {
-					return errors.Errorf("handle %#v, index:%#v != record:%#v", handle, idxRow.GetDatum(j, tp), val)
+					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v", col.Name, handle, idxRow.GetDatum(i, tp), val)
 				}
 			}
-			i++
 		}
 	}
 

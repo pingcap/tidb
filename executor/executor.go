@@ -486,10 +486,8 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *Ind
 		retFieldTypes[i] = cols[i].RetType
 	}
 	chk := chunk.New(retFieldTypes, e.initCap, e.maxChunkSize)
-	iter := chunk.NewIterator4Chunk(chk)
 
 	var err error
-	handles := make(map[int64]struct{}, 1024)
 	for {
 		err = src.Next(ctx, chk)
 		if err != nil {
@@ -497,17 +495,6 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *Ind
 		}
 		if chk.NumRows() == 0 {
 			break
-		}
-		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
-			datum := chunkRow.GetDatum(0, retFieldTypes[0])
-			h := datum.GetInt64()
-			if _, ok := handles[h]; ok {
-				err = errors.Errorf("admin check table %s, index %s, at least two indices have the same handle %d more than one",
-					e.tblInfo.Name, e.indices[num].Meta().Name, h)
-				e.retCh <- errors.Trace(err)
-				return errors.Trace(err)
-			}
-			handles[h] = struct{}{}
 		}
 
 		select {

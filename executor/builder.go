@@ -322,7 +322,6 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 
 func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.PhysicalIndexLookUpReader,
 	readerExec *IndexLookUpExecutor) {
-	readerExec.keepOrder = true
 	is := readerPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	readerExec.dagPB.OutputOffsets = make([]uint32, 0, len(is.Index.Columns))
 	for i := 0; i <= len(is.Index.Columns); i++ {
