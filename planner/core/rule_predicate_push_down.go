@@ -518,3 +518,7 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([
 	p.baseLogicalPlan.PredicatePushDown(nil)
 	return predicates, p
 }
+
+func (*ppdSolver) name() string {
+	return "predicate_push_down"
+}
