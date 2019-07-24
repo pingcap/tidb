@@ -96,7 +96,8 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 			if val != 0 && !isNull {
 				foldedExpr, isDeferred := foldConstant(args[i+1])
 				isDeferredConst = isDeferredConst || isDeferred
-				return BuildCastFunction(expr.GetCtx(), foldedExpr, expr.GetType()), isDeferredConst
+				foldedExpr.GetType().Decimal = expr.GetType().Decimal
+				return foldedExpr, isDeferredConst
 			}
 		} else {
 			hasNonConstCondition = true
@@ -115,7 +116,8 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 	if !hasNonConstCondition {
 		foldedExpr, isDeferred := foldConstant(args[l-1])
 		isDeferredConst = isDeferredConst || isDeferred
-		return BuildCastFunction(expr.GetCtx(), foldedExpr, expr.GetType()), isDeferredConst
+		foldedExpr.GetType().Decimal = expr.GetType().Decimal
+		return foldedExpr, isDeferredConst
 	}
 
 	expr.GetArgs()[l-1], isDeferred = foldConstant(args[l-1])
