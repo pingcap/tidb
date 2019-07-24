@@ -2028,9 +2028,9 @@ func (b *builtinCurrentDateSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curdate
 func (b *builtinCurrentDateSig) evalTime(row chunk.Row) (d types.Time, isNull bool, err error) {
 	tz := b.ctx.GetSessionVars().Location()
-	var nowTs = &b.ctx.GetSessionVars().StmtCtx.NowTs
-	if nowTs.Equal(time.Time{}) {
-		*nowTs = time.Now()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return types.Time{}, true, err
 	}
 	year, month, day := nowTs.In(tz).Date()
 	result := types.Time{
@@ -2087,9 +2087,9 @@ func (b *builtinCurrentTime0ArgSig) Clone() builtinFunc {
 
 func (b *builtinCurrentTime0ArgSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	tz := b.ctx.GetSessionVars().Location()
-	var nowTs = &b.ctx.GetSessionVars().StmtCtx.NowTs
-	if nowTs.Equal(time.Time{}) {
-		*nowTs = time.Now()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return types.Duration{}, true, err
 	}
 	dur := nowTs.In(tz).Format(types.TimeFormat)
 	res, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, dur, types.MinFsp)
@@ -2115,9 +2115,9 @@ func (b *builtinCurrentTime1ArgSig) evalDuration(row chunk.Row) (types.Duration,
 		return types.Duration{}, true, err
 	}
 	tz := b.ctx.GetSessionVars().Location()
-	var nowTs = &b.ctx.GetSessionVars().StmtCtx.NowTs
-	if nowTs.Equal(time.Time{}) {
-		*nowTs = time.Now()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return types.Duration{}, true, err
 	}
 	dur := nowTs.In(tz).Format(types.TimeFSPFormat)
 	res, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, dur, int(fsp))
@@ -2257,9 +2257,9 @@ func (b *builtinUTCDateSig) Clone() builtinFunc {
 // evalTime evals UTC_DATE, UTC_DATE().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-date
 func (b *builtinUTCDateSig) evalTime(row chunk.Row) (types.Time, bool, error) {
-	var nowTs = &b.ctx.GetSessionVars().StmtCtx.NowTs
-	if nowTs.Equal(time.Time{}) {
-		*nowTs = time.Now()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return types.Time{}, true, err
 	}
 	year, month, day := nowTs.UTC().Date()
 	result := types.Time{
@@ -2318,9 +2318,9 @@ func (c *utcTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []E
 }
 
 func evalUTCTimestampWithFsp(ctx sessionctx.Context, fsp int) (types.Time, bool, error) {
-	var nowTs = &ctx.GetSessionVars().StmtCtx.NowTs
-	if nowTs.Equal(time.Time{}) {
-		*nowTs = time.Now()
+	nowTs, err := getStmtTimestamp(ctx)
+	if err != nil {
+		return types.Time{}, true, err
 	}
 	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeHalfEven)
 	if err != nil {
@@ -2405,13 +2405,9 @@ func (c *nowFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 }
 
 func evalNowWithFsp(ctx sessionctx.Context, fsp int) (types.Time, bool, error) {
-	var sysTs = &ctx.GetSessionVars().StmtCtx.SysTs
-	if sysTs.Equal(time.Time{}) {
-		var err error
-		*sysTs, err = getSystemTimestamp(ctx)
-		if err != nil {
-			return types.Time{}, true, err
-		}
+	nowTs, err := getStmtTimestamp(ctx)
+	if err != nil {
+		return types.Time{}, true, err
 	}
 
 	// In MySQL's implementation, now() will truncate the result instead of rounding it.
@@ -2422,7 +2418,7 @@ func evalNowWithFsp(ctx sessionctx.Context, fsp int) (types.Time, bool, error) {
 	//	+----------------------------+-------------------------+---------------------+
 	//	| 2019-03-25 15:57:56.612966 | 2019-03-25 15:57:56.612 | 2019-03-25 15:57:56 |
 	//	+----------------------------+-------------------------+---------------------+
-	result, err := convertTimeToMysqlTime(*sysTs, fsp, types.ModeTruncate)
+	result, err := convertTimeToMysqlTime(nowTs, fsp, types.ModeTruncate)
 	if err != nil {
 		return types.Time{}, true, err
 	}
@@ -4278,11 +4274,11 @@ func (b *builtinUnixTimestampCurrentSig) Clone() builtinFunc {
 // evalInt evals a UNIX_TIMESTAMP().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
 func (b *builtinUnixTimestampCurrentSig) evalInt(row chunk.Row) (int64, bool, error) {
-	var nowTs = &b.ctx.GetSessionVars().StmtCtx.NowTs
-	if nowTs.Equal(time.Time{}) {
-		*nowTs = time.Now()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return 0, true, err
 	}
-	dec, err := goTimeToMysqlUnixTimestamp(*nowTs, 1)
+	dec, err := goTimeToMysqlUnixTimestamp(nowTs, 1)
 	if err != nil {
 		return 0, true, err
 	}
@@ -4800,6 +4796,10 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(row chunk.Row) (types.Time, bo
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg1, err := types.ParseDuration(sc, s, types.GetFsp(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return types.ZeroDatetime, true, nil
+		}
 		return types.ZeroDatetime, true, err
 	}
 	result, err := arg0.Add(sc, arg1)
@@ -4874,8 +4874,13 @@ func (b *builtinAddDurationAndStringSig) evalDuration(row chunk.Row) (types.Dura
 	if !isDuration(s) {
 		return types.ZeroDuration, true, nil
 	}
-	arg1, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, types.GetFsp(s))
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1, err := types.ParseDuration(sc, s, types.GetFsp(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return types.ZeroDuration, true, nil
+		}
 		return types.ZeroDuration, true, err
 	}
 	result, err := arg0.Add(arg1)
@@ -4930,6 +4935,10 @@ func (b *builtinAddStringAndDurationSig) evalString(row chunk.Row) (result strin
 	if isDuration(arg0) {
 		result, err = strDurationAddDuration(sc, arg0, arg1)
 		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				return "", true, nil
+			}
 			return "", true, err
 		}
 		return result, false, nil
@@ -4970,11 +4979,19 @@ func (b *builtinAddStringAndStringSig) evalString(row chunk.Row) (result string,
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg1, err = types.ParseDuration(sc, arg1Str, getFsp4TimeAddSub(arg1Str))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return "", true, nil
+		}
 		return "", true, err
 	}
 	if isDuration(arg0) {
 		result, err = strDurationAddDuration(sc, arg0, arg1)
 		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				return "", true, nil
+			}
 			return "", true, err
 		}
 		return result, false, nil
@@ -5032,8 +5049,13 @@ func (b *builtinAddDateAndStringSig) evalString(row chunk.Row) (string, bool, er
 	if !isDuration(s) {
 		return "", true, nil
 	}
-	arg1, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, getFsp4TimeAddSub(s))
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1, err := types.ParseDuration(sc, s, getFsp4TimeAddSub(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return "", true, nil
+		}
 		return "", true, err
 	}
 	result, err := arg0.Add(arg1)
@@ -5705,6 +5727,10 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row chunk.Row) (types.Time, bo
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg1, err := types.ParseDuration(sc, s, types.GetFsp(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return types.ZeroDatetime, true, nil
+		}
 		return types.ZeroDatetime, true, err
 	}
 	arg1time, err := arg1.ConvertToTime(sc, mysql.TypeDatetime)
@@ -5761,6 +5787,10 @@ func (b *builtinSubStringAndDurationSig) evalString(row chunk.Row) (result strin
 	if isDuration(arg0) {
 		result, err = strDurationSubDuration(sc, arg0, arg1)
 		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				return "", true, nil
+			}
 			return "", true, err
 		}
 		return result, false, nil
@@ -5798,14 +5828,22 @@ func (b *builtinSubStringAndStringSig) evalString(row chunk.Row) (result string,
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	arg1, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, getFsp4TimeAddSub(s))
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1, err = types.ParseDuration(sc, s, getFsp4TimeAddSub(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return "", true, nil
+		}
 		return "", true, err
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
 	if isDuration(arg0) {
 		result, err = strDurationSubDuration(sc, arg0, arg1)
 		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				return "", true, nil
+			}
 			return "", true, err
 		}
 		return result, false, nil
@@ -5882,8 +5920,13 @@ func (b *builtinSubDurationAndStringSig) evalDuration(row chunk.Row) (types.Dura
 	if !isDuration(s) {
 		return types.ZeroDuration, true, nil
 	}
-	arg1, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, types.GetFsp(s))
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1, err := types.ParseDuration(sc, s, types.GetFsp(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return types.ZeroDuration, true, nil
+		}
 		return types.ZeroDuration, true, err
 	}
 	result, err := arg0.Sub(arg1)
@@ -5955,8 +5998,13 @@ func (b *builtinSubDateAndStringSig) evalString(row chunk.Row) (string, bool, er
 	if !isDuration(s) {
 		return "", true, nil
 	}
-	arg1, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, getFsp4TimeAddSub(s))
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1, err := types.ParseDuration(sc, s, getFsp4TimeAddSub(s))
 	if err != nil {
+		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+			sc.AppendWarning(err)
+			return "", true, nil
+		}
 		return "", true, err
 	}
 	result, err := arg0.Sub(arg1)
@@ -6288,9 +6336,9 @@ func (b *builtinUTCTimeWithoutArgSig) Clone() builtinFunc {
 // evalDuration evals a builtinUTCTimeWithoutArgSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeWithoutArgSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
-	var nowTs = &b.ctx.GetSessionVars().StmtCtx.NowTs
-	if nowTs.Equal(time.Time{}) {
-		*nowTs = time.Now()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return types.Duration{}, true, err
 	}
 	v, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, nowTs.UTC().Format(types.TimeFormat), 0)
 	return v, false, err
@@ -6319,9 +6367,9 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(row chunk.Row) (types.Duration, 
 	if fsp < int64(types.MinFsp) {
 		return types.Duration{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 	}
-	var nowTs = &b.ctx.GetSessionVars().StmtCtx.NowTs
-	if nowTs.Equal(time.Time{}) {
-		*nowTs = time.Now()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return types.Duration{}, true, err
 	}
 	v, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, nowTs.UTC().Format(types.TimeFSPFormat), int(fsp))
 	return v, false, err
