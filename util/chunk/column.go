@@ -106,7 +106,7 @@ func (c *Column) IsNull(rowIdx int) bool {
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
-// Copy copies this Column to dst.
+// CopyConstruct copies this Column to dst.
 // If dst is nil, it creates a new Column and returns it.
 func (c *Column) CopyConstruct(dst *Column) *Column {
 	if dst != nil {
