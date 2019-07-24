@@ -840,10 +840,10 @@ func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, er
 			if peer.ID == regionStat.Leader.ID {
 				row[4].SetInt64(1)
 			} else {
-				row[3].SetInt64(0)
+				row[4].SetInt64(0)
 			}
 			if pendingPeerIDSet.Exist(peer.ID) {
-				row[4].SetString(pendingPeer)
+				row[5].SetString(pendingPeer)
 			} else if downSec, ok := downPeerMap[peer.ID]; ok {
 				row[5].SetString(downPeer)
 				row[6].SetInt64(downSec)
