@@ -181,13 +181,13 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
-func (a *ExecStmt) RebuildPlan() (int64, error) {
+func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
 	}
-	p, err := planner.Optimize(a.Ctx, a.StmtNode, is)
+	p, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
 	if err != nil {
 		return 0, err
 	}
