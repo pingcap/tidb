@@ -99,7 +99,7 @@ func (s *testPlanBuilderSuite) TestRewriterPool(c *C) {
 	// Make sure PlanBuilder.getExpressionRewriter() provides clean rewriter from pool.
 	// First, pick one rewriter from the pool and make it dirty.
 	builder.rewriterCounter++
-	dirtyRewriter := builder.getExpressionRewriter(nil)
+	dirtyRewriter := builder.getExpressionRewriter(context.TODO(), nil)
 	dirtyRewriter.asScalar = true
 	dirtyRewriter.aggrMap = make(map[*ast.AggregateFuncExpr]int)
 	dirtyRewriter.preprocess = func(ast.Node) ast.Node { return nil }
@@ -109,7 +109,7 @@ func (s *testPlanBuilderSuite) TestRewriterPool(c *C) {
 	builder.rewriterCounter--
 	// Then, pick again and check if it's cleaned up.
 	builder.rewriterCounter++
-	cleanRewriter := builder.getExpressionRewriter(nil)
+	cleanRewriter := builder.getExpressionRewriter(context.TODO(), nil)
 	c.Assert(cleanRewriter, Equals, dirtyRewriter) // Rewriter should be reused.
 	c.Assert(cleanRewriter.asScalar, Equals, false)
 	c.Assert(cleanRewriter.aggrMap, IsNil)
@@ -149,7 +149,7 @@ func (s *testPlanBuilderSuite) TestDisableFold(c *C) {
 
 		builder := NewPlanBuilder(ctx, nil)
 		builder.rewriterCounter++
-		rewriter := builder.getExpressionRewriter(nil)
+		rewriter := builder.getExpressionRewriter(context.TODO(), nil)
 		c.Assert(rewriter, NotNil)
 		c.Assert(rewriter.disableFoldCounter, Equals, 0)
 		rewritenExpression, _, err := builder.rewriteExprNode(rewriter, expr, true)

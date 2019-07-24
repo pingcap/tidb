@@ -1407,7 +1407,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 	for i, assign := range insert.OnDuplicate {
 		// Construct the function which calculates the assign value of the column.
-		expr, err1 := b.rewriteInsertOnDuplicateUpdate(assign.Expr, mockTablePlan, insertPlan)
+		expr, err1 := b.rewriteInsertOnDuplicateUpdate(ctx, assign.Expr, mockTablePlan, insertPlan)
 		if err1 != nil {
 			return nil, err1
 		}

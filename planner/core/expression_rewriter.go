@@ -56,11 +56,11 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	return newExpr.Eval(chunk.Row{})
 }
 
-func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
-	rewriter := b.getExpressionRewriter(mockPlan)
+	rewriter := b.getExpressionRewriter(ctx, mockPlan)
 	// The rewriter maybe is obtained from "b.rewriterPool", "rewriter.err" is
 	// not nil means certain previous procedure has not handled this error.
 	// Here we give us one more chance to make a correct behavior by handling
@@ -92,7 +92,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(ctx context.Context, exprNode ast.Ex
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
-	rewriter := b.getExpressionRewriter(p)
+	rewriter := b.getExpressionRewriter(ctx, p)
 	// The rewriter maybe is obtained from "b.rewriterPool", "rewriter.err" is
 	// not nil means certain previous procedure has not handled this error.
 	// Here we give us one more chance to make a correct behavior by handling
@@ -105,13 +105,12 @@ func (b *PlanBuilder) rewriteWithPreprocess(ctx context.Context, exprNode ast.Ex
 	rewriter.windowMap = windowMapper
 	rewriter.asScalar = asScalar
 	rewriter.preprocess = preprocess
-	rewriter.ctx = ctx
 
 	expr, resultPlan, err := b.rewriteExprNode(rewriter, exprNode, asScalar)
 	return expr, resultPlan, err
 }
 
-func (b *PlanBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expressionRewriter) {
+func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) (rewriter *expressionRewriter) {
 	defer func() {
 		if p != nil {
 			rewriter.schema = p.Schema()
@@ -132,6 +131,7 @@ func (b *PlanBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expression
 	rewriter.insertPlan = nil
 	rewriter.disableFoldCounter = 0
 	rewriter.ctxStack = rewriter.ctxStack[:0]
+	rewriter.ctx = ctx
 	return
 }
 
