@@ -185,7 +185,7 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	}
 }
 
-// MustIndexLookup checks whether the plan for the sql is Point_Get.
+// MustIndexLookup checks whether the plan for the sql is IndexLookUp.
 func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
 	return tk.MustPlan("IndexLookUp", sql, args...)
 }

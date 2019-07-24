@@ -14,10 +14,10 @@
 package core
 
 import (
-	"github.com/pingcap/errors"
 	"math"
 	"reflect"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -532,7 +532,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		is.KeepOrder = true
 	}
 	// prop.IsEmpty() would always return true when coming to here,
-	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
+	// so we can just use prop.ExpectedCnt as parameter of addIndexScanSelection.
 	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
 
 	task, err = ds.pushDownSelAndResolveVirtualCols(cop, path, finalStats)
@@ -579,7 +579,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (ds *DataSource) addPushedDownSelection(copTask *copTask, path *accessPath) error {
+func (ds *DataSource) addIndexScanSelection(copTask *copTask, path *accessPath) error {
 	// Add filter condition to table plan now.
 	is, ok := copTask.indexPlan.(*PhysicalIndexScan)
 	if !ok {
@@ -872,7 +872,7 @@ func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *a
 	// step 1
 	t = copTask
 	if copTask.indexPlan != nil {
-		if err := ds.addPushedDownSelection(copTask, path); err != nil {
+		if err := ds.addIndexScanSelection(copTask, path); err != nil {
 			return invalidTask, err
 		}
 	}
@@ -884,7 +884,7 @@ func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *a
 		return invalidTask, errors.Errorf("type assertion fail, expect PhysicalTableScan, but got %v", reflect.TypeOf(copTask.tablePlan))
 	}
 	if len(ds.virtualColExprs) == 0 {
-		ds.addPushedDownTableScan(copTask, ts, stats)
+		ds.addTableScanSelection(copTask, ts, stats)
 		return
 	}
 
@@ -897,7 +897,7 @@ func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *a
 	}
 	var cantBePushed []expression.Expression
 	_, ts.filterCondition, cantBePushed = expression.ExpressionsToPB(ds.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ds.ctx.GetClient())
-	ds.addPushedDownTableScan(copTask, ts, stats)
+	ds.addTableScanSelection(copTask, ts, stats)
 	if len(cantBePushed) > 0 { // for filters cannot be pushed down, we add a root Selection to handle them
 		sel := PhysicalSelection{Conditions: cantBePushed}.Init(ds.ctx, stats)
 		t = sel.attach2Task(copTask)
@@ -925,17 +925,15 @@ func (ds *DataSource) substituteVirtualColumns(ts *PhysicalTableScan) {
 	phyCols := make(map[int64]*expression.Column)        // physical columns this ts already has
 	virCols := make(map[int64]*expression.Column)        // virtual columns this ts has
 	phyColsFromVir := make(map[int64]*expression.Column) // physical columns derived from virtual columns
-	for i := 0; i < len(schema.Columns); i++ {
-		if i < len(colInfos) {
-			if colInfos[i].IsGenerated() && !colInfos[i].GeneratedStored {
-				virCols[schema.Columns[i].UniqueID] = schema.Columns[i]
-				expr := expression.ColumnSubstitute(schema.Columns[i], ds.virtualColSchema, ds.virtualColExprs)
-				for _, phyColFromVir := range expression.ExtractColumns(expr) {
-					phyColsFromVir[phyColFromVir.UniqueID] = phyColFromVir
-				}
-			} else {
-				phyCols[schema.Columns[i].UniqueID] = schema.Columns[i]
+	for i := 0; i < len(schema.Columns) && i < len(colInfos); i++ {
+		if colInfos[i].IsGenerated() && !colInfos[i].GeneratedStored {
+			virCols[schema.Columns[i].UniqueID] = schema.Columns[i]
+			expr := expression.ColumnSubstitute(schema.Columns[i], ds.virtualColSchema, ds.virtualColExprs)
+			for _, phyColFromVir := range expression.ExtractColumns(expr) {
+				phyColsFromVir[phyColFromVir.UniqueID] = phyColFromVir
 			}
+		} else {
+			phyCols[schema.Columns[i].UniqueID] = schema.Columns[i]
 		}
 	}
 
@@ -966,7 +964,7 @@ func (ds *DataSource) substituteVirtualColumns(ts *PhysicalTableScan) {
 	ts.SetSchema(schema)
 }
 
-func (ds *DataSource) addPushedDownTableScan(copTask *copTask, ts *PhysicalTableScan, stats *property.StatsInfo) {
+func (ds *DataSource) addTableScanSelection(copTask *copTask, ts *PhysicalTableScan, stats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * cpuFactor
