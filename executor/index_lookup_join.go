@@ -295,9 +295,6 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 		return nil, nil
 	}
 
-	if e.task != nil {
-		e.task.memTracker.Detach()
-	}
 	e.task = task
 	return task, nil
 }
@@ -650,7 +647,6 @@ func (e *IndexLookUpJoin) Close() error {
 		e.cancelFunc()
 	}
 	e.workerWg.Wait()
-	e.memTracker.Detach()
 	e.memTracker = nil
 	return e.children[0].Close()
 }
