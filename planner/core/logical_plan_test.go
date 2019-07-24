@@ -84,7 +84,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
-			best: "Join{DataScan(t1)->Sel([eq(cast(test.t1.d), cast(abc))])->DataScan(t2)->Sel([eq(cast(test.t2.d), cast(abc))])}(test.t1.a,test.t2.b)(test.t1.d,test.t2.d)->Projection",
+			best: "Join{DataScan(t1)->Sel([like(cast(test.t1.d), abc, 92)])->DataScan(t2)->Sel([like(cast(test.t2.d), abc, 92)])}(test.t1.a,test.t2.b)(test.t1.d,test.t2.d)->Projection",
 		},
 		{
 			sql:  "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
