@@ -14,9 +14,6 @@
 package core
 
 import (
-	"math"
-	"reflect"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -30,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"golang.org/x/tools/container/intsets"
+	"math"
 )
 
 const (
@@ -583,7 +581,7 @@ func (ds *DataSource) addIndexScanSelection(copTask *copTask, path *accessPath) 
 	// Add filter condition to table plan now.
 	is, ok := copTask.indexPlan.(*PhysicalIndexScan)
 	if !ok {
-		return errors.Errorf("type assertion fail, expect PhysicalIndexScan, but got %v", reflect.TypeOf(copTask.indexPlan))
+		return errors.Errorf("type assertion fail, expect PhysicalIndexScan, but got %T", copTask.indexPlan)
 	}
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
@@ -602,7 +600,7 @@ func (ds *DataSource) addIndexScanSelection(copTask *copTask, path *accessPath) 
 		copTask.finishIndexPlan()
 		ts, ok := copTask.tablePlan.(*PhysicalTableScan)
 		if !ok {
-			return errors.Errorf("type assertion fail, expect PhysicalTableScan, but got %v", reflect.TypeOf(copTask.tablePlan))
+			return errors.Errorf("type assertion fail, expect PhysicalTableScan, but got %T", copTask.tablePlan)
 		}
 		ts.filterCondition = append(ts.filterCondition, tableConds...)
 	}
@@ -881,7 +879,7 @@ func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *a
 	}
 	ts, ok := copTask.tablePlan.(*PhysicalTableScan)
 	if !ok {
-		return invalidTask, errors.Errorf("type assertion fail, expect PhysicalTableScan, but got %v", reflect.TypeOf(copTask.tablePlan))
+		return invalidTask, errors.Errorf("type assertion fail, expect PhysicalTableScan, but got %T", copTask.tablePlan)
 	}
 	if len(ds.virtualColExprs) == 0 {
 		ds.addTableScanSelection(copTask, ts, stats)
