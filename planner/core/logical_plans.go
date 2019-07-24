@@ -97,6 +97,8 @@ const (
 	preferRightAsIndexInner
 	preferHashJoin
 	preferMergeJoin
+	preferHashAgg
+	preferStreamAgg
 )
 
 // LogicalJoin is the logical join plan.
@@ -236,11 +238,6 @@ func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColu
 	}
 	return corCols
 }
-
-const (
-	preferHashAgg = 1 << iota
-	preferStreamAgg
-)
 
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {

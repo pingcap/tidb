@@ -1272,6 +1272,11 @@ func (ps *PhysicalStreamAgg) convert2Enforced() {
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	preferHash := (la.preferAggType & preferHashAgg) > 0
 	preferStream := (la.preferAggType & preferStreamAgg) > 0
+	if preferHash && preferStream {
+		errMsg := "Optimizer aggregation hints are conflicted"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
 
 	hashAggs := la.getHashAggs(prop)
 	if hashAggs != nil && preferHash && !preferStream {

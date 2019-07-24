@@ -144,9 +144,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.preferAggType = hint.preferAggType
 	}
-	if bits.OnesCount(plan4Agg.preferAggType) > 1 {
-		return nil, nil, errors.New("Aggregation hints are conflict, you can only specify one type of aggregation")
-	}
 	return plan4Agg, aggIndexMap, nil
 }
 
