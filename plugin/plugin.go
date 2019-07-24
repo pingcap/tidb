@@ -200,15 +200,6 @@ func Load(ctx context.Context, cfg Config) (err error) {
 				}
 				return
 			}
-			p := tiPlugins.plugins[kind][i]
-			if err = p.OnInit(ctx, p.Manifest); err != nil {
-				if cfg.SkipWhenFail {
-					tiPlugins.plugins[kind][i].State = Disable
-					err = nil
-					continue
-				}
-				return
-			}
 			if cfg.GlobalSysVar != nil {
 				for key, value := range tiPlugins.plugins[kind][i].SysVars {
 					(*cfg.GlobalSysVar)[key] = value
