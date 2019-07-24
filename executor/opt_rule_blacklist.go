@@ -16,34 +16,35 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/tidb/expression"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// ReloadExprPushdownBlacklistExec indicates ReloadExprPushdownBlacklist executor.
-type ReloadExprPushdownBlacklistExec struct {
+// ReloadOptRuleBlacklistExec indicates ReloadOptRuleBlacklist executor.
+type ReloadOptRuleBlacklistExec struct {
 	baseExecutor
 }
 
 // Next implements the Executor Next interface.
-func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	return LoadExprPushdownBlacklist(e.ctx)
+func (e *ReloadOptRuleBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	return LoadOptRuleBlacklist(e.ctx)
 }
 
-// LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
-func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
-	sql := "select HIGH_PRIORITY name from mysql.expr_pushdown_blacklist"
+// LoadOptRuleBlacklist loads the latest data from table mysql.opt_rule_blacklist.
+func LoadOptRuleBlacklist(ctx sessionctx.Context) (err error) {
+	sql := "select HIGH_PRIORITY name from mysql.opt_rule_blacklist"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return err
 	}
-	newBlacklist := make(map[string]struct{})
+	newDisabledLogicalRules := set.NewStringSet()
 	for _, row := range rows {
 		name := row.GetString(0)
-		newBlacklist[name] = struct{}{}
+		newDisabledLogicalRules.Insert(name)
 	}
-	expression.DefaultExprPushdownBlacklist.Store(newBlacklist)
+	plannercore.DefaultDisabledLogicalRulesList.Store(newDisabledLogicalRules)
 	return nil
 }
