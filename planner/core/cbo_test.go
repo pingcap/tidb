@@ -978,7 +978,7 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 	hasIndexLookUp10 := false
 	hasIndexLookUp22 := false
 	for _, row := range rs.Rows() {
-		c.Assert(row, HasLen, 5)
+		c.Assert(row, HasLen, 6)
 		if strings.Contains(row[0].(string), "IndexLookUp_10") {
 			hasIndexLookUp10 = true
 			c.Assert(row[4], Equals, "time:0ns, loops:0, rows:0")
