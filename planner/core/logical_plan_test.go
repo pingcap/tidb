@@ -83,7 +83,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
-			best: "Join{DataScan(t1)->Sel([eq(cast(test.t1.d), cast(abc))])->DataScan(t2)->Sel([eq(cast(test.t2.d), cast(abc))])}(test.t1.a,test.t2.b)(test.t1.d,test.t2.d)->Projection",
+			best: "Join{DataScan(t1)->Sel([like(cast(test.t1.d), abc, 92)])->DataScan(t2)->Sel([like(cast(test.t2.d), abc, 92)])}(test.t1.a,test.t2.b)(test.t1.d,test.t2.d)->Projection",
 		},
 		{
 			sql:  "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
@@ -2053,7 +2053,21 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		// For complex join query
 		{
 			sql:  "select max(t3.b) from (t t1 left join t t2 on t1.a = t2.a) right join t t3 on t1.b = t3.b",
-			best: "DataScan(t3)->TopN([test.t3.b true],0,1)->Aggr(max(test.t3.b))->Projection",
+			best: "Join{Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)->DataScan(t3)->TopN([test.t3.b true],0,1)}(test.t1.b,test.t3.b)->TopN([test.t3.b true],0,1)->Aggr(max(test.t3.b))->Projection",
+		},
+		{
+			sql:  "select t1.a ta, t1.b tb from t t1 left join t t2 on t1.a = t2.a",
+			best: "DataScan(t1)->Projection",
+		},
+		{
+			// Because the `order by` uses t2.a, the `join` can't be eliminated.
+			sql:  "select t1.a, t1.b from t t1 left join t t2 on t1.a = t2.a order by t2.a",
+			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)->Sort->Projection",
+		},
+		// For issue 11167
+		{
+			sql:  "select a.a from t a natural left join t b natural left join t c",
+			best: "DataScan(a)->Projection",
 		},
 	}
 

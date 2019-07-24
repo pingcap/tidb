@@ -71,15 +71,21 @@ type Region struct {
 type RegionStore struct {
 	workStoreIdx      int32    // point to current work peer in meta.Peers and work store in stores(same idx)
 	stores            []*Store // stores in this region
+	storeFails        []uint32 // snapshots of store's fail, need reload when `storeFails[curr] != stores[cur].fail`
 	nextFollowerStore uint32   // point to current follower in followers store
 	followers         []int32  // followers' index in this region
 }
 
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
+	storeFails := make([]uint32, len(r.stores))
+	for i, e := range r.storeFails {
+		storeFails[i] = e
+	}
 	return &RegionStore{
 		workStoreIdx:      r.workStoreIdx,
 		stores:            r.stores,
+		storeFails:        storeFails,
 		nextFollowerStore: rand.Uint32(),
 		followers:         r.followers,
 	}
@@ -112,6 +118,7 @@ func (r *Region) init(c *RegionCache) {
 	rs := &RegionStore{
 		workStoreIdx:      0,
 		stores:            make([]*Store, 0, len(r.meta.Peers)),
+		storeFails:        make([]uint32, 0, len(r.meta.Peers)),
 		nextFollowerStore: rand.Uint32(),
 		followers:         make([]int32, 0, len(r.meta.Peers)-1),
 	}
@@ -126,6 +133,7 @@ func (r *Region) init(c *RegionCache) {
 		if i != 0 {
 			rs.followers = append(rs.followers, int32(i))
 		}
+		rs.storeFails = append(rs.storeFails, atomic.LoadUint32(&store.fail))
 	}
 	atomic.StorePointer(&r.store, unsafe.Pointer(rs))
 
@@ -311,6 +319,15 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID, replicaRead k
 		return nil, nil
 	}
 
+	storeFailEpoch := atomic.LoadUint32(&store.fail)
+	if storeFailEpoch != regionStore.storeFails[regionStore.workStoreIdx] {
+		cachedRegion.invalidate()
+		logutil.BgLogger().Info("invalidate current region, because others failed on same store",
+			zap.Uint64("region", id.GetID()),
+			zap.String("store", store.addr))
+		return nil, nil
+	}
+
 	return &RPCContext{
 		Region:  id,
 		Meta:    cachedRegion.meta,
@@ -407,7 +424,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
-		c.switchNextPeer(r, ctx.PeerIdx)
+		c.switchNextPeer(r, ctx.PeerIdx, err)
 		if scheduleReload {
 			r.scheduleReload()
 		}
@@ -562,7 +579,7 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 	}
 
 	if leaderStoreID == 0 {
-		c.switchNextPeer(r, currentPeerIdx)
+		c.switchNextPeer(r, currentPeerIdx, nil)
 		logutil.BgLogger().Info("switch region peer to next due to NotLeader with NULL leader",
 			zap.Int("currIdx", currentPeerIdx),
 			zap.Uint64("regionID", regionID.GetID()))
@@ -987,16 +1004,25 @@ func (c *RegionCache) switchToPeer(r *Region, targetStoreID uint64) (found bool)
 	return
 }
 
-func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int) {
-	regionStore := r.getStore()
-	if int(regionStore.workStoreIdx) != currentPeerIdx {
+func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
+	rs := r.getStore()
+	if int(rs.workStoreIdx) != currentPeerIdx {
 		return
 	}
-	nextIdx := (currentPeerIdx + 1) % len(regionStore.stores)
-	newRegionStore := regionStore.clone()
+
+	if err != nil { // TODO: refine err, only do this for some errors.
+		s := rs.stores[rs.workStoreIdx]
+		epoch := rs.storeFails[rs.workStoreIdx]
+		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
+			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+		}
+	}
+
+	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
+	newRegionStore := rs.clone()
 	newRegionStore.workStoreIdx = int32(nextIdx)
 	newRegionStore.initFollowers()
-	r.compareAndSwapStore(regionStore, newRegionStore)
+	r.compareAndSwapStore(rs, newRegionStore)
 }
 
 func (c *RegionCache) getPeerStoreIndex(r *Region, id uint64) (idx int, found bool) {
@@ -1050,6 +1076,7 @@ type Store struct {
 	storeID      uint64     // store's id
 	state        uint64     // unsafe store storeState
 	resolveMutex sync.Mutex // protect pd from concurrent init requests
+	fail         uint32     // store fail count, see RegionStore.storeFails
 }
 
 type resolveState uint64

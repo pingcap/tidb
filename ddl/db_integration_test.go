@@ -414,6 +414,8 @@ func (s *testIntegrationSuite5) TestMySQLErrorCode(c *C) {
 	assertErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int null, age int, primary key(id));"
 	assertErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
+	sql = "create table t2 (id int auto_increment);"
+	assertErrorCode(c, tk, sql, tmysql.ErrWrongAutoKey)
 
 	sql = "create table t2 (id int primary key , age int);"
 	tk.MustExec(sql)
@@ -795,6 +797,69 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (b int, c int)")
 	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
+}
+
+func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int as (a + 1), c int as (b + 1))")
+	tk.MustExec("insert into t (a) values (1)")
+	tk.MustExec("create index idx on t (c)")
+	tk.MustQuery("select * from t where c > 1").Check(testkit.Rows("1 2 3"))
+	res := tk.MustQuery("select * from t use index(idx) where c > 1")
+	tk.MustQuery("select * from t ignore index(idx) where c > 1").Check(res.Rows())
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int as (a + 1), c int as (b + 1), d int as (c + 1))")
+	tk.MustExec("insert into t (a) values (1)")
+	tk.MustExec("create index idx on t (d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 3 4"))
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint, b decimal as (a+1), c varchar(20) as (b*2), d float as (a*23+b-1+length(c)))")
+	tk.MustExec("insert into t (a) values (1)")
+	tk.MustExec("create index idx on t (d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 4 25"))
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10), b float as (length(a)+123), c varchar(20) as (right(a, 2)), d float as (b+b-7+1-3+3*ASCII(c)))")
+	tk.MustExec("insert into t (a) values ('adorable')")
+	tk.MustExec("create index idx on t (d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("adorable 131 le 577")) // 131+131-7+1-3+3*108
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint, b decimal as (a), c int(10) as (a+b), d float as (a+b+c), e decimal as (a+b+c+d))")
+	tk.MustExec("insert into t (a) values (1)")
+	tk.MustExec("create index idx on t (d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 1 2 4 8"))
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint, b bigint as (a+1) virtual, c bigint as (b+1) virtual)")
+	tk.MustExec("alter table t add index idx_b(b)")
+	tk.MustExec("alter table t add index idx_c(c)")
+	tk.MustExec("insert into t(a) values(1)")
+	tk.MustExec("alter table t add column(d bigint as (c+1) virtual)")
+	tk.MustExec("alter table t add index idx_d(d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 3 4"))
+	res = tk.MustQuery("select * from t use index(idx_d) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx_d) where d > 2").Check(res.Rows())
+	tk.MustExec("admin check table t")
 }
 
 func (s *testIntegrationSuite2) TestCaseInsensitiveCharsetAndCollate(c *C) {
@@ -1453,6 +1518,21 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	c.Assert(createSQL, Equals, expected)
 	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
 	c.Assert(err, NotNil)
+
+	s.tk.MustExec("drop table if exists t")
+	// TODO: fix me, below sql should execute successfully. Currently, the result of calculate key length is wrong.
+	//s.tk.MustExec("create table t1 (a varchar(10),b varchar(100),c tinyint,d varchar(3071),index(a),index(a,b),index (c,d));")
+	s.tk.MustExec("create table t1 (a varchar(10),b varchar(100),c tinyint,d varchar(3068),index(a),index(a,b),index (c,d));")
+	_, err = s.tk.Exec("alter table t1 modify column a varchar(3000);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+	// check modify column with rename column.
+	_, err = s.tk.Exec("alter table t1 change column a x varchar(3000);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+	_, err = s.tk.Exec("alter table t1 modify column c bigint;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
 }
 
 func (s *testIntegrationSuite) assertWarningExec(c *C, sql string, expectedWarn *terror.Error) {
@@ -1802,4 +1882,20 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
+}
+
+func (s *testIntegrationSuite4) TestDropAutoIncrementIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int auto_increment, unique key (a))")
+	dropIndexSQL := "alter table t1 drop index a"
+	assertErrorCode(c, tk, dropIndexSQL, mysql.ErrWrongAutoKey)
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
+	dropIndexSQL = "alter table t1 drop index a"
+	assertErrorCode(c, tk, dropIndexSQL, mysql.ErrWrongAutoKey)
 }
