@@ -133,6 +133,11 @@ type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer
 }
 
+// ReloadOptRuleBlacklist reloads the data from opt_rule_blacklist table.
+type ReloadOptRuleBlacklist struct {
+	baseSchemaProducer
+}
+
 // AdminPluginsAction indicate action will be taken on plugins.
 type AdminPluginsAction int
 
