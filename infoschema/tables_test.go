@@ -476,6 +476,7 @@ select * from t_slim;`))
 	_, err = f.Write([]byte(`
 # Time: 2019-02-13T19:33:56.571953+08:00
 `))
+	c.Assert(err, IsNil)
 	sql := "select * from "
 	for len(sql) < 5000 {
 		sql += "abcdefghijklmnopqrstuvwxyz_1234567890_qwertyuiopasdfghjklzxcvbnm"
