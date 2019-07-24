@@ -819,11 +819,8 @@ func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 	return ids, names, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{}
-	if err := handleAnalyzeOptions(p, as.AnalyzeOpts); err != nil {
-		return nil, err
-	}
+func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64) (Plan, error) {
+	p := &Analyze{Opts: opts}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
 			return nil, errors.Errorf("analyze %s is not supported now.", tbl.Name.O)
@@ -858,11 +855,8 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 	return p, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{}
-	if err := handleAnalyzeOptions(p, as.AnalyzeOpts); err != nil {
-		return nil, err
-	}
+func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64) (Plan, error) {
+	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
@@ -889,11 +883,8 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 	return p, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{}
-	if err := handleAnalyzeOptions(p, as.AnalyzeOpts); err != nil {
-		return nil, err
-	}
+func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64) (Plan, error) {
+	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
@@ -933,27 +924,27 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptCMSketchDepth: 5,
 }
 
-func handleAnalyzeOptions(p *Analyze, opts []ast.AnalyzeOpt) error {
-	p.Opts = make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
 	for key, val := range analyzeOptionDefault {
-		p.Opts[key] = val
+		optMap[key] = val
 	}
 	for _, opt := range opts {
 		if opt.Type == ast.AnalyzeOptNumTopN {
 			if opt.Value > analyzeOptionLimit[opt.Type] {
-				return errors.Errorf("value of analyze option %s should not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
+				return nil, errors.Errorf("value of analyze option %s should not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
 		} else {
 			if opt.Value == 0 || opt.Value > analyzeOptionLimit[opt.Type] {
-				return errors.Errorf("value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
+				return nil, errors.Errorf("value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
 		}
-		p.Opts[opt.Type] = opt.Value
+		optMap[opt.Type] = opt.Value
 	}
-	if p.Opts[ast.AnalyzeOptCMSketchWidth]*p.Opts[ast.AnalyzeOptCMSketchDepth] > uint64(cmSketchSizeLimit) {
-		return errors.Errorf("cm sketch size(depth * width) should not larger than %d", cmSketchSizeLimit)
+	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > uint64(cmSketchSizeLimit) {
+		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", cmSketchSizeLimit)
 	}
-	return nil
+	return optMap, nil
 }
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
@@ -971,13 +962,17 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
 	}
+	opts, err := handleAnalyzeOptions(as.AnalyzeOpts)
+	if err != nil {
+		return nil, err
+	}
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
-			return b.buildAnalyzeAllIndex(as)
+			return b.buildAnalyzeAllIndex(as, opts)
 		}
-		return b.buildAnalyzeIndex(as)
+		return b.buildAnalyzeIndex(as, opts)
 	}
-	return b.buildAnalyzeTable(as)
+	return b.buildAnalyzeTable(as, opts)
 }
 
 func buildShowNextRowID() *expression.Schema {
