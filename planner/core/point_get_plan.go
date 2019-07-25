@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tipb/go-tipb"
@@ -264,6 +265,7 @@ func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *mod
 		schema:   schema,
 		TblInfo:  tbl,
 	}
+	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB,  Table:tbl.Name.L}}
 	return p
 }
 
