@@ -3562,6 +3562,11 @@ func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 	_, err = tk.Exec("select time '20171231235959.999999';")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("20171231235959.999999")), IsTrue)
+
+	_, err = tk.Exec("select ADDDATE('2008-01-34', -1);")
+	c.Assert(err, IsNil)
+	tk.MustQuery("Show warnings;").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '2008-1-34'"))
 }
 
 func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
