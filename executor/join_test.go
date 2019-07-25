@@ -1381,3 +1381,11 @@ func (s *testSuite2) TestInjectProjOnTopN(c *C) {
 		"2",
 	))
 }
+
+func (s *testSuite2) TestIssue11390(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table issue11390(k1 int unsigned, k2 int unsigned, key(k1, k2))")
+	tk.MustExec("insert into issue11390 values(1, 1)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ * from issue11390 t1, issue11390 t2 where t1.k1=1 and t1.k2=t2.k2 and t2.k1=1").Check(testkit.Rows("1 1 1 1"))
+}

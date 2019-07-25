@@ -910,6 +910,7 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, i
 }
 
 func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, err error) {
+	sc := ijHelper.join.ctx.GetSessionVars().StmtCtx
 	pointLength := matchedKeyCnt + len(eqAndInFuncs)
 	if nextColRange != nil {
 		for _, colRan := range nextColRange {
@@ -950,11 +951,19 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 				if err != nil {
 					return nil, err
 				}
+				ran.LowVal[i], err = ran.LowVal[i].ConvertTo(sc, sf.GetArgs()[0].GetType())
+				if err != nil {
+					return nil, err
+				}
 				ran.HighVal[i] = ran.LowVal[i]
 			}
 		} else {
 			for _, ran := range ranges {
 				ran.LowVal[i], err = sf.GetArgs()[0].Eval(emptyRow)
+				if err != nil {
+					return nil, err
+				}
+				ran.LowVal[i], err = ran.LowVal[i].ConvertTo(sc, sf.GetArgs()[1].GetType())
 				if err != nil {
 					return nil, err
 				}
