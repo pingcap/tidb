@@ -42,6 +42,7 @@ const (
 	opSucc   = "ok"
 	opFailed = "err"
 
+	LableScope   = "scope"
 	ScopeGlobal  = "global"
 	ScopeSession = "session"
 )
