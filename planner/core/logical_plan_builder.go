@@ -2377,13 +2377,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 // prepareVirtualColumns is only for DataSource.
 // It prepares virtualColExprs and virtualColSchema for table which has virtual generated columns.
 // virtualColExprs and virtualColSchema are used to rewrite virtual columns in pushDownSelAndResolveVirtualCols.
-//<<<<<<< HEAD
-//func (b *PlanBuilder) prepareVirtualColumns(ctx context.Context, ds *DataSource, columns []*table.Column) error {
-//	ds.hasVirtualCol = false
-//=======
 func (b *PlanBuilder) prepareVirtualColumns(ctx context.Context, ds *DataSource, columns []*table.Column) error {
 	hasVirtualCol := false
-	//>>>>>>> address comments
 	for _, column := range columns {
 		if column.IsGenerated() && !column.GeneratedStored {
 			hasVirtualCol = true
