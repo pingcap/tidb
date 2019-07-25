@@ -67,11 +67,24 @@ type Column struct {
 
 // NewColumn creates a new column with the specific length and capacity.
 func NewColumn(ft *types.FieldType, cap int) *Column {
-	typeSize := getFixedLen(ft)
+	return newColumn(getFixedLen(ft), cap)
+}
+
+func newColumn(typeSize, cap int) *Column {
+	var col *Column
 	if typeSize == varElemLen {
-		return newVarLenColumn(cap, nil)
+		col = newVarLenColumn(cap, nil)
+	} else {
+		col = newFixedLenColumn(typeSize, cap)
 	}
-	return newFixedLenColumn(typeSize, cap)
+	return col
+}
+
+func (c *Column) typeSize() int {
+	if len(c.elemBuf) > 0 {
+		return len(c.elemBuf)
+	}
+	return varElemLen
 }
 
 func (c *Column) isFixed() bool {
@@ -96,7 +109,18 @@ func (c *Column) IsNull(rowIdx int) bool {
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
-func (c *Column) copyConstruct() *Column {
+// CopyConstruct copies this Column to dst.
+// If dst is nil, it creates a new Column and returns it.
+func (c *Column) CopyConstruct(dst *Column) *Column {
+	if dst != nil {
+		dst.length = c.length
+		dst.nullCount = c.nullCount
+		dst.nullBitmap = append(dst.nullBitmap[:0], c.nullBitmap...)
+		dst.offsets = append(dst.offsets[:0], c.offsets...)
+		dst.data = append(dst.data[:0], c.data...)
+		dst.elemBuf = append(dst.elemBuf[:0], c.elemBuf...)
+		return dst
+	}
 	newCol := &Column{length: c.length, nullCount: c.nullCount}
 	newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
 	newCol.offsets = append(newCol.offsets, c.offsets...)
@@ -385,4 +409,36 @@ func (c *Column) reconstruct(sel []int) {
 		pos := uint16(len(sel) & 7)
 		c.nullBitmap[idx] &= byte((1 << pos) - 1)
 	}
+}
+
+// CopyReconstruct copies this Column to dst and removes unselected rows.
+// If dst is nil, it creates a new Column and returns it.
+func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
+	if sel == nil {
+		return c.CopyConstruct(dst)
+	}
+
+	if dst == nil {
+		dst = newColumn(c.typeSize(), len(sel))
+	} else {
+		dst.Reset()
+	}
+
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		for _, i := range sel {
+			dst.appendNullBitmap(!c.IsNull(i))
+			dst.data = append(dst.data, c.data[i*elemLen:i*elemLen+elemLen]...)
+			dst.length++
+		}
+	} else {
+		for _, i := range sel {
+			dst.appendNullBitmap(!c.IsNull(i))
+			start, end := c.offsets[i], c.offsets[i+1]
+			dst.data = append(dst.data, c.data[start:end]...)
+			dst.offsets = append(dst.offsets, int64(len(dst.data)))
+			dst.length++
+		}
+	}
+	return dst
 }
