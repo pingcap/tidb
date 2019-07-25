@@ -1109,10 +1109,10 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN int) error 
 	}
 	sort.SliceStable(dataCnts, func(i, j int) bool { return dataCnts[i].cnt >= dataCnts[j].cnt })
 	cms.topN = make(map[uint64][]*TopNMeta)
-	for i, dataCnt := range dataCnts {
-		if i >= numTopN {
-			break
-		}
+	if len(dataCnts) > numTopN {
+		dataCnts = dataCnts[:numTopN]
+	}
+	for _, dataCnt := range dataCnts {
 		h1, h2 := murmur3.Sum128(dataCnt.data)
 		realCnt := cms.queryHashValue(h1, h2)
 		cms.subValue(h1, h2, realCnt)
