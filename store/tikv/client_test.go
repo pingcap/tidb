@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
 func TestT(t *testing.T) {
@@ -97,4 +99,25 @@ func (s *testClientSuite) TestCancelTimeoutRetErr(c *C) {
 
 	_, err = sendBatchRequest(context.Background(), "", a, req, 0)
 	c.Assert(errors.Cause(err), Equals, context.DeadlineExceeded)
+}
+
+func (s *testClientSuite) TestSendWhenReconnect(c *C) {
+	server, port := startMockTikvService()
+	c.Assert(port > 0, IsTrue)
+
+	rpcClient := newRPCClient(config.Security{})
+	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
+	conn, err := rpcClient.getConnArray(addr)
+	c.Assert(err, IsNil)
+
+	// Suppose all connections are re-establishing.
+	for _, client := range conn.batchConn.batchCommandsClients {
+		client.lockForRecreate()
+	}
+
+	req := tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{})
+	_, err = rpcClient.SendRequest(context.Background(), addr, req, 100*time.Second)
+	c.Assert(err.Error() == "no available connections", IsTrue)
+	conn.Close()
+	server.Stop()
 }

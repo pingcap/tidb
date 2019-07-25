@@ -3906,24 +3906,25 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		},
 	}
 
+	ctx := context.Background()
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := tk.Se.(sessionctx.Context)
-		sc := ctx.GetSessionVars().StmtCtx
-		stmts, err := session.Parse(ctx, sql)
+		sctx := tk.Se.(sessionctx.Context)
+		sc := sctx.GetSessionVars().StmtCtx
+		stmts, err := session.Parse(sctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = plannercore.Preprocess(ctx, stmts[0], is)
+		is := domain.GetDomain(sctx).InfoSchema()
+		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(ctx, cond, false))
+			conds = append(conds, expression.PushDownNot(sctx, cond, false))
 		}
-		afterFunc := expression.ExtractFiltersFromDNFs(ctx, conds)
+		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
 			return bytes.Compare(afterFunc[i].HashCode(sc), afterFunc[j].HashCode(sc)) < 0
 		})
@@ -4458,6 +4459,11 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestOptRuleBlacklist(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select * from mysql.opt_rule_blacklist`).Check(testkit.Rows())
+}
+
 func (s *testIntegrationSuite) TestIssue10804(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`SELECT @@information_schema_stats_expiry`).Check(testkit.Rows(`86400`))
@@ -4642,5 +4648,17 @@ func (s *testIntegrationSuite) TestDatetimeMicrosecond(c *C) {
 		testkit.Rows("2007-03-28 22:06:28"))
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" MICROSECOND);`).Check(
 		testkit.Rows("2007-03-28 22:08:27.999998"))
+}
 
+func (s *testIntegrationSuite) TestFuncCaseWithLeftJoin(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table kankan1(id int, name text)")
+	tk.MustExec("insert into kankan1 values(1, 'a')")
+	tk.MustExec("insert into kankan1 values(2, 'a')")
+
+	tk.MustExec("create table kankan2(id int, h1 text)")
+	tk.MustExec("insert into kankan2 values(2, 'z')")
+
+	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1' order by t1.id").Check(testkit.Rows("1", "2"))
 }
