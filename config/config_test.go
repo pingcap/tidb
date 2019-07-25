@@ -60,6 +60,7 @@ unrecognized-option-test = true
 
 	_, err = f.WriteString(`
 token-limit = 0
+split-region-max-num=10000
 [performance]
 [tikv-client]
 commit-timeout="41s"
@@ -78,6 +79,7 @@ max-batch-size=128
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
+	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

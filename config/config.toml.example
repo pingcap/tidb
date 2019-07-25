@@ -54,6 +54,9 @@ check-mb4-value-in-utf8 = true
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
 
+# Maximum number of the splitting region, which is used by the split region statement.
+split-region-max-num = 1000
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
