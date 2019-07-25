@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"fmt"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -61,6 +62,34 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 
 	err = tk1.ExecToErr("explain select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error())
+}
+
+func (s *testSuite1) TestExplainCartesianJoin(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int)")
+
+	cases := []struct {
+		sql             string
+		isCartesianJoin bool
+	}{
+		{"explain select * from t t1, t t2", true},
+		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v)", true},
+		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2))", true},
+		{"explain select * from t t1, t t2 where t1.v = t2.v", false},
+	}
+	for _, ca := range cases {
+		rows := tk.MustQuery(ca.sql).Rows()
+		ok := false
+		for _, row := range rows {
+			str := fmt.Sprintf("%v", row)
+			if strings.Contains(str, "CARTESIAN") {
+				ok = true
+			}
+		}
+
+		c.Assert(ok, Equals, ca.isCartesianJoin)
+	}
 }
 
 func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
