@@ -2522,13 +2522,13 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	return joinPlan, nil
 }
 
-func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int {
+func getTableOffset(schema *expression.Schema, handleCol *expression.Column) (int, error) {
 	for i, col := range schema.Columns {
 		if col.DBName.L == handleCol.DBName.L && col.TblName.L == handleCol.TblName.L {
-			return i
+			return i, nil
 		}
 	}
-	panic("Couldn't get column information when do update/delete")
+	return -1, errors.Errorf("Couldn't get column information when do update/delete")
 }
 
 // TblColPosInfo represents an mapper from column index to handle index.
@@ -2559,13 +2559,13 @@ func (c TblColPosInfoSlice) Less(i, j int) bool {
 }
 
 // FindHandle finds the ordinal of the corresponding handle column.
-func (c TblColPosInfoSlice) FindHandle(ordinal int) (int, bool) {
-	if c == nil || len(c) == 0 {
+func (c TblColPosInfoSlice) FindHandle(colOrdinal int) (int, bool) {
+	if len(c) == 0 {
 		return 0, false
 	}
-	// find the smallest index of the range that its start great than ordinal.
+	// find the smallest index of the range that its start great than colOrdinal.
 	// @see https://godoc.org/sort#Search
-	rangeBehindOrdinal := sort.Search(len(c), func(i int) bool { return c[i].Start > ordinal })
+	rangeBehindOrdinal := sort.Search(len(c), func(i int) bool { return c[i].Start > colOrdinal })
 	if rangeBehindOrdinal == 0 {
 		return 0, false
 	}
@@ -2573,7 +2573,12 @@ func (c TblColPosInfoSlice) FindHandle(ordinal int) (int, bool) {
 }
 
 // buildColumns2Handle builds columns to handle mapping.
-func buildColumns2Handle(schema *expression.Schema, tblID2Handle map[int64][]*expression.Column, tblID2Table map[int64]table.Table, onlyWritableCol bool) TblColPosInfoSlice {
+func buildColumns2Handle(
+	schema *expression.Schema,
+	tblID2Handle map[int64][]*expression.Column,
+	tblID2Table map[int64]table.Table,
+	onlyWritableCol bool,
+) (TblColPosInfoSlice, error) {
 	var cols2Handles TblColPosInfoSlice
 	for tblID, handleCols := range tblID2Handle {
 		tbl := tblID2Table[tblID]
@@ -2584,13 +2589,16 @@ func buildColumns2Handle(schema *expression.Schema, tblID2Handle map[int64][]*ex
 			tblLen = len(tbl.Cols())
 		}
 		for _, handleCol := range handleCols {
-			offset := getTableOffset(schema, handleCol)
+			offset, err := getTableOffset(schema, handleCol)
+			if err != nil {
+				return nil, err
+			}
 			end := offset + tblLen
 			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol.Index})
 		}
 	}
 	sort.Sort(cols2Handles)
-	return cols2Handles
+	return cols2Handles, nil
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
@@ -2666,11 +2674,14 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		return nil, err
 	}
 	err = updt.ResolveIndices()
+	if err != nil {
+		return nil, err
+	}
 	tblID2table := make(map[int64]table.Table)
 	for id := range updt.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
-	updt.TblColPosInfos = buildColumns2Handle(updt.SelectPlan.Schema(), updt.SelectPlan.Schema().TblID2Handle, tblID2table, true)
+	updt.TblColPosInfos, err = buildColumns2Handle(updt.SelectPlan.Schema(), updt.SelectPlan.Schema().TblID2Handle, tblID2table, true)
 	return updt, err
 }
 
@@ -2937,9 +2948,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	for id := range tblID2Handles {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
-	del.TblColPosInfos = buildColumns2Handle(del.SelectPlan.Schema(), tblID2Handles, tblID2table, false)
-
-	return del, nil
+	del.TblColPosInfos, err = buildColumns2Handle(del.SelectPlan.Schema(), tblID2Handles, tblID2table, false)
+	return del, err
 }
 
 func (p *Delete) cleanTblID2HandleMap(tablesToDelete map[int64][]*ast.TableName, tblID2Handle map[int64][]*expression.Column) map[int64][]*expression.Column {
