@@ -172,17 +172,3 @@ select * from t;`)
 	_, err = infoschema.ParseSlowLog(loc, scanner)
 	c.Assert(err, IsNil)
 }
-
-func (s *testSuite) TestSlowLogLongQuery(c *C) {
-	t1Str := "2019-01-24T22:32:29.313255+08:00"
-	t2Str := "2019-01-24T22:32:29.313255"
-	t1, err := infoschema.ParseTime(t1Str)
-	c.Assert(err, IsNil)
-	loc, err := time.LoadLocation("Asia/Shanghai")
-	c.Assert(err, IsNil)
-	t2, err := time.ParseInLocation("2006-01-02T15:04:05.999999999", t2Str, loc)
-	c.Assert(err, IsNil)
-	c.Assert(t1.Unix(), Equals, t2.Unix())
-	t1Format := t1.In(loc).Format(logutil.SlowLogTimeFormat)
-	c.Assert(t1Format, Equals, t1Str)
-}
