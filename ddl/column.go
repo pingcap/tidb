@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
@@ -324,7 +323,7 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	return updateColumn(t, job, newCol, &newCol.Name)
+	return updateColumnDefaultValue(t, job, newCol, &newCol.Name)
 }
 
 func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -489,7 +488,7 @@ func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, tab
 	return nil
 }
 
-func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
+func updateColumnDefaultValue(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -499,7 +498,10 @@ func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldCol
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(newCol.Name, tblInfo.Name)
 	}
-	*oldCol = *newCol
+	// The newCol's offset may be the value of the old schema version, so we can't use newCol directly.
+	oldCol.DefaultValue = newCol.DefaultValue
+	oldCol.DefaultValueBit = newCol.DefaultValueBit
+	oldCol.Flag = newCol.Flag
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
@@ -593,9 +595,9 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	return odValue, nil
 }
 
-func findColumnInIndexCols(c *expression.Column, cols []*ast.IndexColName) bool {
+func findColumnInIndexCols(c *model.ColumnInfo, cols []*ast.IndexColName) bool {
 	for _, c1 := range cols {
-		if c.ColName.L == c1.Column.Name.L {
+		if c.Name.L == c1.Column.Name.L {
 			return true
 		}
 	}

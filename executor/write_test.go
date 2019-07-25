@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -1763,8 +1764,9 @@ func (s *testSuite4) TestQualifiedDelete(c *C) {
 	r := tk.MustQuery("select * from t1")
 	c.Assert(r.Rows(), HasLen, 0)
 
-	_, err := tk.Exec("delete from t1 as a where a.c1 = 1")
-	c.Assert(err, NotNil)
+	tk.MustExec("insert into t1 values (1, 3)")
+	tk.MustExec("delete from t1 as a where a.c1 = 1")
+	tk.CheckExecResult(1, 0)
 
 	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
 	tk.MustExec("insert into t2 values (2, 1), (3,1)")
@@ -1775,8 +1777,45 @@ func (s *testSuite4) TestQualifiedDelete(c *C) {
 	tk.MustExec("delete a, b from t1 as a join t2 as b where a.c2 = b.c1")
 	tk.CheckExecResult(2, 0)
 
-	_, err = tk.Exec("delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1")
+	_, err := tk.Exec("delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1")
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite4) TestLoadDataMissingColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	createSQL := `create table load_data_missing (id int, t timestamp not null)`
+	tk.MustExec(createSQL)
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_missing")
+	ctx := tk.Se.(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
+
+	deleteSQL := "delete from load_data_missing"
+	selectSQL := "select * from load_data_missing;"
+	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
+	c.Assert(err, IsNil)
+	c.Assert(reachLimit, IsFalse)
+	r := tk.MustQuery(selectSQL)
+	r.Check(nil)
+
+	curTime := types.CurrentTime(mysql.TypeTimestamp)
+	timeStr := curTime.String()
+	tests := []testCase{
+		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v", timeStr)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+
+	tk.MustExec("alter table load_data_missing add column t2 timestamp null")
+	curTime = types.CurrentTime(mysql.TypeTimestamp)
+	timeStr = curTime.String()
+	tests = []testCase{
+		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v|<nil>", timeStr)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+
 }
 
 func (s *testSuite4) TestLoadData(c *C) {
@@ -1807,6 +1846,8 @@ func (s *testSuite4) TestLoadData(c *C) {
 	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
+	err = ld.CheckAndInsertOneBatch()
+	c.Assert(err, IsNil)
 	r := tk.MustQuery(selectSQL)
 	r.Check(nil)
 
@@ -2055,6 +2096,8 @@ func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 
 	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
+	c.Assert(err, IsNil)
+	err = ld.CheckAndInsertOneBatch()
 	c.Assert(err, IsNil)
 	ld.SetMessage()
 	err = ctx.StmtCommit()
@@ -2494,4 +2537,16 @@ func (s *testSuite4) TestSetWithRefGenCol(c *C) {
 	tk.MustQuery("select * from t3").Check(testkit.Rows("<nil> <nil>"))
 	_, err = tk.Exec(`insert into t3 set j = i + 1`)
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite4) TestSetWithCurrentTimestampAndNow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists tbl;`)
+	tk.MustExec(`create table t1(c1 timestamp default current_timestamp, c2 int, c3 timestamp default current_timestamp);`)
+	//c1 insert using now() function result, c3 using default value calculation, should be same
+	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(2);`)
+	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1"))
+	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(1);`)
+	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1", "1"))
 }

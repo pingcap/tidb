@@ -682,6 +682,30 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 // 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 // }
 
+func (s *testStateChangeSuite) TestParallelAddColumAndSetDefaultValue(c *C) {
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), `create table tx (
+		c1 varchar(64),
+		c2 enum('N','Y') not null default 'N',
+		primary key idx2 (c2, c1))`)
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tx values('a', 'N')")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table tx")
+
+	sql1 := "alter table tx add column cx int after c1"
+	sql2 := "alter table tx alter c2 set default 'N'"
+
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		_, err := s.se.Execute(context.Background(), "delete from tx where c1='a'")
+		c.Assert(err, IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 	sql1 := "ALTER TABLE t CHANGE a aa int;"
 	sql2 := "ALTER TABLE t CHANGE b aa int;"
@@ -1033,4 +1057,17 @@ func (s *testStateChangeSuite) TestParallelAlterSchemaCharsetAndCollate(c *C) {
 			WHERE schema_name='test_db_state'`
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(sql).Check(testkit.Rows("utf8mb4 utf8mb4_general_ci"))
+}
+
+// TestParallelTruncateTableAndAddColumn tests add column when truncate table.
+func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumn(c *C) {
+	sql1 := "truncate table t"
+	sql2 := "alter table t add column c3 int"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, NotNil)
+		c.Assert(err2.Error(), Equals, "[domain:2]Information schema is changed. [try again later]")
+
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }

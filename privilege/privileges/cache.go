@@ -848,13 +848,19 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	edgeTable, ok := p.RoleGraph[graphKey]
 	g = ""
 	if ok {
+		sortedRes := make([]string, 0, 10)
 		for k := range edgeTable.roleList {
 			role := strings.Split(k, "@")
 			roleName, roleHost := role[0], role[1]
-			if g != "" {
+			tmp := fmt.Sprintf("'%s'@'%s'", roleName, roleHost)
+			sortedRes = append(sortedRes, tmp)
+		}
+		sort.Strings(sortedRes)
+		for i, r := range sortedRes {
+			g += r
+			if i != len(sortedRes)-1 {
 				g += ", "
 			}
-			g += fmt.Sprintf("'%s'@'%s'", roleName, roleHost)
 		}
 		s := fmt.Sprintf(`GRANT %s TO '%s'@'%s'`, g, user, host)
 		gs = append(gs, s)

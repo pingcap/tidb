@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -136,10 +137,10 @@ func (a *aggregationEliminateChecker) wrapCastFunction(ctx sessionctx.Context, a
 	return expression.BuildCastFunction(ctx, arg, targetTp)
 }
 
-func (a *aggregationEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, err := a.optimize(child)
+		newChild, err := a.optimize(ctx, child)
 		if err != nil {
 			return nil, err
 		}
@@ -154,4 +155,8 @@ func (a *aggregationEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 		return proj, nil
 	}
 	return p, nil
+}
+
+func (*aggregationEliminator) name() string {
+	return "aggregation_eliminate"
 }

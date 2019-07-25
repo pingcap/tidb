@@ -19,6 +19,7 @@ import (
 	"math"
 	"runtime"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -121,36 +121,6 @@ func closeAll(objs ...Closeable) error {
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-// statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
-func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
-	var flags uint64
-	if sc.InInsertStmt {
-		flags |= model.FlagInInsertStmt
-	} else if sc.InUpdateStmt || sc.InDeleteStmt {
-		flags |= model.FlagInUpdateOrDeleteStmt
-	} else if sc.InSelectStmt {
-		flags |= model.FlagInSelectStmt
-	}
-	if sc.IgnoreTruncate {
-		flags |= model.FlagIgnoreTruncate
-	} else if sc.TruncateAsWarning {
-		flags |= model.FlagTruncateAsWarning
-	}
-	if sc.OverflowAsWarning {
-		flags |= model.FlagOverflowAsWarning
-	}
-	if sc.IgnoreZeroInDate {
-		flags |= model.FlagIgnoreZeroInDate
-	}
-	if sc.DividedByZeroAsWarning {
-		flags |= model.FlagDividedByZeroAsWarning
-	}
-	if sc.PadCharToFullLength {
-		flags |= model.FlagPadCharToFullLength
-	}
-	return flags
 }
 
 // handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
@@ -251,6 +221,8 @@ type IndexReaderExecutor struct {
 	colLens        []int
 	plans          []plannercore.PhysicalPlan
 
+	memTracker *memory.Tracker
+
 	selectResultHook // for testing
 }
 
@@ -292,8 +264,6 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	return e.open(ctx, kvRanges)
 }
 
-var indexReaderDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("IndexReaderDistSQLTracker")
-
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
@@ -308,6 +278,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaDistSQL)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -315,7 +287,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, indexReaderDistSQLTrackerLabel).
+		SetMemTracker(e.memTracker).
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -446,6 +418,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 
+	tracker := memory.NewTracker(stringutil.StringerStr("IndexWorker"), e.ctx.GetSessionVars().MemQuotaIndexLookupReader)
+	tracker.AttachTo(e.memTracker)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -453,7 +427,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.indexStreaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, indexLookupDistSQLTrackerLabel).
+		SetMemTracker(tracker).
 		Build()
 	if err != nil {
 		return err
@@ -502,8 +476,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	return nil
 }
 
-var tableWorkerLabel fmt.Stringer = stringutil.StringerStr("tableWorker")
-
 // startTableWorker launchs some background goroutines which pick tasks from workCh and execute the task.
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
@@ -517,7 +489,8 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:      e.keepOrder,
 			handleIdx:      e.handleIdx,
 			isCheckOp:      e.isCheckOp,
-			memTracker:     memory.NewTracker(tableWorkerLabel, -1),
+			memTracker: memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(i) }),
+				e.ctx.GetSessionVars().MemQuotaIndexLookupReader),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
@@ -562,7 +535,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.tblWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
-	e.memTracker.Detach()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[0].ExplainID().String())
