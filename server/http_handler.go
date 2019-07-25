@@ -134,12 +134,15 @@ func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
 type mvccKV struct {
 	Key   string                        `json:"key"`
 	Value *kvrpcpb.MvccGetByKeyResponse `json:"value"`
+	RegionID uint64 `json:"region-id"`
 }
 
 func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 	data, err := t.GetMvccByEncodedKey(encodedKey)
-	return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data}, err
+	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	regionID := keyLocation.Region.GetID()
+	return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data, RegionID:regionID}, err
 }
 
 func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
@@ -225,7 +228,9 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 		return nil, errors.Trace(err)
 	}
 	data, err := t.GetMvccByEncodedKey(encodedKey)
-	return &mvccKV{strings.ToUpper(hex.EncodeToString(encodedKey)), data}, err
+	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	regionID := keyLocation.Region.GetID()
+	return &mvccKV{strings.ToUpper(hex.EncodeToString(encodedKey)), data, regionID}, err
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
@@ -1332,13 +1337,9 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 		colMap[col.ID] = &col.FieldType
 	}
 
-	encodedKey := tablecodec.EncodeRowKeyWithHandle(tb.ID, handle)
-	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
 	if err != nil {
 		return nil, err
 	}
-	regionID := keyLocation.Region.GetID()
-
 	respValue := resp.Value
 	var result interface{} = resp
 	if respValue.Info != nil {
@@ -1360,7 +1361,6 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 				"key":       resp.Key,
 				"info":      respValue.Info,
 				"data":      datas,
-				"region-id": regionID,
 			}
 			if err != nil {
 				re["decode_error"] = err.Error()
