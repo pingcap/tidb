@@ -222,6 +222,17 @@ func (n *IndexColName) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// MatchType is the type for reference match type.
+type MatchType int
+
+// match type
+const (
+	MatchNone MatchType = iota
+	MatchFull
+	MatchPartial
+	MatchSimple
+)
+
 // ReferenceDef is used for parsing foreign key reference option from SQL.
 // See http://dev.mysql.com/doc/refman/5.7/en/create-table-foreign-keys.html
 type ReferenceDef struct {
@@ -231,6 +242,7 @@ type ReferenceDef struct {
 	IndexColNames []*IndexColName
 	OnDelete      *OnDeleteOpt
 	OnUpdate      *OnUpdateOpt
+	Match         MatchType
 }
 
 // Restore implements Node interface.
@@ -251,6 +263,17 @@ func (n *ReferenceDef) Restore(ctx *RestoreCtx) error {
 		}
 	}
 	ctx.WritePlain(")")
+	if n.Match != MatchNone {
+		ctx.WriteKeyWord(" MATCH ")
+		switch n.Match {
+		case MatchFull:
+			ctx.WriteKeyWord("FULL")
+		case MatchPartial:
+			ctx.WriteKeyWord("PARTIAL")
+		case MatchSimple:
+			ctx.WriteKeyWord("SIMPLE")
+		}
+	}
 	if n.OnDelete.ReferOpt != ReferOptionNoOption {
 		ctx.WritePlain(" ")
 		if err := n.OnDelete.Restore(ctx); err != nil {
@@ -308,6 +331,7 @@ const (
 	ReferOptionCascade
 	ReferOptionSetNull
 	ReferOptionNoAction
+	ReferOptionSetDefault
 )
 
 // String implements fmt.Stringer interface.
@@ -321,6 +345,8 @@ func (r ReferOptionType) String() string {
 		return "SET NULL"
 	case ReferOptionNoAction:
 		return "NO ACTION"
+	case ReferOptionSetDefault:
+		return "SET DEFAULT"
 	}
 	return ""
 }
