@@ -233,7 +233,13 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalHashJoin) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.JoinType.String())
+	buffer := new(bytes.Buffer)
+
+	if len(p.EqualConditions) == 0 {
+		buffer.WriteString("CARTESIAN ")
+	}
+
+	buffer.WriteString(p.JoinType.String())
 	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
 	if len(p.EqualConditions) > 0 {
 		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
