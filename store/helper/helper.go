@@ -448,7 +448,7 @@ func IsBehind(x, y WithKeyRange) bool {
 
 // IsBefore returns true is x is before [startKey, endKey)
 func IsBeforeKeyRange(x WithKeyRange, startKey, endKey string) bool {
-	return x.GetEndKey() != "" && x.GetEndKey() <= endKey
+	return x.GetEndKey() != "" && x.GetEndKey() <= startKey
 }
 
 // IsBehind returns true is x is behind [startKey, endKey)
@@ -654,27 +654,32 @@ func (h *Helper) RequestPD(method, uri string, body io.Reader, res interface{}) 
 	if len(pdHosts) == 0 {
 		return errors.New("pd unavailable")
 	}
-	logutil.BgLogger().Info("url ", zap.String("url", protocol+pdHosts[0]+uri))
+
+	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", protocol+pdHosts[0]+uri))
 	req, err := http.NewRequest(method, protocol+pdHosts[0]+uri, body)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	timeout, cancelFunc := context.WithTimeout(context.Background(), 5*time.Second)
 	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
+
 	defer cancelFunc()
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
 			logutil.BgLogger().Error("close body failed", zap.Error(err))
 		}
 	}()
+
 	err = json.NewDecoder(resp.Body).Decode(res)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	return nil
 }
 
