@@ -3521,9 +3521,8 @@ func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 
 func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
 	defer s.cleanEnv(c)
-	
-	tk := testkit.NewTestKit(c, s.store)
 
+	tk := testkit.NewTestKit(c, s.store)
 
 	r := tk.MustQuery("select timestamp '2017-01-01 00:00:00';")
 	r.Check(testkit.Rows("2017-01-01 00:00:00"))
