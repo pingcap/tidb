@@ -33,10 +33,8 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -83,8 +81,6 @@ const (
 	tableAnalyzeStatus                      = "ANALYZE_STATUS"
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
-	tableTableRecordRegionsDistribution     = "TABLE_RECORD_REGIONS_DISTRIBUTION"
-	tableTableIndexRegionsDistribution      = "TABLE_INDEX_REGIONS_DISTRIBUTION"
 )
 
 type columnInfo struct {
@@ -647,139 +643,6 @@ var tableTiKVRegionPeersCols = []columnInfo{
 	{"IS_LEADER", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
 	{"STATUS", mysql.TypeVarchar, 10, 0, 0, nil},
 	{"DOWN_SECONDS", mysql.TypeLonglong, 21, 0, 0, nil},
-}
-
-var tableTableRecordRegionsDistributionCols = []columnInfo{
-	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"STORE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"ONLY_LEADERS", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
-	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
-}
-
-var tableTableIndexRegionsDistributionCols = []columnInfo{
-	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"INDEX_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"STORE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"ONLY_LEADERS", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
-	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
-}
-
-func dataForTableRecordRegionsDistribution(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
-	if !ok {
-		return nil, errors.New("Information about table record regions distribution can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := helper.NewHelper(tikvStore)
-
-	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
-	for _, db := range allSchemas {
-		for _, table := range db.Tables {
-			startKey, endKey := tablecodec.GetTableHandleKeyRange(table.ID)
-			startKey = codec.EncodeBytes(nil, startKey)
-			endKey = codec.EncodeBytes(nil, endKey)
-			regions, err := tikvHelper.GetRegionsInfoByKeyRange(startKey, endKey)
-			if err != nil {
-				return nil, err
-			}
-
-			leadersCnt, peersCnt := getDistribution(regions)
-
-			for storeID, cnt := range leadersCnt {
-				row := make([]types.Datum, len(tableTableRecordRegionsDistributionCols))
-				row[0].SetInt64(table.ID)
-				row[1].SetString(db.Name.O)
-				row[2].SetString(table.Name.O)
-				row[3].SetInt64(storeID)
-				row[4].SetInt64(1)
-				row[5].SetUint64(cnt)
-				records = append(records, row)
-			}
-
-			for storeID, cnt := range peersCnt {
-				row := make([]types.Datum, len(tableTableRecordRegionsDistributionCols))
-				row[0].SetInt64(table.ID)
-				row[1].SetString(db.Name.O)
-				row[2].SetString(table.Name.O)
-				row[3].SetInt64(storeID)
-				row[4].SetInt64(0)
-				row[5].SetUint64(cnt)
-				records = append(records, row)
-			}
-		}
-	}
-	return records, nil
-}
-
-func dataForTableIndexRegionsDistribution(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
-	if !ok {
-		return nil, errors.New("Information about table index regions distribution can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := helper.NewHelper(tikvStore)
-
-	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
-	for _, db := range allSchemas {
-		for _, table := range db.Tables {
-			for _, index := range table.Indices {
-				startKey, endKey := tablecodec.GetTableIndexKeyRange(table.ID, index.ID)
-				startKey = codec.EncodeBytes(nil, startKey)
-				endKey = codec.EncodeBytes(nil, endKey)
-				regions, err := tikvHelper.GetRegionsInfoByKeyRange(startKey, endKey)
-				if err != nil {
-					return nil, err
-				}
-
-				leadersCnt, peersCnt := getDistribution(regions)
-
-				for storeID, cnt := range leadersCnt {
-					row := make([]types.Datum, len(tableTableIndexRegionsDistributionCols))
-					row[0].SetInt64(table.ID)
-					row[1].SetString(db.Name.O)
-					row[2].SetString(table.Name.O)
-					row[3].SetInt64(index.ID)
-					row[4].SetString(index.Name.O)
-					row[5].SetInt64(storeID)
-					row[6].SetInt64(1)
-					row[7].SetUint64(cnt)
-					records = append(records, row)
-				}
-
-				for storeID, cnt := range peersCnt {
-					row := make([]types.Datum, len(tableTableIndexRegionsDistributionCols))
-					row[0].SetInt64(table.ID)
-					row[1].SetString(db.Name.O)
-					row[2].SetString(table.Name.O)
-					row[3].SetInt64(index.ID)
-					row[4].SetString(index.Name.O)
-					row[5].SetInt64(storeID)
-					row[6].SetInt64(0)
-					row[7].SetUint64(cnt)
-					records = append(records, row)
-				}
-			}
-		}
-	}
-	return records, nil
-}
-
-// return two map[storeID]regionCount, leadersCnt only count leader regions, peersCnt count all regions
-func getDistribution(regionsInfo *helper.RegionsInfo) (leadersCnt map[int64]uint64, peersCnt map[int64]uint64) {
-	leadersCnt = make(map[int64]uint64)
-	peersCnt = make(map[int64]uint64)
-	for _, region := range regionsInfo.Regions {
-		leaderStoreID := region.Leader.StoreID
-		leadersCnt[leaderStoreID] += 1
-		for _, peer := range region.Peers {
-			peerStoreID := peer.StoreID
-			peersCnt[peerStoreID] += 1
-		}
-	}
-	return leadersCnt, peersCnt
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -1969,8 +1832,6 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
-	tableTableRecordRegionsDistribution:     tableTableRecordRegionsDistributionCols,
-	tableTableIndexRegionsDistribution:      tableTableIndexRegionsDistributionCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -2074,10 +1935,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiKVRegionStatus(ctx)
 	case tableTiKVRegionPeers:
 		fullRows, err = dataForTikVRegionPeers(ctx)
-	case tableTableRecordRegionsDistribution:
-		fullRows, err = dataForTableRecordRegionsDistribution(ctx)
-	case tableTableIndexRegionsDistribution:
-		fullRows, err = dataForTableIndexRegionsDistribution(ctx)
 	}
 	if err != nil {
 		return nil, err
