@@ -166,3 +166,7 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild Logical
 func (s *baseSingleGroupJoinOrderSolver) calcJoinCumCost(join LogicalPlan, lNode, rNode *jrNode) float64 {
 	return join.statsInfo().RowCount + lNode.cumCost + rNode.cumCost
 }
+
+func (*joinReOrderSolver) name() string {
+	return "join_reorder"
+}

@@ -312,15 +312,34 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCharset string) error {
+func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []string, tblCharset string, dbCharset string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
 		if typesNeedCharset(tp.Tp) {
-			var err error
-			tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
-			if err != nil {
-				return errors.Trace(err)
+			if len(specifiedCollates) == 0 {
+				// Both the charset and collate are not specified.
+				var err error
+				tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				// The charset is not specified but the collate is.
+				// We should derive charset from it's collate specified rather than getting from table and db.
+				// It is handled like mysql's logic, use derived charset to judge conflict with next collate.
+				for _, spc := range specifiedCollates {
+					derivedCollation, err := charset.GetCollationByName(spc)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					if len(tp.Charset) == 0 {
+						tp.Charset = derivedCollation.CharsetName
+					} else if tp.Charset != derivedCollation.CharsetName {
+						return ErrCollationCharsetMismatch.GenWithStackByArgs(derivedCollation.Name, tp.Charset)
+					}
+					tp.Collate = derivedCollation.Name
+				}
 			}
 		} else {
 			tp.Charset = charset.CharsetBin
@@ -331,10 +350,25 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 			return errUnsupportedCharset.GenWithStackByArgs(tp.Charset, tp.Collate)
 		}
 		if len(tp.Collate) == 0 {
-			var err error
-			tp.Collate, err = charset.GetDefaultCollation(tp.Charset)
-			if err != nil {
-				return errors.Trace(err)
+			if len(specifiedCollates) == 0 {
+				// The charset is specified, but the collate is not.
+				var err error
+				tp.Collate, err = charset.GetDefaultCollation(tp.Charset)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				// Both the charset and collate are specified.
+				for _, spc := range specifiedCollates {
+					derivedCollation, err := charset.GetCollationByName(spc)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					if tp.Charset != derivedCollation.CharsetName {
+						return ErrCollationCharsetMismatch.GenWithStackByArgs(derivedCollation.Name, tp.Charset)
+					}
+					tp.Collate = derivedCollation.Name
+				}
 			}
 		}
 	}
@@ -358,7 +392,10 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, tblCharset, dbCharset); err != nil {
+	// specifiedCollates refers to collates in colDef.Options, should handle them together.
+	specifiedCollates := extractCollateFromOption(colDef)
+
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollates, tblCharset, dbCharset); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -1727,15 +1764,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	return nil
 }
 
-func hasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
-	for _, col := range tbInfo.Columns {
-		if mysql.HasAutoIncrementFlag(col.Flag) {
-			return true, col.Name.L
-		}
-	}
-	return false, ""
-}
-
 // isIgnorableSpec checks if the spec type is ignorable.
 // Some specs are parsed by ignored. This is for compatibility.
 func isIgnorableSpec(tp ast.AlterTableType) bool {
@@ -2605,7 +2633,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		newCol.FieldType.Charset = col.FieldType.Charset
 		newCol.FieldType.Collate = col.FieldType.Collate
 	}
-	err = setCharsetCollationFlenDecimal(&newCol.FieldType, t.Meta().Charset, schema.Charset)
+	// specifiedCollates refers to collates in colDef.Option. When setting charset and collate here we
+	// should take the collate in colDef.Option into consideration rather than handling it separately
+	specifiedCollates := extractCollateFromOption(specNewColumn)
+
+	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollates, t.Meta().Charset, schema.Charset)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2642,7 +2674,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	if err = checkColumnFieldLength(newCol); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
+	}
+
+	if err = checkColumnWithIndexConstraint(t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
+		return nil, err
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
@@ -2658,6 +2694,43 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp},
 	}
 	return job, nil
+}
+
+// checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.
+// Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
+// will cause index idx to break the max-prefix-length constraint.
+func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+	var columns []*model.ColumnInfo
+	for _, indexInfo := range tbInfo.Indices {
+		containColumn := false
+		for _, col := range indexInfo.Columns {
+			if col.Name.L == originalCol.Name.L {
+				containColumn = true
+				break
+			}
+		}
+		if containColumn == false {
+			continue
+		}
+		if columns == nil {
+			columns = make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
+			columns = append(columns, tbInfo.Columns...)
+			// replace old column with new column.
+			for i, col := range columns {
+				if col.Name.L != originalCol.Name.L {
+					continue
+				}
+				columns[i] = newCol.Clone()
+				columns[i].Name = originalCol.Name
+				break
+			}
+		}
+		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ChangeColumn renames an existing column and modifies the column's definition,
@@ -3263,13 +3336,21 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo == nil {
+	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	if indexInfo == nil {
 		err = ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		if ifExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
 		return err
+	}
+
+	cols := t.Cols()
+	for _, idxCol := range indexInfo.Columns {
+		if mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) {
+			return autoid.ErrWrongAutoKey
+		}
 	}
 
 	job := &model.Job{
@@ -3541,4 +3622,20 @@ type lockTablesArg struct {
 	IndexOfUnlock int
 	SessionInfo   model.SessionInfo
 	IsCleanup     bool
+}
+
+// extractCollateFromOption take collates(may multiple) in option into consideration
+// when handle charset and collate of a column, rather than handling it separately.
+func extractCollateFromOption(def *ast.ColumnDef) []string {
+	specifiedCollates := make([]string, 0, 0)
+	for i := 0; i < len(def.Options); i++ {
+		op := def.Options[i]
+		if op.Tp == ast.ColumnOptionCollate {
+			specifiedCollates = append(specifiedCollates, op.StrValue)
+			def.Options = append(def.Options[:i], def.Options[i+1:]...)
+			// maintain the correct index
+			i--
+		}
+	}
+	return specifiedCollates
 }

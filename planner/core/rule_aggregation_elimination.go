@@ -155,3 +155,7 @@ func (a *aggregationEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 	}
 	return p, nil
 }
+
+func (*aggregationEliminator) name() string {
+	return "aggregation_eliminate"
+}

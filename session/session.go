@@ -1537,6 +1537,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	err = executor.LoadOptRuleBlacklist(se)
+	if err != nil {
+		return nil, err
+	}
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -1639,7 +1644,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 33
+	currentBootstrapVersion = 34
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
