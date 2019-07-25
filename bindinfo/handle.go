@@ -127,7 +127,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		newCache.removeStaleBindMetas(hash, meta, metrics.ScopeGlobal)
 		if meta.Status == Using {
 			newCache[hash] = append(newCache[hash], meta)
-			metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal).Add(meta.size())
+			metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, meta.Status).Add(meta.size())
 		}
 	}
 	return nil
@@ -257,6 +257,7 @@ func (h *BindHandle) DropInvalidBindRecord() {
 		if time.Since(invalidBindRecord.droppedTime) > 6*time.Second {
 			delete(invalidBindRecordMap, key)
 		}
+		invalidBindRecord.bindRecord.updateMetrics(metrics.ScopeGlobal, false)
 	}
 	h.invalidBindRecordMap.Store(invalidBindRecordMap)
 }
@@ -277,6 +278,7 @@ func (h *BindHandle) AddDropInvalidBindTask(invalidBindRecord *BindRecord) {
 		bindRecord: invalidBindRecord,
 	}
 	h.invalidBindRecordMap.Store(newMap)
+	invalidBindRecord.updateMetrics(metrics.ScopeGlobal, true)
 }
 
 // Size return the size of bind info cache.
@@ -324,8 +326,7 @@ func (h *BindHandle) appendBindMeta(hash string, meta *BindMeta) {
 	newCache := h.bindInfo.Value.Load().(cache).copy()
 	newCache.removeStaleBindMetas(hash, meta, metrics.ScopeGlobal)
 	newCache[hash] = append(newCache[hash], meta)
-	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal).Add(float64(meta.size()))
-	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal).Inc()
+	meta.updateMetrics(metrics.ScopeGlobal, true)
 	h.bindInfo.Value.Store(newCache)
 }
 
@@ -350,10 +351,7 @@ func (c cache) removeDeletedBindMeta(hash string, meta *BindMeta, scope string) 
 
 	for i := len(metas) - 1; i >= 0; i-- {
 		if metas[i].isSame(meta) {
-			metrics.BindMemoryUsage.WithLabelValues(scope).Sub(metas[i].size())
-			if metas[i].Status == Using {
-				metrics.BindTotalGauge.WithLabelValues(scope).Dec()
-			}
+			metas[i].updateMetrics(scope, false)
 			metas = append(metas[:i], metas[i+1:]...)
 			if len(metas) == 0 {
 				delete(c, hash)
@@ -372,10 +370,7 @@ func (c cache) removeStaleBindMetas(hash string, meta *BindMeta, scope string) {
 
 	for i := len(metas) - 1; i >= 0; i-- {
 		if metas[i].isStale(meta) {
-			metrics.BindMemoryUsage.WithLabelValues(scope).Sub(metas[i].size())
-			if metas[i].Status == Using {
-				metrics.BindTotalGauge.WithLabelValues(scope).Sub(1)
-			}
+			metas[i].updateMetrics(scope, false)
 			metas = append(metas[:i], metas[i+1:]...)
 			if len(metas) == 0 {
 				delete(c, hash)

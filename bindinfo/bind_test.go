@@ -156,9 +156,9 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Assert(err, IsNil)
 
 	pb := &dto.Metric{}
-	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal).Write(pb)
+	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
-	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal).Write(pb)
+	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(161))
 
 	sql, hash := parser.NormalizeDigest("select * from t where i > ?")
@@ -211,9 +211,9 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	bindData = s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 	c.Check(bindData, IsNil)
 
-	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal).Write(pb)
+	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
-	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal).Write(pb)
+	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	// From newly created global bind handle.
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(161))
 
@@ -259,9 +259,9 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	c.Assert(err, IsNil)
 
 	pb := &dto.Metric{}
-	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession).Write(pb)
+	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
-	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession).Write(pb)
+	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(161))
 
 	handle := tk.Se.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
@@ -306,10 +306,10 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
 	c.Check(bindData.Status, Equals, "deleted")
 
-	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession).Write(pb)
+	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
-	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession).Write(pb)
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(118))
+	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
 }
 
 func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {

@@ -41,10 +41,7 @@ func (h *SessionHandle) appendBindMeta(hash string, meta *BindMeta) {
 	// Make sure there is only one goroutine writes the cache.
 	h.ch.removeStaleBindMetas(hash, meta, metrics.ScopeSession)
 	h.ch[hash] = append(h.ch[hash], meta)
-	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession).Add(float64(meta.size()))
-	if meta.Status == Using {
-		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession).Inc()
-	}
+	meta.updateMetrics(metrics.ScopeSession, true)
 }
 
 func (h *SessionHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
@@ -107,20 +104,10 @@ func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
 
 // Close closes the session handle.
 func (h *SessionHandle) Close() {
-	totalNum, totalSize := float64(0), float64(0)
 	for _, bindRecords := range h.ch {
 		for _, bindRecord := range bindRecords {
-			if bindRecord.Status == Using {
-				totalNum++
-			}
-			totalSize += bindRecord.size()
+			bindRecord.updateMetrics(metrics.ScopeSession, false)
 		}
-	}
-	if totalNum > 0 {
-		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession).Sub(totalNum)
-	}
-	if totalSize > 0 {
-		metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession).Sub(totalSize)
 	}
 }
 
