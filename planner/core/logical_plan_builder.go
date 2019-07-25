@@ -334,9 +334,9 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 	return nil
 }
 
-func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
+func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 	if hintInfo == nil {
-		return nil
+		return
 	}
 
 	lhsAlias := extractTableAlias(p.children[0])
@@ -362,9 +362,10 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
 	// If there're multiple join types and one of them is not index join hint,
 	// then there is a conflict of join types.
 	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexInner^preferLeftAsIndexInner) > 0 {
-		return errors.New("Join hints are conflict, you can only specify one type of join")
+		errMsg := "Join hints are conflict, you can only specify one type of join"
+		warning := ErrInternal.GenWithStack(errMsg)
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 	}
-	return nil
 }
 
 func resetNotNullFlag(schema *expression.Schema, start, end int) {
@@ -431,10 +432,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
 
 	// Set preferred join algorithm if some join hints is specified by user.
-	err = joinPlan.setPreferredJoinType(b.TableHints())
-	if err != nil {
-		return nil, err
-	}
+	joinPlan.setPreferredJoinType(b.TableHints())
 
 	// "NATURAL JOIN" doesn't have "ON" or "USING" conditions.
 	//
@@ -1938,7 +1936,7 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
+func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) {
 	var sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 	var preferAggType uint
 	for _, hint := range hints {
@@ -1957,16 +1955,12 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 || preferAggType != 0 {
-		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
-			sortMergeJoinTables:       sortMergeTables,
-			indexNestedLoopJoinTables: INLJTables,
-			hashJoinTables:            hashJoinTables,
-			preferAggType:             preferAggType,
-		})
-		return true
-	}
-	return false
+	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
+		sortMergeJoinTables:       sortMergeTables,
+		indexNestedLoopJoinTables: INLJTables,
+		hashJoinTables:            hashJoinTables,
+		preferAggType:             preferAggType,
+	})
 }
 
 func (b *PlanBuilder) popTableHints() {
@@ -1996,10 +1990,10 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
-	if b.pushTableHints(sel.TableHints) {
-		// table hints are only visible in the current SELECT statement.
-		defer b.popTableHints()
-	}
+	b.pushTableHints(sel.TableHints)
+	// table hints are only visible in the current SELECT statement.
+	defer b.popTableHints()
+
 	if sel.SelectStmtOpts != nil {
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
@@ -2615,10 +2609,9 @@ func buildColumns2Handle(
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
-	if b.pushTableHints(update.TableHints) {
-		// table hints are only visible in the current UPDATE statement.
-		defer b.popTableHints()
-	}
+	b.pushTableHints(update.TableHints)
+	// table hints are only visible in the current UPDATE statement.
+	defer b.popTableHints()
 
 	// update subquery table should be forbidden
 	var asNameList []string
@@ -2836,10 +2829,9 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
-	if b.pushTableHints(delete.TableHints) {
-		// table hints are only visible in the current DELETE statement.
-		defer b.popTableHints()
-	}
+	b.pushTableHints(delete.TableHints)
+	// table hints are only visible in the current DELETE statement.
+	defer b.popTableHints()
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {

@@ -14,6 +14,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/model"
@@ -126,6 +127,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 				return nil, err
 			}
 			if childTask != nil && childTask.invalid() {
+				fmt.Println("wdnmd", ToString(p), ToString(child))
 				break
 			}
 			childTasks = append(childTasks, childTask)

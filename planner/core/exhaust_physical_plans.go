@@ -1199,6 +1199,10 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 }
 
 func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+	fmt.Println("parent:", prop)
+	for _, possibleChildProperty := range la.possibleProperties {
+		fmt.Println("child:", possibleChildProperty)
+	}
 	all, desc := prop.AllSameOrder()
 	if len(la.possibleProperties) == 0 || !all {
 		return nil
@@ -1231,7 +1235,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
-		for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType} {
+		for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType, property.CopDoubleReadTaskType} {
 			copiedChildProperty := new(property.PhysicalProperty)
 			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 			copiedChildProperty.TaskTp = taskTp
@@ -1280,11 +1284,17 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 
 	hashAggs := la.getHashAggs(prop)
 	if hashAggs != nil && preferHash && !preferStream {
+		errMsg := "WDNMD HASH"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		return hashAggs
 	}
 
 	streamAggs := la.getStreamAggs(prop)
 	if streamAggs != nil && preferStream && !preferHash {
+		errMsg := "WDNMD STREAM"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		for i := range streamAggs {
 			streamAggs[i].(*PhysicalStreamAgg).convert2Enforced()
 		}
