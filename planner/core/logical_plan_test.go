@@ -2171,3 +2171,45 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		c.Assert(pathsName(paths), Equals, tt.result)
 	}
 }
+
+func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql      string
+		fastPlan bool
+	}{
+		{
+			"select * from t where a=1",
+			true,
+		},
+		{
+
+			"update t set f=0 where a=43215",
+			true,
+		},
+		{
+			"delete from t where a =43215",
+			true,
+		},
+		{
+			"select * from t where a>1",
+			false,
+		},
+	}
+	for _, tt := range tests {
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil)
+		Preprocess(s.ctx, stmt, s.is)
+		s.ctx.GetSessionVars().StmtCtx.Tables = nil
+		p := TryFastPlan(s.ctx, stmt)
+		if tt.fastPlan {
+			c.Assert(p, NotNil)
+			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 1)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.Tables[0].Table, Equals, "t")
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.Tables[0].DB, Equals, "test")
+		} else {
+			c.Assert(p, IsNil)
+			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 0)
+		}
+	}
+}
