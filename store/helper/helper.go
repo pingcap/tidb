@@ -21,7 +21,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -421,77 +420,77 @@ type TableInfo struct {
 	Index   *model.IndexInfo
 }
 
-type WithKeyRange interface {
-	GetStartKey() string
-	GetEndKey() string
+type withKeyRange interface {
+	getStartKey() string
+	getEndKey() string
 }
 
-// IsIntersecting returns true if x and y intersect.
-func IsIntersecting(x, y WithKeyRange) bool {
-	return IsIntersectingKeyRange(x, y.GetStartKey(), y.GetEndKey())
+// isIntersecting returns true if x and y intersect.
+func isIntersecting(x, y withKeyRange) bool {
+	return isIntersectingKeyRange(x, y.getStartKey(), y.getEndKey())
 }
 
-// IsIntersectingKeyRange returns true if [startKey, endKey) intersect with x.
-func IsIntersectingKeyRange(x WithKeyRange, startKey, endKey string) bool {
-	return !IsBeforeKeyRange(x, startKey, endKey) && !IsBehindKeyRange(x, startKey, endKey)
+// isIntersectingKeyRange returns true if [startKey, endKey) intersect with x.
+func isIntersectingKeyRange(x withKeyRange, startKey, endKey string) bool {
+	return !isBeforeKeyRange(x, startKey, endKey) && !isBehindKeyRange(x, startKey, endKey)
 }
 
 // IsBefore returns true is x is before y
-func IsBefore(x, y WithKeyRange) bool {
-	return IsBeforeKeyRange(x, y.GetStartKey(), y.GetEndKey())
+func inBefore(x, y withKeyRange) bool {
+	return isBeforeKeyRange(x, y.getStartKey(), y.getEndKey())
 }
 
-// IsBehind returns true is x is behind y
-func IsBehind(x, y WithKeyRange) bool {
-	return IsBehindKeyRange(x, y.GetStartKey(), y.GetEndKey())
+// isBehind returns true is x is behind y
+func isBehind(x, y withKeyRange) bool {
+	return isBehindKeyRange(x, y.getStartKey(), y.getEndKey())
 }
 
 // IsBefore returns true is x is before [startKey, endKey)
-func IsBeforeKeyRange(x WithKeyRange, startKey, endKey string) bool {
-	return x.GetEndKey() != "" && x.GetEndKey() <= startKey
+func isBeforeKeyRange(x withKeyRange, startKey, endKey string) bool {
+	return x.getEndKey() != "" && x.getEndKey() <= startKey
 }
 
 // IsBehind returns true is x is behind [startKey, endKey)
-func IsBehindKeyRange(x WithKeyRange, startKey, endKey string) bool {
-	return endKey != "" && x.GetStartKey() >= endKey
+func isBehindKeyRange(x withKeyRange, startKey, endKey string) bool {
+	return endKey != "" && x.getStartKey() >= endKey
 }
 
-func (r *RegionInfo) GetStartKey() string { return r.StartKey }
-func (r *RegionInfo) GetEndKey() string   { return r.EndKey }
+func (r *RegionInfo) getStartKey() string { return r.StartKey }
+func (r *RegionInfo) getEndKey() string   { return r.EndKey }
 
 // for sorting
-type ByRegionStartKey []*RegionInfo
+type byRegionStartKey []*RegionInfo
 
-func (xs ByRegionStartKey) Len() int      { return len(xs) }
-func (xs ByRegionStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
-func (xs ByRegionStartKey) Less(i, j int) bool {
-	return xs[i].GetStartKey() < xs[j].GetStartKey()
+func (xs byRegionStartKey) Len() int      { return len(xs) }
+func (xs byRegionStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
+func (xs byRegionStartKey) Less(i, j int) bool {
+	return xs[i].getStartKey() < xs[j].getStartKey()
 }
 
-// TableInfoWithKeyRange stores table or index informations with its key range.
-type TableInfoWithKeyRange struct {
+// tableInfoWithKeyRange stores table or index informations with its key range.
+type tableInfoWithKeyRange struct {
 	*TableInfo
 	StartKey string
 	EndKey   string
 }
 
-func (t TableInfoWithKeyRange) GetStartKey() string { return t.StartKey }
-func (t TableInfoWithKeyRange) GetEndKey() string   { return t.EndKey }
+func (t tableInfoWithKeyRange) getStartKey() string { return t.StartKey }
+func (t tableInfoWithKeyRange) getEndKey() string   { return t.EndKey }
 
 // for sorting
-type ByTableStartKey []TableInfoWithKeyRange
+type byTableStartKey []tableInfoWithKeyRange
 
-func (xs ByTableStartKey) Len() int      { return len(xs) }
-func (xs ByTableStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
-func (xs ByTableStartKey) Less(i, j int) bool {
-	return xs[i].GetStartKey() < xs[j].GetStartKey()
+func (xs byTableStartKey) Len() int      { return len(xs) }
+func (xs byTableStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
+func (xs byTableStartKey) Less(i, j int) bool {
+	return xs[i].getStartKey() < xs[j].getStartKey()
 }
 
-func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
+func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) tableInfoWithKeyRange {
 	sk, ek := tablecodec.GetTableHandleKeyRange(table.ID)
-	startKey := BytesKeyToHex(codec.EncodeBytes(nil, sk))
-	endKey := BytesKeyToHex(codec.EncodeBytes(nil, ek))
-	return TableInfoWithKeyRange{
+	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	return tableInfoWithKeyRange{
 		&TableInfo{
 			DB:      db,
 			Table:   table,
@@ -503,11 +502,11 @@ func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWit
 	}
 }
 
-func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
+func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) tableInfoWithKeyRange {
 	sk, ek := tablecodec.GetTableIndexKeyRange(table.ID, index.ID)
-	startKey := BytesKeyToHex(codec.EncodeBytes(nil, sk))
-	endKey := BytesKeyToHex(codec.EncodeBytes(nil, ek))
-	return TableInfoWithKeyRange{
+	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	return tableInfoWithKeyRange{
 		&TableInfo{
 			DB:      db,
 			Table:   table,
@@ -531,12 +530,12 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.
 		regions = append(regions, &regionsInfo.Regions[i])
 	}
 
-	tables := []TableInfoWithKeyRange{}
+	tables := []tableInfoWithKeyRange{}
 	for _, db := range schemas {
 		for _, table := range db.Tables {
-			tables = append(tables, NewTableWithKeyRange(db, table))
+			tables = append(tables, newTableWithKeyRange(db, table))
 			for _, index := range table.Indices {
-				tables = append(tables, NewIndexWithKeyRange(db, table, index))
+				tables = append(tables, newIndexWithKeyRange(db, table, index))
 			}
 		}
 	}
@@ -545,20 +544,20 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.
 		return tableInfos
 	}
 
-	sort.Sort(ByRegionStartKey(regions))
-	sort.Sort(ByTableStartKey(tables))
+	sort.Sort(byRegionStartKey(regions))
+	sort.Sort(byTableStartKey(tables))
 
 	idx := 0
 OutLoop:
 	for _, region := range regions {
 		id := region.ID
-		for IsBehind(region, &tables[idx]) {
+		for isBehind(region, &tables[idx]) {
 			idx++
 			if idx >= len(tables) {
 				break OutLoop
 			}
 		}
-		for i := idx; i < len(tables) && IsIntersecting(region, &tables[i]); i++ {
+		for i := idx; i < len(tables) && isIntersecting(region, &tables[i]); i++ {
 			tableInfos[id] = append(tableInfos[id], *tables[i].TableInfo)
 		}
 	}
@@ -566,86 +565,23 @@ OutLoop:
 	return tableInfos
 }
 
-// GetRegionsInfoByKeyRange gets regions intersecting with a key range
-// NOTE: the keys will send to PD directly, may need codec.EncodeBytes() first.
-func (h *Helper) GetRegionsInfoByKeyRange(stKey, edKey []byte) (*RegionsInfo, error) {
-	var regionsInfo RegionsInfo
-	queryParams := url.Values{}
-	queryParams.Set("limit", "128")
-	uri, err := url.Parse(pdapi.Regions + "/key")
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// encode method found in pd/server/core/region.go:HexRegionKey()
-	startKey := BytesKeyToHex(stKey)
-	endKey := BytesKeyToHex(edKey)
-
-	logutil.BgLogger().Info("finding [start, end)", zap.String("start", startKey), zap.String("end", endKey), zap.ByteString("raw-start", stKey))
-
-	regions := make([]RegionInfo, 0)
-
-	for startKey < endKey {
-		// encode method found in pd/tools/pd-ctl/pdctl/command/region_command.go:parseKey()
-		queryKey, err := HexKeyToBytes(startKey)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		queryParams.Set("key", string(queryKey))
-		uri.RawQuery = queryParams.Encode()
-		err = h.RequestPD("GET", uri.String(), nil, &regionsInfo)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(regionsInfo.Regions) == 0 {
-			logutil.BgLogger().Info("empty")
-			break
-		}
-
-		for _, region := range regionsInfo.Regions {
-			logutil.BgLogger().Info("found [start, end)", zap.String("start", region.StartKey), zap.String("end", region.EndKey))
-			if IsIntersectingKeyRange(&region, startKey, endKey) {
-				logutil.BgLogger().Info("found one")
-				regions = append(regions, region)
-			}
-			if region.EndKey == "" || region.StartKey >= region.EndKey {
-				logutil.BgLogger().Info("edge region", zap.String("start", region.StartKey), zap.String("end", region.EndKey))
-				startKey = endKey
-				break
-			}
-			if region.EndKey > startKey {
-				startKey = region.EndKey
-			}
-			// reach the edge, stop
-		}
-		//logutil.BgLogger().Info("update to [start, end)", zap.String("start", startKey), zap.String("end", endKey))
-	}
-	logutil.BgLogger().Info("stop at [start, end)", zap.String("start", startKey), zap.String("end", endKey))
-
-	return &RegionsInfo{
-		Count:   int64(len(regions)),
-		Regions: regions,
-	}, nil
-}
-
-func BytesKeyToHex(key []byte) string {
+func bytesKeyToHex(key []byte) string {
 	return strings.ToUpper(hex.EncodeToString(key))
 }
 
-func HexKeyToBytes(key string) ([]byte, error) {
+func hexKeyToBytes(key string) ([]byte, error) {
 	return hex.DecodeString(key)
 }
 
 // GetRegionsInfo gets the region information of current store by using PD's api.
 func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
-	err := h.RequestPD("GET", pdapi.Regions, nil, &regionsInfo)
+	err := h.requestPD("GET", pdapi.Regions, nil, &regionsInfo)
 	return &regionsInfo, err
 }
 
 // request PD API, decode the response body into res
-func (h *Helper) RequestPD(method, uri string, body io.Reader, res interface{}) error {
+func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) error {
 	etcd, ok := h.Store.(tikv.EtcdBackend)
 	if !ok {
 		return errors.WithStack(errors.New("not implemented"))
