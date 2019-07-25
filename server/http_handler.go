@@ -132,9 +132,9 @@ func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
 }
 
 type mvccKV struct {
-	Key   string                        `json:"key"`
-	Value *kvrpcpb.MvccGetByKeyResponse `json:"value"`
-	RegionID uint64 `json:"region-id"`
+	Key      string                        `json:"key"`
+	Value    *kvrpcpb.MvccGetByKeyResponse `json:"value"`
+	RegionID uint64                        `json:"region-id"`
 }
 
 func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
@@ -142,7 +142,7 @@ func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error
 	data, err := t.GetMvccByEncodedKey(encodedKey)
 	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
 	regionID := keyLocation.Region.GetID()
-	return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data, RegionID:regionID}, err
+	return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data, RegionID: regionID}, err
 }
 
 func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
@@ -1358,9 +1358,9 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 
 		if len(datas) > 0 {
 			re := map[string]interface{}{
-				"key":       resp.Key,
-				"info":      respValue.Info,
-				"data":      datas,
+				"key":  resp.Key,
+				"info": respValue.Info,
+				"data": datas,
 			}
 			if err != nil {
 				re["decode_error"] = err.Error()
