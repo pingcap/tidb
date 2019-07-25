@@ -1357,9 +1357,9 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 
 		if len(datas) > 0 {
 			re := map[string]interface{}{
-				"key":  resp.Key,
-				"info": respValue.Info,
-				"data": datas,
+				"key":       resp.Key,
+				"info":      respValue.Info,
+				"data":      datas,
 				"region-id": regionID,
 			}
 			if err != nil {
