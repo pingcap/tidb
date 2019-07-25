@@ -1408,7 +1408,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	return deleteExec
 }
 
-func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, maxNumBuckets uint64, autoAnalyze string) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeIndexExec{
@@ -1422,24 +1422,24 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		maxNumBuckets: maxNumBuckets,
+		opts: opts,
 	}
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
-		BucketSize: int64(maxNumBuckets),
+		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
 	}
-	depth := int32(defaultCMSketchDepth)
-	width := int32(defaultCMSketchWidth)
+	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
+	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
 	e.analyzePB.IdxReq.CmsketchDepth = &depth
 	e.analyzePB.IdxReq.CmsketchWidth = &width
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	return &analyzeTask{taskType: idxTask, idxExec: e, job: job}
 }
 
-func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeIndexTask, maxNumBuckets uint64) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.PhysicalTableID)
-	analyzeTask := b.buildAnalyzeIndexPushdown(task, maxNumBuckets, "")
+	analyzeTask := b.buildAnalyzeIndexPushdown(task, opts, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
 	}
@@ -1470,7 +1470,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64, autoAnalyze string) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
 	cols := task.ColsInfo
 	if task.PKInfo != nil {
 		cols = append([]*model.ColumnInfo{task.PKInfo}, cols...)
@@ -1490,12 +1490,12 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		maxNumBuckets: maxNumBuckets,
+		opts: opts,
 	}
-	depth := int32(defaultCMSketchDepth)
-	width := int32(defaultCMSketchWidth)
+	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
+	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
-		BucketSize:    int64(maxNumBuckets),
+		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
 		ColumnsInfo:   model.ColumnsToProto(cols, task.PKInfo != nil),
@@ -1507,10 +1507,10 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
-func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64) *analyzeTask {
+func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.PhysicalTableID)
-	analyzeTask := b.buildAnalyzeColumnsPushdown(task, maxNumBuckets, "")
+	analyzeTask := b.buildAnalyzeColumnsPushdown(task, opts, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
 	}
@@ -1541,7 +1541,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64) {
+func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) {
 	findTask := false
 	for _, eTask := range e.tasks {
 		if eTask.fastExec.physicalTableID == task.PhysicalTableID {
@@ -1563,7 +1563,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 				physicalTableID: task.PhysicalTableID,
 				colsInfo:        task.ColsInfo,
 				pkInfo:          task.PKInfo,
-				maxNumBuckets:   maxNumBuckets,
+				opts:            opts,
 				tblInfo:         task.TblInfo,
 				concurrency:     concurrency,
 				wg:              &sync.WaitGroup{},
@@ -1573,7 +1573,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 	}
 }
 
-func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore.AnalyzeIndexTask, maxNumBuckets uint64) {
+func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) {
 	findTask := false
 	for _, eTask := range e.tasks {
 		if eTask.fastExec.physicalTableID == task.PhysicalTableID {
@@ -1594,7 +1594,7 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 				ctx:             b.ctx,
 				physicalTableID: task.PhysicalTableID,
 				idxsInfo:        []*model.IndexInfo{task.IndexInfo},
-				maxNumBuckets:   maxNumBuckets,
+				opts:            opts,
 				tblInfo:         task.TblInfo,
 				concurrency:     concurrency,
 				wg:              &sync.WaitGroup{},
@@ -1617,12 +1617,12 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	}
 	for _, task := range v.ColTasks {
 		if task.Incremental {
-			e.tasks = append(e.tasks, b.buildAnalyzePKIncremental(task, v.MaxNumBuckets))
+			e.tasks = append(e.tasks, b.buildAnalyzePKIncremental(task, v.Opts))
 		} else {
 			if enableFastAnalyze {
-				b.buildAnalyzeFastColumn(e, task, v.MaxNumBuckets)
+				b.buildAnalyzeFastColumn(e, task, v.Opts)
 			} else {
-				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets, autoAnalyze))
+				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze))
 			}
 		}
 		if b.err != nil {
@@ -1631,12 +1631,12 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	}
 	for _, task := range v.IdxTasks {
 		if task.Incremental {
-			e.tasks = append(e.tasks, b.buildAnalyzeIndexIncremental(task, v.MaxNumBuckets))
+			e.tasks = append(e.tasks, b.buildAnalyzeIndexIncremental(task, v.Opts))
 		} else {
 			if enableFastAnalyze {
-				b.buildAnalyzeFastIndex(e, task, v.MaxNumBuckets)
+				b.buildAnalyzeFastIndex(e, task, v.Opts)
 			} else {
-				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets, autoAnalyze))
+				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
 			}
 		}
 		if b.err != nil {

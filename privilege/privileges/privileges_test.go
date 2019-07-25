@@ -673,7 +673,6 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 		i++
 	}
 	buf.WriteString(" from mysql.user where user = 'superadmin'")
-	fmt.Println(buf.String())
 	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
 }
 
