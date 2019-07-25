@@ -1010,6 +1010,20 @@ func (s *testAnalyzeSuite) TestVirtualGeneratedColumn(c *C) {
 	tk.MustIndexLookup("select * from t1 where b=1").Check(testkit.Rows("0 1 2 3"))
 	tk.MustIndexRead("select c from t1 where c=2 and d=3").Check(testkit.Rows("2"))
 
+	tk.MustExec("insert into t1 (a) values (1)")
+	tk.MustQuery("select /*+ TIDB_INLJ(o, i) */ i.b, o.a from t1 o, t1 i where i.b = o.a").Check(testkit.Rows("1 1"))
+	tk.MustQuery("explain select /*+ TIDB_INLJ(o, i) */ * from t1 o, t1 i where i.b = o.a").Check(testkit.Rows(
+		"IndexJoin_12 12487.50 root inner join, inner:Projection_10, outer key:test.o.a, inner key:test.i.b",
+		"├─Projection_15 9990.00 root test.o.a, cast(plus(test.o.a, 1)), cast(plus(cast(plus(test.o.a, 1)), 1)), cast(plus(cast(plus(cast(plus(test.o.a, 1)), 1)), 1))",
+		"│ └─TableReader_16 9990.00 root data:Selection_14",
+		"│   └─Selection_14 9990.00 cop not(isnull(test.o.a))",
+		"│     └─TableScan_13 10000.00 cop table:o, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─Projection_10 9.99 root test.i.a, cast(plus(test.i.a, 1)), cast(plus(cast(plus(test.i.a, 1)), 1)), cast(plus(cast(plus(cast(plus(test.i.a, 1)), 1)), 1))",
+		"  └─IndexLookUp_11 9.99 root ",
+		"    ├─Selection_9 9.99 cop not(isnull(test.i.b))",
+		"    │ └─IndexScan_7 10.00 cop table:i, index:b, range: decided by [eq(test.i.b, test.o.a)], keep order:false, stats:pseudo",
+		"    └─TableScan_8 9.99 cop table:t1, keep order:false, stats:pseudo"))
+
 	tk.MustExec(`CREATE TABLE person (
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,

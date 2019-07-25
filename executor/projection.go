@@ -78,6 +78,10 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 		return err
 	}
 
+	return e.open(ctx)
+}
+
+func (e *ProjectionExec) open(ctx context.Context) error {
 	e.prepared = false
 	e.parentReqRows = int64(e.maxChunkSize)
 

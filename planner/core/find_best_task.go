@@ -14,6 +14,8 @@
 package core
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -27,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"golang.org/x/tools/container/intsets"
-	"math"
 )
 
 const (
@@ -538,7 +539,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		return invalidTask, err
 	}
 	if prop.TaskTp == property.RootTaskType {
-		task = finishCopTask(ds.ctx, task)
+		if cop, ok := task.(*copTask); ok {
+			task = finishCopTask(ds.ctx, cop)
+		}
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -811,7 +814,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	ts.Ranges = path.ranges
 	ts.AccessCondition, ts.filterCondition = path.accessConds, path.tableFilters
 	rowCount := path.countAfterAccess
-	copTask := &copTask{
+	cop := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
 	}
@@ -839,22 +842,24 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
 
-	copTask.cst = rowCount * scanFactor
+	cop.cst = rowCount * scanFactor
 	if candidate.isMatchProp {
 		if prop.Items[0].Desc {
 			ts.Desc = true
-			copTask.cst = rowCount * descScanFactor
+			cop.cst = rowCount * descScanFactor
 		}
 		ts.KeepOrder = true
-		copTask.keepOrder = true
+		cop.keepOrder = true
 	}
 
-	task, err = ds.pushDownSelAndResolveVirtualCols(copTask, path, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	task, err = ds.pushDownSelAndResolveVirtualCols(cop, path, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	if err != nil {
 		return invalidTask, err
 	}
 	if prop.TaskTp == property.RootTaskType {
-		task = finishCopTask(ds.ctx, task)
+		if cop, ok := task.(*copTask); ok {
+			task = finishCopTask(ds.ctx, cop)
+		}
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}

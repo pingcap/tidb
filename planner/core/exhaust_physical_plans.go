@@ -541,16 +541,18 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
 
-	copTask := &copTask{
+	cop := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
 	}
 	selStats := ts.stats.Scale(selectionFactor)
-	t, err := ds.pushDownSelAndResolveVirtualCols(copTask, nil, selStats)
+	t, err := ds.pushDownSelAndResolveVirtualCols(cop, nil, selStats)
 	if err != nil {
 		return nil, err
 	}
-	t = finishCopTask(ds.ctx, copTask)
+	if cop, ok := t.(*copTask); ok {
+		t = finishCopTask(ds.ctx, cop)
+	}
 	reader := t.plan()
 	return p.constructInnerUnionScan(us, reader), nil
 }
@@ -626,7 +628,9 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	if err != nil {
 		return nil, err
 	}
-	t = finishCopTask(ds.ctx, t)
+	if cop, ok := t.(*copTask); ok {
+		t = finishCopTask(ds.ctx, cop)
+	}
 	reader := t.plan()
 	return p.constructInnerUnionScan(us, reader), nil
 }
