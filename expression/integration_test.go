@@ -3512,11 +3512,18 @@ func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 	_, err = tk.Exec("select time '20171231235959.999999';")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("20171231235959.999999")), IsTrue)
+
+	_, err = tk.Exec("select ADDDATE('2008-01-34', -1);")
+	c.Assert(err, NotNil)
+
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("2008-01-34")), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
 	defer s.cleanEnv(c)
+	
 	tk := testkit.NewTestKit(c, s.store)
+
 
 	r := tk.MustQuery("select timestamp '2017-01-01 00:00:00';")
 	r.Check(testkit.Rows("2017-01-01 00:00:00"))
