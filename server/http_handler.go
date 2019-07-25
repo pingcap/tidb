@@ -23,7 +23,6 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1068,17 +1067,9 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeError(w, err)
 				return
 			}
-			asSortedEntry := func(metric map[helper.TblIndex]helper.RegionMetric) hotRegions {
-				hs := make(hotRegions, 0, len(metric))
-				for key, value := range metric {
-					hs = append(hs, hotRegion{key, value})
-				}
-				sort.Sort(hs)
-				return hs
-			}
 			writeData(w, map[string]interface{}{
-				"write": asSortedEntry(hotWrite),
-				"read":  asSortedEntry(hotRead),
+				"write": hotWrite,
+				"read":  hotRead,
 			})
 			return
 		}
