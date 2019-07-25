@@ -689,6 +689,21 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 
+func (s *testTypeConvertSuite) TestRoundIntStr(c *C) {
+	cases := []struct {
+		a string
+		b byte
+		c string
+	}{
+		{"+999", '5', "+1000"},
+		{"999", '5', "1000"},
+		{"-999", '5', "-1000"},
+	}
+	for _, cc := range cases {
+		c.Assert(roundIntStr(cc.b, cc.a), Equals, cc.c)
+	}
+}
+
 func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	tests := []struct {
 		origin string

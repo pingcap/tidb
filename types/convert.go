@@ -375,24 +375,24 @@ func roundIntStr(numNextDot byte, intStr string) string {
 		return intStr
 	}
 	retStr := []byte(intStr)
-	for i := len(intStr) - 1; i >= 0; i-- {
-		if !isDigit(intStr[i]) {
-			// because this is a valid int str,
-			// and intStr[i] is not digit, so intStr[i+1] must be a digit
-			retStr[i+1] = '1'
+	idx := len(intStr) - 1
+	for ; idx >= 1; idx-- {
+		if retStr[idx] != '9' {
+			retStr[idx]++
+			break
+		}
+		retStr[idx] = '0'
+	}
+	if idx == 0 {
+		if intStr[0] == '9' {
+			retStr[0] = '1'
 			retStr = append(retStr, '0')
-			break
-		}
-		if retStr[i] != '9' {
-			retStr[i]++
-			break
-		}
-		if i == 0 {
-			retStr[i] = '1'
+		} else if isDigit(intStr[0]) {
+			retStr[0]++
+		} else {
+			retStr[1] = '1'
 			retStr = append(retStr, '0')
-			break
 		}
-		retStr[i] = '0'
 	}
 	return string(retStr)
 }
