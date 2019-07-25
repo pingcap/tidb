@@ -83,6 +83,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(HandShakeErrorCounter)
 	prometheus.MustRegister(HandleJobHistogram)
 	prometheus.MustRegister(SignificantFeedbackCounter)
+	prometheus.MustRegister(FastAnalyzeHistogram)
 	prometheus.MustRegister(JobsGauge)
 	prometheus.MustRegister(KeepAliveCounter)
 	prometheus.MustRegister(LoadPrivilegeCounter)

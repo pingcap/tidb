@@ -202,6 +202,7 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a order by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
 
 	// for locks
+	tk.MustExec(`set tidb_enable_noop_functions=1;`)
 	result := tk.MustQuery(`SELECT GET_LOCK('test_lock1', 10);`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`SELECT GET_LOCK('test_lock2', 10);`)
@@ -550,6 +551,8 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1),(2),(3)")
+	tk.Se.GetSessionVars().MaxChunkSize = 1
+	tk.MustQuery("select rand(1) from t").Sort().Check(testkit.Rows("0.6046602879796196", "0.6645600532184904", "0.9405090880450124"))
 	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.6046602879796196", "0.16729663442585624", "0.7199826688373036"))
 	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.6046602879796196 0.16729663442585624 0.7199826688373036"))
 }
@@ -4192,7 +4195,7 @@ func (s *testIntegrationSuite) TestIssue9710(c *C) {
 	}
 }
 
-// for issue #9770
+// TestDecimalConvertToTime for issue #9770
 func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
@@ -4402,4 +4405,47 @@ func (s *testIntegrationSuite) TestIssue10181(c *C) {
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestIssue10804(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`SELECT @@information_schema_stats_expiry`).Check(testkit.Rows(`86400`))
+	tk.MustExec("/*!80000 SET SESSION information_schema_stats_expiry=0 */")
+	tk.MustQuery(`SELECT @@information_schema_stats_expiry`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`SELECT @@GLOBAL.information_schema_stats_expiry`).Check(testkit.Rows(`86400`))
+	tk.MustExec("/*!80000 SET GLOBAL information_schema_stats_expiry=0 */")
+	tk.MustQuery(`SELECT @@GLOBAL.information_schema_stats_expiry`).Check(testkit.Rows(`0`))
+}
+
+func (s *testIntegrationSuite) TestInvalidEndingStatement(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	parseErrMsg := "[parser:1064]"
+	errMsgLen := len(parseErrMsg)
+
+	assertParseErr := func(sql string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error()[:errMsgLen], Equals, parseErrMsg)
+	}
+
+	assertParseErr("drop table if exists t'xyz")
+	assertParseErr("drop table if exists t'")
+	assertParseErr("drop table if exists t`")
+	assertParseErr(`drop table if exists t'`)
+	assertParseErr(`drop table if exists t"`)
+}
+
+func (s *testIntegrationSuite) TestIssue10675(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a int);`)
+	tk.MustExec(`insert into t values(1);`)
+	tk.MustQuery(`select * from t where a < -184467440737095516167.1;`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a > -184467440737095516167.1;`).Check(
+		testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a < 184467440737095516167.1;`).Check(
+		testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a > 184467440737095516167.1;`).Check(testkit.Rows())
 }

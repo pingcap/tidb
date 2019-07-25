@@ -120,7 +120,7 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (us *UnionScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
@@ -188,7 +188,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		err = Next(ctx, us.children[0], chunk.NewRecordBatch(us.snapshotChunkBuffer))
+		err = Next(ctx, us.children[0], us.snapshotChunkBuffer)
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, err
 		}

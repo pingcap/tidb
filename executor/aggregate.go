@@ -512,12 +512,12 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 }
 
 // Next implements the Executor Next interface.
-func (e *HashAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *HashAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.isUnparallelExec {
-		return e.unparallelExec(ctx, req.Chunk)
+		return e.unparallelExec(ctx, req)
 	}
-	return e.parallelExec(ctx, req.Chunk)
+	return e.parallelExec(ctx, req)
 }
 
 func (e *HashAggExec) fetchChildData(ctx context.Context) {
@@ -545,7 +545,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 			}
 			chk = input.chk
 		}
-		err = Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
+		err = Next(ctx, e.children[0], chk)
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
 			return
@@ -671,7 +671,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childResult)
 	for {
-		err := Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
+		err := Next(ctx, e.children[0], e.childResult)
 		if err != nil {
 			return err
 		}
@@ -784,10 +784,10 @@ func (e *StreamAggExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *StreamAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	for !e.executed && !req.IsFull() {
-		err := e.consumeOneGroup(ctx, req.Chunk)
+		err := e.consumeOneGroup(ctx, req)
 		if err != nil {
 			e.executed = true
 			return err
@@ -852,7 +852,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return err
 	}
 
-	err = Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
+	err = Next(ctx, e.children[0], e.childResult)
 	if err != nil {
 		return err
 	}

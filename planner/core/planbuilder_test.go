@@ -94,9 +94,7 @@ func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
 }
 
 func (s *testPlanBuilderSuite) TestRewriterPool(c *C) {
-	builder := &PlanBuilder{
-		ctx: MockContext(),
-	}
+	builder := NewPlanBuilder(MockContext(), nil)
 
 	// Make sure PlanBuilder.getExpressionRewriter() provides clean rewriter from pool.
 	// First, pick one rewriter from the pool and make it dirty.
@@ -149,7 +147,7 @@ func (s *testPlanBuilderSuite) TestDisableFold(c *C) {
 		stmt := st.(*ast.SelectStmt)
 		expr := stmt.Fields.Fields[0].Expr
 
-		builder := &PlanBuilder{ctx: ctx}
+		builder := NewPlanBuilder(ctx, nil)
 		builder.rewriterCounter++
 		rewriter := builder.getExpressionRewriter(nil)
 		c.Assert(rewriter, NotNil)

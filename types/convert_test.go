@@ -693,15 +693,29 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		_, err := strconv.ParseFloat(prefix, 64)
 		c.Assert(err, IsNil)
 	}
-	floatStr, err := floatStrToIntStr(sc, "1e9223372036854775807", "1e9223372036854775807")
-	c.Assert(err, IsNil)
-	c.Assert(floatStr, Equals, "1")
-	floatStr, err = floatStrToIntStr(sc, "125e342", "125e342.83")
-	c.Assert(err, IsNil)
-	c.Assert(floatStr, Equals, "125")
-	floatStr, err = floatStrToIntStr(sc, "1e21", "1e21")
-	c.Assert(err, IsNil)
-	c.Assert(floatStr, Equals, "1")
+
+	tests2 := []struct {
+		origin   string
+		expected string
+	}{
+		{"1e9223372036854775807", "1"},
+		{"125e342", "125"},
+		{"1e21", "1"},
+		{"1e5", "100000"},
+		{"-123.45678e5", "-12345678"},
+		{"+0.5", "1"},
+		{"-0.5", "-1"},
+		{".5e0", "1"},
+		{"+.5e0", "+1"},
+		{"-.5e0", "-1"},
+		{"123.456789e5", "12345679"},
+		{"123.456784e5", "12345678"},
+	}
+	for _, t := range tests2 {
+		str, err := floatStrToIntStr(sc, t.origin, t.origin)
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, t.expected, Commentf("%v, %v", t.origin, t.expected))
+	}
 }
 
 // TestConvertTime tests time related conversion.

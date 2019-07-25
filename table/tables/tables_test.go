@@ -95,7 +95,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoid, err := tb.AllocAutoIncrementValue(nil)
+	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
@@ -186,7 +186,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	req := rs[0].NewRecordBatch()
+	req := rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -200,7 +200,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	req = rs[0].NewRecordBatch()
+	req = rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -216,7 +216,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select c1 + 1 from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	req = rs[0].NewRecordBatch()
+	req = rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -247,7 +247,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(handle, Greater, int64(0))
 
-	autoid, err := tb.AllocAutoIncrementValue(nil)
+	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 

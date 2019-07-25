@@ -63,6 +63,10 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"'1.1' != a", "ne(1.1, cast(a))"},
 		{"'123456789123456711111189' = a", "0"},
 		{"123456789123456789.12345 = a", "0"},
+		{"123456789123456789123456789.12345 > a", "1"},
+		{"-123456789123456789123456789.12345 > a", "0"},
+		{"123456789123456789123456789.12345 < a", "0"},
+		{"-123456789123456789123456789.12345 < a", "1"},
 		// This cast can not be eliminated,
 		// since converting "aaaa" to an int will cause DataTruncate error.
 		{"'aaaa'=a", "eq(cast(aaaa), cast(a))"},

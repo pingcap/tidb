@@ -14,7 +14,10 @@
 
 package linux
 
-import "syscall"
+import (
+	"golang.org/x/sys/unix"
+	"syscall"
+)
 
 // OSVersion returns version info of operation system.
 // e.g. Linux 4.15.0-45-generic.x86_64
@@ -37,4 +40,14 @@ func OSVersion() (osVersion string, err error) {
 	}
 	osVersion = charsToString(un.Sysname[:]) + " " + charsToString(un.Release[:]) + "." + charsToString(un.Machine[:])
 	return
+}
+
+// SetAffinity sets cpu affinity.
+func SetAffinity(cpus []int) error {
+	var cpuSet unix.CPUSet
+	cpuSet.Zero()
+	for _, c := range cpus {
+		cpuSet.Set(c)
+	}
+	return unix.SchedSetaffinity(unix.Getpid(), &cpuSet)
 }
