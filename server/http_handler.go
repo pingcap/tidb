@@ -1332,6 +1332,13 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 		colMap[col.ID] = &col.FieldType
 	}
 
+	encodedKey := tablecodec.EncodeRowKeyWithHandle(tb.ID, handle)
+	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	regionID := keyLocation.Region.GetID()
+
 	respValue := resp.Value
 	var result interface{} = resp
 	if respValue.Info != nil {
@@ -1353,6 +1360,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 				"key":  resp.Key,
 				"info": respValue.Info,
 				"data": datas,
+				"region-id": regionID,
 			}
 			if err != nil {
 				re["decode_error"] = err.Error()
