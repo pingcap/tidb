@@ -458,6 +458,7 @@ var funcs = map[string]functionClass{
 	ast.Left:            &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
 	ast.Right:           &rightFunctionClass{baseFunctionClass{ast.Right, 2, 2}},
 	ast.Length:          &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}},
+	ast.OctetLength:     &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}}, // synonym
 	ast.LoadFile:        &loadFileFunctionClass{baseFunctionClass{ast.LoadFile, 1, 1}},
 	ast.Locate:          &locateFunctionClass{baseFunctionClass{ast.Locate, 2, 3}},
 	ast.Lower:           &lowerFunctionClass{baseFunctionClass{ast.Lower, 1, 1}},
