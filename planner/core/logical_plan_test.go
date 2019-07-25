@@ -562,6 +562,71 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 	}
 }
 
+func buildLogicPlan4GroupBy(s *testPlanSuite, c *C, sql string) (Plan, error) {
+	sqlMode := s.ctx.GetSessionVars().SQLMode
+	mockedTableInfo := MockSignedTable()
+	// mock the table info here for later use
+	// enable only full group by
+	s.ctx.GetSessionVars().SQLMode = sqlMode | mysql.ModeOnlyFullGroupBy
+	defer func() { s.ctx.GetSessionVars().SQLMode = sqlMode }() // restore it
+	comment := Commentf("for %s", sql)
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil, comment)
+
+	stmt.(*ast.SelectStmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).TableInfo = mockedTableInfo
+
+	return BuildLogicalPlan(context.Background(), s.ctx, stmt, s.is)
+}
+
+func (s *testPlanSuite) TestGroupByWhenNotExistCols(c *C) {
+	sqlTests := []struct {
+		sql              string
+		expectedErrMatch string
+	}{
+		{
+			sql:              "select a from t group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+		{
+			// has an as column alias
+			sql:              "select a as tempField from t group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+		{
+			// has as table alias
+			sql:              "select tempTable.a from t as tempTable group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.tempTable\\.a'.*",
+		},
+		{
+			// has a func call
+			sql:              "select length(a) from t  group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+		{
+			// has a func call with two cols
+			sql:              "select length(b + a) from t  group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+		{
+			// has a func call with two cols
+			sql:              "select length(a + b) from t  group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+		{
+			// has a func call with two cols
+			sql:              "select length(a + b) as tempField from t  group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+	}
+	for _, test := range sqlTests {
+		sql := test.sql
+		p, err := buildLogicPlan4GroupBy(s, c, sql)
+		c.Assert(err, NotNil)
+		c.Assert(p, IsNil)
+		c.Assert(err, ErrorMatches, test.expectedErrMatch)
+	}
+}
+
 func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {
 	sql := "select * from t as t1 join t t2 on t1.a > rand() and t1.a > rand()"
 	comment := Commentf("for %s", sql)
