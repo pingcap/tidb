@@ -14,6 +14,7 @@
 package privileges_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -648,6 +650,31 @@ func (s *testPrivilegeSuite) TestDefaultRoles(c *C) {
 	mustExec(c, rootSe, `flush privileges;`)
 	ret = pc.GetDefaultRoles("testdefault", "localhost")
 	c.Assert(len(ret), Equals, 0)
+}
+
+func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user superadmin")
+	tk.MustExec("grant all privileges on *.* to 'superadmin'")
+
+	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs))
+
+	var buf bytes.Buffer
+	var res bytes.Buffer
+	buf.WriteString("select ")
+	i := 0
+	for _, priv := range mysql.Priv2UserCol {
+		if i != 0 {
+			buf.WriteString(", ")
+			res.WriteString(" ")
+		}
+		buf.WriteString(priv)
+		res.WriteString("Y")
+		i++
+	}
+	buf.WriteString(" from mysql.user where user = 'superadmin'")
+	fmt.Println(buf.String())
+	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
 }
 
 func mustExec(c *C, se session.Session, sql string) {
