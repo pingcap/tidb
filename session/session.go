@@ -962,12 +962,12 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
-	var db interface{}
+	var db string
 	if len(s.sessionVars.CurrentDB) > 0 {
 		db = s.sessionVars.CurrentDB
 	}
 
-	var info interface{}
+	var info string
 	if len(sql) > 0 {
 		info = sql
 	}
