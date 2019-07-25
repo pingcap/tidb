@@ -1158,7 +1158,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 	}
 	// bigger than tablePrefix, means is bigger than all tables.
 	frame.TableID = math.MaxInt64
-	frame.TableID = math.MaxInt64
+	frame.IndexID = math.MaxInt64
 	frame.IsRecord = true
 	return
 }
