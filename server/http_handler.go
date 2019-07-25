@@ -144,6 +144,9 @@ func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error
 		return nil, err
 	}
 	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	if err != nil {
+		return nil, err
+	}
 	regionID := keyLocation.Region.GetID()
 	return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data, RegionID: regionID}, err
 }
@@ -238,6 +241,9 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 		return nil, err
 	}
 	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	if err != nil {
+		return nil, err
+	}
 	regionID := keyLocation.Region.GetID()
 	return &mvccKV{strings.ToUpper(hex.EncodeToString(encodedKey)), data, regionID}, err
 }
