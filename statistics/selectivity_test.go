@@ -14,6 +14,7 @@
 package statistics_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -275,17 +276,19 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 			selectivity: 0.001,
 		},
 	}
+
+	ctx := context.Background()
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprs
 		comment := Commentf("for %s", tt.exprs)
-		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(ctx, sql)
+		sctx := testKit.Se.(sessionctx.Context)
+		stmts, err := session.Parse(sctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plannercore.Preprocess(ctx, stmts[0], is)
+		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, comment)
-		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
@@ -293,12 +296,12 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)
 
-		ratio, _, err := histColl.Selectivity(ctx, sel.Conditions)
+		ratio, _, err := histColl.Selectivity(sctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 
 		histColl.Count *= 10
-		ratio, _, err = histColl.Selectivity(ctx, sel.Conditions)
+		ratio, _, err = histColl.Selectivity(sctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 	}
@@ -451,13 +454,13 @@ func BenchmarkSelectivity(b *testing.B) {
 	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
 	sql := "select * from t where " + exprs
 	comment := Commentf("for %s", exprs)
-	ctx := testKit.Se.(sessionctx.Context)
-	stmts, err := session.Parse(ctx, sql)
+	sctx := testKit.Se.(sessionctx.Context)
+	stmts, err := session.Parse(sctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
-	err = plannercore.Preprocess(ctx, stmts[0], is)
+	err = plannercore.Preprocess(sctx, stmts[0], is)
 	c.Assert(err, IsNil, comment)
-	p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
+	p, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], is)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
 	file, err := os.Create("cpu.profile")
@@ -468,7 +471,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := statsTbl.Selectivity(ctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions)
+			_, _, err := statsTbl.Selectivity(sctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions)
 			c.Assert(err, IsNil)
 		}
 		b.ReportAllocs()
