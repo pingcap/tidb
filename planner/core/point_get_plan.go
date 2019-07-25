@@ -231,7 +231,7 @@ func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *mod
 		schema:   schema,
 		TblInfo:  tbl,
 	}
-	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB,  Table:tbl.Name.L}}
+	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
 	return p
 }
 
