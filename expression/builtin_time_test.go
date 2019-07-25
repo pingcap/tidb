@@ -762,6 +762,10 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func resetStmtContext(ctx sessionctx.Context) {
+	ctx.GetSessionVars().StmtCtx.ResetNowTs()
+}
+
 func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	defer testleak.AfterTest(c)()
 
@@ -778,6 +782,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		{funcs[ast.Now], func() time.Time { return time.Now() }},
 		{funcs[ast.UTCTimestamp], func() time.Time { return time.Now().UTC() }},
 	} {
+		resetStmtContext(s.ctx)
 		f, err := x.fc.getFunction(s.ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
@@ -789,6 +794,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		c.Assert(strings.Contains(t.String(), "."), IsFalse)
 		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Second)
 
+		resetStmtContext(s.ctx)
 		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(6)))
 		c.Assert(err, IsNil)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
@@ -798,11 +804,13 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		c.Assert(strings.Contains(t.String(), "."), IsTrue)
 		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Millisecond)
 
+		resetStmtContext(s.ctx)
 		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(8)))
 		c.Assert(err, IsNil)
 		_, err = evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, NotNil)
 
+		resetStmtContext(s.ctx)
 		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-2)))
 		c.Assert(err, IsNil)
 		_, err = evalBuiltinFunc(f, chunk.Row{})
@@ -813,6 +821,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("+00:00"))
 	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(1234))
 	fc := funcs[ast.Now]
+	resetStmtContext(s.ctx)
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(nil))
 	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
@@ -877,6 +886,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 
 	// This is a test for issue 7334
 	du := newDateArighmeticalUtil()
+	resetStmtContext(s.ctx)
 	now, _, err := evalNowWithFsp(s.ctx, 0)
 	c.Assert(err, IsNil)
 	res, _, err := du.add(s.ctx, now, "1", "MICROSECOND")
@@ -1203,6 +1213,7 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	}{{0, 8}, {3, 12}, {6, 15}, {-1, 0}, {7, 0}}
 
 	for _, test := range tests {
+		resetStmtContext(s.ctx)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(test.param)))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1229,6 +1240,7 @@ func (s *testEvaluatorSuite) TestUTCDate(c *C) {
 	defer testleak.AfterTest(c)()
 	last := time.Now().UTC()
 	fc := funcs[ast.UTCDate]
+	resetStmtContext(mock.NewContext())
 	f, err := fc.getFunction(mock.NewContext(), s.datumsToConstants(nil))
 	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1536,6 +1548,7 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 			types.NewStringDatum(test.t1),
 			types.NewStringDatum(test.t2),
 		}
+		resetStmtContext(s.ctx)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1545,6 +1558,7 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	sc.IgnoreTruncate = true
 	sc.IgnoreZeroInDate = true
+	resetStmtContext(s.ctx)
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
 		types.NewStringDatum("2017-01-00"),
 		types.NewStringDatum("2017-01-01")}))
@@ -1552,6 +1566,7 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(d.Kind(), Equals, types.KindNull)
 
+	resetStmtContext(s.ctx)
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
 		{}, types.NewStringDatum("2017-01-01")}))
 	c.Assert(err, IsNil)
@@ -1563,6 +1578,7 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	// Test UNIX_TIMESTAMP().
 	fc := funcs[ast.UnixTimestamp]
+	resetStmtContext(s.ctx)
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1572,12 +1588,14 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 
 	// https://github.com/pingcap/tidb/issues/2496
 	// Test UNIX_TIMESTAMP(NOW()).
+	resetStmtContext(s.ctx)
 	now, isNull, err := evalNowWithFsp(s.ctx, 0)
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsFalse)
 	n := types.Datum{}
 	n.SetMysqlTime(now)
 	args := []types.Datum{n}
+	resetStmtContext(s.ctx)
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(args))
 	c.Assert(err, IsNil)
 	d, err = evalBuiltinFunc(f, chunk.Row{})
@@ -1589,6 +1607,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	// https://github.com/pingcap/tidb/issues/2852
 	// Test UNIX_TIMESTAMP(NULL).
 	args = []types.Datum{types.NewDatum(nil)}
+	resetStmtContext(s.ctx)
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(args))
 	c.Assert(err, IsNil)
 	d, err = evalBuiltinFunc(f, chunk.Row{})
@@ -1634,6 +1653,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 		fmt.Printf("Begin Test %v\n", test)
 		expr := s.datumsToConstants([]types.Datum{test.input})
 		expr[0].GetType().Decimal = test.inputDecimal
+		resetStmtContext(s.ctx)
 		f, err := fc.getFunction(s.ctx, expr)
 		c.Assert(err, IsNil, Commentf("%+v", test))
 		d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1803,6 +1823,7 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 	}
 	fc := funcs[ast.Timestamp]
 	for _, test := range tests {
+		resetStmtContext(s.ctx)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(test.t))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1812,6 +1833,7 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 	}
 
 	nilDatum := types.NewDatum(nil)
+	resetStmtContext(s.ctx)
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{nilDatum}))
 	c.Assert(err, IsNil)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -2331,8 +2353,8 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 	tests := []struct {
 		t       interface{}
-		fromTz  string
-		toTz    string
+		fromTz  interface{}
+		toTz    interface{}
 		Success bool
 		expect  string
 	}{
@@ -2344,11 +2366,20 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 		{"2004-01-01 12:00:00", "-00:00", "+13:00", true, "2004-01-02 01:00:00"},
 		{"2004-01-01 12:00:00", "-00:00", "-13:00", true, ""},
 		{"2004-01-01 12:00:00", "-00:00", "-12:88", true, ""},
-		{"2004-01-01 12:00:00", "+10:82", "GMT", false, ""},
+		{"2004-01-01 12:00:00", "+10:82", "GMT", true, ""},
 		{"2004-01-01 12:00:00", "+00:00", "GMT", true, ""},
 		{"2004-01-01 12:00:00", "GMT", "+00:00", true, ""},
 		{20040101, "+00:00", "+10:32", true, "2004-01-01 10:32:00"},
 		{3.14159, "+00:00", "+10:32", true, ""},
+		{"2004-01-01 12:00:00", "", "GMT", true, ""},
+		{"2004-01-01 12:00:00", "GMT", "", true, ""},
+		{"2004-01-01 12:00:00", "a", "GMT", true, ""},
+		{"2004-01-01 12:00:00", "0", "GMT", true, ""},
+		{"2004-01-01 12:00:00", "GMT", "a", true, ""},
+		{"2004-01-01 12:00:00", "GMT", "0", true, ""},
+		{nil, "GMT", "+00:00", true, ""},
+		{"2004-01-01 12:00:00", nil, "+00:00", true, ""},
+		{"2004-01-01 12:00:00", "GMT", nil, true, ""},
 	}
 	fc := funcs[ast.ConvertTz]
 	for _, test := range tests {
@@ -2356,8 +2387,8 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 			s.datumsToConstants(
 				[]types.Datum{
 					types.NewDatum(test.t),
-					types.NewStringDatum(test.fromTz),
-					types.NewStringDatum(test.toTz)}))
+					types.NewDatum(test.fromTz),
+					types.NewDatum(test.toTz)}))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		if test.Success {
@@ -2515,6 +2546,7 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 
 	for _, t := range tests {
 		now := time.Now().In(sv.TimeZone)
+		resetStmtContext(s.ctx)
 		f, err := funcs[t.method].getFunction(s.ctx, s.datumsToConstants(t.Input))
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)

@@ -281,8 +281,17 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 	return
 }
 
+// extractTableAlias returns table alias of the LogicalPlan's columns.
+// It will return nil when there are multiple table alias, because the alias is only used to check if
+// the logicalPlan match some optimizer hints, and hints are not expected to take effect in this case.
 func extractTableAlias(p LogicalPlan) *model.CIStr {
 	if p.Schema().Len() > 0 && p.Schema().Columns[0].TblName.L != "" {
+		tblName := p.Schema().Columns[0].TblName.L
+		for _, column := range p.Schema().Columns {
+			if column.TblName.L != tblName {
+				return nil
+			}
+		}
 		return &(p.Schema().Columns[0].TblName)
 	}
 	return nil
@@ -544,12 +553,10 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
-func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
-	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
-		origColName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
-	}
-	if field.AsName.L != "" {
-		colName = field.AsName
+func (b *planBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
+	origColName, tblName, dbName = colNameField.Name.Name, colNameField.Name.Table, colNameField.Name.Schema
+	if origField.AsName.L != "" {
+		colName = origField.AsName
 	} else {
 		colName = origColName
 	}
@@ -606,9 +613,13 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
 	var origTblName, tblName, origColName, colName, dbName model.CIStr
-	if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
+	innerNode := getInnerFromParentheses(field.Expr)
+	col, isCol := expr.(*expression.Column)
+	// Correlated column won't affect the final output names. So we can put it in any of the three logic block.
+	// Don't put it into the first block just for simplifying the codes.
+	if colNameField, ok := innerNode.(*ast.ColumnNameExpr); ok && isCol {
 		// Field is a column reference.
-		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, c)
+		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, colNameField, col)
 	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
