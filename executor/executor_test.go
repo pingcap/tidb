@@ -2022,7 +2022,7 @@ func (s *testSuiteP1) TestIsPointGet(c *C) {
 		c.Check(err, IsNil)
 		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
-		p, err := planner.Optimize(ctx, stmtNode, infoSchema)
+		p, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
 		ret, err := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(err, IsNil)
@@ -2074,16 +2074,9 @@ func (s *testSuite4) TestSplitRegionTimeout(c *C) {
 	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
 	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
 	tk.MustExec(`set @@tidb_wait_split_region_timeout=1`)
-	_, err := tk.Exec(`split table t between (0) and (10000) regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "split region timeout(1s)")
+	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
+	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout"), IsNil)
-
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockScatterRegionTimeout", `return(true)`), IsNil)
-	_, err = tk.Exec(`split table t between (0) and (10000) regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "wait split region scatter timeout(1s)")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockScatterRegionTimeout"), IsNil)
 }
 
 func (s *testSuiteP1) TestRow(c *C) {
@@ -2214,6 +2207,13 @@ func (s *testSuiteP1) TestColumnName(c *C) {
 	c.Assert(fields[1].ColumnAsName.L, Equals, "num")
 	tk.MustExec("set @@tidb_enable_window_function = 0")
 	rs.Close()
+
+	rs, err = tk.Exec("select if(1,c,c) from t;")
+	c.Check(err, IsNil)
+	fields = rs.Fields()
+	c.Assert(fields[0].Column.Name.L, Equals, "if(1,c,c)")
+	// It's a compatibility issue. Should be empty instead.
+	c.Assert(fields[0].ColumnAsName.L, Equals, "if(1,c,c)")
 }
 
 func (s *testSuiteP1) TestSelectVar(c *C) {
@@ -4052,7 +4052,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 
 	// Test show table regions.
 	tk.MustExec(`split table t_regions1 by (0)`)
-	tk.MustExec(`split table t_regions between (-10000) and (10000) regions 4;`)
+	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("3 1"))
 	re := tk.MustQuery("show table t_regions regions")
 	rows := re.Rows()
 	// Table t_regions should have 4 regions now.
@@ -4067,7 +4067,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
 
 	// Test show table index regions.
-	tk.MustExec(`split table t_regions index idx between (-1000) and (1000) regions 4;`)
+	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("4 1"))
 	re = tk.MustQuery("show table t_regions index idx regions")
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
@@ -4097,7 +4097,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 
 	// Test show table regions.
 	tk.MustExec(`set @@session.tidb_wait_split_region_finish=1;`)
-	tk.MustExec(`split table t_regions between (0) and (10000) regions 4;`)
+	tk.MustQuery(`split table t_regions by (2500),(5000),(7500);`).Check(testkit.Rows("3 1"))
 	re = tk.MustQuery("show table t_regions regions")
 	rows = re.Rows()
 	// Table t_regions should have 4 regions now.
@@ -4110,7 +4110,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_7500", tbl.Meta().ID))
 
 	// Test show table index regions.
-	tk.MustExec(`split table t_regions index idx between (0) and (1000) regions 4;`)
+	tk.MustQuery(`split table t_regions index idx by (250),(500),(750);`).Check(testkit.Rows("4 1"))
 	re = tk.MustQuery("show table t_regions index idx regions")
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
