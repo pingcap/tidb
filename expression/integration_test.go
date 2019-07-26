@@ -2330,6 +2330,29 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(1 as signed int)")
 	result.Check(testkit.Rows("1"))
 
+	// test cast as double
+	result = tk.MustQuery("select cast(1 as double)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(1.1 as double)")
+	result.Check(testkit.Rows("1.1"))
+	result = tk.MustQuery("select cast(1.1 as double)")
+	result.Check(testkit.Rows("1.1"))
+	result = tk.MustQuery("select cast('123.321' as double)")
+	result.Check(testkit.Rows("123.321"))
+	result = tk.MustQuery("select cast(-1 as double)")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast(null as double)")
+	result.Check(testkit.Rows("<nil>"))
+	/*  There is something wrong in showing float number.
+	The testkit gets the format 'f' (-ddd.dddd, no exponent),
+	but we need the format 'e' (-d.dddde±dd, a decimal exponent).
+
+	result = tk.MustQuery("select cast(12345678901234567890 as double)")
+	result.Check(testkit.Rows("1.2345678901234567e19"))
+	result = tk.MustQuery("select cast(cast(-1 as unsigned) as double)")
+	result.Check(testkit.Rows("1.8446744073709552e19"))
+	*/
+
 	// test cast time as decimal overflow
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(s1 time);")
