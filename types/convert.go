@@ -371,17 +371,19 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error)
 	}
 
 	validLen := 0
+
 	for i := 0; i < len(str); i++ {
 		c := str[i]
-		if c == '+' || c == '-' {
-			if i != 0 {
-				break
-			}
-		} else if c >= '0' && c <= '9' {
-			validLen = i + 1
-		} else {
-			break
+		if (c == '+' || c == '-') && i == 0 {
+			continue
 		}
+
+		if c >= '0' && c <= '9' {
+			validLen = i + 1
+			continue
+		}
+
+		break
 	}
 	valid := str[:validLen]
 	if valid == "" {
@@ -605,7 +607,7 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
 func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, err error) {
-	if sc.InDeleteStmt && s == "" {
+	if (sc.InDeleteStmt || sc.InSelectStmt || sc.InUpdateStmt) && s == "" {
 		return "0", nil
 	}
 

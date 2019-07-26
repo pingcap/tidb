@@ -462,28 +462,41 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 	testStrToFloat(c, "-1e649", -math.MaxFloat64, true, ErrTruncatedWrongVal)
 	testStrToFloat(c, "-1e649", -math.MaxFloat64, false, nil)
 
-	// for issue  #10806
-	testDeleteEmptyStringError(c)
+	// for issue #10806, #11179
+	testSelectUpdateDeleteEmptyStringError(c)
 }
 
-func testDeleteEmptyStringError(c *C) {
+func testSelectUpdateDeleteEmptyStringError(c *C) {
+	testCases := []struct {
+		inSelect bool
+		inUpdate bool
+		inDelete bool
+	}{
+		{true, false, false},
+		{false, true, false},
+		{false, false, true},
+	}
 	sc := new(stmtctx.StatementContext)
-	sc.InDeleteStmt = true
+	for _, tc := range testCases {
+		sc.InSelectStmt = tc.inSelect
+		sc.InUpdateStmt = tc.inUpdate
+		sc.InDeleteStmt = tc.inDelete
 
-	str := ""
-	expect := 0
+		str := ""
+		expect := 0
 
-	val, err := StrToInt(sc, str)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, int64(expect))
+		val, err := StrToInt(sc, str)
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, int64(expect))
 
-	val1, err := StrToUint(sc, str)
-	c.Assert(err, IsNil)
-	c.Assert(val1, Equals, uint64(expect))
+		val1, err := StrToUint(sc, str)
+		c.Assert(err, IsNil)
+		c.Assert(val1, Equals, uint64(expect))
 
-	val2, err := StrToFloat(sc, str)
-	c.Assert(err, IsNil)
-	c.Assert(val2, Equals, float64(expect))
+		val2, err := StrToFloat(sc, str)
+		c.Assert(err, IsNil)
+		c.Assert(val2, Equals, float64(expect))
+	}
 }
 
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
