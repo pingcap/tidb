@@ -548,7 +548,7 @@ func (e *Explain) prepareSchema() error {
 	case ast.ExplainFormatROW:
 		retFields := []string{"id", "count", "task", "operator info"}
 		if e.Analyze {
-			retFields = append(retFields, "execution info")
+			retFields = append(retFields, "execution info", "memory")
 		}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		for _, fieldName := range retFields {
@@ -627,6 +627,13 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 			row = append(row, runtimeStatsColl.GetRootStats(explainID).String())
 		} else {
 			row = append(row, "time:0ns, loops:0, rows:0")
+		}
+
+		tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+		if tracker != nil {
+			row = append(row, tracker.BytesToString(tracker.MaxConsumed()))
+		} else {
+			row = append(row, "N/A")
 		}
 	}
 	e.Rows = append(e.Rows, row)
