@@ -2333,25 +2333,30 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	// test cast as double
 	result = tk.MustQuery("select cast(1 as double)")
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(cast(12345 as unsigned) as double)")
+	result.Check(testkit.Rows("12345"))
 	result = tk.MustQuery("select cast(1.1 as double)")
 	result.Check(testkit.Rows("1.1"))
-	result = tk.MustQuery("select cast(1.1 as double)")
-	result.Check(testkit.Rows("1.1"))
+	result = tk.MustQuery("select cast(-1.1 as double)")
+	result.Check(testkit.Rows("-1.1"))
 	result = tk.MustQuery("select cast('123.321' as double)")
 	result.Check(testkit.Rows("123.321"))
+	result = tk.MustQuery("select cast('12345678901234567890' as double) = 1.2345678901234567e19")
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select cast(-1 as double)")
 	result.Check(testkit.Rows("-1"))
 	result = tk.MustQuery("select cast(null as double)")
 	result.Check(testkit.Rows("<nil>"))
-	/*  There is something wrong in showing float number.
-	The testkit gets the format 'f' (-ddd.dddd, no exponent),
-	but we need the format 'e' (-d.dddde±dd, a decimal exponent).
-
-	result = tk.MustQuery("select cast(12345678901234567890 as double)")
-	result.Check(testkit.Rows("1.2345678901234567e19"))
-	result = tk.MustQuery("select cast(cast(-1 as unsigned) as double)")
-	result.Check(testkit.Rows("1.8446744073709552e19"))
-	*/
+	result = tk.MustQuery("select cast(12345678901234567890 as double) = 1.2345678901234567e19")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(cast(-1 as unsigned) as double) = 1.8446744073709552e19")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(1e100 as double) = 1e100")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(123456789012345678901234567890 as double) = 1.2345678901234568e29")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(0x12345678 as double)")
+	result.Check(testkit.Rows("305419896"))
 
 	// test cast time as decimal overflow
 	tk.MustExec("drop table if exists t1")
