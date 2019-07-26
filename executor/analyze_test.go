@@ -135,16 +135,16 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
 	col := tbl.Columns[1]
 	c.Assert(col.Len(), Equals, 20)
-	c.Assert(len(col.CMSketch.TopN()), Equals, 20)
+	c.Assert(len(col.CMSketch.TopN()), Equals, 1)
 	width, depth := col.CMSketch.GetWidthAndDepth()
 	c.Assert(depth, Equals, int32(5))
 	c.Assert(width, Equals, int32(2048))
 
-	tk.MustExec("analyze table t with 4 buckets, 1 topn, 4 cmsketch width, 4 cmsketch depth")
+	tk.MustExec("analyze table t with 4 buckets, 0 topn, 4 cmsketch width, 4 cmsketch depth")
 	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
 	col = tbl.Columns[1]
 	c.Assert(col.Len(), Equals, 4)
-	c.Assert(len(col.CMSketch.TopN()), Equals, 1)
+	c.Assert(len(col.CMSketch.TopN()), Equals, 0)
 	width, depth = col.CMSketch.GetWidthAndDepth()
 	c.Assert(depth, Equals, int32(4))
 	c.Assert(width, Equals, int32(4))
