@@ -256,8 +256,8 @@ func (h *BindHandle) DropInvalidBindRecord() {
 
 		if time.Since(invalidBindRecord.droppedTime) > 6*time.Second {
 			delete(invalidBindRecordMap, key)
+			invalidBindRecord.bindRecord.updateMetrics(metrics.ScopeGlobal, false)
 		}
-		invalidBindRecord.bindRecord.updateMetrics(metrics.ScopeGlobal, false)
 	}
 	h.invalidBindRecordMap.Store(invalidBindRecordMap)
 }
