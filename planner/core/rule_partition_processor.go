@@ -13,6 +13,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -39,7 +41,7 @@ import (
 // partitionProcessor is here because it's easier to prune partition after predicate push down.
 type partitionProcessor struct{}
 
-func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
+func (s *partitionProcessor) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
 	return s.rewriteDataSource(lp)
 }
 
@@ -201,4 +203,8 @@ func (s *partitionProcessor) findByName(partitionNames []model.CIStr, partitionN
 		}
 	}
 	return false
+}
+
+func (*partitionProcessor) name() string {
+	return "partition_processor"
 }

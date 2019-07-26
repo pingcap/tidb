@@ -14,6 +14,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -52,7 +54,7 @@ type jrNode struct {
 	cumCost float64
 }
 
-func (s *joinReOrderSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	return s.optimizeRecursive(p.context(), p)
 }
 
@@ -165,4 +167,8 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild Logical
 // calcJoinCumCost calculates the cumulative cost of the join node.
 func (s *baseSingleGroupJoinOrderSolver) calcJoinCumCost(join LogicalPlan, lNode, rNode *jrNode) float64 {
 	return join.statsInfo().RowCount + lNode.cumCost + rNode.cumCost
+}
+
+func (*joinReOrderSolver) name() string {
+	return "join_reorder"
 }

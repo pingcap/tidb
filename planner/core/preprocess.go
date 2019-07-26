@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
@@ -178,7 +179,12 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				p.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(x.FnName.L)
 			} else {
 				_, isValueExpr1 := x.Args[0].(*driver.ValueExpr)
-				_, isValueExpr2 := x.Args[1].(*driver.ValueExpr)
+				isValueExpr2 := false
+				switch x.Args[1].(type) {
+				case *driver.ValueExpr, *ast.UnaryOperationExpr:
+					isValueExpr2 = true
+				}
+
 				if !isValueExpr1 || !isValueExpr2 {
 					p.err = ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
 				}
@@ -290,7 +296,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		}
 	}
 	if (autoIncrementMustBeKey && !isKey) || count > 1 {
-		p.err = errors.New("Incorrect table definition; there can be only one auto column and it must be defined as a key")
+		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
 	}
 
 	switch autoIncrementCol.Tp.Tp {
