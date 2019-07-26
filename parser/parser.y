@@ -5071,6 +5071,15 @@ CastType:
 		x.Collate = mysql.DefaultCollationName
 		$$ = x
 	}
+|	"DOUBLE"
+	{
+		x := types.NewFieldType(mysql.TypeDouble)
+		x.Flen, x.Decimal = mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDouble)
+		x.Flag |= mysql.BinaryFlag
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
+		$$ = x
+	}
 
 PriorityOpt:
 	{

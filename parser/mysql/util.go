@@ -79,6 +79,7 @@ var defaultLengthAndDecimalForCast = map[byte]lengthAndDecimal{
 	TypeNewDecimal: {11, 0},
 	TypeDuration:   {10, 0},
 	TypeLonglong:   {22, 0},
+	TypeDouble:     {22, -1},
 	TypeJSON:       {4194304, 0}, // Flen differs.
 }
 
