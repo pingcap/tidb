@@ -1248,9 +1248,8 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	if len(la.possibleProperties) == 0 {
 		if preferStream {
 			return la.getEnforcedStreamAggs(prop)
-		} else {
-			return nil
 		}
+		return nil
 	}
 
 	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
