@@ -3960,7 +3960,7 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 		return nil, nil, err
 	}
 	session.SetSchemaLease(0)
-	dom, err := session.BootstrapSession(store)aa
+	dom, err := session.BootstrapSession(store)
 	return store, dom, err
 }
 
@@ -3971,7 +3971,7 @@ func (s *testIntegrationSuite) TestTwoDecimalTruncate(c *C) {
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t1(a decimal(10,5), b decimal(10,1))")
-	tk.MustExec("insert into t1 iues(123.12345, 123.12345)")
+	tk.MustExec("insert into t1 values(123.12345, 123.12345)")
 	tk.MustExec("update t1 set b = a")
 	res := tk.MustQuery("select a, b from t1")
 	res.Check(testkit.Rows("123.12345 123.1"))
