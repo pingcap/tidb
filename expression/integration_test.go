@@ -2172,9 +2172,13 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select cast(cast('2017-01-01 01:01:11.12' as date) as datetime(2));`)
 	result.Check(testkit.Rows("2017-01-01 00:00:00.00"))
-
 	result = tk.MustQuery(`select cast(20170118.999 as datetime);`)
 	result.Check(testkit.Rows("2017-01-18 00:00:00"))
+
+	tk.MustExec(`create table tb5(a bigint(64) unsigned, b double);`)
+	tk.MustExec(`insert into tb5 (a, b) values (9223372036854776000, 9223372036854776000);`)
+	tk.MustExec(`insert into tb5 (a, b) select * from (select cast(a as json) as a1, b from tb5) as t where t.a1 = t.b;`)
+	tk.MustExec(`drop table tb5;`)
 
 	// Test corner cases of cast string as datetime
 	result = tk.MustQuery(`select cast("170102034" as datetime);`)
@@ -3558,6 +3562,11 @@ func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 	_, err = tk.Exec("select time '20171231235959.999999';")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("20171231235959.999999")), IsTrue)
+
+	_, err = tk.Exec("select ADDDATE('2008-01-34', -1);")
+	c.Assert(err, IsNil)
+	tk.MustQuery("Show warnings;").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '2008-1-34'"))
 }
 
 func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
