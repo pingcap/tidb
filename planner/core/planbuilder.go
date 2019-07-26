@@ -1001,7 +1001,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 	}
 	if np != mockTablePlan {
 		fieldsLen := len(mockTablePlan.schema.Columns)
-		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx)
+		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.init(b.ctx)
 		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
 		for _, col := range mockTablePlan.schema.Columns {
 			proj.Exprs = append(proj.Exprs, col)
@@ -1011,7 +1011,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		}
 		proj.SetSchema(schema)
 		proj.SetChildren(np)
-		physical, err := DoOptimize(b.optFlag|flagEliminateProjection, proj)
+		physical, err := doOptimize(b.optFlag|flagEliminateProjection, proj)
 		if err != nil {
 			return nil, err
 		}
