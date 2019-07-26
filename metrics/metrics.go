@@ -122,6 +122,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVSecondaryLockCleanupFailureCounter)
 	prometheus.MustRegister(TiKVSendReqHistogram)
 	prometheus.MustRegister(TiKVSnapshotCounter)
+	prometheus.MustRegister(TiKVTxnCmdCounter)
 	prometheus.MustRegister(TiKVTxnCmdHistogram)
 	prometheus.MustRegister(TiKVTxnCounter)
 	prometheus.MustRegister(TiKVTxnRegionsNumHistogram)

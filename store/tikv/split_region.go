@@ -33,13 +33,11 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64,
 		zap.Binary("at", splitKey))
 	bo := NewBackoffer(context.Background(), splitRegionBackoff)
 	sender := NewRegionRequestSender(s.regionCache, s.client)
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdSplitRegion,
-		SplitRegion: &kvrpcpb.SplitRegionRequest{
-			SplitKey: splitKey,
-		},
-	}
-	req.Context.Priority = kvrpcpb.CommandPri_Normal
+	req := tikvrpc.NewRequest(tikvrpc.CmdSplitRegion, &kvrpcpb.SplitRegionRequest{
+		SplitKey: splitKey,
+	}, kvrpcpb.Context{
+		Priority: kvrpcpb.CommandPri_Normal,
+	})
 	for {
 		loc, err := s.regionCache.LocateKey(bo, splitKey)
 		if err != nil {
@@ -65,11 +63,12 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64,
 			}
 			continue
 		}
+		splitRegion := res.Resp.(*kvrpcpb.SplitRegionResponse)
 		logutil.BgLogger().Info("split region complete",
 			zap.Binary("at", splitKey),
-			zap.Stringer("new region left", res.SplitRegion.GetLeft()),
-			zap.Stringer("new region right", res.SplitRegion.GetRight()))
-		left := res.SplitRegion.GetLeft()
+			zap.Stringer("new region left", splitRegion.GetLeft()),
+			zap.Stringer("new region right", splitRegion.GetRight()))
+		left := splitRegion.GetLeft()
 		if left == nil {
 			return 0, nil
 		}
@@ -104,10 +103,15 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 }
 
 // WaitScatterRegionFinish implements SplitableStore interface.
-func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
+// backOff is the back off time of the wait scatter region.(Milliseconds)
+// if backOff <= 0, the default wait scatter back off time will be used.
+func (s *tikvStore) WaitScatterRegionFinish(regionID uint64, backOff int) error {
 	logutil.BgLogger().Info("wait scatter region",
 		zap.Uint64("regionID", regionID))
-	bo := NewBackoffer(context.Background(), waitScatterRegionFinishBackoff)
+	if backOff <= 0 {
+		backOff = waitScatterRegionFinishBackoff
+	}
+	bo := NewBackoffer(context.Background(), backOff)
 	logFreq := 0
 	for {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
