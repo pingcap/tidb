@@ -497,9 +497,11 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
+			if !regionErr.RegionCacheMiss {
+				err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			err = c.prewriteKeys(bo, batch.keys)
 			return errors.Trace(err)
@@ -584,9 +586,11 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
+			if !regionErr.RegionCacheMiss {
+				err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			err = c.pessimisticLockKeys(bo, batch.keys)
 			return errors.Trace(err)
@@ -645,9 +649,11 @@ func (c *twoPhaseCommitter) pessimisticRollbackSingleBatch(bo *Backoffer, batch 
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
+			if !regionErr.RegionCacheMiss {
+				err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			err = c.pessimisticRollbackKeys(bo, batch.keys)
 			return errors.Trace(err)
@@ -720,9 +726,11 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-		if err != nil {
-			return errors.Trace(err)
+		if !regionErr.RegionCacheMiss {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		// re-split keys and commit again.
 		err = c.commitKeys(bo, batch.keys)
@@ -778,9 +786,11 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-		if err != nil {
-			return errors.Trace(err)
+		if !regionErr.RegionCacheMiss {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		err = c.cleanupKeys(bo, batch.keys)
 		return errors.Trace(err)

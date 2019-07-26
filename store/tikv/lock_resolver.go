@@ -233,9 +233,11 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 	}
 
 	if regionErr != nil {
-		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-		if err != nil {
-			return false, errors.Trace(err)
+		if !regionErr.RegionCacheMiss {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return false, errors.Trace(err)
+			}
 		}
 		return false, nil
 	}
@@ -354,9 +356,11 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			return status, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return status, errors.Trace(err)
+			if !regionErr.RegionCacheMiss {
+				err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return status, errors.Trace(err)
+				}
 			}
 			continue
 		}
@@ -413,9 +417,11 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
+			if !regionErr.RegionCacheMiss {
+				err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			continue
 		}

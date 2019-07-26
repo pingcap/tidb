@@ -210,11 +210,13 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			logutil.BgLogger().Debug("scanner getData failed",
-				zap.Stringer("regionErr", regionErr))
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
+			if !regionErr.RegionCacheMiss {
+				logutil.BgLogger().Debug("scanner getData failed",
+					zap.Stringer("regionErr", regionErr))
+				err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			continue
 		}

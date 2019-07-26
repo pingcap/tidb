@@ -104,9 +104,9 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
 
-			// TODO: Change the returned error to something like "region missing in cache",
 			// and handle this error like EpochNotMatch, which means to re-split the request and retry.
-			resp, err := tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
+			resp, err := tikvrpc.GenRegionErrorResp(req, nil)
+			resp.CacheMiss = true
 			return resp, nil, err
 		}
 
@@ -124,6 +124,9 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
+			if regionErr.RegionCacheMiss {
+				continue
+			}
 			retry, err := s.onRegionError(bo, ctx, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -193,7 +196,10 @@ func (s *RegionRequestSender) needReloadRegion(ctx *RPCContext) (need bool) {
 	return
 }
 
-func regionErrorToLabel(e *errorpb.Error) string {
+func regionErrorToLabel(e *tikvrpc.RegionError) string {
+	if e.RegionCacheMiss {
+		return "cache_miss"
+	}
 	if e.GetNotLeader() != nil {
 		return "not_leader"
 	} else if e.GetRegionNotFound() != nil {
@@ -212,7 +218,7 @@ func regionErrorToLabel(e *errorpb.Error) string {
 	return "unknown"
 }
 
-func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regionErr *errorpb.Error) (retry bool, err error) {
+func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regionErr *tikvrpc.RegionError) (retry bool, err error) {
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.

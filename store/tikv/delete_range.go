@@ -119,9 +119,11 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (Ra
 			return stat, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return stat, errors.Trace(err)
+			if !regionErr.RegionCacheMiss {
+				err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return stat, errors.Trace(err)
+				}
 			}
 			continue
 		}

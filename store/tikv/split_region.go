@@ -57,9 +57,11 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64,
 			return 0, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return 0, errors.Trace(err)
+			if !regionErr.RegionCacheMiss {
+				err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
 			}
 			continue
 		}

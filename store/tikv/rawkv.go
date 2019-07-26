@@ -384,9 +384,11 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return nil, nil, errors.Trace(err)
+			if !regionErr.RegionCacheMiss {
+				err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return nil, nil, errors.Trace(err)
+				}
 			}
 			continue
 		}
@@ -468,10 +470,12 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 		return batchResp
 	}
 	if regionErr != nil {
-		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-		if err != nil {
-			batchResp.err = errors.Trace(err)
-			return batchResp
+		if !regionErr.RegionCacheMiss {
+			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				batchResp.err = errors.Trace(err)
+				return batchResp
+			}
 		}
 		resp, err = c.sendBatchReq(bo, batch.keys, cmdType)
 		batchResp.resp = resp
@@ -529,9 +533,11 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return nil, nil, errors.Trace(err)
+			if !regionErr.RegionCacheMiss {
+				err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return nil, nil, errors.Trace(err)
+				}
 			}
 			continue
 		}
@@ -634,9 +640,11 @@ func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-		if err != nil {
-			return errors.Trace(err)
+		if !regionErr.RegionCacheMiss {
+			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		// recursive call
 		return c.sendBatchPut(bo, batch.keys, batch.values)

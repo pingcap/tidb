@@ -27,7 +27,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/client"
@@ -319,7 +318,7 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
-	var regionErr *errorpb.Error
+	var regionErr *tikvrpc.RegionError
 
 	p := s.createGCProbe(c, "k1")
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
