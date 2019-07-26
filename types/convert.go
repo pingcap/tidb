@@ -362,11 +362,37 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
 func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error) {
-	floatPrefix, err := getValidFloatPrefix(sc, str)
-	if err != nil {
-		return floatPrefix, errors.Trace(err)
+	if !sc.CastStrToIntStrict {
+		floatPrefix, err := getValidFloatPrefix(sc, str)
+		if err != nil {
+			return floatPrefix, errors.Trace(err)
+		}
+		return floatStrToIntStr(sc, floatPrefix, str)
 	}
-	return floatStrToIntStr(sc, floatPrefix, str)
+
+	validLen := 0
+
+	for i := 0; i < len(str); i++ {
+		c := str[i]
+		if (c == '+' || c == '-') && i == 0 {
+			continue
+		}
+
+		if c >= '0' && c <= '9' {
+			validLen = i + 1
+			continue
+		}
+
+		break
+	}
+	valid := str[:validLen]
+	if valid == "" {
+		valid = "0"
+	}
+	if validLen == 0 || validLen != len(str) {
+		return valid, errors.Trace(handleTruncateError(sc, ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", str)))
+	}
+	return valid, nil
 }
 
 // roundIntStr is to round a **valid int string** base on the number following dot.
@@ -561,8 +587,7 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 	case json.TypeCodeInt64:
 		return float64(j.GetInt64()), nil
 	case json.TypeCodeUint64:
-		u, err := ConvertIntToUint(sc, j.GetInt64(), IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
-		return float64(u), errors.Trace(err)
+		return float64(j.GetUint64()), nil
 	case json.TypeCodeFloat64:
 		return j.GetFloat64(), nil
 	case json.TypeCodeString:
@@ -589,7 +614,7 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
 func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, err error) {
-	if sc.InDeleteStmt && s == "" {
+	if (sc.InDeleteStmt || sc.InSelectStmt || sc.InUpdateStmt) && s == "" {
 		return "0", nil
 	}
 
@@ -633,7 +658,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(s) {
-		err = errors.Trace(handleTruncateError(sc))
+		err = errors.Trace(handleTruncateError(sc, ErrTruncated))
 	}
 	return valid, err
 }

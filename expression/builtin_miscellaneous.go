@@ -114,6 +114,7 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, isNull, err
 	}
+
 	sessVars := b.ctx.GetSessionVars()
 	if isNull {
 		if sessVars.StrictSQLMode {
