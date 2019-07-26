@@ -220,7 +220,10 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 				p.IsTableDual = true
 				return p
 			}
-			return nil
+			// some scenarios cast to int with error, but we may use this value in point get
+			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
+				return nil
+			}
 		}
 		cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &handlePair.value)
 		if err != nil {
