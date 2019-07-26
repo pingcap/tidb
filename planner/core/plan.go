@@ -304,7 +304,7 @@ func (p *basePhysicalPlan) SetChildren(children ...PhysicalPlan) {
 
 // SetChild implements LogicalPlan SetChild interface.
 func (p *baseLogicalPlan) SetChild(i int, child LogicalPlan) {
-  	p.children[i] = child
+	p.children[i] = child
 }
 
 // SetChild implements PhysicalPlan SetChild interface.
