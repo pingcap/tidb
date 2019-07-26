@@ -299,6 +299,8 @@ func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx) {
 		}
 	case mysql.TypeJSON:
 		ctx.WriteKeyWord("JSON")
+	case mysql.TypeDouble:
+		ctx.WriteKeyWord("DOUBLE")
 	}
 }
 
