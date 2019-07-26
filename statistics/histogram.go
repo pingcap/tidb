@@ -1078,7 +1078,7 @@ func getIndexPrefixLens(data []byte, numCols int) (prefixLens []int, err error) 
 }
 
 // ExtractTopN extracts topn from histogram.
-func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN int) error {
+func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN uint32) error {
 	if hg.Len() == 0 || cms == nil || numTopN == 0 {
 		return nil
 	}
@@ -1109,7 +1109,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN int) error 
 	}
 	sort.SliceStable(dataCnts, func(i, j int) bool { return dataCnts[i].cnt >= dataCnts[j].cnt })
 	cms.topN = make(map[uint64][]*TopNMeta)
-	if len(dataCnts) > numTopN {
+	if len(dataCnts) > int(numTopN) {
 		dataCnts = dataCnts[:numTopN]
 	}
 	for _, dataCnt := range dataCnts {

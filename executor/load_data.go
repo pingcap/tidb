@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
@@ -112,7 +113,12 @@ type LoadDataInfo struct {
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
 func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 	e.maxRowsInBatch = limit
-	e.rows = make([][]types.Datum, 0, limit)
+	if uint64(cap(e.rows)) < limit {
+		e.rows = make([][]types.Datum, 0, limit)
+		for i := 0; uint64(i) < limit; i++ {
+			e.rows = append(e.rows, make([]types.Datum, len(e.Table.Cols())))
+		}
+	}
 }
 
 // getValidData returns prevData and curData that starts from starting symbol.
@@ -127,7 +133,7 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 	prevLen := len(prevData)
 	if prevLen > 0 {
 		// starting symbol in the prevData
-		idx := strings.Index(string(prevData), e.LinesInfo.Starting)
+		idx := strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
 		if idx != -1 {
 			return prevData[idx:], curData
 		}
@@ -138,14 +144,14 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 			restStart = curData[:startingLen-1]
 		}
 		prevData = append(prevData, restStart...)
-		idx = strings.Index(string(prevData), e.LinesInfo.Starting)
+		idx = strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
 		if idx != -1 {
 			return prevData[idx:prevLen], curData
 		}
 	}
 
 	// starting symbol in the curData
-	idx := strings.Index(string(curData), e.LinesInfo.Starting)
+	idx := strings.Index(string(hack.String(curData)), e.LinesInfo.Starting)
 	if idx != -1 {
 		return nil, curData[idx:]
 	}
@@ -174,7 +180,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 	}
 	endIdx := -1
 	if len(curData) >= curStartIdx {
-		endIdx = strings.Index(string(curData[curStartIdx:]), e.LinesInfo.Terminated)
+		endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
 	}
 	if endIdx == -1 {
 		// no terminated symbol
@@ -184,7 +190,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 		// terminated symbol in the middle of prevData and curData
 		curData = append(prevData, curData...)
-		endIdx = strings.Index(string(curData[startingLen:]), e.LinesInfo.Terminated)
+		endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
 			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
@@ -201,7 +207,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 	// terminated symbol in the curData
 	prevData = append(prevData, curData[:nextDataIdx]...)
-	endIdx = strings.Index(string(prevData[startingLen:]), e.LinesInfo.Terminated)
+	endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
 	}
@@ -253,8 +259,9 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		if err != nil {
 			return nil, false, err
 		}
-		e.rows = append(e.rows, e.colsToRow(ctx, cols))
+		e.colsToRow(ctx, cols)
 		e.rowCount++
+		e.curBatchCnt++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
 			logutil.BgLogger().Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
@@ -268,15 +275,15 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 // CheckAndInsertOneBatch is used to commit one transaction batch full filled data
 func (e *LoadDataInfo) CheckAndInsertOneBatch() error {
 	var err error
-	if len(e.rows) == 0 {
+	if e.curBatchCnt == 0 {
 		return err
 	}
-	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(e.rows)))
-	err = e.batchCheckAndInsert(e.rows, e.addRecordLD)
+	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(e.curBatchCnt)
+	err = e.batchCheckAndInsert(e.rows[0:e.curBatchCnt], e.addRecordLD)
 	if err != nil {
 		return err
 	}
-	e.rows = e.rows[:0]
+	e.curBatchCnt = 0
 	return err
 }
 
@@ -312,7 +319,7 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 			e.row[i].SetString(string(cols[i].str))
 		}
 	}
-	row, err := e.getRow(ctx, e.row)
+	row, err := e.getRowInPlace(ctx, e.row, e.rows[e.curBatchCnt])
 	if err != nil {
 		e.handleWarning(err)
 		return nil
