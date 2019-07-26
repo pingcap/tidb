@@ -114,11 +114,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *ShowDDL:
 		str = "ShowDDL"
 	case *Show:
-		if len(x.Conditions) == 0 {
-			str = "Show"
-		} else {
-			str = fmt.Sprintf("Show(%s)", x.Conditions)
-		}
+		str = "Show"
 	case *LogicalSort, *PhysicalSort:
 		str = "Sort"
 	case *LogicalJoin:
