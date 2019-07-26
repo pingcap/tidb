@@ -1198,15 +1198,42 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
-func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
-	fmt.Println("parent:", prop)
-	for _, possibleChildProperty := range la.possibleProperties {
-		fmt.Println("child:", possibleChildProperty)
+func (ps *PhysicalStreamAgg) convert2Enforced() {
+	for i := range ps.childrenReqProps {
+		ps.childrenReqProps[i].Enforced = true
 	}
+}
+
+func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+	enforcedAggs := make([]PhysicalPlan, 0, 2)
+	childProp := &property.PhysicalProperty{
+		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
+		Enforced:    true,
+	}
+
+	for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType} {
+		copiedChildProperty := new(property.PhysicalProperty)
+		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+		copiedChildProperty.TaskTp = taskTp
+
+		agg := basePhysicalAgg{
+			GroupByItems: la.GroupByItems,
+			AggFuncs:     la.AggFuncs,
+		}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
+		agg.SetSchema(la.schema.Clone())
+		enforcedAggs = append(enforcedAggs, agg)
+	}
+	return enforcedAggs
+}
+
+func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+	preferStream := (la.preferAggType & preferStreamAgg) > 0
+
 	all, desc := prop.AllSameOrder()
-	if len(la.possibleProperties) == 0 || !all {
+	if !all {
 		return nil
 	}
+
 	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.Mode == aggregation.FinalMode {
 			return nil
@@ -1217,12 +1244,22 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
+	// The above checks ensure that stream aggregation can satisfy the required property
+	if len(la.possibleProperties) == 0 {
+		if preferStream {
+			return la.getEnforcedStreamAggs(prop)
+		} else {
+			return nil
+		}
+	}
+
 	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 	}
 
 	for _, possibleChildProperty := range la.possibleProperties {
+		fmt.Println("prop:", possibleChildProperty, "groupBy:", la.groupByCols)
 		sortColOffsets := getMaxSortPrefix(possibleChildProperty, la.groupByCols)
 		if len(sortColOffsets) != len(la.groupByCols) {
 			continue
@@ -1235,7 +1272,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
-		for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType, property.CopDoubleReadTaskType} {
+		for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType} {
 			copiedChildProperty := new(property.PhysicalProperty)
 			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 			copiedChildProperty.TaskTp = taskTp
@@ -1247,6 +1284,9 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			agg.SetSchema(la.schema.Clone())
 			streamAggs = append(streamAggs, agg)
 		}
+	}
+	if streamAggs == nil && preferStream {
+		return la.getEnforcedStreamAggs(prop)
 	}
 	return streamAggs
 }
@@ -1267,13 +1307,8 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	return hashAggs
 }
 
-func (ps *PhysicalStreamAgg) convert2Enforced() {
-	for i := range ps.childrenReqProps {
-		ps.childrenReqProps[i].Enforced = true
-	}
-}
-
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	fmt.Println(ToString(la), la.preferAggType)
 	preferHash := (la.preferAggType & preferHashAgg) > 0
 	preferStream := (la.preferAggType & preferStreamAgg) > 0
 	if preferHash && preferStream {
@@ -1284,17 +1319,11 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 
 	hashAggs := la.getHashAggs(prop)
 	if hashAggs != nil && preferHash && !preferStream {
-		errMsg := "WDNMD HASH"
-		warning := ErrInternal.GenWithStack(errMsg)
-		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		return hashAggs
 	}
 
 	streamAggs := la.getStreamAggs(prop)
 	if streamAggs != nil && preferStream && !preferHash {
-		errMsg := "WDNMD STREAM"
-		warning := ErrInternal.GenWithStack(errMsg)
-		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		for i := range streamAggs {
 			streamAggs[i].(*PhysicalStreamAgg).convert2Enforced()
 		}
