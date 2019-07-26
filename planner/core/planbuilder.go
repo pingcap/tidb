@@ -687,6 +687,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 
 	// Get generated columns.
 	var genCols []*expression.Column
+	pkOffset := -1
 	colsMap := make(map[int64]struct{})
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
 	for _, idxCol := range idx.Columns {
@@ -697,9 +698,11 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 				schema.Append(&expression.Column{
 					ColName:  col.Name,
 					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  &col.FieldType,
-				})
+					RetType:  &col.FieldType})
 				colsMap[col.ID] = struct{}{}
+				if mysql.HasPriKeyFlag(col.Flag) {
+					pkOffset = len(tblColumns) - 1
+				}
 			}
 			genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}
 			if expr, ok := genExprs[genColumnID]; ok {
@@ -718,22 +721,27 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 				tblSchema.Append(&expression.Column{
 					ColName:  c.Name,
 					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  &c.FieldType,
-				})
+					RetType:  &c.FieldType})
 				colsMap[c.ID] = struct{}{}
+				if mysql.HasPriKeyFlag(c.Flag) {
+					pkOffset = len(tblColumns) - 1
+				}
 			}
 		}
 	}
-	tblColumns = append(tblColumns, model.NewExtraHandleColInfo())
-	handleCol := &expression.Column{
-		DBName:   dbName,
-		TblName:  tblInfo.Name,
-		ColName:  model.ExtraHandleName,
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraHandleID,
+	if !tbl.Meta().PKIsHandle || pkOffset == -1 {
+		tblColumns = append(tblColumns, model.NewExtraHandleColInfo())
+		handleCol := &expression.Column{
+			DBName:   dbName,
+			TblName:  tblInfo.Name,
+			ColName:  model.ExtraHandleName,
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       model.ExtraHandleID,
+		}
+		tblSchema.Append(handleCol)
+		pkOffset = len(tblColumns) - 1
 	}
-	tblSchema.Append(handleCol)
 
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
@@ -752,6 +760,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 	ts := PhysicalTableScan{Columns: tblColumns, Table: is.Table}.Init(b.ctx)
 	ts.SetSchema(tblSchema)
 	cop.tablePlan = ts
+	ts.HandleIdx = pkOffset
 	is.initSchema(id, idx, true)
 	t := finishCopTask(b.ctx, cop)
 	rootT := t.(*rootTask)

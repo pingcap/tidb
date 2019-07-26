@@ -1994,7 +1994,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 	}
+	// These are used to check the consistency of the index data.
 	e.genExprs = is.GenExprs
+	e.handleIdx = ts.HandleIdx
+
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {

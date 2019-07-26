@@ -810,7 +810,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		tblReaderExec := tableReader.(*TableReaderExecutor)
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle := row.GetInt64(row.Len() - 1)
+			handle := row.GetInt64(w.handleIdx)
 			offset, ok := task.indexOrder[handle]
 			if !ok {
 				offset = task.duplicatedIndexOrder[handle]
