@@ -454,12 +454,15 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 				PhysicalID: fakePhysicalID,
 				Info:       col,
 				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
 			}
 		}
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			t.Indices[idx.ID] = &Index{Info: idx}
+			t.Indices[idx.ID] = &Index{
+				Info:      idx,
+				Histogram: *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
 		}
 	}
 	return t

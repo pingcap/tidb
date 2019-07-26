@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testEvaluatorSuite) TestLength(c *C) {
+func (s *testEvaluatorSuite) TestLengthAndOctetLength(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
@@ -54,18 +54,21 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{errors.New("must error"), 0, false, true},
 	}
 
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Length, s.primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(chunk.Row{})
-		if t.getErr {
-			c.Assert(err, NotNil)
-		} else {
+	lengthMethods := []string{ast.Length, ast.OctetLength}
+	for _, lengthMethod := range lengthMethods {
+		for _, t := range cases {
+			f, err := newFunctionForTest(s.ctx, lengthMethod, s.primitiveValsToConstants([]interface{}{t.args})...)
 			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			d, err := f.Eval(chunk.Row{})
+			if t.getErr {
+				c.Assert(err, NotNil)
 			} else {
-				c.Assert(d.GetInt64(), Equals, t.expected)
+				c.Assert(err, IsNil)
+				if t.isNil {
+					c.Assert(d.Kind(), Equals, types.KindNull)
+				} else {
+					c.Assert(d.GetInt64(), Equals, t.expected)
+				}
 			}
 		}
 	}
