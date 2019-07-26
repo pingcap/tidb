@@ -1259,7 +1259,6 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	}
 
 	for _, possibleChildProperty := range la.possibleProperties {
-		fmt.Println("prop:", possibleChildProperty, "groupBy:", la.groupByCols)
 		sortColOffsets := getMaxSortPrefix(possibleChildProperty, la.groupByCols)
 		if len(sortColOffsets) != len(la.groupByCols) {
 			continue
@@ -1308,7 +1307,6 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	fmt.Println(ToString(la), la.preferAggType)
 	preferHash := (la.preferAggType & preferHashAgg) > 0
 	preferStream := (la.preferAggType & preferStreamAgg) > 0
 	if preferHash && preferStream {
@@ -1324,13 +1322,19 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 
 	streamAggs := la.getStreamAggs(prop)
 	if streamAggs != nil && preferStream && !preferHash {
+		// The following three lines are used to cover a bug related to possibleProperties.
 		for i := range streamAggs {
 			streamAggs[i].(*PhysicalStreamAgg).convert2Enforced()
 		}
 		return streamAggs
 	}
+	if streamAggs == nil && preferStream {
+		errMsg := "Optimizer Hint TIDB_STREAMAGG is inapplicable"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
 
-	aggs := make([]PhysicalPlan, 0, len(la.possibleProperties)+1)
+	aggs := make([]PhysicalPlan, 0, len(hashAggs)+len(streamAggs))
 	aggs = append(aggs, hashAggs...)
 	aggs = append(aggs, streamAggs...)
 	return aggs
