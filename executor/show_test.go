@@ -97,16 +97,6 @@ func (s *testSuite2) TestShowDatabasesInfoSchemaFirst(c *C) {
 	tk.MustExec(`drop database BBBB`)
 }
 
-// mockSessionManager is a mocked session manager that wraps one session
-// it returns only this session's current process info as processlist for test.
-type mockSessionManager struct {
-	session.Session
-}
-
-// Kill implements the SessionManager.Kill interface.
-func (msm *mockSessionManager) Kill(cid uint64, query bool) {
-}
-
 func (s *testSuite2) TestShowWarnings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -157,6 +147,21 @@ func (s *testSuite2) TestIssue3641(c *C) {
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 }
 
+func (s *testSuite2) TestIssue10549(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE DATABASE newdb;")
+	tk.MustExec("CREATE ROLE 'app_developer';")
+	tk.MustExec("GRANT ALL ON newdb.* TO 'app_developer';")
+	tk.MustExec("CREATE USER 'dev';")
+	tk.MustExec("GRANT 'app_developer' TO 'dev';")
+	tk.MustExec("SET DEFAULT ROLE app_developer TO 'dev';")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil), IsTrue)
+	tk.MustQuery("SHOW DATABASES;").Check(testkit.Rows("INFORMATION_SCHEMA", "newdb"))
+	tk.MustQuery("SHOW GRANTS;").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT ALL PRIVILEGES ON newdb.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
+}
+
 // TestShow2 is moved from session_test
 func (s *testSuite2) TestShow2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -170,6 +175,78 @@ func (s *testSuite2) TestShow2(c *C) {
 	// TODO: In MySQL, the result is "autocommit ON".
 	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
 
+	// TODO: Specifying the charset for national char/varchar should not be supported.
+	tk.MustExec("drop table if exists test_full_column")
+	tk.MustExec(`create table test_full_column(
+					c_int int,
+					c_float float,
+					c_bit bit,
+					c_bool bool,
+					c_char char(1) charset ascii collate ascii_bin,
+					c_nchar national char(1) charset ascii collate ascii_bin,
+					c_binary binary,
+					c_varchar varchar(1) charset ascii collate ascii_bin,
+					c_varchar_default varchar(20) charset ascii collate ascii_bin default 'cUrrent_tImestamp',
+					c_nvarchar national varchar(1) charset ascii collate ascii_bin,
+					c_varbinary varbinary(1),
+					c_year year,
+					c_date date,
+					c_time time,
+					c_datetime datetime,
+					c_datetime_default datetime default current_timestamp,
+					c_datetime_default_2 datetime(2) default current_timestamp(2),
+					c_timestamp timestamp,
+					c_timestamp_default timestamp default current_timestamp,
+					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
+					c_blob blob,
+					c_tinyblob tinyblob,
+					c_mediumblob mediumblob,
+					c_longblob longblob,
+					c_text text charset ascii collate ascii_bin,
+					c_tinytext tinytext charset ascii collate ascii_bin,
+					c_mediumtext mediumtext charset ascii collate ascii_bin,
+					c_longtext longtext charset ascii collate ascii_bin,
+					c_json json,
+					c_enum enum('1') charset ascii collate ascii_bin,
+					c_set set('1') charset ascii collate ascii_bin
+				);`)
+
+	tk.MustQuery(`show full columns from test_full_column`).Check(testkit.Rows(
+		"" +
+			"c_int int(11) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_float float <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_bit bit(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_bool tinyint(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_char char(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_nchar char(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_binary binary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_varchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_varchar_default varchar(20) ascii_bin YES  cUrrent_tImestamp  select,insert,update,references ]\n" +
+			"[c_nvarchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_varbinary varbinary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_year year(4) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_date date <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_time time <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_datetime datetime <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_datetime_default datetime <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
+			"[c_datetime_default_2 datetime(2) <nil> YES  CURRENT_TIMESTAMP(2)  select,insert,update,references ]\n" +
+			"[c_timestamp timestamp <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
+			"[c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ]\n" +
+			"[c_blob blob <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_longblob longblob <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_text text ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_tinytext tinytext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_mediumtext mediumtext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_longtext longtext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_json json <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_enum enum('1') ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_set set('1') ascii_bin YES  <nil>  select,insert,update,references "))
+
+	tk.MustExec("drop table if exists test_full_column")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
 	tk.MustExec("create or replace definer='root'@'localhost' view v as select * from t")
@@ -177,8 +254,7 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.MustQuery(`describe t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`show columns from v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
-
+	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1"))
 	tk.MustQuery("show tables").Check(testkit.Rows("t", "v"))
 	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE", "v VIEW"))
 	ctx := tk.Se.(sessionctx.Context)
@@ -191,7 +267,7 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
 	r := tk.MustQuery("show table status from test like 't'")
-	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 0 0 0 0 0 0 0 %s <nil> <nil> utf8mb4_bin   注释", createTime)))
+	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_bin   注释", createTime)))
 
 	tk.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
 
@@ -202,7 +278,7 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
 }
 
-func (s *testSuite2) TestShow3(c *C) {
+func (s *testSuite2) TestShowCreateUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`)
@@ -220,6 +296,27 @@ func (s *testSuite2) TestShow3(c *C) {
 	// Case: a user that doesn't exist
 	err = tk.QueryToErr("show create user 'aaa'@'localhost';")
 	c.Assert(err.Error(), Equals, executor.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'aaa'@'localhost'").Error())
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, nil)
+	rows := tk.MustQuery("show create user current_user")
+	rows.Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+
+	rows = tk.MustQuery("show create user current_user()")
+	rows.Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+
+	tk.MustExec("create user 'check_priv'")
+
+	// "show create user" for other user requires the SELECT privilege on mysql database.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use mysql")
+	succ := tk1.Se.Auth(&auth.UserIdentity{Username: "check_priv", Hostname: "127.0.0.1", AuthUsername: "test_show", AuthHostname: "asdf"}, nil, nil)
+	c.Assert(succ, IsTrue)
+	err = tk1.QueryToErr("show create user 'root'@'%'")
+	c.Assert(err, NotNil)
+
+	// "show create user" for current user doesn't check privileges.
+	rows = tk1.MustQuery("show create user current_user")
+	rows.Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 }
 
 func (s *testSuite2) TestUnprivilegedShow(c *C) {
@@ -249,7 +346,7 @@ func (s *testSuite2) TestUnprivilegedShow(c *C) {
 	c.Assert(err, IsNil)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
 
-	tk.MustQuery("show table status from testshow").Check(testkit.Rows(fmt.Sprintf("t1 InnoDB 10 Compact 0 0 0 0 0 0 0 %s <nil> <nil> utf8mb4_bin   ", createTime)))
+	tk.MustQuery("show table status from testshow").Check(testkit.Rows(fmt.Sprintf("t1 InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_bin   ", createTime)))
 
 }
 
@@ -321,6 +418,12 @@ func (s *testSuite2) TestShowSlow(c *C) {
 	tk.MustQuery(`admin show slow top all 3`)
 }
 
+func (s *testSuite2) TestShowOpenTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("show open tables")
+	tk.MustQuery("show open tables in test")
+}
+
 func (s *testSuite2) TestShowCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -331,9 +434,13 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1")
 	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS select * from t1  "))
 	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS select * from t1  "))
-
 	tk.MustExec("drop view v1")
 	tk.MustExec("drop table t1")
+
+	tk.MustExec("drop view if exists v")
+	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
+	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS select JSON_MERGE('{}', '{}') as col;  "))
+	tk.MustExec("drop view if exists v")
 
 	// For issue #9211
 	tk.MustExec("create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
@@ -374,6 +481,90 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 			"  `ch2` varbinary(10) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table `t` (\n" +
+		"`a` timestamp not null default current_timestamp,\n" +
+		"`b` timestamp(3) default current_timestamp(3),\n" +
+		"`c` datetime default current_timestamp,\n" +
+		"`d` datetime(4) default current_timestamp(4),\n" +
+		"`e` varchar(20) default 'cUrrent_tImestamp')")
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"+
+			"  `b` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3),\n"+
+			"  `c` datetime DEFAULT CURRENT_TIMESTAMP,\n"+
+			"  `d` datetime(4) DEFAULT CURRENT_TIMESTAMP(4),\n"+
+			"  `e` varchar(20) DEFAULT 'cUrrent_tImestamp'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t (a int, b int) shard_row_id_bits = 4 pre_split_regions=3;")
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000 SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("CREATE TABLE `log` (" +
+		"`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT," +
+		"`ROUND_ID` bigint(20) UNSIGNED NOT NULL," +
+		"`USER_ID` int(10) UNSIGNED NOT NULL," +
+		"`USER_IP` int(10) UNSIGNED DEFAULT NULL," +
+		"`END_TIME` datetime NOT NULL," +
+		"`USER_TYPE` int(11) DEFAULT NULL," +
+		"`APP_ID` int(11) DEFAULT NULL," +
+		"PRIMARY KEY (`LOG_ID`,`END_TIME`)," +
+		"KEY `IDX_EndTime` (`END_TIME`)," +
+		"KEY `IDX_RoundId` (`ROUND_ID`)," +
+		"KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488 " +
+		"PARTITION BY RANGE ( month(`end_time`) ) (" +
+		"PARTITION p1 VALUES LESS THAN (2)," +
+		"PARTITION p2 VALUES LESS THAN (3)," +
+		"PARTITION p3 VALUES LESS THAN (4)," +
+		"PARTITION p4 VALUES LESS THAN (5)," +
+		"PARTITION p5 VALUES LESS THAN (6)," +
+		"PARTITION p6 VALUES LESS THAN (7)," +
+		"PARTITION p7 VALUES LESS THAN (8)," +
+		"PARTITION p8 VALUES LESS THAN (9)," +
+		"PARTITION p9 VALUES LESS THAN (10)," +
+		"PARTITION p10 VALUES LESS THAN (11)," +
+		"PARTITION p11 VALUES LESS THAN (12)," +
+		"PARTITION p12 VALUES LESS THAN (MAXVALUE))")
+	tk.MustQuery("show create table log").Check(testutil.RowsWithSep("|",
+		"log CREATE TABLE `log` (\n"+
+			"  `LOG_ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"+
+			"  `ROUND_ID` bigint(20) unsigned NOT NULL,\n"+
+			"  `USER_ID` int(10) unsigned NOT NULL,\n"+
+			"  `USER_IP` int(10) unsigned DEFAULT NULL,\n"+
+			"  `END_TIME` datetime NOT NULL,\n"+
+			"  `USER_TYPE` int(11) DEFAULT NULL,\n"+
+			"  `APP_ID` int(11) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`LOG_ID`,`END_TIME`),\n"+
+			"  KEY `IDX_EndTime` (`END_TIME`),\n"+
+			"  KEY `IDX_RoundId` (`ROUND_ID`),\n"+
+			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488\n"+
+			"PARTITION BY RANGE ( month(`end_time`) ) (\n"+
+			"  PARTITION p1 VALUES LESS THAN (2),\n"+
+			"  PARTITION p2 VALUES LESS THAN (3),\n"+
+			"  PARTITION p3 VALUES LESS THAN (4),\n"+
+			"  PARTITION p4 VALUES LESS THAN (5),\n"+
+			"  PARTITION p5 VALUES LESS THAN (6),\n"+
+			"  PARTITION p6 VALUES LESS THAN (7),\n"+
+			"  PARTITION p7 VALUES LESS THAN (8),\n"+
+			"  PARTITION p8 VALUES LESS THAN (9),\n"+
+			"  PARTITION p9 VALUES LESS THAN (10),\n"+
+			"  PARTITION p10 VALUES LESS THAN (11),\n"+
+			"  PARTITION p11 VALUES LESS THAN (12),\n"+
+			"  PARTITION p12 VALUES LESS THAN (MAXVALUE)\n"+
+			")"))
 }
 
 func (s *testSuite2) TestShowEscape(c *C) {

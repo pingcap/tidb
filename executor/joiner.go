@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -173,14 +172,14 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColsLen int) (bool,
 	var err error
 	j.selected, err = expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	// Batch copies selected rows to output chunk.
 	innerColOffset, outerColOffset := 0, input.NumCols()-outerColsLen
 	if !j.outerIsRight {
 		innerColOffset, outerColOffset = outerColsLen, 0
 	}
-	return chunk.CopySelectedJoinRows(input, innerColOffset, outerColOffset, j.selected, output), nil
+	return chunk.CopySelectedJoinRows(input, innerColOffset, outerColOffset, j.selected, output)
 }
 
 type semiJoiner struct {
@@ -205,7 +204,7 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 		// so we ignore the nullness returned by EvalBool here.
 		matched, _, err = expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
-			return false, false, errors.Trace(err)
+			return false, false, err
 		}
 		if matched {
 			chk.AppendPartialRow(0, outer)
@@ -239,7 +238,7 @@ func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk 
 
 		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
-			return false, false, errors.Trace(err)
+			return false, false, err
 		}
 		if matched {
 			inners.ReachEnd()
@@ -277,7 +276,7 @@ func (j *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator,
 
 		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
-			return false, false, errors.Trace(err)
+			return false, false, err
 		}
 		if matched {
 			j.onMatch(outer, chk)
@@ -324,7 +323,7 @@ func (j *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Itera
 
 		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
-			return false, false, errors.Trace(err)
+			return false, false, err
 		}
 		if matched {
 			j.onMatch(outer, chk)
@@ -377,7 +376,7 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 	// reach here, chkForJoin is j.chk
 	matched, err := j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
-		return false, false, errors.Trace(err)
+		return false, false, err
 	}
 	return matched, false, nil
 }
@@ -414,7 +413,7 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 
 	matched, err := j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
-		return false, false, errors.Trace(err)
+		return false, false, err
 	}
 	return matched, false, nil
 }
@@ -453,7 +452,7 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 	// reach here, chkForJoin is j.chk
 	matched, err := j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
-		return false, false, errors.Trace(err)
+		return false, false, err
 	}
 	return matched, false, nil
 }

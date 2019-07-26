@@ -396,7 +396,7 @@ func (e *indexScanExec) decodeIndexKV(pair Pair) ([][]byte, error) {
 		} else {
 			handleDatum = types.NewIntDatum(handle)
 		}
-		handleBytes, err := codec.EncodeValue(nil, b, handleDatum)
+		handleBytes, err := codec.EncodeValue(nil, nil, handleDatum)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

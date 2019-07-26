@@ -28,6 +28,7 @@ var (
 	ErrRegexp                  = terror.ClassExpression.New(mysql.ErrRegexp, mysql.MySQLErrName[mysql.ErrRegexp])
 	ErrOperandColumns          = terror.ClassExpression.New(mysql.ErrOperandColumns, mysql.MySQLErrName[mysql.ErrOperandColumns])
 	ErrCutValueGroupConcat     = terror.ClassExpression.New(mysql.ErrCutValueGroupConcat, mysql.MySQLErrName[mysql.ErrCutValueGroupConcat])
+	ErrFunctionsNoopImpl       = terror.ClassExpression.New(mysql.ErrNotSupportedYet, "function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
 
 	// All the un-exported errors are defined here:
 	errFunctionNotExists             = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
@@ -62,6 +63,7 @@ func init() {
 		mysql.WarnOptionIgnored:                    mysql.WarnOptionIgnored,
 		mysql.ErrTruncatedWrongValue:               mysql.ErrTruncatedWrongValue,
 		mysql.ErrUnknownLocale:                     mysql.ErrUnknownLocale,
+		mysql.ErrBadField:                          mysql.ErrBadField,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
@@ -69,7 +71,8 @@ func init() {
 // handleInvalidTimeError reports error or warning depend on the context.
 func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err) ||
-		types.ErrTruncatedWrongValue.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err)) {
+		types.ErrTruncatedWrongValue.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
+		types.ErrDatetimeFunctionOverflow.Equal(err)) {
 		return err
 	}
 	sc := ctx.GetSessionVars().StmtCtx

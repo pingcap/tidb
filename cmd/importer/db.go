@@ -17,13 +17,15 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"math/rand"
 	"strconv"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 func intRangeValue(column *column, min int64, max int64) (int64, int64) {
@@ -31,13 +33,13 @@ func intRangeValue(column *column, min int64, max int64) (int64, int64) {
 	if len(column.min) > 0 {
 		min, err = strconv.ParseInt(column.min, 10, 64)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal(err.Error())
 		}
 
 		if len(column.max) > 0 {
 			max, err = strconv.ParseInt(column.max, 10, 64)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatal(err.Error())
 			}
 		}
 	}
@@ -67,7 +69,7 @@ func randInt64Value(column *column, min int64, max int64) int64 {
 		idx := randInt(0, len(column.set)-1)
 		data, err := strconv.ParseInt(column.set[idx], 10, 64)
 		if err != nil {
-			log.Warnf("rand int64 error: %s", err)
+			log.Warn("rand int64 failed", zap.Error(err))
 		}
 		return data
 	}
@@ -76,10 +78,10 @@ func randInt64Value(column *column, min int64, max int64) int64 {
 	return randInt64(min, max)
 }
 
-func uniqInt64Value(column *column, min int64, max int64) int64 {
+func nextInt64Value(column *column, min int64, max int64) int64 {
 	min, max = intRangeValue(column, min, max)
-	column.data.setInitInt64Value(column.step, min, max)
-	return column.data.uniqInt64()
+	column.data.setInitInt64Value(min, max)
+	return column.data.nextInt64()
 }
 
 func intToDecimalString(intValue int64, decimal int) string {
@@ -131,14 +133,28 @@ func genRowData(table *table) (string, error) {
 
 func genColumnData(table *table, column *column) (string, error) {
 	tp := column.tp
-	_, isUnique := table.uniqIndices[column.name]
+	incremental := column.incremental
+	if incremental {
+		incremental = uint32(rand.Int31n(100))+1 <= column.data.probability
+		// If incremental, there is only one worker, so it is safe to directly access datum.
+		if !incremental && column.data.remains > 0 {
+			column.data.remains--
+		}
+	}
+	if _, ok := table.uniqIndices[column.name]; ok {
+		incremental = true
+	}
 	isUnsigned := mysql.HasUnsignedFlag(tp.Flag)
 
 	switch tp.Tp {
 	case mysql.TypeTiny:
 		var data int64
-		if isUnique {
-			data = uniqInt64Value(column, 0, math.MaxUint8)
+		if incremental {
+			if isUnsigned {
+				data = nextInt64Value(column, 0, math.MaxUint8)
+			} else {
+				data = nextInt64Value(column, math.MinInt8, math.MaxInt8)
+			}
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxUint8)
@@ -149,8 +165,12 @@ func genColumnData(table *table, column *column) (string, error) {
 		return strconv.FormatInt(data, 10), nil
 	case mysql.TypeShort:
 		var data int64
-		if isUnique {
-			data = uniqInt64Value(column, 0, math.MaxUint16)
+		if incremental {
+			if isUnsigned {
+				data = nextInt64Value(column, 0, math.MaxUint16)
+			} else {
+				data = nextInt64Value(column, math.MinInt16, math.MaxInt16)
+			}
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxUint16)
@@ -161,8 +181,12 @@ func genColumnData(table *table, column *column) (string, error) {
 		return strconv.FormatInt(data, 10), nil
 	case mysql.TypeLong:
 		var data int64
-		if isUnique {
-			data = uniqInt64Value(column, 0, math.MaxUint32)
+		if incremental {
+			if isUnsigned {
+				data = nextInt64Value(column, 0, math.MaxUint32)
+			} else {
+				data = nextInt64Value(column, math.MinInt32, math.MaxInt32)
+			}
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxUint32)
@@ -173,8 +197,12 @@ func genColumnData(table *table, column *column) (string, error) {
 		return strconv.FormatInt(data, 10), nil
 	case mysql.TypeLonglong:
 		var data int64
-		if isUnique {
-			data = uniqInt64Value(column, 0, math.MaxInt64)
+		if incremental {
+			if isUnsigned {
+				data = nextInt64Value(column, 0, math.MaxInt64-1)
+			} else {
+				data = nextInt64Value(column, math.MinInt32, math.MaxInt32)
+			}
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxInt64-1)
@@ -185,8 +213,8 @@ func genColumnData(table *table, column *column) (string, error) {
 		return strconv.FormatInt(data, 10), nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		data := []byte{'\''}
-		if isUnique {
-			data = append(data, []byte(column.data.uniqString(tp.Flen))...)
+		if incremental {
+			data = append(data, []byte(column.data.nextString(tp.Flen))...)
 		} else {
 			data = append(data, []byte(randStringValue(column, tp.Flen))...)
 		}
@@ -195,8 +223,12 @@ func genColumnData(table *table, column *column) (string, error) {
 		return string(data), nil
 	case mysql.TypeFloat, mysql.TypeDouble:
 		var data float64
-		if isUnique {
-			data = float64(uniqInt64Value(column, 0, math.MaxInt64))
+		if incremental {
+			if isUnsigned {
+				data = float64(nextInt64Value(column, 0, math.MaxInt64-1))
+			} else {
+				data = float64(nextInt64Value(column, math.MinInt32, math.MaxInt32))
+			}
 		} else {
 			if isUnsigned {
 				data = float64(randInt64Value(column, 0, math.MaxInt64-1))
@@ -207,8 +239,8 @@ func genColumnData(table *table, column *column) (string, error) {
 		return strconv.FormatFloat(data, 'f', -1, 64), nil
 	case mysql.TypeDate:
 		data := []byte{'\''}
-		if isUnique {
-			data = append(data, []byte(column.data.uniqDate())...)
+		if incremental {
+			data = append(data, []byte(column.data.nextDate())...)
 		} else {
 			data = append(data, []byte(randDate(column))...)
 		}
@@ -217,8 +249,8 @@ func genColumnData(table *table, column *column) (string, error) {
 		return string(data), nil
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		data := []byte{'\''}
-		if isUnique {
-			data = append(data, []byte(column.data.uniqTimestamp())...)
+		if incremental {
+			data = append(data, []byte(column.data.nextTimestamp())...)
 		} else {
 			data = append(data, []byte(randTimestamp(column))...)
 		}
@@ -227,8 +259,8 @@ func genColumnData(table *table, column *column) (string, error) {
 		return string(data), nil
 	case mysql.TypeDuration:
 		data := []byte{'\''}
-		if isUnique {
-			data = append(data, []byte(column.data.uniqTime())...)
+		if incremental {
+			data = append(data, []byte(column.data.nextTime())...)
 		} else {
 			data = append(data, []byte(randTime(column))...)
 		}
@@ -237,8 +269,8 @@ func genColumnData(table *table, column *column) (string, error) {
 		return string(data), nil
 	case mysql.TypeYear:
 		data := []byte{'\''}
-		if isUnique {
-			data = append(data, []byte(column.data.uniqYear())...)
+		if incremental {
+			data = append(data, []byte(column.data.nextYear())...)
 		} else {
 			data = append(data, []byte(randYear(column))...)
 		}
@@ -251,8 +283,12 @@ func genColumnData(table *table, column *column) (string, error) {
 		if limit < 0 {
 			limit = math.MaxInt64
 		}
-		if isUnique {
-			intVal = uniqInt64Value(column, 0, limit-1)
+		if incremental {
+			if isUnsigned {
+				intVal = nextInt64Value(column, 0, limit-1)
+			} else {
+				intVal = nextInt64Value(column, (-limit+1)/2, (limit-1)/2)
+			}
 		} else {
 			if isUnsigned {
 				intVal = randInt64Value(column, 0, limit-1)
@@ -311,7 +347,7 @@ func closeDBs(dbs []*sql.DB) {
 	for _, db := range dbs {
 		err := closeDB(db)
 		if err != nil {
-			log.Errorf("close db failed - %v", err)
+			log.Error("close DB failed", zap.Error(err))
 		}
 	}
 }

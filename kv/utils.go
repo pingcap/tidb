@@ -25,12 +25,12 @@ func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
 	if IsErrNotFound(err) {
 		err = rm.Set(k, []byte(strconv.FormatInt(step, 10)))
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		return step, nil
 	}
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 
 	intVal, err := strconv.ParseInt(string(val), 10, 0)
@@ -41,7 +41,7 @@ func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
 	intVal += step
 	err = rm.Set(k, []byte(strconv.FormatInt(intVal, 10)))
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	return intVal, nil
 }
@@ -53,8 +53,11 @@ func GetInt64(r Retriever, k Key) (int64, error) {
 		return 0, nil
 	}
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	intVal, err := strconv.ParseInt(string(val), 10, 0)
-	return intVal, errors.Trace(err)
+	if err != nil {
+		return intVal, errors.Trace(err)
+	}
+	return intVal, nil
 }

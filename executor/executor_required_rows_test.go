@@ -62,11 +62,11 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(ctx, schema, "")
+	baseExec := newBaseExecutor(ctx, schema, nil)
 	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0, defaultGenerator}
 }
 
-func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.Chunk) error {
 	defer func() {
 		if r.expectedRowsRet == nil {
 			r.numNextCalled++
@@ -93,9 +93,9 @@ func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatc
 }
 
 func (r *requiredRowsDataSource) genOneRow() chunk.Row {
-	row := chunk.MutRowFromTypes(r.retTypes())
-	for i := range r.retTypes() {
-		row.SetValue(i, r.generator(r.retTypes()[i]))
+	row := chunk.MutRowFromTypes(retTypes(r))
+	for i, tp := range retTypes(r) {
+		row.SetValue(i, r.generator(tp))
 	}
 	return row.ToRow()
 }
@@ -177,10 +177,10 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
 		exec := buildLimitExec(sctx, ds, testCase.limitOffset, testCase.limitCount)
 		c.Assert(exec.Open(ctx), IsNil)
-		chk := exec.newFirstChunk()
+		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], sctx.GetSessionVars().MaxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)
@@ -190,7 +190,7 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 
 func buildLimitExec(ctx sessionctx.Context, src Executor, offset, count int) Executor {
 	n := mathutil.Min(count, ctx.GetSessionVars().MaxChunkSize)
-	base := newBaseExecutor(ctx, src.Schema(), "", src)
+	base := newBaseExecutor(ctx, src.Schema(), nil, src)
 	base.initCap = n
 	limitExec := &LimitExec{
 		baseExecutor: base,
@@ -205,7 +205,8 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MemQuotaSort = variable.DefTiDBMemQuotaSort
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker("", ctx.GetSessionVars().MemQuotaQuery)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, ctx.GetSessionVars().MemQuotaQuery)
+	ctx.GetSessionVars().SnapshotTS = uint64(1)
 	return ctx
 }
 
@@ -259,10 +260,10 @@ func (s *testExecSuite) TestSortRequiredRows(c *C) {
 		}
 		exec := buildSortExec(sctx, byItems, ds)
 		c.Assert(exec.Open(ctx), IsNil)
-		chk := exec.newFirstChunk()
+		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)
@@ -272,7 +273,7 @@ func (s *testExecSuite) TestSortRequiredRows(c *C) {
 
 func buildSortExec(sctx sessionctx.Context, byItems []*plannercore.ByItems, src Executor) Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(sctx, src.Schema(), "", src),
+		baseExecutor: newBaseExecutor(sctx, src.Schema(), nil, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -366,10 +367,10 @@ func (s *testExecSuite) TestTopNRequiredRows(c *C) {
 		}
 		exec := buildTopNExec(sctx, testCase.topNOffset, testCase.topNCount, byItems, ds)
 		c.Assert(exec.Open(ctx), IsNil)
-		chk := exec.newFirstChunk()
+		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)
@@ -379,7 +380,7 @@ func (s *testExecSuite) TestTopNRequiredRows(c *C) {
 
 func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*plannercore.ByItems, src Executor) Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), "", src),
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), nil, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -459,10 +460,10 @@ func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
 		}
 		exec := buildSelectionExec(sctx, filters, ds)
 		c.Assert(exec.Open(ctx), IsNil)
-		chk := exec.newFirstChunk()
+		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)
@@ -472,7 +473,7 @@ func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
 
 func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src Executor) Executor {
 	return &SelectionExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), "", src),
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), nil, src),
 		filters:      filters,
 	}
 }
@@ -517,10 +518,10 @@ func (s *testExecSuite) TestProjectionUnparallelRequiredRows(c *C) {
 		}
 		exec := buildProjectionExec(sctx, exprs, ds, 0)
 		c.Assert(exec.Open(ctx), IsNil)
-		chk := exec.newFirstChunk()
+		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)
@@ -529,6 +530,7 @@ func (s *testExecSuite) TestProjectionUnparallelRequiredRows(c *C) {
 }
 
 func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
+	c.Skip("not stable because of goroutine schedule")
 	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
 	testCases := []struct {
 		totalRows      int
@@ -572,10 +574,10 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 		}
 		exec := buildProjectionExec(sctx, exprs, ds, testCase.numWorkers)
 		c.Assert(exec.Open(ctx), IsNil)
-		chk := exec.newFirstChunk()
+		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 
 			// wait projectionInputFetcher blocked on fetching data
@@ -589,7 +591,7 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 
 func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor, numWorkers int) Executor {
 	return &ProjectionExec{
-		baseExecutor:  newBaseExecutor(ctx, src.Schema(), "", src),
+		baseExecutor:  newBaseExecutor(ctx, src.Schema(), nil, src),
 		numWorkers:    int64(numWorkers),
 		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
 	}
@@ -657,14 +659,15 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 		childCols := ds.Schema().Columns
 		schema := expression.NewSchema(childCols...)
 		groupBy := []expression.Expression{childCols[1]}
-		aggFunc := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
+		aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
+		c.Assert(err, IsNil)
 		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 		exec := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
 		c.Assert(exec.Open(ctx), IsNil)
-		chk := exec.newFirstChunk()
+		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)
@@ -716,14 +719,15 @@ func (s *testExecSuite) TestHashAggParallelRequiredRows(c *C) {
 			childCols := ds.Schema().Columns
 			schema := expression.NewSchema(childCols...)
 			groupBy := []expression.Expression{childCols[1]}
-			aggFunc := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, hasDistinct)
+			aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, hasDistinct)
+			c.Assert(err, IsNil)
 			aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 			exec := buildHashAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
 			c.Assert(exec.Open(ctx), IsNil)
-			chk := exec.newFirstChunk()
+			chk := newFirstChunk(exec)
 			for i := range testCase.requiredRows {
 				chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-				c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+				c.Assert(exec.Next(ctx, chk), IsNil)
 				c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 			}
 			c.Assert(exec.Close(), IsNil)
@@ -756,10 +760,10 @@ func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
 		exec := buildMergeJoinExec(ctx, joinType, innerSrc, outerSrc)
 		c.Assert(exec.Open(context.Background()), IsNil)
 
-		chk := exec.newFirstChunk()
+		chk := newFirstChunk(exec)
 		for i := range required {
 			chk.SetRequiredRows(required[i], ctx.GetSessionVars().MaxChunkSize)
-			c.Assert(exec.Next(context.Background(), chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(context.Background(), chk), IsNil)
 		}
 		c.Assert(exec.Close(), IsNil)
 		c.Assert(outerSrc.checkNumNextCalled(), IsNil)

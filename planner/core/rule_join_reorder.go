@@ -14,6 +14,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -52,7 +54,7 @@ type jrNode struct {
 	cumCost float64
 }
 
-func (s *joinReOrderSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	return s.optimizeRecursive(p.context(), p)
 }
 
@@ -71,11 +73,19 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			ctx:        ctx,
 			otherConds: otherConds,
 		}
-		groupSolver := &joinReorderGreedySingleGroupSolver{
-			baseSingleGroupJoinOrderSolver: baseGroupSolver,
-			eqEdges:                        eqEdges,
+		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
+			groupSolver := &joinReorderGreedySolver{
+				baseSingleGroupJoinOrderSolver: baseGroupSolver,
+				eqEdges:                        eqEdges,
+			}
+			p, err = groupSolver.solve(curJoinGroup)
+		} else {
+			dpSolver := &joinReorderDPSolver{
+				baseSingleGroupJoinOrderSolver: baseGroupSolver,
+			}
+			dpSolver.newJoin = dpSolver.newJoinWithEdges
+			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges))
 		}
-		p, err = groupSolver.solve(curJoinGroup)
 		if err != nil {
 			return nil, err
 		}
@@ -143,25 +153,22 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 	return join
 }
 
-func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(eqEdges []*expression.ScalarFunction, remainedOtherConds []expression.Expression,
-	lChild, rChild LogicalPlan) (*LogicalJoin, []expression.Expression) {
+func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) LogicalPlan {
 	newJoin := s.newCartesianJoin(lChild, rChild)
 	newJoin.EqualConditions = eqEdges
+	newJoin.OtherConditions = otherConds
 	for _, eqCond := range newJoin.EqualConditions {
 		newJoin.LeftJoinKeys = append(newJoin.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
 		newJoin.RightJoinKeys = append(newJoin.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
-	for i := len(remainedOtherConds) - 1; i >= 0; i-- {
-		cols := expression.ExtractColumns(remainedOtherConds[i])
-		if newJoin.schema.ColumnsIndices(cols) != nil {
-			newJoin.OtherConditions = append(newJoin.OtherConditions, remainedOtherConds[i])
-			remainedOtherConds = append(remainedOtherConds[:i], remainedOtherConds[i+1:]...)
-		}
-	}
-	return newJoin, remainedOtherConds
+	return newJoin
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.
 func (s *baseSingleGroupJoinOrderSolver) calcJoinCumCost(join LogicalPlan, lNode, rNode *jrNode) float64 {
 	return join.statsInfo().RowCount + lNode.cumCost + rNode.cumCost
+}
+
+func (*joinReOrderSolver) name() string {
+	return "join_reorder"
 }

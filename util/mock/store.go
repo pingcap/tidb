@@ -14,6 +14,8 @@
 package mock
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
@@ -49,3 +51,14 @@ func (s *Store) CurrentVersion() (kv.Version, error) { return kv.Version{}, nil 
 
 // SupportDeleteRange implements kv.Storage interface.
 func (s *Store) SupportDeleteRange() bool { return false }
+
+// Name implements kv.Storage interface.
+func (s *Store) Name() string { return "UtilMockStorage" }
+
+// Describe implements kv.Storage interface.
+func (s *Store) Describe() string {
+	return "UtilMockStorage is a mock Store implementation, only for unittests in util package"
+}
+
+// ShowStatus implements kv.Storage interface.
+func (s *Store) ShowStatus(ctx context.Context, key string) (interface{}, error) { return nil, nil }

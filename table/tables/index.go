@@ -46,7 +46,7 @@ func DecodeHandle(data []byte) (int64, error) {
 	var h int64
 	buf := bytes.NewBuffer(data)
 	err := binary.Read(buf, binary.BigEndian, &h)
-	return h, errors.Trace(err)
+	return h, err
 }
 
 // indexIter is for KV store index iterator.
@@ -76,7 +76,7 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 	buf := c.it.Key()[len(c.prefix):]
 	vv, err := codec.Decode(buf, len(c.idx.idxInfo.Columns))
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, 0, err
 	}
 	if len(vv) > len(c.idx.idxInfo.Columns) {
 		h = vv[len(vv)-1].GetInt64()
@@ -85,14 +85,14 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 		// If the index is unique and the value isn't nil, the handle is in value.
 		h, err = DecodeHandle(c.it.Value())
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return nil, 0, err
 		}
 		val = vv
 	}
 	// update new iter to next
 	err = c.it.Next()
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, 0, err
 	}
 	return
 }
@@ -188,7 +188,7 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 		key, err = codec.EncodeKey(sc, key, types.NewDatum(h))
 	}
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, false, err
 	}
 	return
 }
@@ -196,35 +196,50 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64,
-	opts ...*table.CreateIdxOpt) (int64, error) {
+func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...table.CreateIdxOptFunc) (int64, error) {
+	var opt table.CreateIdxOpt
+	for _, fn := range opts {
+		fn(&opt)
+	}
+	ss := opt.AssertionProto
 	writeBufs := ctx.GetSessionVars().GetWriteStmtBufs()
 	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	key, distinct, err := c.GenIndexKey(ctx.GetSessionVars().StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	// save the key buffer to reuse.
 	writeBufs.IndexKeyBuf = key
 	if !distinct {
 		// non-unique index doesn't need store value, write a '0' to reduce space
 		err = rm.Set(key, []byte{'0'})
-		return 0, errors.Trace(err)
+		if ss != nil {
+			ss.SetAssertion(key, kv.None)
+		}
+		return 0, err
+	}
+
+	if skipCheck {
+		err = rm.Set(key, EncodeHandle(h))
+		if ss != nil {
+			ss.SetAssertion(key, kv.None)
+		}
+		return 0, err
 	}
 
 	var value []byte
-	if !skipCheck {
-		value, err = rm.Get(key)
-	}
-
-	if skipCheck || kv.IsErrNotFound(err) {
+	value, err = rm.Get(key)
+	if kv.IsErrNotFound(err) {
 		err = rm.Set(key, EncodeHandle(h))
-		return 0, errors.Trace(err)
+		if ss != nil {
+			ss.SetAssertion(key, kv.NotExist)
+		}
+		return 0, err
 	}
 
 	handle, err := DecodeHandle(value)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	return handle, kv.ErrKeyExists
 }
@@ -233,7 +248,7 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64, ss kv.Transaction) error {
 	key, _, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = m.Delete(key)
 	if ss != nil {
@@ -245,14 +260,14 @@ func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues
 			ss.SetAssertion(key, kv.None)
 		}
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // Drop removes the KV index from store.
 func (c *index) Drop(rm kv.RetrieverMutator) error {
 	it, err := rm.Iter(c.prefix, c.prefix.PrefixNext())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer it.Close()
 
@@ -263,11 +278,11 @@ func (c *index) Drop(rm kv.RetrieverMutator) error {
 		}
 		err := rm.Delete(it.Key())
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = it.Next()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -277,13 +292,13 @@ func (c *index) Drop(rm kv.RetrieverMutator) error {
 func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues []types.Datum) (iter table.IndexIterator, hit bool, err error) {
 	key, _, err := c.GenIndexKey(sc, indexedValues, 0, nil)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, false, err
 	}
 
 	upperBound := c.prefix.PrefixNext()
 	it, err := r.Iter(key, upperBound)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, false, err
 	}
 	// check if hit
 	hit = false
@@ -298,7 +313,7 @@ func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) 
 	upperBound := c.prefix.PrefixNext()
 	it, err := r.Iter(c.prefix, upperBound)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return &indexIter{it: it, idx: c, prefix: c.prefix}, nil
 }
@@ -306,7 +321,7 @@ func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) 
 func (c *index) Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (bool, int64, error) {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
-		return false, 0, errors.Trace(err)
+		return false, 0, err
 	}
 
 	value, err := rm.Get(key)
@@ -314,18 +329,18 @@ func (c *index) Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, inde
 		return false, 0, nil
 	}
 	if err != nil {
-		return false, 0, errors.Trace(err)
+		return false, 0, err
 	}
 
 	// For distinct index, the value of key is handle.
 	if distinct {
 		handle, err := DecodeHandle(value)
 		if err != nil {
-			return false, 0, errors.Trace(err)
+			return false, 0, err
 		}
 
 		if handle != h {
-			return true, handle, errors.Trace(kv.ErrKeyExists)
+			return true, handle, kv.ErrKeyExists
 		}
 
 		return true, handle, nil

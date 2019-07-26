@@ -14,10 +14,17 @@
 package util
 
 import (
+	"bytes"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -112,4 +119,66 @@ func (s *testMiscSuite) TestCompatibleParseGCTime(c *C) {
 		_, err := CompatibleParseGCTime(value)
 		c.Assert(err, NotNil)
 	}
+}
+
+func (s *testMiscSuite) TestBasicFunc(c *C) {
+	// Test for GetStack.
+	b := GetStack()
+	c.Assert(len(b) < 4096, IsTrue)
+
+	// Test for WithRecovery.
+	var recover interface{}
+	WithRecovery(func() {
+		panic("test")
+	}, func(r interface{}) {
+		recover = r
+	})
+	c.Assert(recover, Equals, "test")
+
+	// Test for SyntaxError.
+	c.Assert(SyntaxError(nil), IsNil)
+	c.Assert(terror.ErrorEqual(SyntaxError(errors.New("test")), parser.ErrParse), IsTrue)
+	c.Assert(terror.ErrorEqual(SyntaxError(parser.ErrSyntax.GenWithStackByArgs()), parser.ErrSyntax), IsTrue)
+
+	// Test for SyntaxWarn.
+	c.Assert(SyntaxWarn(nil), IsNil)
+	c.Assert(terror.ErrorEqual(SyntaxWarn(errors.New("test")), parser.ErrParse), IsTrue)
+
+	// Test for ProcessInfo.
+	pi := ProcessInfo{
+		ID:      1,
+		User:    "test",
+		Host:    "www",
+		DB:      "db",
+		Command: mysql.ComSleep,
+		Plan:    nil,
+		Time:    time.Now(),
+		State:   1,
+		Info:    "test",
+		StmtCtx: &stmtctx.StatementContext{
+			MemTracker: memory.NewTracker(stringutil.StringerStr(""), -1),
+		},
+	}
+	row := pi.ToRowForShow(false)
+	row2 := pi.ToRowForShow(true)
+	c.Assert(row, DeepEquals, row2)
+	c.Assert(len(row), Equals, 8)
+	c.Assert(row[0], Equals, pi.ID)
+	c.Assert(row[1], Equals, pi.User)
+	c.Assert(row[2], Equals, pi.Host)
+	c.Assert(row[3], Equals, pi.DB)
+	c.Assert(row[4], Equals, "Sleep")
+	c.Assert(row[5], Equals, uint64(0))
+	c.Assert(row[6], Equals, "1")
+	c.Assert(row[7], Equals, "test")
+
+	row3 := pi.ToRow()
+	c.Assert(row3[:8], DeepEquals, row)
+	c.Assert(row3[8], Equals, int64(0))
+
+	// Test for RandomBuf.
+	buf := RandomBuf(5)
+	c.Assert(len(buf), Equals, 5)
+	c.Assert(bytes.Contains(buf, []byte("$")), IsFalse)
+	c.Assert(bytes.Contains(buf, []byte{0}), IsFalse)
 }

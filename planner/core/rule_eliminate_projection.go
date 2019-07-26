@@ -14,6 +14,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -104,7 +106,7 @@ type projectionEliminater struct {
 }
 
 // optimize implements the logicalOptRule interface.
-func (pe *projectionEliminater) optimize(lp LogicalPlan) (LogicalPlan, error) {
+func (pe *projectionEliminater) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false)
 	return root, nil
 }
@@ -208,8 +210,10 @@ func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column)
 }
 
 func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, arg := range p.WindowFuncDesc.Args {
-		resolveExprAndReplace(arg, replace)
+	for _, desc := range p.WindowFuncDescs {
+		for _, arg := range desc.Args {
+			resolveExprAndReplace(arg, replace)
+		}
 	}
 	for _, item := range p.PartitionBy {
 		resolveColumnAndReplace(item.Col, replace)
@@ -217,4 +221,8 @@ func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column
 	for _, item := range p.OrderBy {
 		resolveColumnAndReplace(item.Col, replace)
 	}
+}
+
+func (*projectionEliminater) name() string {
+	return "projection_eliminate"
 }

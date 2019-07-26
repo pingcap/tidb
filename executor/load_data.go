@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -34,12 +36,15 @@ type LoadDataExec struct {
 	baseExecutor
 
 	IsLocal      bool
+	OnDuplicate  ast.OnDuplicateKeyHandlingType
 	loadDataInfo *LoadDataInfo
 }
 
+var insertValuesLabel fmt.Stringer = stringutil.StringerStr("InsertValues")
+
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, insertValuesLabel), Table: tbl}
 	return &LoadDataInfo{
 		row:          row,
 		InsertValues: insertVal,
@@ -49,11 +54,15 @@ func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table,
 }
 
 // Next implements the Executor Next interface.
-func (e *LoadDataExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return errors.New("Load Data: don't support load data without local field")
+	}
+	// TODO: support load data with replace field.
+	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
+		return errors.New("Load Data: don't support load data with replace field")
 	}
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
@@ -98,11 +107,18 @@ type LoadDataInfo struct {
 	LinesInfo   *ast.LinesClause
 	IgnoreLines uint64
 	Ctx         sessionctx.Context
+	rows        [][]types.Datum
 }
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
 func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 	e.maxRowsInBatch = limit
+	if uint64(cap(e.rows)) < limit {
+		e.rows = make([][]types.Datum, 0, limit)
+		for i := 0; uint64(i) < limit; i++ {
+			e.rows = append(e.rows, make([]types.Datum, len(e.Table.Cols())))
+		}
+	}
 }
 
 // getValidData returns prevData and curData that starts from starting symbol.
@@ -117,7 +133,7 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 	prevLen := len(prevData)
 	if prevLen > 0 {
 		// starting symbol in the prevData
-		idx := strings.Index(string(prevData), e.LinesInfo.Starting)
+		idx := strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
 		if idx != -1 {
 			return prevData[idx:], curData
 		}
@@ -128,14 +144,14 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 			restStart = curData[:startingLen-1]
 		}
 		prevData = append(prevData, restStart...)
-		idx = strings.Index(string(prevData), e.LinesInfo.Starting)
+		idx = strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
 		if idx != -1 {
 			return prevData[idx:prevLen], curData
 		}
 	}
 
 	// starting symbol in the curData
-	idx := strings.Index(string(curData), e.LinesInfo.Starting)
+	idx := strings.Index(string(hack.String(curData)), e.LinesInfo.Starting)
 	if idx != -1 {
 		return nil, curData[idx:]
 	}
@@ -164,7 +180,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 	}
 	endIdx := -1
 	if len(curData) >= curStartIdx {
-		endIdx = strings.Index(string(curData[curStartIdx:]), e.LinesInfo.Terminated)
+		endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
 	}
 	if endIdx == -1 {
 		// no terminated symbol
@@ -174,7 +190,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 		// terminated symbol in the middle of prevData and curData
 		curData = append(prevData, curData...)
-		endIdx = strings.Index(string(curData[startingLen:]), e.LinesInfo.Terminated)
+		endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
 			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
@@ -191,7 +207,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 	// terminated symbol in the curData
 	prevData = append(prevData, curData[:nextDataIdx]...)
-	endIdx = strings.Index(string(prevData[startingLen:]), e.LinesInfo.Terminated)
+	endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
 	}
@@ -205,7 +221,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 // If it has the rest of data isn't completed the processing, then it returns without completed data.
 // If the number of inserted rows reaches the batchRows, then the second return value is true.
 // If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
-func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error) {
+func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte) ([]byte, bool, error) {
 	if len(prevData) == 0 && len(curData) == 0 {
 		return nil, false, nil
 	}
@@ -215,7 +231,6 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		isEOF = true
 		prevData, curData = curData, prevData
 	}
-	rows := make([][]types.Datum, 0, e.maxRowsInBatch)
 	for len(curData) > 0 {
 		line, curData, hasStarting = e.getLine(prevData, curData)
 		prevData = nil
@@ -242,23 +257,34 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		}
 		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, false, err
 		}
-		rows = append(rows, e.colsToRow(cols))
+		e.colsToRow(ctx, cols)
 		e.rowCount++
+		e.curBatchCnt++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
-			logutil.Logger(context.Background()).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
+			logutil.BgLogger().Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
 				zap.Uint64("totalRows", e.rowCount))
 			break
 		}
 	}
-	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(rows)))
-	err := e.batchCheckAndInsert(rows, e.addRecordLD)
-	if err != nil {
-		return nil, reachLimit, errors.Trace(err)
-	}
 	return curData, reachLimit, nil
+}
+
+// CheckAndInsertOneBatch is used to commit one transaction batch full filled data
+func (e *LoadDataInfo) CheckAndInsertOneBatch() error {
+	var err error
+	if e.curBatchCnt == 0 {
+		return err
+	}
+	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(e.curBatchCnt)
+	err = e.batchCheckAndInsert(e.rows[0:e.curBatchCnt], e.addRecordLD)
+	if err != nil {
+		return err
+	}
+	e.curBatchCnt = 0
+	return err
 }
 
 // SetMessage sets info message(ERR_LOAD_INFO) generated by LOAD statement, it is public because of the special way that
@@ -273,9 +299,15 @@ func (e *LoadDataInfo) SetMessage() {
 	e.ctx.GetSessionVars().StmtCtx.SetMessage(msg)
 }
 
-func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
+func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datum {
+	totalCols := e.Table.Cols()
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
+			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
+			if types.IsTypeTime(totalCols[i].Tp) && mysql.HasNotNullFlag(totalCols[i].Flag) {
+				e.row[i].SetMysqlTime(types.CurrentTime(totalCols[i].Tp))
+				continue
+			}
 			e.row[i].SetNull()
 			continue
 		}
@@ -287,10 +319,9 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 			e.row[i].SetString(string(cols[i].str))
 		}
 	}
-	row, err := e.getRow(e.row)
+	row, err := e.getRowInPlace(ctx, e.row, e.rows[e.curBatchCnt])
 	if err != nil {
-		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+		e.handleWarning(err)
 		return nil
 	}
 	return row
@@ -302,8 +333,7 @@ func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
 	}
 	h, err := e.addRecord(row)
 	if err != nil {
-		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+		e.handleWarning(err)
 	}
 	return h, nil
 }

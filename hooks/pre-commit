@@ -1,6 +1,8 @@
 #!/bin/bash
 # This file modified from k8s
 # https://github.com/kubernetes/kubernetes/blob/master/hooks/pre-commit
+# Now It's removed, The Reason is https://github.com/kubernetes/community/issues/729
+# The PR is https://github.com/kubernetes/kubernetes/pull/47673
 
 # How to use this hook?
 # ln -s hooks/pre-commit .git/hooks/

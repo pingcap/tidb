@@ -14,7 +14,6 @@
 package tablecodec
 
 import (
-	"bytes"
 	"encoding/binary"
 	"math"
 	"time"
@@ -210,14 +209,13 @@ func DecodeRowKey(key kv.Key) (int64, error) {
 }
 
 // EncodeValue encodes a go value to bytes.
-func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) {
+func EncodeValue(sc *stmtctx.StatementContext, b []byte, raw types.Datum) ([]byte, error) {
 	var v types.Datum
 	err := flatten(sc, raw, &v)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	b, err := codec.EncodeValue(sc, nil, v)
-	return b, errors.Trace(err)
+	return codec.EncodeValue(sc, b, v)
 }
 
 // EncodeRow encode row data and column ids into a slice of byte.
@@ -237,12 +235,12 @@ func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, 
 		values[2*i].SetInt64(id)
 		err := flatten(sc, c, &values[2*i+1])
 		if err != nil {
-			return nil, errors.Trace(err)
+			return valBuf, errors.Trace(err)
 		}
 	}
 	if len(values) == 0 {
 		// We could not set nil value into kv.
-		return []byte{codec.NilFlag}, nil
+		return append(valBuf, codec.NilFlag), nil
 	}
 	return codec.EncodeValue(sc, valBuf, values...)
 }
@@ -372,25 +370,23 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 		cnt int
 		b   []byte
 		err error
+		cid int64
 	)
 	row := make([][]byte, len(colIDs))
 	for len(data) > 0 && cnt < len(colIDs) {
 		// Get col id.
-		b, data, err = codec.CutOne(data)
+		data, cid, err = codec.CutColumnID(data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		_, cid, err := codec.DecodeOne(b)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+
 		// Get col value.
 		b, data, err = codec.CutOne(data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		id := cid.GetInt64()
-		offset, ok := colIDs[id]
+
+		offset, ok := colIDs[cid]
 		if ok {
 			row[offset] = b
 			cnt++
@@ -603,25 +599,6 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	startKey = EncodeIndexSeekKey(tableID, indexID, nil)
 	endKey = EncodeIndexSeekKey(tableID, indexID, []byte{255})
 	return
-}
-
-type keyRangeSorter struct {
-	ranges []kv.KeyRange
-}
-
-func (r *keyRangeSorter) Len() int {
-	return len(r.ranges)
-}
-
-func (r *keyRangeSorter) Less(i, j int) bool {
-	a := r.ranges[i]
-	b := r.ranges[j]
-	cmp := bytes.Compare(a.StartKey, b.StartKey)
-	return cmp < 0
-}
-
-func (r *keyRangeSorter) Swap(i, j int) {
-	r.ranges[i], r.ranges[j] = r.ranges[j], r.ranges[i]
 }
 
 const (

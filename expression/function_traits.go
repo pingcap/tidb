@@ -42,6 +42,7 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.GetVar:    {},
 	ast.GetParam:  {},
 	ast.Benchmark: {},
+	ast.DayName:   {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.
@@ -49,6 +50,48 @@ var unFoldableFunctions = map[string]struct{}{
 // are in child scope of an outer function, and the outer function is recursively folding its children.
 var DisableFoldFunctions = map[string]struct{}{
 	ast.Benchmark: {},
+}
+
+// IllegalFunctions4GeneratedColumns stores functions that is illegal for generated columns.
+// See https://github.com/mysql/mysql-server/blob/5.7/mysql-test/suite/gcol/inc/gcol_blocked_sql_funcs_main.inc for details
+var IllegalFunctions4GeneratedColumns = map[string]struct{}{
+	ast.ConnectionID:     {},
+	ast.LoadFile:         {},
+	ast.LastInsertId:     {},
+	ast.Rand:             {},
+	ast.UUID:             {},
+	ast.UUIDShort:        {},
+	ast.Curdate:          {},
+	ast.CurrentDate:      {},
+	ast.Curtime:          {},
+	ast.CurrentTime:      {},
+	ast.CurrentTimestamp: {},
+	ast.LocalTime:        {},
+	ast.LocalTimestamp:   {},
+	ast.Now:              {},
+	ast.UnixTimestamp:    {},
+	ast.UTCDate:          {},
+	ast.UTCTime:          {},
+	ast.UTCTimestamp:     {},
+	ast.Benchmark:        {},
+	ast.CurrentUser:      {},
+	ast.Database:         {},
+	ast.FoundRows:        {},
+	ast.GetLock:          {},
+	ast.IsFreeLock:       {},
+	ast.IsUsedLock:       {},
+	ast.MasterPosWait:    {},
+	ast.NameConst:        {},
+	ast.ReleaseLock:      {},
+	ast.RowCount:         {},
+	ast.Schema:           {},
+	ast.SessionUser:      {},
+	ast.Sleep:            {},
+	ast.SystemUser:       {},
+	ast.User:             {},
+	ast.Values:           {},
+	ast.Encrypt:          {},
+	ast.Version:          {},
 }
 
 // DeferredFunctions stores non-deterministic functions, which can be deferred only when the plan cache is enabled.
@@ -112,4 +155,12 @@ var mutableEffectsFunctions = map[string]struct{}{
 	ast.SetVar:      {},
 	ast.GetVar:      {},
 	ast.AnyValue:    {},
+}
+
+// some functions like "get_lock" and "release_lock" currently do NOT have
+// right implementations, but may have noop ones(like with any inputs, always return 1)
+// if apps really need these "funcs" to run, we offer sys var(tidb_enable_noop_functions) to enable noop usage
+var noopFuncs = map[string]struct{}{
+	ast.GetLock:     {},
+	ast.ReleaseLock: {},
 }

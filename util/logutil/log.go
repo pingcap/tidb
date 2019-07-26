@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
@@ -130,30 +131,9 @@ func stringToLogLevel(level string) log.Level {
 	return defaultLogLevel
 }
 
-// logTypeToColor converts the Level to a color string.
-func logTypeToColor(level log.Level) string {
-	switch level {
-	case log.DebugLevel:
-		return "[0;37"
-	case log.InfoLevel:
-		return "[0;36"
-	case log.WarnLevel:
-		return "[0;33"
-	case log.ErrorLevel:
-		return "[0;31"
-	case log.FatalLevel:
-		return "[0;31"
-	case log.PanicLevel:
-		return "[0;31"
-	}
-
-	return "[0;37"
-}
-
 // textFormatter is for compatibility with ngaut/log
 type textFormatter struct {
 	DisableTimestamp bool
-	EnableColors     bool
 	EnableEntryOrder bool
 }
 
@@ -164,11 +144,6 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 		b = entry.Buffer
 	} else {
 		b = &bytes.Buffer{}
-	}
-
-	if f.EnableColors {
-		colorStr := logTypeToColor(entry.Level)
-		fmt.Fprintf(b, "\033%sm ", colorStr)
 	}
 
 	if !f.DisableTimestamp {
@@ -200,15 +175,14 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 
 	b.WriteByte('\n')
 
-	if f.EnableColors {
-		b.WriteString("\033[0m")
-	}
 	return b.Bytes(), nil
 }
 
 const (
 	// SlowLogTimeFormat is the time format for slow log.
-	SlowLogTimeFormat = "2006-01-02-15:04:05.999999999 -0700"
+	SlowLogTimeFormat = time.RFC3339Nano
+	// OldSlowLogTimeFormat is the first version of the the time format for slow log, This is use for compatibility.
+	OldSlowLogTimeFormat = "2006-01-02-15:04:05.999999999 -0700"
 )
 
 type slowLogFormatter struct{}
@@ -231,22 +205,6 @@ func stringToLogFormatter(format string, disableTimestamp bool) log.Formatter {
 	case "text":
 		return &textFormatter{
 			DisableTimestamp: disableTimestamp,
-		}
-	case "json":
-		return &log.JSONFormatter{
-			TimestampFormat:  defaultLogTimeFormat,
-			DisableTimestamp: disableTimestamp,
-		}
-	case "console":
-		return &log.TextFormatter{
-			FullTimestamp:    true,
-			TimestampFormat:  defaultLogTimeFormat,
-			DisableTimestamp: disableTimestamp,
-		}
-	case "highlight":
-		return &textFormatter{
-			DisableTimestamp: disableTimestamp,
-			EnableColors:     true,
 		}
 	default:
 		return &textFormatter{}
@@ -369,6 +327,11 @@ func Logger(ctx context.Context) *zap.Logger {
 	if ctxlogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
 		return ctxlogger
 	}
+	return zaplog.L()
+}
+
+// BgLogger is alias of `logutil.BgLogger()`
+func BgLogger() *zap.Logger {
 	return zaplog.L()
 }
 

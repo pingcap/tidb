@@ -53,11 +53,11 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"create table t(id int auto_increment default null, primary key (id))", true, nil},
 		{"create table t(id int default null auto_increment, primary key (id))", true, nil},
 		{"create table t(id int not null auto_increment)", true,
-			errors.New("Incorrect table definition; there can be only one auto column and it must be defined as a key")},
+			errors.New("[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")},
 		{"create table t(id int not null auto_increment, c int auto_increment, key (id, c))", true,
-			errors.New("Incorrect table definition; there can be only one auto column and it must be defined as a key")},
+			errors.New("[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")},
 		{"create table t(id int not null auto_increment, c int, key (c, id))", true,
-			errors.New("Incorrect table definition; there can be only one auto column and it must be defined as a key")},
+			errors.New("[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")},
 		{"create table t(id decimal auto_increment, key (id))", true,
 			errors.New("Incorrect column specifier for column 'id'")},
 		{"create table t(id float auto_increment, key (id))", true, nil},
@@ -126,6 +126,9 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"drop table `t `", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create database ``", true, errors.New("[ddl:1102]Incorrect database name ''")},
 		{"create database `test `", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
+		{"alter database collate = 'utf8mb4_bin'", true, nil},
+		{"alter database `` collate = 'utf8mb4_bin'", true, errors.New("[ddl:1102]Incorrect database name ''")},
+		{"alter database `test ` collate = 'utf8mb4_bin'", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
 		{"drop database ``", true, errors.New("[ddl:1102]Incorrect database name ''")},
 		{"drop database `test `", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
 		{"alter table `t ` add column c int", true, errors.New("[ddl:1103]Incorrect table name 't '")},
@@ -198,6 +201,11 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
+
+		// issue 9464
+		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
+		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
+		{"create table t (a DOUBLE NULL, b_sto DOUBLE GENERATED ALWAYS AS (a + 2) STORED UNIQUE KEY NOT NULL PRIMARY KEY);", false, nil},
 	}
 
 	store, dom, err := newStoreWithBootstrap()
@@ -211,7 +219,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	ctx := se.(sessionctx.Context)
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	for _, tt := range tests {
 		stmts, err1 := session.Parse(ctx, tt.sql)
 		c.Assert(err1, IsNil)

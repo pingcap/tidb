@@ -82,6 +82,11 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	if !ok {
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
 	}
+	if !ctx.GetSessionVars().EnableNoopFuncs {
+		if _, ok := noopFuncs[funcName]; ok {
+			return nil, ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+		}
+	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
 	f, err := fc.getFunction(ctx, funcArgs)
@@ -163,6 +168,20 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 		}
 	}
 	return false
+}
+
+// ConstItem implements Expression interface.
+func (sf *ScalarFunction) ConstItem() bool {
+	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
+	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
+		return false
+	}
+	for _, arg := range sf.GetArgs() {
+		if !arg.ConstItem() {
+			return false
+		}
+	}
+	return true
 }
 
 // Decorrelate implements Expression interface.

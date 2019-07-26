@@ -286,3 +286,263 @@ func (s *testSuite3) TestAllowInvalidDates(c *C) {
 	runWithMode("STRICT_TRANS_TABLES,ALLOW_INVALID_DATES")
 	runWithMode("ALLOW_INVALID_DATES")
 }
+
+func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1(id int primary key auto_increment, n int);`)
+	tk.MustExec(`create table t2(id int unsigned primary key auto_increment, n int);`)
+	tk.MustExec(`create table t3(id tinyint primary key auto_increment, n int);`)
+	tk.MustExec(`create table t4(id int primary key, n float auto_increment, key I_n(n));`)
+	tk.MustExec(`create table t5(id int primary key, n float unsigned auto_increment, key I_n(n));`)
+	tk.MustExec(`create table t6(id int primary key, n double auto_increment, key I_n(n));`)
+	tk.MustExec(`create table t7(id int primary key, n double unsigned auto_increment, key I_n(n));`)
+
+	tests := []struct {
+		insert string
+		query  string
+		result [][]interface{}
+	}{
+		{
+			`insert into t1(id, n) values(1, 1)`,
+			`select * from t1 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`insert into t1(n) values(2)`,
+			`select * from t1 where id = 2`,
+			testkit.Rows(`2 2`),
+		},
+		{
+			`insert into t1(n) values(3)`,
+			`select * from t1 where id = 3`,
+			testkit.Rows(`3 3`),
+		},
+		{
+			`insert into t1(id, n) values(-1, 4)`,
+			`select * from t1 where id = -1`,
+			testkit.Rows(`-1 4`),
+		},
+		{
+			`insert into t1(n) values(5)`,
+			`select * from t1 where id = 4`,
+			testkit.Rows(`4 5`),
+		},
+		{
+			`insert into t1(id, n) values('5', 6)`,
+			`select * from t1 where id = 5`,
+			testkit.Rows(`5 6`),
+		},
+		{
+			`insert into t1(n) values(7)`,
+			`select * from t1 where id = 6`,
+			testkit.Rows(`6 7`),
+		},
+		{
+			`insert into t1(id, n) values(7.4, 8)`,
+			`select * from t1 where id = 7`,
+			testkit.Rows(`7 8`),
+		},
+		{
+			`insert into t1(id, n) values(7.5, 9)`,
+			`select * from t1 where id = 8`,
+			testkit.Rows(`8 9`),
+		},
+		{
+			`insert into t1(n) values(9)`,
+			`select * from t1 where id = 9`,
+			testkit.Rows(`9 9`),
+		},
+		{
+			`insert into t2(id, n) values(1, 1)`,
+			`select * from t2 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`insert into t2(n) values(2)`,
+			`select * from t2 where id = 2`,
+			testkit.Rows(`2 2`),
+		},
+		{
+			`insert into t2(n) values(3)`,
+			`select * from t2 where id = 3`,
+			testkit.Rows(`3 3`),
+		},
+		{
+			`insert into t3(id, n) values(1, 1)`,
+			`select * from t3 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`insert into t3(n) values(2)`,
+			`select * from t3 where id = 2`,
+			testkit.Rows(`2 2`),
+		},
+		{
+			`insert into t3(n) values(3)`,
+			`select * from t3 where id = 3`,
+			testkit.Rows(`3 3`),
+		},
+		{
+			`insert into t3(id, n) values(-1, 4)`,
+			`select * from t3 where id = -1`,
+			testkit.Rows(`-1 4`),
+		},
+		{
+			`insert into t3(n) values(5)`,
+			`select * from t3 where id = 4`,
+			testkit.Rows(`4 5`),
+		},
+		{
+			`insert into t4(id, n) values(1, 1)`,
+			`select * from t4 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`insert into t4(id) values(2)`,
+			`select * from t4 where id = 2`,
+			testkit.Rows(`2 2`),
+		},
+		{
+			`insert into t4(id, n) values(3, -1)`,
+			`select * from t4 where id = 3`,
+			testkit.Rows(`3 -1`),
+		},
+		{
+			`insert into t4(id) values(4)`,
+			`select * from t4 where id = 4`,
+			testkit.Rows(`4 3`),
+		},
+		{
+			`insert into t4(id, n) values(5, 5.5)`,
+			`select * from t4 where id = 5`,
+			testkit.Rows(`5 5.5`),
+		},
+		{
+			`insert into t4(id) values(6)`,
+			`select * from t4 where id = 6`,
+			testkit.Rows(`6 7`),
+		},
+		{
+			`insert into t4(id, n) values(7, '7.7')`,
+			`select * from t4 where id = 7`,
+			testkit.Rows(`7 7.7`),
+		},
+		{
+			`insert into t4(id) values(8)`,
+			`select * from t4 where id = 8`,
+			testkit.Rows(`8 9`),
+		},
+		{
+			`insert into t4(id, n) values(9, 10.4)`,
+			`select * from t4 where id = 9`,
+			testkit.Rows(`9 10.4`),
+		},
+		{
+			`insert into t4(id) values(10)`,
+			`select * from t4 where id = 10`,
+			testkit.Rows(`10 11`),
+		},
+		{
+			`insert into t5(id, n) values(1, 1)`,
+			`select * from t5 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`insert into t5(id) values(2)`,
+			`select * from t5 where id = 2`,
+			testkit.Rows(`2 2`),
+		},
+		{
+			`insert into t5(id) values(3)`,
+			`select * from t5 where id = 3`,
+			testkit.Rows(`3 3`),
+		},
+		{
+			`insert into t6(id, n) values(1, 1)`,
+			`select * from t6 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`insert into t6(id) values(2)`,
+			`select * from t6 where id = 2`,
+			testkit.Rows(`2 2`),
+		},
+		{
+			`insert into t6(id, n) values(3, -1)`,
+			`select * from t6 where id = 3`,
+			testkit.Rows(`3 -1`),
+		},
+		{
+			`insert into t6(id) values(4)`,
+			`select * from t6 where id = 4`,
+			testkit.Rows(`4 3`),
+		},
+		{
+			`insert into t6(id, n) values(5, 5.5)`,
+			`select * from t6 where id = 5`,
+			testkit.Rows(`5 5.5`),
+		},
+		{
+			`insert into t6(id) values(6)`,
+			`select * from t6 where id = 6`,
+			testkit.Rows(`6 7`),
+		},
+		{
+			`insert into t6(id, n) values(7, '7.7')`,
+			`select * from t4 where id = 7`,
+			testkit.Rows(`7 7.7`),
+		},
+		{
+			`insert into t6(id) values(8)`,
+			`select * from t4 where id = 8`,
+			testkit.Rows(`8 9`),
+		},
+		{
+			`insert into t6(id, n) values(9, 10.4)`,
+			`select * from t6 where id = 9`,
+			testkit.Rows(`9 10.4`),
+		},
+		{
+			`insert into t6(id) values(10)`,
+			`select * from t6 where id = 10`,
+			testkit.Rows(`10 11`),
+		},
+		{
+			`insert into t7(id, n) values(1, 1)`,
+			`select * from t7 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`insert into t7(id) values(2)`,
+			`select * from t7 where id = 2`,
+			testkit.Rows(`2 2`),
+		},
+		{
+			`insert into t7(id) values(3)`,
+			`select * from t7 where id = 3`,
+			testkit.Rows(`3 3`),
+		},
+	}
+
+	for _, tt := range tests {
+		tk.MustExec(tt.insert)
+		tk.MustQuery(tt.query).Check(tt.result)
+	}
+
+}
+
+func (s *testSuite3) TestPartitionInsertOnDuplicate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int,b int,primary key(a,b)) partition by range(a) (partition p0 values less than (100),partition p1 values less than (1000))`)
+	tk.MustExec(`insert into t1 set a=1, b=1`)
+	tk.MustExec(`insert into t1 set a=1,b=1 on duplicate key update a=1,b=1`)
+	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`create table t2 (a int,b int,primary key(a,b)) partition by hash(a) partitions 4`)
+	tk.MustExec(`insert into t2 set a=1,b=1;`)
+	tk.MustExec(`insert into t2 set a=1,b=1 on duplicate key update a=1,b=1`)
+	tk.MustQuery(`select * from t2`).Check(testkit.Rows("1 1"))
+
+}
