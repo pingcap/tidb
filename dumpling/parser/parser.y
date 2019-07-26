@@ -387,6 +387,7 @@ import (
 	pageSym		"PAGE"
 	password	"PASSWORD"
 	partial		"PARTIAL"
+	partitioning	"PARTITIONING"
 	partitions	"PARTITIONS"
 	pipesAsOr
 	plugins		"PLUGINS"
@@ -404,6 +405,7 @@ import (
 	recover 	"RECOVER"
 	redundant	"REDUNDANT"
 	reload		"RELOAD"
+	remove 		"REMOVE"
 	repeatable	"REPEATABLE"
 	respect		"RESPECT"
 	replication	"REPLICATION"
@@ -693,6 +695,7 @@ import (
 %type   <item>
 	AdminShowSlow			"Admin Show Slow statement"
 	AlterAlgorithm			"Alter table algorithm"
+	AlterTablePartitionOpt		"Alter table partition option"
 	AlterTableSpec			"Alter table specification"
 	AlterTableSpecList		"Alter table specification list"
 	AlterTableSpecListOpt		"Alter table specification list optional"
@@ -1118,14 +1121,11 @@ Start:
  * See https://dev.mysql.com/doc/refman/5.7/en/alter-table.html
  *******************************************************************************************/
 AlterTableStmt:
-	"ALTER" IgnoreOptional "TABLE" TableName AlterTableSpecListOpt PartitionOpt
+	"ALTER" IgnoreOptional "TABLE" TableName AlterTableSpecListOpt AlterTablePartitionOpt
 	{
 		specs := $5.([]*ast.AlterTableSpec)
 		if $6 != nil {
-			specs = append(specs, &ast.AlterTableSpec{
-				Tp:        ast.AlterTablePartition,
-				Partition: $6.(*ast.PartitionOptions),
-			})
+			specs = append(specs, $6.(*ast.AlterTableSpec))
 		}
 		$$ = &ast.AlterTableStmt{
 			Table: $4.(*ast.TableName),
@@ -1145,6 +1145,28 @@ AlterTableStmt:
 			IndexFlag: true,
 			AnalyzeOpts: $10.([]ast.AnalyzeOpt),
 		}
+	}
+
+AlterTablePartitionOpt:
+	PartitionOpt
+        {
+        	if $1 != nil {
+	        	$$ = &ast.AlterTableSpec{
+				Tp: ast.AlterTablePartition,
+				Partition: $1.(*ast.PartitionOptions),
+			}
+		} else {
+			$$ = nil
+		}
+
+	}
+|	"REMOVE" "PARTITIONING"
+	{
+        	$$ = &ast.AlterTableSpec{
+        		Tp: ast.AlterTableRemovePartitioning,
+        	}
+		yylex.AppendError(yylex.Errorf("The REMOVE PARTITIONING clause is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 
 AlterTableSpec:
@@ -3707,7 +3729,7 @@ UnReservedKeyword:
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "PRECEDING" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "SLOW" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 | "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT" | "INCREMENTAL" | "CPU" | "MEMORY" | "BLOCK" | "IO" | "CONTEXT" | "SWITCHES" | "PAGE" | "FAULTS" | "IPC" | "SWAPS" | "SOURCE"
-| "TRADITIONAL" | "SQL_BUFFER_RESULT" | "DIRECTORY" | "HISTORY" | "LIST" | "NODEGROUP" | "SYSTEM_TIME" | "PARTIAL" | "SIMPLE"
+| "TRADITIONAL" | "SQL_BUFFER_RESULT" | "DIRECTORY" | "HISTORY" | "LIST" | "NODEGROUP" | "SYSTEM_TIME" | "PARTIAL" | "SIMPLE" | "REMOVE" | "PARTITIONING"
 
 
 TiDBKeyword:
