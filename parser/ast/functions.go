@@ -200,6 +200,7 @@ const (
 	MakeSet         = "make_set"
 	Mid             = "mid"
 	Oct             = "oct"
+	OctetLength     = "octet_length"
 	Ord             = "ord"
 	Position        = "position"
 	Quote           = "quote"
