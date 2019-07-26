@@ -441,18 +441,36 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 # Cop_proc_avg: 0.1 Cop_proc_p90: 0.2 Cop_proc_max: 0.03 Cop_proc_addr: 127.0.0.1:20160
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8 Cop_wait_addr: 0.0.0.0:20160
 # Mem_max: 70724
+# Succ: true
 select * from t_slim;`))
-	c.Assert(f.Close(), IsNil)
+	c.Assert(f.Sync(), IsNil)
 	c.Assert(err, IsNil)
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
+		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|select * from t_slim;"))
+
+	// Test for long query.
+	_, err = f.Write([]byte(`
+# Time: 2019-02-13T19:33:56.571953+08:00
+`))
+	c.Assert(err, IsNil)
+	sql := "select * from "
+	for len(sql) < 5000 {
+		sql += "abcdefghijklmnopqrstuvwxyz_1234567890_qwertyuiopasdfghjklzxcvbnm"
+	}
+	sql += ";"
+	_, err = f.Write([]byte(sql))
+	c.Assert(err, IsNil)
+	c.Assert(f.Close(), IsNil)
+	re = tk.MustQuery("select query from information_schema.slow_query order by time desc limit 1")
+	rows := re.Rows()
+	c.Assert(rows[0][0], Equals, sql)
 }
 
 func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
