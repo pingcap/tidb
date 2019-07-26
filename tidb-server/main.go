@@ -189,8 +189,9 @@ func exit() {
 func syncLog() {
 	if err := log.Sync(); err != nil {
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
-		os.Exit(1)
+		// os.Exit(1)
 	}
+	// os.Exit(0)
 }
 
 func setCPUAffinity() {
