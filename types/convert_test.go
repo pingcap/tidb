@@ -828,24 +828,26 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 
 func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 	var tests = []struct {
-		In  string
+		In  interface{}
 		Out float64
+		ty  json.TypeCode
 	}{
-		{`{}`, 0},
-		{`[]`, 0},
-		{`3`, 3},
-		{`-3`, -3},
-		{`4.5`, 4.5},
-		{`true`, 1},
-		{`false`, 0},
-		{`null`, 0},
-		{`"hello"`, 0},
-		{`"123.456hello"`, 123.456},
-		{`"1234"`, 1234},
+		{make(map[string]interface{}, 0), 0, json.TypeCodeObject},
+		{make([]interface{}, 0), 0, json.TypeCodeArray},
+		{int64(3), 3, json.TypeCodeInt64},
+		{int64(-3), -3, json.TypeCodeInt64},
+		{uint64(1 << 63), 1 << 63, json.TypeCodeUint64},
+		{float64(4.5), 4.5, json.TypeCodeFloat64},
+		{true, 1, json.TypeCodeLiteral},
+		{false, 0, json.TypeCodeLiteral},
+		{nil, 0, json.TypeCodeLiteral},
+		{"hello", 0, json.TypeCodeString},
+		{"123.456hello", 123.456, json.TypeCodeString},
+		{"1234", 1234, json.TypeCodeString},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseBinaryFromString(tt.In)
-		c.Assert(err, IsNil)
+		j := json.CreateBinary(tt.In)
+		c.Assert(j.TypeCode, Equals, tt.ty)
 		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)
 	}

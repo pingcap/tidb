@@ -498,9 +498,9 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	baseSchemaProducer
 
-	ColTasks      []AnalyzeColumnsTask
-	IdxTasks      []AnalyzeIndexTask
-	MaxNumBuckets uint64
+	ColTasks []AnalyzeColumnsTask
+	IdxTasks []AnalyzeIndexTask
+	Opts     map[ast.AnalyzeOptionType]uint64
 }
 
 // LoadData represents a loaddata plan.

@@ -466,6 +466,7 @@ var funcs = map[string]functionClass{
 	ast.Mid:             &substringFunctionClass{baseFunctionClass{ast.Mid, 3, 3}},
 	ast.MakeSet:         &makeSetFunctionClass{baseFunctionClass{ast.MakeSet, 2, -1}},
 	ast.Oct:             &octFunctionClass{baseFunctionClass{ast.Oct, 1, 1}},
+	ast.OctetLength:     &lengthFunctionClass{baseFunctionClass{ast.OctetLength, 1, 1}},
 	ast.Ord:             &ordFunctionClass{baseFunctionClass{ast.Ord, 1, 1}},
 	ast.Position:        &locateFunctionClass{baseFunctionClass{ast.Position, 2, 2}},
 	ast.Quote:           &quoteFunctionClass{baseFunctionClass{ast.Quote, 1, 1}},
