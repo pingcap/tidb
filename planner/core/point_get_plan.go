@@ -223,7 +223,6 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
 				return nil
 			}
-			return nil
 		}
 		cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &handlePair.value)
 		if err != nil {
