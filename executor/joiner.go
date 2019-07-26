@@ -179,7 +179,7 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColsLen int) (bool,
 	if !j.outerIsRight {
 		innerColOffset, outerColOffset = outerColsLen, 0
 	}
-	return chunk.CopySelectedJoinRows(input, innerColOffset, outerColOffset, j.selected, output), nil
+	return chunk.CopySelectedJoinRows(input, innerColOffset, outerColOffset, j.selected, output)
 }
 
 type semiJoiner struct {

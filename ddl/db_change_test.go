@@ -1058,3 +1058,16 @@ func (s *testStateChangeSuite) TestParallelAlterSchemaCharsetAndCollate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(sql).Check(testkit.Rows("utf8mb4 utf8mb4_general_ci"))
 }
+
+// TestParallelTruncateTableAndAddColumn tests add column when truncate table.
+func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumn(c *C) {
+	sql1 := "truncate table t"
+	sql2 := "alter table t add column c3 int"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, NotNil)
+		c.Assert(err2.Error(), Equals, "[domain:2]Information schema is changed. [try again later]")
+
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
