@@ -133,7 +133,7 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 	prevLen := len(prevData)
 	if prevLen > 0 {
 		// starting symbol in the prevData
-		idx := strings.Index(string(prevData), e.LinesInfo.Starting)
+		idx := strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
 		if idx != -1 {
 			return prevData[idx:], curData
 		}
@@ -144,14 +144,14 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 			restStart = curData[:startingLen-1]
 		}
 		prevData = append(prevData, restStart...)
-		idx = strings.Index(string(prevData), e.LinesInfo.Starting)
+		idx = strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
 		if idx != -1 {
 			return prevData[idx:prevLen], curData
 		}
 	}
 
 	// starting symbol in the curData
-	idx := strings.Index(string(curData), e.LinesInfo.Starting)
+	idx := strings.Index(string(hack.String(curData)), e.LinesInfo.Starting)
 	if idx != -1 {
 		return nil, curData[idx:]
 	}
@@ -190,7 +190,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 		// terminated symbol in the middle of prevData and curData
 		curData = append(prevData, curData...)
-		endIdx = strings.Index(string(curData[startingLen:]), e.LinesInfo.Terminated)
+		endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
 			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
@@ -207,7 +207,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 	// terminated symbol in the curData
 	prevData = append(prevData, curData[:nextDataIdx]...)
-	endIdx = strings.Index(string(prevData[startingLen:]), e.LinesInfo.Terminated)
+	endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
 	}
