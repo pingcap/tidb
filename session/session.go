@@ -1364,6 +1364,10 @@ func (s *session) Close() {
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
+	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
+	if bindValue != nil {
+		bindValue.(*bindinfo.SessionHandle).Close()
+	}
 	ctx := context.TODO()
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
