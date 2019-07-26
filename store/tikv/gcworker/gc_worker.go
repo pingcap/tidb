@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
@@ -839,9 +838,11 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 			return stat, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return stat, errors.Trace(err)
+			if !regionErr.RegionCacheMiss {
+				err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return stat, errors.Trace(err)
+				}
 			}
 			continue
 		}
@@ -936,12 +937,15 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 			return stat, errors.Trace(err)
 		}
 
-		var regionErr *errorpb.Error
+		var regionErr *tikvrpc.RegionError
 		regionErr, err = w.doGCForRegion(bo, safePoint, loc.Region)
 
 		// we check regionErr here first, because we know 'regionErr' and 'err' should not return together, to keep it to
 		// make the process correct.
 		if regionErr != nil {
+			if regionErr.RegionCacheMiss {
+				continue
+			}
 			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
 			if err == nil {
 				continue
@@ -970,7 +974,7 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 
 // doGCForRegion used for gc for region.
 // these two errors should not return together, for more, see the func 'doGC'
-func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
+func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*tikvrpc.RegionError, error) {
 	req := tikvrpc.NewRequest(tikvrpc.CmdGC, &kvrpcpb.GCRequest{
 		SafePoint: safePoint,
 	})

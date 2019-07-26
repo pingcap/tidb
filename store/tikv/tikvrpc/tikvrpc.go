@@ -358,7 +358,8 @@ func (req *Request) IsDebugReq() bool {
 
 // Response wraps all kv/coprocessor responses.
 type Response struct {
-	Resp interface{}
+	Resp      interface{}
+	CacheMiss bool
 }
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
@@ -623,7 +624,7 @@ type getRegionError interface {
 }
 
 // GetRegionError returns the RegionError of the underlying concrete response.
-func (resp *Response) GetRegionError() (*errorpb.Error, error) {
+func (resp *Response) GetRegionError() (*RegionError, error) {
 	if resp.Resp == nil {
 		return nil, nil
 	}
@@ -634,7 +635,16 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		}
 		return nil, fmt.Errorf("invalid response type %v", resp)
 	}
-	return err.GetRegionError(), nil
+	rErr := err.GetRegionError()
+	if rErr == nil && !resp.CacheMiss {
+		return nil, nil
+	}
+	return &RegionError{Error: rErr, RegionCacheMiss: resp.CacheMiss}, nil
+}
+
+type RegionError struct {
+	*errorpb.Error
+	RegionCacheMiss bool
 }
 
 // CallRPC launches a rpc call.
