@@ -134,7 +134,7 @@ func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
 type mvccKV struct {
 	Key      string                        `json:"key"`
 	Value    *kvrpcpb.MvccGetByKeyResponse `json:"value"`
-	RegionID uint64                        `json:"region-id"`
+	RegionID uint64                        `json:"region_id"`
 }
 
 func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
@@ -1352,9 +1352,6 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 		colMap[col.ID] = &col.FieldType
 	}
 
-	if err != nil {
-		return nil, err
-	}
 	respValue := resp.Value
 	var result interface{} = resp
 	if respValue.Info != nil {
