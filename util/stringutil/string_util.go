@@ -262,13 +262,8 @@ func (l stringerFunc) String() string {
 
 // MemoizeStr returns memoized version of stringFunc.
 func MemoizeStr(l func() string) fmt.Stringer {
-	var result string
 	return stringerFunc(func() string {
-		if result != "" {
-			return result
-		}
-		result = l()
-		return result
+		return l()
 	})
 }
 
