@@ -1845,6 +1845,16 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		c.Assert(v.IsNull(), IsTrue)
 	}
 
+	for _, test := range testOverflowYears {
+		args = types.MakeDatums(test.input, test.year, "YEAR")
+		f, err = fcSub.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v.IsNull(), IsTrue)
+	}
+
 	testDurations := []struct {
 		fc       functionClass
 		dur      string
