@@ -773,7 +773,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 			c.Assert(err, IsNil)
 		}
 		c.Assert(prefix, Equals, tt.valid)
-  }
+	}
 }
 
 func (s *testTypeConvertSuite) TestRoundIntStr(c *C) {
