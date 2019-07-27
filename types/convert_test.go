@@ -687,6 +687,21 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 
+func (s *testTypeConvertSuite) TestRoundIntStr(c *C) {
+	cases := []struct {
+		a string
+		b byte
+		c string
+	}{
+		{"+999", '5', "+1000"},
+		{"999", '5', "1000"},
+		{"-999", '5', "-1000"},
+	}
+	for _, cc := range cases {
+		c.Assert(roundIntStr(cc.b, cc.a), Equals, cc.c)
+	}
+}
+
 func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	tests := []struct {
 		origin string
@@ -714,15 +729,31 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		_, err := strconv.ParseFloat(prefix, 64)
 		c.Assert(err, IsNil)
 	}
-	floatStr, err := floatStrToIntStr(sc, "1e9223372036854775807", "1e9223372036854775807")
-	c.Assert(err, IsNil)
-	c.Assert(floatStr, Equals, "1")
-	floatStr, err = floatStrToIntStr(sc, "125e342", "125e342.83")
-	c.Assert(err, IsNil)
-	c.Assert(floatStr, Equals, "125")
-	floatStr, err = floatStrToIntStr(sc, "1e21", "1e21")
-	c.Assert(err, IsNil)
-	c.Assert(floatStr, Equals, "1")
+
+	tests2 := []struct {
+		origin   string
+		expected string
+	}{
+		{"1e9223372036854775807", "1"},
+		{"125e342", "125"},
+		{"1e21", "1"},
+		{"1e5", "100000"},
+		{"-123.45678e5", "-12345678"},
+		{"+0.5", "1"},
+		{"-0.5", "-1"},
+		{".5e0", "1"},
+		{"+.5e0", "+1"},
+		{"-.5e0", "-1"},
+		{".5", "1"},
+		{"123.456789e5", "12345679"},
+		{"123.456784e5", "12345678"},
+		{"+999.9999e2", "+100000"},
+	}
+	for _, t := range tests2 {
+		str, err := floatStrToIntStr(sc, t.origin, t.origin)
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, t.expected, Commentf("%v, %v", t.origin, t.expected))
+	}
 }
 
 // TestConvertTime tests time related conversion.
@@ -811,24 +842,26 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 
 func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 	var tests = []struct {
-		In  string
+		In  interface{}
 		Out float64
+		ty  json.TypeCode
 	}{
-		{`{}`, 0},
-		{`[]`, 0},
-		{`3`, 3},
-		{`-3`, -3},
-		{`4.5`, 4.5},
-		{`true`, 1},
-		{`false`, 0},
-		{`null`, 0},
-		{`"hello"`, 0},
-		{`"123.456hello"`, 123.456},
-		{`"1234"`, 1234},
+		{make(map[string]interface{}, 0), 0, json.TypeCodeObject},
+		{make([]interface{}, 0), 0, json.TypeCodeArray},
+		{int64(3), 3, json.TypeCodeInt64},
+		{int64(-3), -3, json.TypeCodeInt64},
+		{uint64(1 << 63), 1 << 63, json.TypeCodeUint64},
+		{float64(4.5), 4.5, json.TypeCodeFloat64},
+		{true, 1, json.TypeCodeLiteral},
+		{false, 0, json.TypeCodeLiteral},
+		{nil, 0, json.TypeCodeLiteral},
+		{"hello", 0, json.TypeCodeString},
+		{"123.456hello", 123.456, json.TypeCodeString},
+		{"1234", 1234, json.TypeCodeString},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseBinaryFromString(tt.In)
-		c.Assert(err, IsNil)
+		j := json.CreateBinary(tt.In)
+		c.Assert(j.TypeCode, Equals, tt.ty)
 		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)
 	}
