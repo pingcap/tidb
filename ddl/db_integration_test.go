@@ -803,3 +803,26 @@ func (s *testIntegrationSuite) TestChangingDBCharset(c *C) {
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
 }
+
+func (s *testIntegrationSuite) TestDropAutoIncrementIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	assertErrMsg := func(sql string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		errMsg := "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key"
+		c.Assert(err.Error(), Equals, errMsg)
+	}
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int auto_increment, unique key (a))")
+	dropIndexSQL := "alter table t1 drop index a"
+	assertErrMsg(dropIndexSQL)
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
+	dropIndexSQL = "alter table t1 drop index a"
+	assertErrMsg(dropIndexSQL)
+}
