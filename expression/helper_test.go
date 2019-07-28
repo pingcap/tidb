@@ -108,11 +108,20 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 
 func (s *testExpressionSuite) TestIsCurrentTimestampExpr(c *C) {
 	defer testleak.AfterTest(c)()
-	v := IsCurrentTimestampExpr(ast.NewValueExpr("abc"))
+	v := IsValidCurrentTimestampExpr(ast.NewValueExpr("abc"), nil)
 	c.Assert(v, IsFalse)
-
-	v = IsCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")})
+	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}, nil)
 	c.Assert(v, IsTrue)
+	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP(3)")}, &types.FieldType{Decimal: 3})
+	c.Assert(v, IsTrue)
+	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP(1)")}, &types.FieldType{Decimal: 3})
+	c.Assert(v, IsFalse)
+	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}, &types.FieldType{Decimal: 3})
+	c.Assert(v, IsFalse)
+	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP(2)")}, &types.FieldType{Decimal: 0})
+	c.Assert(v, IsFalse)
+	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP(2)")}, nil)
+	c.Assert(v, IsFalse)
 }
 
 func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
