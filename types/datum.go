@@ -1789,14 +1789,14 @@ func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
 }
 
-func handleTruncateError(sc *stmtctx.StatementContext) error {
+func handleTruncateError(sc *stmtctx.StatementContext, err error) error {
 	if sc.IgnoreTruncate {
 		return nil
 	}
 	if !sc.TruncateAsWarning {
-		return ErrTruncated
+		return err
 	}
-	sc.AppendWarning(ErrTruncated)
+	sc.AppendWarning(err)
 	return nil
 }
 

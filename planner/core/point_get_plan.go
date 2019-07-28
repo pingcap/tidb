@@ -220,7 +220,10 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 				p.IsTableDual = true
 				return p
 			}
-			return nil
+			// some scenarios cast to int with error, but we may use this value in point get
+			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
+				return nil
+			}
 		}
 		cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &handlePair.value)
 		if err != nil {
@@ -470,9 +473,21 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	if orderedList == nil {
 		return nil
 	}
+	var handleCol *expression.Column
+	for _, handles := range fastSelect.schema.TblID2Handle {
+		handleCol = handles[0]
+	}
 	updatePlan := Update{
 		SelectPlan:  fastSelect,
 		OrderedList: orderedList,
+		TblColPosInfos: TblColPosInfoSlice{
+			TblColPosInfo{
+				TblID:         fastSelect.TblInfo.ID,
+				Start:         0,
+				End:           fastSelect.schema.Len(),
+				HandleOrdinal: handleCol.Index,
+			},
+		},
 	}.Init(ctx)
 	updatePlan.SetSchema(fastSelect.schema)
 	return updatePlan
@@ -529,8 +544,20 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true
 	}
+	var handleCol *expression.Column
+	for _, handles := range fastSelect.schema.TblID2Handle {
+		handleCol = handles[0]
+	}
 	delPlan := Delete{
 		SelectPlan: fastSelect,
+		TblColPosInfos: TblColPosInfoSlice{
+			TblColPosInfo{
+				TblID:         fastSelect.TblInfo.ID,
+				Start:         0,
+				End:           fastSelect.schema.Len(),
+				HandleOrdinal: handleCol.Index,
+			},
+		},
 	}.Init(ctx)
 	delPlan.SetSchema(fastSelect.schema)
 	return delPlan
