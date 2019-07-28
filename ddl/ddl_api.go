@@ -540,7 +540,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
 				if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-					if !expression.IsCurrentTimestampExpr(v.Expr) {
+					if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
 						return nil, nil, ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 					}
 				} else {
@@ -2527,7 +2527,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-				if !expression.IsCurrentTimestampExpr(opt.Expr) {
+				if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldType) {
 					return ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 				}
 			} else {
