@@ -2749,6 +2749,10 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		date.Fsp = 6
 	}
 
+	if goTime.Year() < 0 || goTime.Year() > (1<<16-1) {
+		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
+
 	date.Time = types.FromGoTime(goTime)
 	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
@@ -2804,6 +2808,10 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 		date.Fsp = 0
 	} else {
 		date.Fsp = 6
+	}
+
+	if goTime.Year() < 0 || goTime.Year() > (1<<16-1) {
+		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
 	date.Time = types.FromGoTime(goTime)

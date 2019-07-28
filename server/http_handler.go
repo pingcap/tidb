@@ -482,14 +482,32 @@ type RegionDetail struct {
 func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo, r *helper.RegionFrameRange) {
 	tName := curTable.Name.String()
 	tID := curTable.ID
-
+	pi := curTable.GetPartitionInfo()
 	for _, index := range curTable.Indices {
-		if f := r.GetIndexFrame(tID, index.ID, dbName, tName, index.Name.String()); f != nil {
+		if pi != nil {
+			for _, def := range pi.Definitions {
+				if f := r.GetIndexFrame(def.ID, index.ID, dbName, fmt.Sprintf("%s(%s)", tName, def.Name.O), index.Name.String()); f != nil {
+					rt.Frames = append(rt.Frames, f)
+				}
+			}
+		} else {
+			if f := r.GetIndexFrame(tID, index.ID, dbName, tName, index.Name.String()); f != nil {
+				rt.Frames = append(rt.Frames, f)
+			}
+		}
+
+	}
+
+	if pi != nil {
+		for _, def := range pi.Definitions {
+			if f := r.GetRecordFrame(def.ID, dbName, fmt.Sprintf("%s(%s)", tName, def.Name.O)); f != nil {
+				rt.Frames = append(rt.Frames, f)
+			}
+		}
+	} else {
+		if f := r.GetRecordFrame(tID, dbName, tName); f != nil {
 			rt.Frames = append(rt.Frames, f)
 		}
-	}
-	if f := r.GetRecordFrame(tID, dbName, tName); f != nil {
-		rt.Frames = append(rt.Frames, f)
 	}
 }
 
@@ -916,18 +934,43 @@ func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema
 }
 
 func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
-	tableID := tbl.Meta().ID
-	// for record
-	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
-	recordRegionIDs, err := h.RegionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+	pi := tbl.Meta().GetPartitionInfo()
+	if pi != nil {
+		// Partitioned table.
+		var data []*TableRegions
+		for _, def := range pi.Definitions {
+			tableRegions, err := h.getRegionsByID(tbl, def.ID, def.Name.O)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+
+			data = append(data, tableRegions)
+		}
+		writeData(w, data)
+		return
+	}
+
+	meta := tbl.Meta()
+	tableRegions, err := h.getRegionsByID(tbl, meta.ID, meta.Name.O)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+
+	writeData(w, tableRegions)
+}
+
+func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*TableRegions, error) {
+	// for record
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
+	recordRegionIDs, err := h.RegionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+	if err != nil {
+		return nil, err
+	}
 	recordRegions, err := h.getRegionsMeta(recordRegionIDs)
 	if err != nil {
-		writeError(w, err)
-		return
+		return nil, err
 	}
 
 	// for indices
@@ -936,27 +979,23 @@ func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tabl
 		indexID := index.Meta().ID
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
-		startKey, endKey := tablecodec.GetTableIndexKeyRange(tableID, indexID)
+		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
 		rIDs, err := h.RegionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
 		if err != nil {
-			writeError(w, err)
-			return
+			return nil, err
 		}
 		indices[i].Regions, err = h.getRegionsMeta(rIDs)
 		if err != nil {
-			writeError(w, err)
-			return
+			return nil, err
 		}
 	}
 
-	tableRegions := &TableRegions{
-		TableName:     tbl.Meta().Name.O,
-		TableID:       tableID,
+	return &TableRegions{
+		TableName:     name,
+		TableID:       id,
 		Indices:       indices,
 		RecordRegions: recordRegions,
-	}
-
-	writeData(w, tableRegions)
+	}, nil
 }
 
 // pdRegionStats is the json response from PD.
