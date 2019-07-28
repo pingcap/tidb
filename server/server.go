@@ -121,9 +121,8 @@ type Server struct {
 
 // ConnectionCount gets current connection count.
 func (s *Server) ConnectionCount() int {
-	var cnt int
 	s.rwlock.RLock()
-	cnt = len(s.clients)
+	cnt := len(s.clients)
 	s.rwlock.RUnlock()
 	return cnt
 }
@@ -294,7 +293,6 @@ func (s *Server) loadTLSCertificates() {
 		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
-		MinVersion:   0,
 	}
 }
 
@@ -471,11 +469,9 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		ClientPort:        cc.peerPort,
 		ServerID:          1,
 		ServerPort:        int(cc.server.cfg.Port),
-		Duration:          0,
 		User:              cc.user,
 		ServerOSLoginUser: osUser,
 		OSVersion:         osVersion,
-		ClientVersion:     "",
 		ServerVersion:     mysql.TiDBReleaseVersion,
 		SSLVersion:        "v1.2.0", // for current go version
 		PID:               serverPID,
