@@ -222,6 +222,21 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 	return err
 }
 
+// for compatible with MySQL, convert Warning ErrDataOutOfRange to ErrWarnDataOutOfRange
+func (e *UpdateExec) handleOverflowWarning(colName model.CIStr, rowIdx int)  {
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnings := sc.GetWarnings()
+
+	for i, warning := range warnings {
+		if types.ErrOverflow.Equal(warning.Err) {
+			warning.Err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
+			warnings[i] = warning
+			sc.SetWarnings(warnings)
+			break
+		}
+	}
+}
+
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
@@ -239,6 +254,9 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo)
+
+			e.handleOverflowWarning(assign.Col.ColName, rowIdx)
+
 			if err = e.handleErr(assign.Col.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}

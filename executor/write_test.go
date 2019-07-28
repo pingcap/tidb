@@ -248,14 +248,14 @@ func (s *testSuite4) TestInsert(c *C) {
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("insert into t value (-1);")
 	// TODO: the following warning messages are not consistent with MySQL, fix them in the future PRs
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t select -1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	tk.MustExec("insert into t select cast(-1 as unsigned);")
 	tk.MustExec("insert into t value (-1.111);")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t value ('-1.111');")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
 	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
@@ -276,8 +276,8 @@ func (s *testSuite4) TestInsert(c *C) {
 	tk.MustExec("create table t(a float unsigned, b double unsigned)")
 	tk.MustExec("insert into t value(-1.1, -1.1), (-2.1, -2.1), (0, 0), (1.1, 1.1)")
 	tk.MustQuery("show warnings").
-		Check(testkit.Rows("Warning 1690 constant -1.1 overflows float", "Warning 1690 constant -1.1 overflows double",
-			"Warning 1690 constant -2.1 overflows float", "Warning 1690 constant -2.1 overflows double"))
+		Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1", "Warning 1264 Out of range value for column 'b' at row 1",
+			"Warning 1264 Out of range value for column 'a' at row 2", "Warning 1264 Out of range value for column 'b' at row 2"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("0 0", "0 0", "0 0", "1.1 1.1"))
 
 	// issue 7061
