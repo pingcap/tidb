@@ -404,6 +404,7 @@ func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt as
 			return stmt
 		}
 		if bindRecord.Status == bindinfo.Using {
+			metrics.BindUsageCounter.WithLabelValues(metrics.ScopeSession).Inc()
 			return bindinfo.BindHint(stmt, bindRecord.Ast)
 		}
 	}
@@ -413,6 +414,7 @@ func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt as
 		bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
 	}
 	if bindRecord != nil {
+		metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Inc()
 		return bindinfo.BindHint(stmt, bindRecord.Ast)
 	}
 	return stmt
