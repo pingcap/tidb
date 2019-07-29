@@ -516,3 +516,17 @@ Projection_8	8320.83	root	test.t.a, test.t1.a
       └─TableScan_15	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 rollback;
 drop table if exists t;
+create table t(a time, b date);
+insert into t values (1, "1000-01-01"), (2, "1000-01-02"), (3, "1000-01-03");
+analyze table t;
+explain select * from t where a = 1;
+id	count	task	operator info
+TableReader_7	1.00	root	data:Selection_6
+└─Selection_6	1.00	cop	eq(test.t.a, 00:00:01.000000)
+  └─TableScan_5	3.00	cop	table:t, range:[-inf,+inf], keep order:false
+explain select * from t where b = "1000-01-01";
+id	count	task	operator info
+TableReader_7	1.00	root	data:Selection_6
+└─Selection_6	1.00	cop	eq(test.t.b, 1000-01-01 00:00:00.000000)
+  └─TableScan_5	3.00	cop	table:t, range:[-inf,+inf], keep order:false
+drop table t;
