@@ -158,3 +158,20 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	cmsFromJSON := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
 	c.Check(cms.Equal(cmsFromJSON), IsTrue)
 }
+
+func (s *testStatsSuite) TestDumpPseudoColumns(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int, index idx(a))")
+	// Force adding an pseudo tables in stats cache.
+	testKit.MustQuery("select * from t")
+	testKit.MustExec("analyze table t index idx")
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	h := s.do.StatsHandle()
+	_, err = h.DumpStatsToJSON("test", tbl.Meta(), nil)
+	c.Assert(err, IsNil)
+}

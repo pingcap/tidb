@@ -74,8 +74,8 @@ func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
 	for i := range entries {
 		requests[i] = entries[i].req
 	}
-	length := removeCanceledRequests(&entries, &requests)
-	c.Assert(length, Equals, 2)
+	entries, requests = removeCanceledRequests(entries, requests)
+	c.Assert(len(entries), Equals, 2)
 	for _, e := range entries {
 		c.Assert(e.isCanceled(), IsFalse)
 	}

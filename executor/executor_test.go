@@ -363,6 +363,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
+		ctx.GetSessionVars().StmtCtx.InDeleteStmt = false
 		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
@@ -2115,6 +2116,13 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Assert(fields[1].ColumnAsName.L, Equals, "num")
 	tk.MustExec("set @@tidb_enable_window_function = 0")
 	rs.Close()
+
+	rs, err = tk.Exec("select if(1,c,c) from t;")
+	c.Check(err, IsNil)
+	fields = rs.Fields()
+	c.Assert(fields[0].Column.Name.L, Equals, "if(1,c,c)")
+	// It's a compatibility issue. Should be empty instead.
+	c.Assert(fields[0].ColumnAsName.L, Equals, "if(1,c,c)")
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
