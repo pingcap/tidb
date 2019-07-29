@@ -67,11 +67,24 @@ type Column struct {
 
 // NewColumn creates a new column with the specific length and capacity.
 func NewColumn(ft *types.FieldType, cap int) *Column {
-	typeSize := getFixedLen(ft)
+	return newColumn(getFixedLen(ft), cap)
+}
+
+func newColumn(typeSize, cap int) *Column {
+	var col *Column
 	if typeSize == varElemLen {
-		return newVarLenColumn(cap, nil)
+		col = newVarLenColumn(cap, nil)
+	} else {
+		col = newFixedLenColumn(typeSize, cap)
 	}
-	return newFixedLenColumn(typeSize, cap)
+	return col
+}
+
+func (c *Column) typeSize() int {
+	if len(c.elemBuf) > 0 {
+		return len(c.elemBuf)
+	}
+	return varElemLen
 }
 
 func (c *Column) isFixed() bool {
@@ -96,7 +109,18 @@ func (c *Column) IsNull(rowIdx int) bool {
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
-func (c *Column) copyConstruct() *Column {
+// CopyConstruct copies this Column to dst.
+// If dst is nil, it creates a new Column and returns it.
+func (c *Column) CopyConstruct(dst *Column) *Column {
+	if dst != nil {
+		dst.length = c.length
+		dst.nullCount = c.nullCount
+		dst.nullBitmap = append(dst.nullBitmap[:0], c.nullBitmap...)
+		dst.offsets = append(dst.offsets[:0], c.offsets...)
+		dst.data = append(dst.data[:0], c.data...)
+		dst.elemBuf = append(dst.elemBuf[:0], c.elemBuf...)
+		return dst
+	}
 	newCol := &Column{length: c.length, nullCount: c.nullCount}
 	newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
 	newCol.offsets = append(newCol.offsets, c.offsets...)
@@ -333,4 +357,88 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 		return "", 0
 	}
 	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
+}
+
+// reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
+func (c *Column) reconstruct(sel []int) {
+	if sel == nil {
+		return
+	}
+	nullCnt := 0
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		for dst, src := range sel {
+			idx := dst >> 3
+			pos := uint16(dst & 7)
+			if c.IsNull(src) {
+				nullCnt++
+				c.nullBitmap[idx] &= ^byte(1 << pos)
+			} else {
+				copy(c.data[dst*elemLen:dst*elemLen+elemLen], c.data[src*elemLen:src*elemLen+elemLen])
+				c.nullBitmap[idx] |= byte(1 << pos)
+			}
+		}
+		c.data = c.data[:len(sel)*elemLen]
+	} else {
+		tail := 0
+		for dst, src := range sel {
+			idx := dst >> 3
+			pos := uint(dst & 7)
+			if c.IsNull(src) {
+				nullCnt++
+				c.nullBitmap[idx] &= ^byte(1 << pos)
+				c.offsets[dst+1] = int64(tail)
+			} else {
+				start, end := c.offsets[src], c.offsets[src+1]
+				copy(c.data[tail:], c.data[start:end])
+				tail += int(end - start)
+				c.offsets[dst+1] = int64(tail)
+				c.nullBitmap[idx] |= byte(1 << pos)
+			}
+		}
+		c.data = c.data[:tail]
+		c.offsets = c.offsets[:len(sel)+1]
+	}
+	c.length = len(sel)
+	c.nullCount = nullCnt
+
+	// clean nullBitmap
+	c.nullBitmap = c.nullBitmap[:(len(sel)+7)>>3]
+	idx := len(sel) >> 3
+	if idx < len(c.nullBitmap) {
+		pos := uint16(len(sel) & 7)
+		c.nullBitmap[idx] &= byte((1 << pos) - 1)
+	}
+}
+
+// CopyReconstruct copies this Column to dst and removes unselected rows.
+// If dst is nil, it creates a new Column and returns it.
+func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
+	if sel == nil {
+		return c.CopyConstruct(dst)
+	}
+
+	if dst == nil {
+		dst = newColumn(c.typeSize(), len(sel))
+	} else {
+		dst.Reset()
+	}
+
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		for _, i := range sel {
+			dst.appendNullBitmap(!c.IsNull(i))
+			dst.data = append(dst.data, c.data[i*elemLen:i*elemLen+elemLen]...)
+			dst.length++
+		}
+	} else {
+		for _, i := range sel {
+			dst.appendNullBitmap(!c.IsNull(i))
+			start, end := c.offsets[i], c.offsets[i+1]
+			dst.data = append(dst.data, c.data[start:end]...)
+			dst.offsets = append(dst.offsets, int64(len(dst.data)))
+			dst.length++
+		}
+	}
+	return dst
 }

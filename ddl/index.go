@@ -943,27 +943,23 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
 	cols := t.Cols()
-	decodeColMap := make(map[int64]decoder.Column, len(indexInfo.Columns))
-	for _, v := range indexInfo.Columns {
-		col := cols[v.Offset]
-		tpExpr := decoder.Column{
-			Col: col,
-		}
-		if col.IsGenerated() && !col.GeneratedStored {
-			for _, c := range cols {
-				if _, ok := col.Dependences[c.Name.L]; ok {
-					decodeColMap[c.ID] = decoder.Column{
-						Col: c,
-					}
-				}
-			}
-			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta(), &col.FieldType)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			tpExpr.GenExpr = e
-		}
-		decodeColMap[col.ID] = tpExpr
+	indexedCols := make([]*table.Column, len(indexInfo.Columns))
+	for i, v := range indexInfo.Columns {
+		indexedCols[i] = cols[v.Offset]
+	}
+
+	var containsVirtualCol bool
+	decodeColMap, err := decoder.BuildFullDecodeColMap(indexedCols, t, func(genCol *table.Column) (expression.Expression, error) {
+		containsVirtualCol = true
+		return expression.ParseSimpleExprCastWithTableInfo(sessCtx, genCol.GeneratedExprString, t.Meta(), &genCol.FieldType)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if containsVirtualCol {
+		decoder.SubstituteGenColsInDecodeColMap(decodeColMap)
+		decoder.RemoveUnusedVirtualCols(decodeColMap, indexedCols)
 	}
 	return decodeColMap, nil
 }
