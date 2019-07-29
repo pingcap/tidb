@@ -497,7 +497,6 @@ func OptionalFsp(fieldType *types.FieldType) string {
 	fsp := fieldType.Decimal
 	if fsp == 0 {
 		return ""
-	} else {
-		return "(" + strconv.Itoa(fsp) + ")"
 	}
+	return "(" + strconv.Itoa(fsp) + ")"
 }
