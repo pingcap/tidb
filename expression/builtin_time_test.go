@@ -783,9 +783,9 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		{funcs[ast.Now], func() time.Time { return time.Now() }},
 		{funcs[ast.UTCTimestamp], func() time.Time { return time.Now().UTC() }},
 	} {
-		resetStmtContext(s.ctx)
 		f, err := x.fc.getFunction(s.ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
+		resetStmtContext(s.ctx)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		ts := x.now()
 		c.Assert(err, IsNil)
@@ -795,9 +795,9 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		c.Assert(strings.Contains(t.String(), "."), IsFalse)
 		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Second)
 
-		resetStmtContext(s.ctx)
 		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(6)))
 		c.Assert(err, IsNil)
+		resetStmtContext(s.ctx)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		ts = x.now()
 		c.Assert(err, IsNil)
@@ -1071,6 +1071,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 		variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone)
 		f, err := fc.getFunction(ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
+		resetStmtContext(s.ctx)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		last := time.Now()
 		c.Assert(err, IsNil)
@@ -1081,6 +1082,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	last := time.Now()
 	f, err := fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(6)))
 	c.Assert(err, IsNil)
+	resetStmtContext(s.ctx)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
@@ -1213,6 +1215,7 @@ func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
 	fc := funcs[ast.CurrentDate]
 	f, err := fc.getFunction(mock.NewContext(), s.datumsToConstants(nil))
 	c.Assert(err, IsNil)
+	resetStmtContext(s.ctx)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
@@ -1227,6 +1230,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	fc := funcs[ast.CurrentTime]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(err, IsNil)
+	resetStmtContext(s.ctx)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	n := v.GetMysqlDuration()
@@ -1235,6 +1239,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(3)))
 	c.Assert(err, IsNil)
+	resetStmtContext(s.ctx)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	n = v.GetMysqlDuration()
@@ -1243,6 +1248,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(6)))
 	c.Assert(err, IsNil)
+	resetStmtContext(s.ctx)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	n = v.GetMysqlDuration()
@@ -1269,9 +1275,9 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	}{{0, 8}, {3, 12}, {6, 15}, {-1, 0}, {7, 0}}
 
 	for _, test := range tests {
-		resetStmtContext(s.ctx)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(test.param)))
 		c.Assert(err, IsNil)
+		resetStmtContext(s.ctx)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		if test.expect > 0 {
 			c.Assert(err, IsNil)
@@ -1285,6 +1291,7 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 
 	f, err := fc.getFunction(s.ctx, make([]Expression, 0))
 	c.Assert(err, IsNil)
+	resetStmtContext(s.ctx)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	n := v.GetMysqlDuration()
@@ -1296,9 +1303,9 @@ func (s *testEvaluatorSuite) TestUTCDate(c *C) {
 	defer testleak.AfterTest(c)()
 	last := time.Now().UTC()
 	fc := funcs[ast.UTCDate]
-	resetStmtContext(mock.NewContext())
 	f, err := fc.getFunction(mock.NewContext(), s.datumsToConstants(nil))
 	c.Assert(err, IsNil)
+	resetStmtContext(mock.NewContext())
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
@@ -1635,9 +1642,9 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	// Test UNIX_TIMESTAMP().
 	fc := funcs[ast.UnixTimestamp]
-	resetStmtContext(s.ctx)
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
+	resetStmtContext(s.ctx)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
@@ -1652,9 +1659,9 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	n := types.Datum{}
 	n.SetMysqlTime(now)
 	args := []types.Datum{n}
-	resetStmtContext(s.ctx)
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(args))
 	c.Assert(err, IsNil)
+	resetStmtContext(s.ctx)
 	d, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	val, _ := d.GetMysqlDecimal().ToInt()
@@ -2714,9 +2721,9 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 
 	for _, t := range tests {
 		now := time.Now().In(sv.TimeZone)
-		resetStmtContext(s.ctx)
 		f, err := funcs[t.method].getFunction(s.ctx, s.datumsToConstants(t.Input))
 		c.Assert(err, IsNil)
+		resetStmtContext(s.ctx)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		result := t.convertToTime(d, sv.TimeZone)
