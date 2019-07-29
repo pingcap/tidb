@@ -229,7 +229,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 }
 
 // for compatible with MySQL, convert Warning ErrDataOutOfRange to ErrWarnDataOutOfRange
-func (e *InsertValues) handleOverflowWarning(col *table.Column, rowIdx int)  {
+func (e *InsertValues) handleOverflowWarning(col *table.Column, rowIdx int) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	warnings := sc.GetWarnings()
 

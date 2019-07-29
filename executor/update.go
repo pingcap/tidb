@@ -215,7 +215,7 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 }
 
 // for compatible with MySQL, convert Warning ErrDataOutOfRange to ErrWarnDataOutOfRange
-func (e *UpdateExec) handleOverflowWarning(colName model.CIStr, rowIdx int)  {
+func (e *UpdateExec) handleOverflowWarning(colName model.CIStr, rowIdx int) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	warnings := sc.GetWarnings()
 
