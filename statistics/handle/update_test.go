@@ -1257,6 +1257,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 }
 
 func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
+	c.Skip("support update the topn of index equal conditions")
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
