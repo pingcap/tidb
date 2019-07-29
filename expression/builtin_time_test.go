@@ -1168,6 +1168,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	tfStr := "15:04:05"
 
 	last := time.Now()
+	resetStmtContext(s.ctx)
 	fc := funcs[ast.CurrentTime]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(err, IsNil)
