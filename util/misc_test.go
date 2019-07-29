@@ -182,3 +182,24 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 	c.Assert(bytes.Contains(buf, []byte("$")), IsFalse)
 	c.Assert(bytes.Contains(buf, []byte{0}), IsFalse)
 }
+
+func (s *testMiscSuite) TestParseTSO(c *C) {
+	tests := []struct {
+		tso      uint64
+		physical int64
+		logical  int
+	}{
+		{0, 0, 0},
+		{410090409861578752, 1564370765, 0},
+	}
+
+	for _, td := range tests {
+		p, l := ParseTSO(td.tso)
+		var ts int64
+		if !p.IsZero() {
+			ts = p.Unix()
+		}
+		c.Assert(ts, Equals, td.physical)
+		c.Assert(l, Equals, td.logical)
+	}
+}

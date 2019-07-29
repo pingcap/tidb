@@ -151,3 +151,19 @@ func IsMemOrSysDB(dbLowerName string) bool {
 	}
 	return false
 }
+
+const (
+	physicalShiftBits = 18
+	logicalBits       = 0x3FFFF
+)
+
+// ParseTSO parses tso into physicalTime and logical parts.
+func ParseTSO(tso uint64) (physicalTime time.Time, logical int) {
+	if tso == 0 {
+		return
+	}
+	logical = int(tso & logicalBits)
+	physical := tso >> physicalShiftBits
+	physicalTime = time.Unix(int64(physical/1000), int64(physical%1000)*time.Millisecond.Nanoseconds())
+	return
+}

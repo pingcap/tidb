@@ -64,10 +64,18 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	}
 }
 
+func (pi *ProcessInfo) txnStartTs() (txnStart string) {
+	if pi.CurTxnStartTS > 0 {
+		physicalTime, _ := ParseTSO(pi.CurTxnStartTS)
+		txnStart = fmt.Sprintf("%s(%d)", physicalTime.Format("01-02 15:04:05.000"), pi.CurTxnStartTS)
+	}
+	return
+}
+
 // ToRow returns []interface{} for the row data of
 // "SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST".
 func (pi *ProcessInfo) ToRow() []interface{} {
-	return append(pi.ToRowForShow(true), pi.StmtCtx.MemTracker.BytesConsumed())
+	return append(pi.ToRowForShow(true), pi.StmtCtx.MemTracker.BytesConsumed(), pi.txnStartTs())
 }
 
 // SessionManager is an interface for session manage. Show processlist and
