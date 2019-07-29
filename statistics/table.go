@@ -361,11 +361,31 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
+func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll bool) float64 {
+	val := types.NewBytesDatum(bytes)
+	if idx.outOfRange(val) {
+		// When the value is out of range, we could not found this value in the CM Sketch,
+		// so we use heuristic methods to estimate the selectivity.
+		if idx.NDV > 0 && coverAll {
+			// for equality queries
+			return float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
+		}
+		// for range queries
+		return float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
+	}
+	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
+}
+
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
 		rangePosition := GetOrdinalOfRangeCond(sc, ran)
+		var rangeVals []types.Datum
+		// Try to enum the last range values.
+		if rangePosition != len(ran.LowVal) {
+			rangeVals = enumRangeValues(ran.LowVal[rangePosition], ran.HighVal[rangePosition], ran.LowExclude, ran.HighExclude)
+		}
 		// If first one is range, just use the previous way to estimate; if it is [NULL, NULL] range
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
@@ -378,24 +398,28 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			continue
 		}
 		var selectivity float64
+		coverAll := len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal)
 		// use CM Sketch to estimate the equal conditions
-		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		val := types.NewBytesDatum(bytes)
-		if idx.outOfRange(val) {
-			// When the value is out of range, we could not found this value in the CM Sketch,
-			// so we use heuristic methods to estimate the selectivity.
-			if idx.NDV > 0 && len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal) {
-				// for equality queries
-				selectivity = float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
-			} else {
-				// for range queries
-				selectivity = float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
+		if rangeVals == nil {
+			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
+			if err != nil {
+				return 0, errors.Trace(err)
 			}
+			selectivity = coll.getEqualCondSelectivity(idx, bytes, coverAll)
 		} else {
-			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
+			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition-1]...)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			prefixLen := len(bytes)
+			for _, val := range rangeVals {
+				bytes = bytes[:prefixLen]
+				bytes, err = codec.EncodeKey(sc, bytes, val)
+				if err != nil {
+					return 0, err
+				}
+				selectivity += coll.getEqualCondSelectivity(idx, bytes, coverAll)
+			}
 		}
 		// use histogram to estimate the range condition
 		if rangePosition != len(ran.LowVal) {

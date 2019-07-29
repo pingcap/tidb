@@ -16,6 +16,7 @@ package statistics
 import (
 	"encoding/binary"
 	"math"
+	"time"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -174,4 +175,102 @@ func calcFraction4Datums(lower, upper, value *types.Datum) float64 {
 		return calcFraction(convertDatumToScalar(lower, commonPfxLen), convertDatumToScalar(upper, commonPfxLen), convertDatumToScalar(value, commonPfxLen))
 	}
 	return 0.5
+}
+
+const maxNumStep = 10
+
+func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) (res []types.Datum) {
+	if low.Kind() != high.Kind() {
+		return nil
+	}
+	exclude := 0
+	if lowExclude {
+		exclude++
+	}
+	if highExclude {
+		exclude++
+	}
+	switch low.Kind() {
+	case types.KindInt64:
+		remaining := high.GetInt64() - low.GetInt64() + 1 - int64(exclude)
+		if remaining >= maxNumStep {
+			return nil
+		}
+		values := make([]types.Datum, 0, remaining)
+		startValue := low.GetInt64()
+		if lowExclude {
+			startValue++
+		}
+		for i := int64(0); i < remaining; i++ {
+			values = append(values, types.NewIntDatum(startValue+i))
+		}
+		return values
+	case types.KindUint64:
+		remaining := high.GetUint64() - low.GetUint64() + 1 - uint64(exclude)
+		if remaining >= maxNumStep {
+			return nil
+		}
+		values := make([]types.Datum, 0, remaining)
+		startValue := low.GetUint64()
+		if lowExclude {
+			startValue++
+		}
+		for i := uint64(0); i < remaining; i++ {
+			values = append(values, types.NewUintDatum(startValue+i))
+		}
+		return values
+	case types.KindMysqlDuration:
+		lowDur, highDur := low.GetMysqlDuration(), high.GetMysqlDuration()
+		if lowDur.Fsp != highDur.Fsp {
+			return nil
+		}
+		stepSize := int64(math.Pow10(types.MaxFsp-lowDur.Fsp)) * int64(time.Microsecond)
+		remaining := int64(highDur.Duration-lowDur.Duration)/stepSize + 1 - int64(exclude)
+		if remaining >= maxNumStep {
+			return nil
+		}
+		startValue := int64(lowDur.Duration)
+		if lowExclude {
+			startValue += stepSize
+		}
+		values := make([]types.Datum, 0, remaining)
+		for i := int64(0); i < remaining; i++ {
+			values = append(values, types.NewDurationDatum(types.Duration{Duration: time.Duration(startValue + i*stepSize), Fsp: lowDur.Fsp}))
+		}
+		return values
+	case types.KindMysqlTime:
+		lowTime, highTime := low.GetMysqlTime(), high.GetMysqlTime()
+		if lowTime.Type != highTime.Type || lowTime.Fsp != highTime.Fsp {
+			return nil
+		}
+		var stepSize int64
+		if lowTime.Type == mysql.TypeDate {
+			stepSize = 24 * int64(time.Hour)
+		} else {
+			stepSize = int64(math.Pow10(types.MaxFsp-lowTime.Fsp)) * int64(time.Microsecond)
+		}
+		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+		remaining := int64(highTime.Sub(sc, &lowTime).Duration)/stepSize + 1 - int64(exclude)
+		if remaining >= maxNumStep {
+			return nil
+		}
+		startValue := lowTime
+		var err error
+		if lowExclude {
+			startValue, err = lowTime.Add(sc, types.Duration{Duration: time.Duration(stepSize), Fsp: lowTime.Fsp})
+			if err != nil {
+				return nil
+			}
+		}
+		values := make([]types.Datum, 0, remaining)
+		for i := int64(0); i < remaining; i++ {
+			value, err := startValue.Add(sc, types.Duration{Duration: time.Duration(i * stepSize), Fsp: lowTime.Fsp})
+			if err != nil {
+				return nil
+			}
+			values = append(values, types.NewTimeDatum(value))
+		}
+		return values
+	}
+	return nil
 }
