@@ -416,6 +416,14 @@ func (s *testIntegrationSuite5) TestMySQLErrorCode(c *C) {
 	assertErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int auto_increment);"
 	assertErrorCode(c, tk, sql, tmysql.ErrWrongAutoKey)
+	sql = "create table t2 (a datetime(2) default current_timestamp(3))"
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp)"
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidOnUpdate)
+	sql = "create table t2 (a datetime default current_timestamp on update current_timestamp(2))"
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidOnUpdate)
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp(3))"
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidOnUpdate)
 
 	sql = "create table t2 (id int primary key , age int);"
 	tk.MustExec(sql)

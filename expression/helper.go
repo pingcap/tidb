@@ -43,7 +43,8 @@ func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTy
 	}
 
 	containsArg := len(fn.Args) > 0
-	containsFsp := fieldType != nil && fieldType.Decimal > 0 // Fsp represents fractional seconds precision.
+	// Fsp represents fractional seconds precision.
+	containsFsp := fieldType != nil && fieldType.Decimal > 0
 	var isConsistent bool
 	if containsArg {
 		v, ok := fn.Args[0].(*driver.ValueExpr)
