@@ -228,21 +228,6 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	return e.filterErr(err)
 }
 
-// for compatible with MySQL, convert Warning ErrDataOutOfRange to ErrWarnDataOutOfRange
-func (e *InsertValues) handleOverflowWarning(col *table.Column, rowIdx int) {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	warnings := sc.GetWarnings()
-
-	for i, warning := range warnings {
-		if types.ErrOverflow.Equal(warning.Err) {
-			warning.Err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(col.Name.O, rowIdx+1)
-			warnings[i] = warning
-			sc.SetWarnings(warnings)
-			break
-		}
-	}
-}
-
 // evalRow evaluates a to-be-inserted row. The value of the column may base on another column,
 // so we use setValueForRefColumn to fill the empty row some default values when needFillDefaultValues is true.
 func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression, rowIdx int) ([]types.Datum, error) {

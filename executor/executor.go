@@ -121,6 +121,21 @@ func (e *baseExecutor) Schema() *expression.Schema {
 	return e.schema
 }
 
+// for compatible with MySQL, convert Warning ErrDataOutOfRange to ErrWarnDataOutOfRange
+func (e *baseExecutor) handleOverflowWarning(col *table.Column, rowIdx int) {
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnings := sc.GetWarnings()
+
+	for i, warning := range warnings {
+		if types.ErrOverflow.Equal(warning.Err) {
+			warning.Err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(col.Name.O, rowIdx+1)
+			warnings[i] = warning
+			sc.SetWarnings(warnings)
+			break
+		}
+	}
+}
+
 // newFirstChunk creates a new chunk to buffer current executor's result.
 func newFirstChunk(e Executor) *chunk.Chunk {
 	base := e.base()
