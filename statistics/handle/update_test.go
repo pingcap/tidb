@@ -1353,7 +1353,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 			sql: "select * from t use index(idx_ag) where a = 1 and g < 21",
 			hist: "column:7 ndv:20 totColSize:196\n" +
 				"num: 13 lower_bound: -838:59:59 upper_bound: 00:00:06 repeats: 0\n" +
-				"num: 11 lower_bound: 00:00:07 upper_bound: 00:00:13 repeats: 0\n" +
+				"num: 12 lower_bound: 00:00:07 upper_bound: 00:00:13 repeats: 0\n" +
 				"num: 10 lower_bound: 00:00:14 upper_bound: 00:00:21 repeats: 0",
 			rangeID: tblInfo.Columns[6].ID,
 			idxID:   tblInfo.Indices[6].ID,
@@ -1364,7 +1364,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 			sql: `select * from t use index(idx_ah) where a = 1 and h < "1000-01-21"`,
 			hist: "column:8 ndv:20 totColSize:360\n" +
 				"num: 13 lower_bound: 1000-01-01 upper_bound: 1000-01-07 repeats: 0\n" +
-				"num: 11 lower_bound: 1000-01-08 upper_bound: 1000-01-14 repeats: 0\n" +
+				"num: 12 lower_bound: 1000-01-08 upper_bound: 1000-01-14 repeats: 0\n" +
 				"num: 10 lower_bound: 1000-01-15 upper_bound: 1000-01-21 repeats: 0",
 			rangeID: tblInfo.Columns[7].ID,
 			idxID:   tblInfo.Indices[7].ID,
