@@ -872,7 +872,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 			continue
 		}
 
-		rows := pi.ToRow()
+		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone)
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
