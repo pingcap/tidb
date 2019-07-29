@@ -532,6 +532,7 @@ var tableProcesslistCols = []columnInfo{
 	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
 	{"INFO", mysql.TypeString, 512, 0, nil, nil},
 	{"MEM", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"TxnStart", mysql.TypeVarchar, 64, mysql.NotNullFlag, "", nil},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -627,7 +628,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	var records [][]types.Datum
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
-		rows := pi.ToRow()
+		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone)
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
