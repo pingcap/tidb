@@ -512,6 +512,7 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	err := txn.Set(key, key)
 	c.Assert(err, IsNil)
 	commiter, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
