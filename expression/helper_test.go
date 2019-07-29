@@ -14,6 +14,7 @@
 package expression
 
 import (
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"strings"
 	"time"
 
@@ -108,19 +109,27 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 
 func (s *testExpressionSuite) TestIsCurrentTimestampExpr(c *C) {
 	defer testleak.AfterTest(c)()
+	buildTimestampFuncCallExpr := func(i int64) *ast.FuncCallExpr {
+		var args []ast.ExprNode
+		if i != 0 {
+			args = []ast.ExprNode{&driver.ValueExpr{Datum: types.NewIntDatum(i)}}
+		}
+		return &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: args}
+	}
+
 	v := IsValidCurrentTimestampExpr(ast.NewValueExpr("abc"), nil)
 	c.Assert(v, IsFalse)
-	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}, nil)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), nil)
 	c.Assert(v, IsTrue)
-	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP(3)")}, &types.FieldType{Decimal: 3})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), &types.FieldType{Decimal: 3})
 	c.Assert(v, IsTrue)
-	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP(1)")}, &types.FieldType{Decimal: 3})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), &types.FieldType{Decimal: 3})
 	c.Assert(v, IsFalse)
-	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}, &types.FieldType{Decimal: 3})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), &types.FieldType{Decimal: 3})
 	c.Assert(v, IsFalse)
-	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP(2)")}, &types.FieldType{Decimal: 0})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), &types.FieldType{Decimal: 0})
 	c.Assert(v, IsFalse)
-	v = IsValidCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP(2)")}, nil)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), nil)
 	c.Assert(v, IsFalse)
 }
 
