@@ -6,3 +6,9 @@ describe t;
 desc t;
 desc t c1;
 desc t id;
+
+drop table if exists t;
+create table t(id int primary key, a int, b int);
+explain select group_concat(a) from t group by id;
+explain select group_concat(a, b) from t group by id;
+drop table t;

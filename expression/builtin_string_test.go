@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testEvaluatorSuite) TestLength(c *C) {
+func (s *testEvaluatorSuite) TestLengthAndOctetLength(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
@@ -54,18 +54,21 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{errors.New("must error"), 0, false, true},
 	}
 
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Length, s.primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(chunk.Row{})
-		if t.getErr {
-			c.Assert(err, NotNil)
-		} else {
+	lengthMethods := []string{ast.Length, ast.OctetLength}
+	for _, lengthMethod := range lengthMethods {
+		for _, t := range cases {
+			f, err := newFunctionForTest(s.ctx, lengthMethod, s.primitiveValsToConstants([]interface{}{t.args})...)
 			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			d, err := f.Eval(chunk.Row{})
+			if t.getErr {
+				c.Assert(err, NotNil)
 			} else {
-				c.Assert(d.GetInt64(), Equals, t.expected)
+				c.Assert(err, IsNil)
+				if t.isNil {
+					c.Assert(d.Kind(), Equals, types.KindNull)
+				} else {
+					c.Assert(d.GetInt64(), Equals, t.expected)
+				}
 			}
 		}
 	}
@@ -171,6 +174,50 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestConcatSig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeVarchar},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	concat := &builtinConcatSig{base, 5}
+
+	cases := []struct {
+		args     []interface{}
+		warnings int
+		res      string
+	}{
+		{[]interface{}{"a", "b"}, 0, "ab"},
+		{[]interface{}{"aaa", "bbb"}, 1, ""},
+		{[]interface{}{"中", "a"}, 0, "中a"},
+		{[]interface{}{"中文", "a"}, 2, ""},
+	}
+
+	for _, t := range cases {
+		input := chunk.NewChunkWithCapacity(colTypes, 10)
+		input.AppendString(0, t.args[0].(string))
+		input.AppendString(1, t.args[1].(string))
+
+		res, isNull, err := concat.evalString(input.GetRow(0))
+		c.Assert(res, Equals, t.res)
+		c.Assert(err, IsNil)
+		if t.warnings == 0 {
+			c.Assert(isNull, IsFalse)
+		} else {
+			c.Assert(isNull, IsTrue)
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(warnings, HasLen, t.warnings)
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+		}
+	}
+}
+
 func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
@@ -244,6 +291,53 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 
 	_, err = funcs[ast.ConcatWS].getFunction(s.ctx, s.primitiveValsToConstants([]interface{}{nil, nil}))
 	c.Assert(err, IsNil)
+}
+
+func (s *testEvaluatorSuite) TestConcatWSSig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeVarchar},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+		&Column{Index: 2, RetType: colTypes[2]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	concat := &builtinConcatWSSig{base, 6}
+
+	cases := []struct {
+		args     []interface{}
+		warnings int
+		res      string
+	}{
+		{[]interface{}{",", "a", "b"}, 0, "a,b"},
+		{[]interface{}{",", "aaa", "bbb"}, 1, ""},
+		{[]interface{}{",", "中", "a"}, 0, "中,a"},
+		{[]interface{}{",", "中文", "a"}, 2, ""},
+	}
+
+	for _, t := range cases {
+		input := chunk.NewChunkWithCapacity(colTypes, 10)
+		input.AppendString(0, t.args[0].(string))
+		input.AppendString(1, t.args[1].(string))
+		input.AppendString(2, t.args[2].(string))
+
+		res, isNull, err := concat.evalString(input.GetRow(0))
+		c.Assert(res, Equals, t.res)
+		c.Assert(err, IsNil)
+		if t.warnings == 0 {
+			c.Assert(isNull, IsFalse)
+		} else {
+			c.Assert(isNull, IsTrue)
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(warnings, HasLen, t.warnings)
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestLeft(c *C) {
@@ -676,41 +770,61 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 func (s *testEvaluatorSuite) TestConvert(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		str    string
-		cs     string
-		result string
+		str           interface{}
+		cs            string
+		result        string
+		hasBinaryFlag bool
 	}{
-		{"haha", "utf8", "haha"},
-		{"haha", "ascii", "haha"},
-		{"haha", "binary", "haha"},
+		{"haha", "utf8", "haha", false},
+		{"haha", "ascii", "haha", false},
+		{"haha", "binary", "haha", true},
+		{"haha", "bInAry", "haha", true},
+		{types.NewBinaryLiteralFromUint(0x7e, -1), "BiNarY", "~", true},
+		{types.NewBinaryLiteralFromUint(0xe4b8ade696870a, -1), "uTf8", "中文\n", false},
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.Convert]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.cs)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
+		retType := f.getRetTp()
+		c.Assert(retType.Charset, Equals, strings.ToLower(v.cs))
+		collate, err := charset.GetDefaultCollation(strings.ToLower(v.cs))
+		c.Assert(err, IsNil)
+		c.Assert(retType.Collate, Equals, collate)
+		c.Assert(mysql.HasBinaryFlag(retType.Flag), Equals, v.hasBinaryFlag)
+
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
 		c.Assert(r.GetString(), Equals, v.result)
 	}
 
-	// Test case for error
+	// Test case for getFunction() error
 	errTbl := []struct {
-		str    interface{}
-		cs     string
-		result string
+		str interface{}
+		cs  string
+		err string
 	}{
-		{"haha", "wrongcharset", "haha"},
+		{"haha", "wrongcharset", "[expression:1115]Unknown character set: 'wrongcharset'"},
+		{"haha", "cp866", "[expression:1115]Unknown character set: 'cp866'"},
 	}
 	for _, v := range errTbl {
 		fc := funcs[ast.Convert]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.cs)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		_, err = evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, v.err)
+		c.Assert(f, IsNil)
 	}
+
+	// Test wrong charset while evaluating.
+	fc := funcs[ast.Convert]
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("haha", "utf8")))
+	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	wrongFunction := f.(*builtinConvertSig)
+	wrongFunction.tp.Charset = "wrongcharset"
+	_, err = evalBuiltinFunc(wrongFunction, chunk.Row{})
+	c.Assert(err.Error(), Equals, "[expression:1115]Unknown character set: 'wrongcharset'")
 }
 
 func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
@@ -1199,6 +1313,13 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum("AB"))
+
+	// Test unsupported charset.
+	fc = funcs[ast.CharFunc]
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("65", "tidb")))
+	c.Assert(err, IsNil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
 }
 
 func (s *testEvaluatorSuite) TestCharLength(c *C) {
@@ -1447,12 +1568,32 @@ func (s *testEvaluatorSuite) TestInsertBinarySig(c *C) {
 	input := chunk.NewChunkWithCapacity(colTypes, 2)
 	input.AppendString(0, "abc")
 	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendNull(0)
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendInt64(1, 3)
+	input.AppendInt64(1, 3)
+	input.AppendInt64(1, 0)
+	input.AppendInt64(1, 3)
+	input.AppendNull(1)
 	input.AppendInt64(1, 3)
 	input.AppendInt64(1, 3)
 	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendNull(2)
 	input.AppendInt64(2, -1)
 	input.AppendString(3, "d")
 	input.AppendString(3, "de")
+	input.AppendString(3, "d")
+	input.AppendString(3, "d")
+	input.AppendString(3, "d")
+	input.AppendString(3, "d")
+	input.AppendNull(3)
 
 	res, isNull, err := insert.evalString(input.GetRow(0))
 	c.Assert(res, Equals, "abd")
@@ -1460,6 +1601,31 @@ func (s *testEvaluatorSuite) TestInsertBinarySig(c *C) {
 	c.Assert(err, IsNil)
 
 	res, isNull, err = insert.evalString(input.GetRow(1))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(2))
+	c.Assert(res, Equals, "abc")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(3))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(4))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(5))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(6))
 	c.Assert(res, Equals, "")
 	c.Assert(isNull, IsTrue)
 	c.Assert(err, IsNil)
@@ -1828,6 +1994,8 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 		{[]interface{}{"Quadratic", 3, 4, nil}, nil},
 		{[]interface{}{"Quadratic", 3, -1, "What"}, "QuWhat"},
 		{[]interface{}{"Quadratic", 3, 1, "What"}, "QuWhatdratic"},
+		{[]interface{}{"Quadratic", -1, nil, "What"}, nil},
+		{[]interface{}{"Quadratic", -1, 4, nil}, nil},
 
 		{[]interface{}{"我叫小雨呀", 3, 2, "王雨叶"}, "我叫王雨叶呀"},
 		{[]interface{}{"我叫小雨呀", -1, 2, "王雨叶"}, "我叫小雨呀"},
@@ -1838,6 +2006,8 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 		{[]interface{}{"我叫小雨呀", 3, 4, nil}, nil},
 		{[]interface{}{"我叫小雨呀", 3, -1, "王雨叶"}, "我叫王雨叶"},
 		{[]interface{}{"我叫小雨呀", 3, 1, "王雨叶"}, "我叫王雨叶雨呀"},
+		{[]interface{}{"我叫小雨呀", -1, nil, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", -1, 2, nil}, nil},
 	}
 	fc := funcs[ast.InsertFunc]
 	for _, test := range tests {

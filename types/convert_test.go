@@ -461,6 +461,42 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 	testStrToFloat(c, "1e649", math.MaxFloat64, false, nil)
 	testStrToFloat(c, "-1e649", -math.MaxFloat64, true, ErrTruncatedWrongVal)
 	testStrToFloat(c, "-1e649", -math.MaxFloat64, false, nil)
+
+	// for issue #10806, #11179
+	testSelectUpdateDeleteEmptyStringError(c)
+}
+
+func testSelectUpdateDeleteEmptyStringError(c *C) {
+	testCases := []struct {
+		inSelect bool
+		inUpdate bool
+		inDelete bool
+	}{
+		{true, false, false},
+		{false, true, false},
+		{false, false, true},
+	}
+	sc := new(stmtctx.StatementContext)
+	for _, tc := range testCases {
+		sc.InSelectStmt = tc.inSelect
+		sc.InUpdateStmt = tc.inUpdate
+		sc.InDeleteStmt = tc.inDelete
+
+		str := ""
+		expect := 0
+
+		val, err := StrToInt(sc, str)
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, int64(expect))
+
+		val1, err := StrToUint(sc, str)
+		c.Assert(err, IsNil)
+		c.Assert(val1, Equals, uint64(expect))
+
+		val2, err := StrToFloat(sc, str)
+		c.Assert(err, IsNil)
+		c.Assert(val2, Equals, float64(expect))
+	}
 }
 
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
@@ -621,13 +657,18 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedDeny(c, mysql.TypeYear, 123, "<nil>")
 	signedDeny(c, mysql.TypeYear, 3000, "<nil>")
 	signedAccept(c, mysql.TypeYear, "2000", "2000")
+	signedAccept(c, mysql.TypeYear, "abc", "0")
+	signedAccept(c, mysql.TypeYear, "00abc", "2000")
+	signedAccept(c, mysql.TypeYear, "0019", "2019")
 
 	// time from string
 	signedAccept(c, mysql.TypeDate, "2012-08-23", "2012-08-23")
 	signedAccept(c, mysql.TypeDatetime, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
 	signedAccept(c, mysql.TypeDatetime, ZeroDatetime, "0000-00-00 00:00:00")
 	signedAccept(c, mysql.TypeDatetime, int64(0), "0000-00-00 00:00:00")
+	signedAccept(c, mysql.TypeDatetime, NewDecFromFloatForTest(20010101100000.123456), "2001-01-01 10:00:00")
 	signedAccept(c, mysql.TypeTimestamp, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
+	signedAccept(c, mysql.TypeTimestamp, NewDecFromFloatForTest(20010101100000.123456), "2001-01-01 10:00:00")
 	signedAccept(c, mysql.TypeDuration, "10:11:12", "10:11:12")
 	signedAccept(c, mysql.TypeDuration, ZeroDatetime, "00:00:00")
 	signedAccept(c, mysql.TypeDuration, ZeroDuration, "00:00:00")
@@ -661,6 +702,95 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 
+func (s *testTypeConvertSuite) TestRoundIntStr(c *C) {
+	cases := []struct {
+		a string
+		b byte
+		c string
+	}{
+		{"+999", '5', "+1000"},
+		{"999", '5', "1000"},
+		{"-999", '5', "-1000"},
+	}
+	for _, cc := range cases {
+		c.Assert(roundIntStr(cc.b, cc.a), Equals, cc.c)
+	}
+}
+
+func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
+	tests := []struct {
+		origin  string
+		valid   string
+		warning bool
+	}{
+		{"100", "100", false},
+		{"-100", "-100", false},
+		{"1abc", "1", true},
+		{"-1-1", "-1", true},
+		{"+1+1", "+1", true},
+		{"123..34", "123", true},
+		{"123.23E-10", "123", true},
+		{"1.1e1.3", "1", true},
+		{"11e1.3", "11", true},
+		{"1.", "1", true},
+		{".1", "0", true},
+		{"", "0", true},
+		{"123e+", "123", true},
+		{"123de", "123", true},
+	}
+	sc := new(stmtctx.StatementContext)
+	sc.TruncateAsWarning = true
+	sc.CastStrToIntStrict = true
+	warningCount := 0
+	for _, tt := range tests {
+		prefix, err := getValidIntPrefix(sc, tt.origin)
+		c.Assert(err, IsNil)
+		c.Assert(prefix, Equals, tt.valid)
+		_, err = strconv.ParseInt(prefix, 10, 64)
+		c.Assert(err, IsNil)
+		warnings := sc.GetWarnings()
+		if tt.warning {
+			c.Assert(warnings, HasLen, warningCount+1)
+			c.Assert(terror.ErrorEqual(warnings[len(warnings)-1].Err, ErrTruncatedWrongVal), IsTrue)
+			warningCount += 1
+		} else {
+			c.Assert(warnings, HasLen, warningCount)
+		}
+	}
+
+	tests2 := []struct {
+		origin  string
+		valid   string
+		warning bool
+	}{
+		{"100", "100", false},
+		{"-100", "-100", false},
+		{"1abc", "1", true},
+		{"-1-1", "-1", true},
+		{"+1+1", "+1", true},
+		{"123..34", "123.", true},
+		{"123.23E-10", "0", false},
+		{"1.1e1.3", "1.1e1", true},
+		{"11e1.3", "11e1", true},
+		{"1.", "1", false},
+		{".1", "0", false},
+		{"", "0", true},
+		{"123e+", "123", true},
+		{"123de", "123", true},
+	}
+	sc.TruncateAsWarning = false
+	sc.CastStrToIntStrict = false
+	for _, tt := range tests2 {
+		prefix, err := getValidIntPrefix(sc, tt.origin)
+		if tt.warning {
+			c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+		}
+		c.Assert(prefix, Equals, tt.valid)
+	}
+}
+
 func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	tests := []struct {
 		origin string
@@ -688,15 +818,31 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		_, err := strconv.ParseFloat(prefix, 64)
 		c.Assert(err, IsNil)
 	}
-	floatStr, err := floatStrToIntStr(sc, "1e9223372036854775807", "1e9223372036854775807")
-	c.Assert(err, IsNil)
-	c.Assert(floatStr, Equals, "1")
-	floatStr, err = floatStrToIntStr(sc, "125e342", "125e342.83")
-	c.Assert(err, IsNil)
-	c.Assert(floatStr, Equals, "125")
-	floatStr, err = floatStrToIntStr(sc, "1e21", "1e21")
-	c.Assert(err, IsNil)
-	c.Assert(floatStr, Equals, "1")
+
+	tests2 := []struct {
+		origin   string
+		expected string
+	}{
+		{"1e9223372036854775807", "1"},
+		{"125e342", "125"},
+		{"1e21", "1"},
+		{"1e5", "100000"},
+		{"-123.45678e5", "-12345678"},
+		{"+0.5", "1"},
+		{"-0.5", "-1"},
+		{".5e0", "1"},
+		{"+.5e0", "+1"},
+		{"-.5e0", "-1"},
+		{".5", "1"},
+		{"123.456789e5", "12345679"},
+		{"123.456784e5", "12345678"},
+		{"+999.9999e2", "+100000"},
+	}
+	for _, t := range tests2 {
+		str, err := floatStrToIntStr(sc, t.origin, t.origin)
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, t.expected, Commentf("%v, %v", t.origin, t.expected))
+	}
 }
 
 // TestConvertTime tests time related conversion.
@@ -785,24 +931,26 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 
 func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 	var tests = []struct {
-		In  string
+		In  interface{}
 		Out float64
+		ty  json.TypeCode
 	}{
-		{`{}`, 0},
-		{`[]`, 0},
-		{`3`, 3},
-		{`-3`, -3},
-		{`4.5`, 4.5},
-		{`true`, 1},
-		{`false`, 0},
-		{`null`, 0},
-		{`"hello"`, 0},
-		{`"123.456hello"`, 123.456},
-		{`"1234"`, 1234},
+		{make(map[string]interface{}, 0), 0, json.TypeCodeObject},
+		{make([]interface{}, 0), 0, json.TypeCodeArray},
+		{int64(3), 3, json.TypeCodeInt64},
+		{int64(-3), -3, json.TypeCodeInt64},
+		{uint64(1 << 63), 1 << 63, json.TypeCodeUint64},
+		{float64(4.5), 4.5, json.TypeCodeFloat64},
+		{true, 1, json.TypeCodeLiteral},
+		{false, 0, json.TypeCodeLiteral},
+		{nil, 0, json.TypeCodeLiteral},
+		{"hello", 0, json.TypeCodeString},
+		{"123.456hello", 123.456, json.TypeCodeString},
+		{"1234", 1234, json.TypeCodeString},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseBinaryFromString(tt.In)
-		c.Assert(err, IsNil)
+		j := json.CreateBinary(tt.In)
+		c.Assert(j.TypeCode, Equals, tt.ty)
 		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)
 	}
@@ -877,5 +1025,90 @@ func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 		dur, err := NumberToDuration(tc.number, 0)
 		c.Assert(err, IsNil)
 		c.Assert(dur.Duration, Equals, tc.dur)
+	}
+}
+
+func (s *testTypeConvertSuite) TestStrToDuration(c *C) {
+	sc := new(stmtctx.StatementContext)
+	var tests = []struct {
+		str        string
+		fsp        int
+		isDuration bool
+	}{
+		{"20190412120000", 4, false},
+		{"20190101180000", 6, false},
+		{"20190101180000", 1, false},
+		{"20190101181234", 3, false},
+	}
+	for _, tt := range tests {
+		_, _, isDuration, err := StrToDuration(sc, tt.str, tt.fsp)
+		c.Assert(err, IsNil)
+		c.Assert(isDuration, Equals, tt.isDuration)
+	}
+}
+
+func (s *testTypeConvertSuite) TestConvertScientificNotation(c *C) {
+	cases := []struct {
+		input  string
+		output string
+		succ   bool
+	}{
+		{"123.456e0", "123.456", true},
+		{"123.456e1", "1234.56", true},
+		{"123.456e3", "123456", true},
+		{"123.456e4", "1234560", true},
+		{"123.456e5", "12345600", true},
+		{"123.456e6", "123456000", true},
+		{"123.456e7", "1234560000", true},
+		{"123.456e-1", "12.3456", true},
+		{"123.456e-2", "1.23456", true},
+		{"123.456e-3", "0.123456", true},
+		{"123.456e-4", "0.0123456", true},
+		{"123.456e-5", "0.00123456", true},
+		{"123.456e-6", "0.000123456", true},
+		{"123.456e-7", "0.0000123456", true},
+		{"123.456e-", "", false},
+		{"123.456e-7.5", "", false},
+		{"123.456e", "", false},
+	}
+	for _, ca := range cases {
+		result, err := convertScientificNotation(ca.input)
+		if !ca.succ {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			c.Assert(ca.output, Equals, result)
+		}
+	}
+}
+
+func (s *testTypeConvertSuite) TestConvertDecimalStrToUint(c *C) {
+	cases := []struct {
+		input  string
+		result uint64
+		succ   bool
+	}{
+		{"0.", 0, true},
+		{"72.40", 72, true},
+		{"072.40", 72, true},
+		{"123.456e2", 12346, true},
+		{"123.456e-2", 1, true},
+		{"072.50000000001", 73, true},
+		{".5757", 1, true},
+		{".12345E+4", 1235, true},
+		{"9223372036854775807.5", 9223372036854775808, true},
+		{"9223372036854775807.4999", 9223372036854775807, true},
+		{"18446744073709551614.55", 18446744073709551615, true},
+		{"18446744073709551615.344", 18446744073709551615, true},
+		{"18446744073709551615.544", 0, false},
+	}
+	for _, ca := range cases {
+		result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, ca.input, math.MaxUint64, 0)
+		if !ca.succ {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			c.Assert(result, Equals, ca.result)
+		}
 	}
 }

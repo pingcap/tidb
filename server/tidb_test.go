@@ -53,7 +53,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	metrics.RegisterMetrics()
 	var err error
 	ts.store, err = mockstore.NewMockTikvStore()
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	c.Assert(err, IsNil)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
@@ -210,7 +210,7 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 // If parentCert and parentCertKey is specified, the new certificate will be signed by the parentCert.
 // Otherwise, the new certificate will be self-signed and is a CA.
 func generateCert(sn int, commonName string, parentCert *x509.Certificate, parentCertKey *rsa.PrivateKey, outKeyFile string, outCertFile string) (*x509.Certificate, *rsa.PrivateKey, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 512)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 528)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -437,7 +437,7 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show create table t1")
 	c.Assert(err, IsNil)
-	req := rs[0].NewRecordBatch()
+	req := rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
@@ -467,7 +467,7 @@ func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show tables")
 	c.Assert(err, IsNil)
-	req := rs[0].NewRecordBatch()
+	req := rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
@@ -535,11 +535,11 @@ func (ts *TidbTestSuite) TestFieldList(c *C) {
 		case 10, 11, 12, 15, 16:
 			// c_char char(20), c_varchar varchar(20), c_text_d text,
 			// c_set set('a', 'b', 'c'), c_enum enum('a', 'b', 'c')
-			c.Assert(col.Charset, Equals, uint16(tmysql.CharsetIDs[tmysql.DefaultCharset]), Commentf("index %d", i))
+			c.Assert(col.Charset, Equals, uint16(tmysql.CharsetNameToID(tmysql.DefaultCharset)), Commentf("index %d", i))
 			continue
 		}
 
-		c.Assert(col.Charset, Equals, uint16(tmysql.CharsetIDs["binary"]), Commentf("index %d", i))
+		c.Assert(col.Charset, Equals, uint16(tmysql.CharsetNameToID("binary")), Commentf("index %d", i))
 	}
 
 	// c_decimal decimal(6, 3)

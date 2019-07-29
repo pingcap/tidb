@@ -33,9 +33,10 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // DDLInfo is for DDL information.
@@ -103,7 +104,8 @@ func IsJobRollbackable(job *model.Job) bool {
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
-		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition:
+		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
+		model.ActionModifySchemaCharsetAndCollate:
 		return job.SchemaState == model.StateNone
 	}
 	return true
@@ -126,7 +128,9 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		found := false
 		for j, job := range jobs {
 			if id != job.ID {
-				log.Debugf("the job ID %d that needs to be canceled isn't equal to current job ID %d", id, job.ID)
+				logutil.BgLogger().Debug("the job that needs to be canceled isn't equal to current job",
+					zap.Int64("need to canceled job ID", id),
+					zap.Int64("current job ID", job.ID))
 				continue
 			}
 			found = true
@@ -222,7 +226,7 @@ const DefNumHistoryJobs = 10
 // The maximum count of history jobs is num.
 func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
-	jobs, err := t.GetAllHistoryDDLJobs()
+	jobs, err := t.GetLastNHistoryDDLJobs(maxNumJobs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -585,25 +589,16 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 }
 
 func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
-	cols := t.Cols()
-	tblInfo := t.Meta()
-	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
-	for _, v := range decodeCol {
-		col := cols[v.Offset]
-		tpExpr := decoder.Column{
-			Col: col,
-		}
-		if col.IsGenerated() && !col.GeneratedStored {
-			for _, c := range cols {
-				if _, ok := col.Dependences[c.Name.L]; ok {
-					decodeColsMap[c.ID] = decoder.Column{
-						Col: c,
-					}
-				}
-			}
-			tpExpr.GenExpr = genExpr[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
-		}
-		decodeColsMap[col.ID] = tpExpr
+	var containsVirtualCol bool
+	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
+		containsVirtualCol = true
+		return genExpr[model.TableColumnID{TableID: t.Meta().ID, ColumnID: genCol.ID}], nil
+	})
+	_ = ignored
+
+	if containsVirtualCol {
+		decoder.SubstituteGenColsInDecodeColMap(decodeColsMap)
+		decoder.RemoveUnusedVirtualCols(decodeColsMap, decodeCol)
 	}
 	return decoder.NewRowDecoder(t, decodeColsMap)
 }
@@ -683,7 +678,10 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		return nil
 	}
 
-	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
+	logutil.BgLogger().Debug("record",
+		zap.Binary("startKey", startKey),
+		zap.Binary("key", it.Key()),
+		zap.Binary("value", it.Value()))
 	rowDecoder := makeRowDecoder(t, cols, genExprs)
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.

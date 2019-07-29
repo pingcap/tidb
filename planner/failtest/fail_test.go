@@ -17,7 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -77,8 +77,10 @@ func (s *testFailPointSuit) TestColumnPruningError(c *C) {
 	tk.MustQuery(`select a from t;`).Check(testkit.Rows(`1`))
 
 	// test the injected fail point
-	gofail.Enable("github.com/pingcap/tidb/planner/core/enableGetUsedListErr", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/executor/enableGetUsedListErr")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/core/enableGetUsedListErr", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/core/enableGetUsedListErr"), IsNil)
+	}()
 	err := tk.ExecToErr(`select a from t;`)
 	c.Assert(err.Error(), Equals, "getUsedList failed, triggered by gofail enableGetUsedListErr")
 }

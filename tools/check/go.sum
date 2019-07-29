@@ -58,6 +58,8 @@ golang.org/x/tools v0.0.0-20181030221726-6c7e314b6563 h1:NIou6eNFigscvKJmsbyez16
 golang.org/x/tools v0.0.0-20181030221726-6c7e314b6563/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=
 gopkg.in/alecthomas/gometalinter.v2 v2.0.12 h1:/xBWwtjmOmVxn8FXfIk9noV8m2E2Id9jFfUY/Mh9QAI=
 gopkg.in/alecthomas/gometalinter.v2 v2.0.12/go.mod h1:NDRytsqEZyolNuAgTzJkZMkSQM7FIKyzVzGhjB/qfYo=
+gopkg.in/alecthomas/gometalinter.v3 v3.0.0 h1:tKnpLD70cWDacxrv9JZ4atld7RPoPiHOBfad6mPmyBw=
+gopkg.in/alecthomas/gometalinter.v3 v3.0.0/go.mod h1:sE0aqUDPY4ibZWdfOxx4ZVG9CD+Y5I1H+Snwv8a3r/s=
 gopkg.in/alecthomas/kingpin.v2 v2.2.6/go.mod h1:FMv+mEhP44yOT+4EoQTLFTRgOQ1FBLkstjWtayDeSgw=
 gopkg.in/alecthomas/kingpin.v3-unstable v3.0.0-20170321130658-9670b87a702e h1:/Kkmnr1GwjGf9vuTsP/PZLLQxJolIZl7UGN+Or0co1A=
 gopkg.in/alecthomas/kingpin.v3-unstable v3.0.0-20170321130658-9670b87a702e/go.mod h1:3HH7i1SgMqlzxCcBmUHW657sD4Kvv9sC3HpL3YukzwA=

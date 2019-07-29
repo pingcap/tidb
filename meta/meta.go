@@ -31,7 +31,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/structure"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -62,7 +63,6 @@ var (
 	mTablePrefix      = "Table"
 	mTableIDPrefix    = "TID"
 	mBootstrapKey     = []byte("BootstrapKey")
-	mTableStatsPrefix = "TStats"
 	mSchemaDiffPrefix = "Diff"
 )
 
@@ -126,16 +126,6 @@ func (m *Meta) dbKey(dbID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
 }
 
-func (m *Meta) parseDatabaseID(key string) (int64, error) {
-	seps := strings.Split(key, ":")
-	if len(seps) != 2 {
-		return 0, errors.Errorf("invalid db key %s", key)
-	}
-
-	n, err := strconv.ParseInt(seps[1], 10, 64)
-	return n, errors.Trace(err)
-}
-
 func (m *Meta) autoTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
 }
@@ -144,18 +134,13 @@ func (m *Meta) tableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
 }
 
-func (m *Meta) parseTableID(key string) (int64, error) {
-	seps := strings.Split(key, ":")
-	if len(seps) != 2 {
-		return 0, errors.Errorf("invalid table meta key %s", key)
-	}
-
-	n, err := strconv.ParseInt(seps[1], 10, 64)
-	return n, errors.Trace(err)
+// DDLJobHistoryKey is only used for testing.
+func DDLJobHistoryKey(m *Meta, jobID int64) []byte {
+	return m.txn.EncodeHashDataKey(mDDLJobHistoryKey, m.jobIDKey(jobID))
 }
 
-// GenAutoTableIDIDKeyValue generate meta key by dbID, tableID and corresponding value by autoID.
-func (m *Meta) GenAutoTableIDIDKeyValue(dbID, tableID, autoID int64) (key, value []byte) {
+// GenAutoTableIDKeyValue generates meta key by dbID, tableID and corresponding value by autoID.
+func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value []byte) {
 	dbKey := m.dbKey(dbID)
 	autoTableIDKey := m.autoTableIDKey(tableID)
 	return m.txn.EncodeHashAutoIDKeyValue(dbKey, autoTableIDKey, autoID)
@@ -194,52 +179,34 @@ func (m *Meta) GenSchemaVersion() (int64, error) {
 
 func (m *Meta) checkDBExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
-	if err != nil {
-		return errors.Trace(err)
-	} else if v == nil {
-		return ErrDBNotExists
+	if err == nil && v == nil {
+		err = ErrDBNotExists
 	}
-
-	return nil
+	return errors.Trace(err)
 }
 
 func (m *Meta) checkDBNotExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
-	if err != nil {
-		return errors.Trace(err)
+	if err == nil && v != nil {
+		err = ErrDBExists
 	}
-
-	if v != nil {
-		return ErrDBExists
-	}
-
-	return nil
+	return errors.Trace(err)
 }
 
 func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
-	if err != nil {
-		return errors.Trace(err)
+	if err == nil && v == nil {
+		err = ErrTableNotExists
 	}
-
-	if v == nil {
-		return ErrTableNotExists
-	}
-
-	return nil
+	return errors.Trace(err)
 }
 
 func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
-	if err != nil {
-		return errors.Trace(err)
+	if err == nil && v != nil {
+		err = ErrTableExists
 	}
-
-	if v != nil {
-		return ErrTableExists
-	}
-
-	return nil
+	return errors.Trace(err)
 }
 
 // CreateDatabase creates a database with db info.
@@ -482,10 +449,10 @@ var (
 
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 	b, err := job.Encode(true)
-	if err != nil {
-		return errors.Trace(err)
+	if err == nil {
+		err = m.txn.RPush(key, b)
 	}
-	return m.txn.RPush(key, b)
+	return errors.Trace(err)
 }
 
 // EnQueueDDLJob adds a DDL job to the list.
@@ -548,10 +515,10 @@ func (m *Meta) GetDDLJobByIdx(index int64, jobListKeys ...JobListKeyType) (*mode
 // updateRawArgs is used to determine whether to update the raw args when encode the job.
 func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte, updateRawArgs bool) error {
 	b, err := job.Encode(updateRawArgs)
-	if err != nil {
-		return errors.Trace(err)
+	if err == nil {
+		err = m.txn.LSet(key, index, b)
 	}
-	return m.txn.LSet(key, index, b)
+	return errors.Trace(err)
 }
 
 // UpdateDDLJob updates the DDL job with index.
@@ -638,11 +605,10 @@ func (m *Meta) reorgJobPhysicalTableID(id int64) []byte {
 
 func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job) error {
 	b, err := job.Encode(true)
-	if err != nil {
-		return errors.Trace(err)
+	if err == nil {
+		err = m.txn.HSet(key, m.jobIDKey(job.ID), b)
 	}
-
-	return m.txn.HSet(key, m.jobIDKey(job.ID), b)
+	return errors.Trace(err)
 }
 
 // AddHistoryDDLJob adds DDL job to history.
@@ -675,10 +641,23 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var jobs []*model.Job
-	for _, pair := range pairs {
+	return decodeAndSortJob(pairs)
+}
+
+// GetLastNHistoryDDLJobs gets latest N history ddl jobs.
+func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
+	pairs, err := m.txn.HGetLastN(mDDLJobHistoryKey, num)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return decodeAndSortJob(pairs)
+}
+
+func decodeAndSortJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
+	jobs := make([]*model.Job, 0, len(jobPairs))
+	for _, pair := range jobPairs {
 		job := &model.Job{}
-		err = job.Decode(pair.Value)
+		err := job.Decode(pair.Value)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -746,10 +725,10 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 		return errors.Trace(err)
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID)); err != nil {
-		log.Warn("remove ddl reorg end handle error:", err)
+		logutil.BgLogger().Warn("remove DDL reorg end handle", zap.Error(err))
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID)); err != nil {
-		log.Warn("remove ddl reorg physical id error:", err)
+		logutil.BgLogger().Warn("remove DDL reorg physical ID", zap.Error(err))
 	}
 	return nil
 }
@@ -771,22 +750,21 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, physic
 		err = errors.Trace(err)
 		return
 	}
-	// endHandle or physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
+	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
 	// update them to table's in this case.
-	if endHandle == 0 || physicalTableID == 0 {
+	if physicalTableID == 0 {
 		if job.ReorgMeta != nil {
 			endHandle = job.ReorgMeta.EndHandle
 		} else {
 			endHandle = math.MaxInt64
 		}
 		physicalTableID = job.TableID
-		log.Warnf("new TiDB binary running on old TiDB ddl reorg data, partition %v [%v %v]", physicalTableID, startHandle, endHandle)
+		logutil.BgLogger().Warn("new TiDB binary running on old TiDB DDL reorg data",
+			zap.Int64("partition ID", physicalTableID),
+			zap.Int64("startHandle", startHandle),
+			zap.Int64("endHandle", endHandle))
 	}
 	return
-}
-
-func (m *Meta) tableStatsKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mTableStatsPrefix, tableID))
 }
 
 func (m *Meta) schemaDiffKey(schemaVersion int64) []byte {
@@ -799,11 +777,8 @@ func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
 	startTime := time.Now()
 	data, err := m.txn.Get(diffKey)
 	metrics.MetaHistogram.WithLabelValues(metrics.GetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	if err != nil {
+	if err != nil || len(data) == 0 {
 		return nil, errors.Trace(err)
-	}
-	if len(data) == 0 {
-		return nil, nil
 	}
 	diff := &model.SchemaDiff{}
 	err = json.Unmarshal(data, diff)

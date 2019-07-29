@@ -27,7 +27,7 @@ import (
 // 1. encode a Chunk to a byte slice.
 // 2. decode a Chunk from a byte slice.
 type Codec struct {
-	// colTypes is used to check whether a column is fixed sized and what the
+	// colTypes is used to check whether a Column is fixed sized and what the
 	// fixed size for every element.
 	// NOTE: It's only used for decoding.
 	colTypes []*types.FieldType
@@ -47,7 +47,7 @@ func (c *Codec) Encode(chk *Chunk) []byte {
 	return buffer
 }
 
-func (c *Codec) encodeColumn(buffer []byte, col *column) []byte {
+func (c *Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	var lenBuffer [4]byte
 	// encode length.
 	binary.LittleEndian.PutUint32(lenBuffer[:], uint32(col.length))
@@ -65,8 +65,8 @@ func (c *Codec) encodeColumn(buffer []byte, col *column) []byte {
 
 	// encode offsets.
 	if !col.isFixed() {
-		numOffsetBytes := (col.length + 1) * 4
-		offsetBytes := c.i32SliceToBytes(col.offsets)
+		numOffsetBytes := (col.length + 1) * 8
+		offsetBytes := c.i64SliceToBytes(col.offsets)
 		buffer = append(buffer, offsetBytes[:numOffsetBytes]...)
 	}
 
@@ -75,14 +75,14 @@ func (c *Codec) encodeColumn(buffer []byte, col *column) []byte {
 	return buffer
 }
 
-func (c *Codec) i32SliceToBytes(i32s []int32) (b []byte) {
-	if len(i32s) == 0 {
+func (c *Codec) i64SliceToBytes(i64s []int64) (b []byte) {
+	if len(i64s) == 0 {
 		return nil
 	}
 	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	hdr.Len = len(i32s) * 4
+	hdr.Len = len(i64s) * 8
 	hdr.Cap = hdr.Len
-	hdr.Data = uintptr(unsafe.Pointer(&i32s[0]))
+	hdr.Data = uintptr(unsafe.Pointer(&i64s[0]))
 	return b
 }
 
@@ -90,7 +90,7 @@ func (c *Codec) i32SliceToBytes(i32s []int32) (b []byte) {
 func (c *Codec) Decode(buffer []byte) (*Chunk, []byte) {
 	chk := &Chunk{}
 	for ordinal := 0; len(buffer) > 0; ordinal++ {
-		col := &column{}
+		col := &Column{}
 		buffer = c.decodeColumn(buffer, col, ordinal)
 		chk.columns = append(chk.columns, col)
 	}
@@ -105,7 +105,7 @@ func (c *Codec) DecodeToChunk(buffer []byte, chk *Chunk) (remained []byte) {
 	return buffer
 }
 
-func (c *Codec) decodeColumn(buffer []byte, col *column, ordinal int) (remained []byte) {
+func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained []byte) {
 	// decode length.
 	col.length = int(binary.LittleEndian.Uint32(buffer))
 	buffer = buffer[4:]
@@ -125,12 +125,12 @@ func (c *Codec) decodeColumn(buffer []byte, col *column, ordinal int) (remained 
 
 	// decode offsets.
 	numFixedBytes := getFixedLen(c.colTypes[ordinal])
-	numDataBytes := numFixedBytes * col.length
+	numDataBytes := int64(numFixedBytes * col.length)
 	if numFixedBytes == -1 {
-		numOffsetBytes := (col.length + 1) * 4
-		col.offsets = append(col.offsets[:0], c.bytesToI32Slice(buffer[:numOffsetBytes])...)
+		numOffsetBytes := (col.length + 1) * 8
+		col.offsets = append(col.offsets[:0], c.bytesToI64Slice(buffer[:numOffsetBytes])...)
 		buffer = buffer[numOffsetBytes:]
-		numDataBytes = int(col.offsets[col.length])
+		numDataBytes = col.offsets[col.length]
 	} else if cap(col.elemBuf) < numFixedBytes {
 		col.elemBuf = make([]byte, numFixedBytes)
 	}
@@ -142,7 +142,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *column, ordinal int) (remained 
 
 var allNotNullBitmap [128]byte
 
-func (c *Codec) setAllNotNull(col *column) {
+func (c *Codec) setAllNotNull(col *Column) {
 	numNullBitmapBytes := (col.length + 7) / 8
 	col.nullBitmap = col.nullBitmap[:0]
 	for i := 0; i < numNullBitmapBytes; {
@@ -152,18 +152,18 @@ func (c *Codec) setAllNotNull(col *column) {
 	}
 }
 
-func (c *Codec) bytesToI32Slice(b []byte) (i32s []int32) {
+func (c *Codec) bytesToI64Slice(b []byte) (i64s []int64) {
 	if len(b) == 0 {
 		return nil
 	}
-	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&i32s))
-	hdr.Len = len(b) / 4
+	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&i64s))
+	hdr.Len = len(b) / 8
 	hdr.Cap = hdr.Len
 	hdr.Data = uintptr(unsafe.Pointer(&b[0]))
-	return i32s
+	return i64s
 }
 
-// varElemLen indicates this column is a variable length column.
+// varElemLen indicates this Column is a variable length Column.
 const varElemLen = -1
 
 func getFixedLen(colType *types.FieldType) int {

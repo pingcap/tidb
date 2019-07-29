@@ -24,7 +24,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
@@ -40,7 +39,7 @@ const (
 type brokenStore struct{}
 
 func (s *brokenStore) Open(schema string) (kv.Storage, error) {
-	return nil, errors.New("try again later")
+	return nil, kv.ErrTxnRetryable
 }
 
 func TestT(t *testing.T) {
@@ -160,6 +159,12 @@ func mustGet(c *C, txn kv.Transaction) {
 		c.Assert(err, IsNil)
 		c.Assert(string(val), Equals, string(s))
 	}
+}
+
+func (s *testKVSuite) TestNew(c *C) {
+	store, err := New("goleveldb://relative/path")
+	c.Assert(err, NotNil)
+	c.Assert(store, IsNil)
 }
 
 func (s *testKVSuite) TestGetSet(c *C) {
@@ -662,5 +667,21 @@ func (s *testKVSuite) TestRetryOpenStore(c *C) {
 	}
 	c.Assert(err, NotNil)
 	elapse := time.Since(begin)
-	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
+	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second), Commentf("elapse: %s", elapse))
+}
+
+func (s *testKVSuite) TestOpenStore(c *C) {
+	Register("open", &brokenStore{})
+	store, err := newStoreWithRetry(":", 3)
+	if store != nil {
+		defer store.Close()
+	}
+	c.Assert(err, NotNil)
+}
+
+func (s *testKVSuite) TestRegister(c *C) {
+	err := Register("retry", &brokenStore{})
+	c.Assert(err, IsNil)
+	err = Register("retry", &brokenStore{})
+	c.Assert(err, NotNil)
 }

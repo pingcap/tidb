@@ -96,7 +96,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		Desc:    p.Desc,
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
-	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, err
 }
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of
@@ -149,12 +149,12 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 		d, err := table.GetColOriginDefaultValue(ctx, c)
 		sessVars.StrictSQLMode = originStrict
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx, d)
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(sessVars.StmtCtx, nil, d)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil

@@ -27,7 +27,8 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // pluginGlobal holds all global variables for plugin.
@@ -48,8 +49,9 @@ type plugins struct {
 // clone deep copies plugins info.
 func (p *plugins) clone() *plugins {
 	np := &plugins{
-		plugins:  make(map[Kind][]Plugin, len(p.plugins)),
-		versions: make(map[string]uint16, len(p.versions)),
+		plugins:      make(map[Kind][]Plugin, len(p.plugins)),
+		versions:     make(map[string]uint16, len(p.versions)),
+		dyingPlugins: make([]Plugin, len(p.dyingPlugins)),
 	}
 	for key, value := range p.plugins {
 		np.plugins[key] = append([]Plugin(nil), value...)
@@ -93,39 +95,31 @@ type Config struct {
 // Plugin presents a TiDB plugin.
 type Plugin struct {
 	*Manifest
-	library *gplugin.Plugin
-	State   State
-	Path    string
+	library  *gplugin.Plugin
+	State    State
+	Path     string
+	Disabled uint32
 }
 
-type validateMode int
-
-const (
-	initMode validateMode = iota
-	reloadMode
-)
-
-func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins, mode validateMode) error {
-	if mode == reloadMode {
-		var oldPlugin *Plugin
-		for i, item := range tiPlugins.plugins[p.Kind] {
-			if item.Name == p.Name {
-				oldPlugin = &tiPlugins.plugins[p.Kind][i]
-				break
-			}
-		}
-		if oldPlugin == nil {
-			return errUnsupportedReloadPlugin.GenWithStackByArgs(p.Name)
-		}
-		if len(p.SysVars) != len(oldPlugin.SysVars) {
-			return errUnsupportedReloadPluginVar.GenWithStackByArgs("")
-		}
-		for varName, varVal := range p.SysVars {
-			if oldPlugin.SysVars[varName] == nil || *oldPlugin.SysVars[varName] != *varVal {
-				return errUnsupportedReloadPluginVar.GenWithStackByArgs(varVal)
-			}
-		}
+// StateValue returns readable state string.
+func (p *Plugin) StateValue() string {
+	flag := "enable"
+	if atomic.LoadUint32(&p.Disabled) == 1 {
+		flag = "disable"
 	}
+	return p.State.String() + "-" + flag
+}
+
+// DisableFlag changes the disable flag of plugin.
+func (p *Plugin) DisableFlag(disable bool) {
+	if disable {
+		atomic.StoreUint32(&p.Disabled, 1)
+	} else {
+		atomic.StoreUint32(&p.Disabled, 0)
+	}
+}
+
+func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins) error {
 	if p.RequireVersion != nil {
 		for component, reqVer := range p.RequireVersion {
 			if ver, ok := tiPlugins.versions[component]; !ok || ver < reqVer {
@@ -148,9 +142,9 @@ func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins, mode validate
 	return nil
 }
 
-// Init initializes the plugin and load plugin by config param.
-// This method isn't thread-safe and must be called before any other plugin operation.
-func Init(ctx context.Context, cfg Config) (err error) {
+// Load load plugin by config param.
+// This method need be called before domain init to inject global variable info during bootstrap.
+func Load(ctx context.Context, cfg Config) (err error) {
 	tiPlugins := &plugins{
 		plugins:      make(map[Kind][]Plugin),
 		versions:     make(map[string]uint16),
@@ -174,6 +168,7 @@ func Init(ctx context.Context, cfg Config) (err error) {
 		_, dup := tiPlugins.versions[pName]
 		if dup {
 			if cfg.SkipWhenFail {
+				logutil.Logger(ctx).Warn("duplicate load %s and ignored", zap.String("pluginName", pName))
 				continue
 			}
 			err = errDuplicatePlugin.GenWithStackByArgs(pluginID)
@@ -184,6 +179,7 @@ func Init(ctx context.Context, cfg Config) (err error) {
 		plugin, err = loadOne(cfg.PluginDir, ID(pluginID))
 		if err != nil {
 			if cfg.SkipWhenFail {
+				logutil.Logger(ctx).Warn("load plugin failure and ignored", zap.String("pluginID", pluginID), zap.Error(err))
 				continue
 			}
 			return
@@ -194,17 +190,10 @@ func Init(ctx context.Context, cfg Config) (err error) {
 	// Cross validate & Load plugins.
 	for kind := range tiPlugins.plugins {
 		for i := range tiPlugins.plugins[kind] {
-			if err = tiPlugins.plugins[kind][i].validate(ctx, tiPlugins, initMode); err != nil {
+			if err = tiPlugins.plugins[kind][i].validate(ctx, tiPlugins); err != nil {
 				if cfg.SkipWhenFail {
-					tiPlugins.plugins[kind][i].State = Disable
-					err = nil
-					continue
-				}
-				return
-			}
-			p := tiPlugins.plugins[kind][i]
-			if err = p.OnInit(ctx, p.Manifest); err != nil {
-				if cfg.SkipWhenFail {
+					logutil.Logger(ctx).Warn("validate plugin fail and disable plugin",
+						zap.String("plugin", tiPlugins.plugins[kind][i].Name), zap.Error(err))
 					tiPlugins.plugins[kind][i].State = Disable
 					err = nil
 					continue
@@ -219,7 +208,6 @@ func Init(ctx context.Context, cfg Config) (err error) {
 					}
 				}
 			}
-			tiPlugins.plugins[kind][i].State = Ready
 		}
 	}
 	pluginGlobal = copyOnWriteContext{tiPlugins: unsafe.Pointer(tiPlugins)}
@@ -227,30 +215,44 @@ func Init(ctx context.Context, cfg Config) (err error) {
 	return
 }
 
-// InitWatchLoops starts etcd watch loops for plugin that need watch.
-func InitWatchLoops(etcdClient *clientv3.Client) {
-	if etcdClient == nil {
-		return
-	}
+// Init initializes the loaded plugin by config param.
+// This method must be called after `Load` but before any other plugin method call, so it call got TiDB domain info.
+func Init(ctx context.Context, cfg Config) (err error) {
 	tiPlugins := pluginGlobal.plugins()
+	if tiPlugins == nil {
+		return nil
+	}
 	for kind := range tiPlugins.plugins {
 		for i := range tiPlugins.plugins[kind] {
-			if tiPlugins.plugins[kind][i].OnFlush == nil {
-				continue
+			p := tiPlugins.plugins[kind][i]
+			if err = p.OnInit(ctx, p.Manifest); err != nil {
+				if cfg.SkipWhenFail {
+					logutil.Logger(ctx).Warn("call Plugin OnInit failure, err: %v",
+						zap.String("plugin", p.Name), zap.Error(err))
+					tiPlugins.plugins[kind][i].State = Disable
+					err = nil
+					continue
+				}
+				return
 			}
-			const pluginWatchPrefix = "/tidb/plugins/"
-			ctx, cancel := context.WithCancel(context.Background())
-			watcher := &flushWatcher{
-				ctx:      ctx,
-				cancel:   cancel,
-				path:     pluginWatchPrefix + tiPlugins.plugins[kind][i].Name,
-				etcd:     etcdClient,
-				manifest: tiPlugins.plugins[kind][i].Manifest,
+			if p.OnFlush != nil && cfg.EtcdClient != nil {
+				const pluginWatchPrefix = "/tidb/plugins/"
+				ctx, cancel := context.WithCancel(context.Background())
+				watcher := &flushWatcher{
+					ctx:      ctx,
+					cancel:   cancel,
+					path:     pluginWatchPrefix + tiPlugins.plugins[kind][i].Name,
+					etcd:     cfg.EtcdClient,
+					manifest: tiPlugins.plugins[kind][i].Manifest,
+					plugin:   &tiPlugins.plugins[kind][i],
+				}
+				tiPlugins.plugins[kind][i].flushWatcher = watcher
+				go util.WithRecovery(watcher.watchLoop, nil)
 			}
-			tiPlugins.plugins[kind][i].flushWatcher = watcher
-			go util.WithRecovery(watcher.watchLoop, nil)
+			tiPlugins.plugins[kind][i].State = Ready
 		}
 	}
+	return
 }
 
 type flushWatcher struct {
@@ -259,6 +261,7 @@ type flushWatcher struct {
 	path     string
 	etcd     *clientv3.Client
 	manifest *Manifest
+	plugin   *Plugin
 }
 
 func (w *flushWatcher) watchLoop() {
@@ -268,15 +271,71 @@ func (w *flushWatcher) watchLoop() {
 		case <-w.ctx.Done():
 			return
 		case <-watchChan:
-			err := w.manifest.OnFlush(w.ctx, w.manifest)
+			disabled, err := w.getPluginDisabledFlag()
 			if err != nil {
-				log.Errorf("Notify plugin %s flush event failure: %v", w.manifest.Name, err)
+				logutil.BgLogger().Error("get plugin disabled flag failure", zap.String("plugin", w.manifest.Name), zap.Error(err))
+			}
+			if disabled {
+				atomic.StoreUint32(&w.manifest.flushWatcher.plugin.Disabled, 1)
+			} else {
+				atomic.StoreUint32(&w.manifest.flushWatcher.plugin.Disabled, 0)
+			}
+			err = w.manifest.OnFlush(w.ctx, w.manifest)
+			if err != nil {
+				logutil.BgLogger().Error("notify plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
 			}
 		}
 	}
 }
 
+func (w *flushWatcher) getPluginDisabledFlag() (bool, error) {
+	if w == nil || w.etcd == nil {
+		return true, errors.New("etcd is need to get plugin enable status")
+	}
+	resp, err := w.etcd.Get(context.Background(), w.manifest.flushWatcher.path)
+	if err != nil {
+		return true, errors.Trace(err)
+	}
+	if len(resp.Kvs) == 0 {
+		return false, nil
+	}
+	return string(resp.Kvs[0].Value) == "1", nil
+}
+
+type loadFn func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error)
+
+var testHook *struct {
+	loadOne loadFn
+}
+
 func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
+	pName, pVersion, err := pluginID.Decode()
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	var manifest func() *Manifest
+	if testHook == nil {
+		manifest, err = loadManifestByGoPlugin(&plugin, dir, pluginID)
+	} else {
+		manifest, err = testHook.loadOne(&plugin, dir, pluginID)
+	}
+	if err != nil {
+		return
+	}
+	plugin.Manifest = manifest()
+	if plugin.Name != pName {
+		err = errInvalidPluginName.GenWithStackByArgs(string(pluginID), plugin.Name)
+		return
+	}
+	if strconv.Itoa(int(plugin.Version)) != pVersion {
+		err = errInvalidPluginVersion.GenWithStackByArgs(string(pluginID))
+		return
+	}
+	return
+}
+
+func loadManifestByGoPlugin(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 	plugin.Path = filepath.Join(dir, string(pluginID)+LibrarySuffix)
 	plugin.library, err = gplugin.Open(plugin.Path)
 	if err != nil {
@@ -288,23 +347,10 @@ func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 		err = errors.Trace(err)
 		return
 	}
-	manifest, ok := manifestSym.(func() *Manifest)
+	var ok bool
+	manifest, ok = manifestSym.(func() *Manifest)
 	if !ok {
 		err = errInvalidPluginManifest.GenWithStackByArgs(string(pluginID))
-		return
-	}
-	pName, pVersion, err := pluginID.Decode()
-	if err != nil {
-		err = errors.Trace(err)
-		return
-	}
-	plugin.Manifest = manifest()
-	if plugin.Name != pName {
-		err = errInvalidPluginName.GenWithStackByArgs(string(pluginID), plugin.Name)
-		return
-	}
-	if strconv.Itoa(int(plugin.Version)) != pVersion {
-		err = errInvalidPluginVersion.GenWithStackByArgs(string(pluginID))
 		return
 	}
 	return
@@ -324,7 +370,12 @@ func Shutdown(ctx context.Context) {
 				if p.flushWatcher != nil {
 					p.flushWatcher.cancel()
 				}
+				if p.OnShutdown == nil {
+					continue
+				}
 				if err := p.OnShutdown(ctx, p.Manifest); err != nil {
+					logutil.Logger(ctx).Error("call OnShutdown for failure",
+						zap.String("plugin", p.Name), zap.Error(err))
 				}
 			}
 		}
@@ -348,13 +399,41 @@ func Get(kind Kind, name string) *Plugin {
 	return nil
 }
 
-// GetByKind finds and returns plugin by kind parameters.
-func GetByKind(kind Kind) []Plugin {
+// ForeachPlugin loops all ready plugins.
+func ForeachPlugin(kind Kind, fn func(plugin *Plugin) error) error {
 	plugins := pluginGlobal.plugins()
 	if plugins == nil {
 		return nil
 	}
-	return plugins.plugins[kind]
+	for i := range plugins.plugins[kind] {
+		p := &plugins.plugins[kind][i]
+		if p.State != Ready {
+			continue
+		}
+		if atomic.LoadUint32(&p.Disabled) == 1 {
+			continue
+		}
+		err := fn(p)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// IsEnable checks plugin's enable state.
+func IsEnable(kind Kind) bool {
+	plugins := pluginGlobal.plugins()
+	if plugins == nil {
+		return false
+	}
+	for i := range plugins.plugins[kind] {
+		p := &plugins.plugins[kind][i]
+		if p.State == Ready && atomic.LoadUint32(&p.Disabled) != 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // GetAll finds and returns all plugins.
@@ -369,10 +448,28 @@ func GetAll() map[Kind][]Plugin {
 // NotifyFlush notify plugins to do flush logic.
 func NotifyFlush(dom *domain.Domain, pluginName string) error {
 	p := getByName(pluginName)
-	if p == nil || p.Manifest.flushWatcher == nil {
-		return errors.Errorf("plugin %s doesn't exists or unsupported flush", pluginName)
+	if p == nil || p.Manifest.flushWatcher == nil || p.State != Ready {
+		return errors.Errorf("plugin %s doesn't exists or unsupported flush or doesn't start with PD", pluginName)
 	}
-	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, "")
+	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, strconv.Itoa(int(p.Disabled)))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// ChangeDisableFlagAndFlush changes plugin disable flag and notify other nodes to do same change.
+func ChangeDisableFlagAndFlush(dom *domain.Domain, pluginName string, disable bool) error {
+	p := getByName(pluginName)
+	if p == nil || p.Manifest.flushWatcher == nil || p.State != Ready {
+		return errors.Errorf("plugin %s doesn't exists or unsupported flush or doesn't start with PD", pluginName)
+	}
+	disableInt := uint32(0)
+	if disable {
+		disableInt = 1
+	}
+	atomic.StoreUint32(&p.Disabled, disableInt)
+	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, strconv.Itoa(int(disableInt)))
 	if err != nil {
 		return err
 	}

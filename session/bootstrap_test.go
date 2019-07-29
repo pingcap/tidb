@@ -51,7 +51,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	r := mustExecSQL(c, se, `select * from user;`)
 	c.Assert(r, NotNil)
 	ctx := context.Background()
-	req := r.NewRecordBatch()
+	req := r.NewChunk()
 	err := r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -67,7 +67,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	// Check privilege tables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	c.Assert(r, NotNil)
-	req = r.NewRecordBatch()
+	req = r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetInt64(0), Equals, globalVarsCount())
@@ -88,7 +88,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	r = mustExecSQL(c, se, "select * from t")
 	c.Assert(r, NotNil)
 
-	req = r.NewRecordBatch()
+	req = r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	datums = statistics.RowToDatums(req.GetRow(0), r.Fields())
@@ -154,7 +154,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	se := newSession(c, store, s.dbNameBootstrap)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
-	req := r.NewRecordBatch()
+	req := r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -173,7 +173,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	mustExecSQL(c, se, "SELECT * from mysql.default_roles;")
 	// Check global variables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
-	req = r.NewRecordBatch()
+	req = r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	v := req.GetRow(0)
@@ -181,7 +181,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	c.Assert(r.Close(), IsNil)
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
-	req = r.NewRecordBatch()
+	req = r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -202,7 +202,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 
 	// bootstrap with currentBootstrapVersion
 	r := mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	req := r.NewRecordBatch()
+	req := r.NewChunk()
 	err := r.Next(ctx, req)
 	row := req.GetRow(0)
 	c.Assert(err, IsNil)
@@ -232,7 +232,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	delete(storeBootstrapped, store.UUID())
 	// Make sure the version is downgraded.
 	r = mustExecSQL(c, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	req = r.NewRecordBatch()
+	req = r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsTrue)
@@ -248,7 +248,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	defer dom1.Close()
 	se2 := newSession(c, store, s.dbName)
 	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	req = r.NewRecordBatch()
+	req = r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -295,4 +295,17 @@ func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
 	newpwd, err := oldPasswordUpgrade(oldpwd)
 	c.Assert(err, IsNil)
 	c.Assert(newpwd, Equals, "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")
+}
+
+func (s *testBootstrapSuite) TestBootstrapInitExpensiveQueryHandle(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	defer store.Close()
+	se, err := createSession(store)
+	c.Assert(err, IsNil)
+	dom := domain.GetDomain(se)
+	c.Assert(dom, NotNil)
+	defer dom.Close()
+	dom.InitExpensiveQueryHandle()
+	c.Assert(dom.ExpensiveQueryHandle(), NotNil)
 }

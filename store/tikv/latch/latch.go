@@ -21,8 +21,9 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/spaolacci/murmur3"
+	"go.uber.org/zap"
 )
 
 type node struct {
@@ -288,7 +289,9 @@ func (latches *Latches) recycle(currentTS uint64) {
 		total += latch.recycle(currentTS)
 		latch.Unlock()
 	}
-	log.Debugf("recycle run at %v, recycle count = %d...\n", time.Now(), total)
+	logutil.BgLogger().Debug("recycle",
+		zap.Time("start at", time.Now()),
+		zap.Int("count", total))
 }
 
 func findNode(list *node, key []byte) *node {

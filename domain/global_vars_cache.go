@@ -56,7 +56,7 @@ func (gvc *GlobalVariableCache) Get() (succ bool, rows []chunk.Row, fields []*as
 }
 
 // Disable disables the global variabe cache, used in test only.
-func (gvc *GlobalVariableCache) Disable() (succ bool, rows []chunk.Row, fields []*ast.ResultField) {
+func (gvc *GlobalVariableCache) Disable() {
 	gvc.Lock()
 	defer gvc.Unlock()
 	gvc.disable = true

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
@@ -215,6 +216,41 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
 }
 
+// AddTableLock implements the sessionctx.Context interface.
+func (c *Context) AddTableLock(_ []model.TableLockTpInfo) {
+}
+
+// ReleaseTableLocks implements the sessionctx.Context interface.
+func (c *Context) ReleaseTableLocks(locks []model.TableLockTpInfo) {
+}
+
+// ReleaseTableLockByTableIDs implements the sessionctx.Context interface.
+func (c *Context) ReleaseTableLockByTableIDs(tableIDs []int64) {
+}
+
+// CheckTableLocked implements the sessionctx.Context interface.
+func (c *Context) CheckTableLocked(_ int64) (bool, model.TableLockType) {
+	return false, model.TableLockNone
+}
+
+// GetAllTableLocks implements the sessionctx.Context interface.
+func (c *Context) GetAllTableLocks() []model.TableLockTpInfo {
+	return nil
+}
+
+// ReleaseAllTableLocks implements the sessionctx.Context interface.
+func (c *Context) ReleaseAllTableLocks() {
+}
+
+// HasLockedTables implements the sessionctx.Context interface.
+func (c *Context) HasLockedTables() bool {
+	return false
+}
+
+// Close implements the sessionctx.Context interface.
+func (c *Context) Close() {
+}
+
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -228,6 +264,9 @@ func NewContext() *Context {
 	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
+		panic(err)
+	}
 	return sctx
 }
 

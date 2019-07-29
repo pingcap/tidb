@@ -15,11 +15,13 @@ package executor_test
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -239,13 +241,8 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 
-	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(binloginfo.ShouldEnableBinlog())))
-	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(binloginfo.ShouldEnableBinlog())))
-
-	tk.MustExec("set global tidb_log_bin = on")
-	tk.MustQuery(`select @@global.tidb_log_bin;`).Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_log_bin = off")
-	tk.MustQuery(`select @@global.tidb_log_bin;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
+	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
 
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
@@ -290,6 +287,102 @@ func (s *testSuite2) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("set global tidb_batch_commit = 2")
 	c.Assert(err, NotNil)
+
+	// test skip isolation level check: init
+	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
+	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
+	tk.MustExec("SET GLOBAL TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
+
+	// test skip isolation level check: error
+	_, err = tk.Exec("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
+
+	_, err = tk.Exec("SET GLOBAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
+
+	// test skip isolation level check: success
+	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 1")
+	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 1")
+	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error"))
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("SERIALIZABLE"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("SERIALIZABLE"))
+
+	// test skip isolation level check: success
+	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
+	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 1")
+	tk.MustExec("SET GLOBAL TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The isolation level 'READ-UNCOMMITTED' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error"))
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+
+	// test skip isolation level check: reset
+	tk.MustExec("SET GLOBAL transaction_isolation='REPEATABLE-READ'") // should reset tx_isolation back to rr before reset tidb_skip_isolation_level_check
+	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
+	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
+
+	tk.MustExec("set global read_only = 0")
+	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("0"))
+	tk.MustExec("set global read_only = off")
+	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("0"))
+	tk.MustExec("set global read_only = 1")
+	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
+	tk.MustExec("set global read_only = on")
+	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
+	_, err = tk.Exec("set global read_only = abc")
+	c.Assert(err, NotNil)
+
+	// test for tidb_wait_split_region_finish
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_wait_split_region_finish = 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_wait_split_region_finish = 0")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
+
+	// test for tidb_scatter_region
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_scatter_region = 1")
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_scatter_region = 0")
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("0"))
+	_, err = tk.Exec("set session tidb_scatter_region = 0")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`select @@session.tidb_scatter_region;`)
+	c.Assert(err, NotNil)
+
+	// test for tidb_wait_split_region_timeout
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitSplitRegionTimeout)))
+	tk.MustExec("set tidb_wait_split_region_timeout = 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
+	_, err = tk.Exec("set tidb_wait_split_region_timeout = 0")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_wait_split_region_timeout(0) cannot be smaller than 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
+
+	tk.MustExec("set session tidb_back_off_weight = 3")
+	tk.MustQuery("select @@session.tidb_back_off_weight;").Check(testkit.Rows("3"))
+	tk.MustExec("set session tidb_back_off_weight = 20")
+	tk.MustQuery("select @@session.tidb_back_off_weight;").Check(testkit.Rows("20"))
+	_, err = tk.Exec("set session tidb_back_off_weight = -1")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set global tidb_back_off_weight = 0")
+	c.Assert(err, NotNil)
+	tk.MustExec("set global tidb_back_off_weight = 10")
+	tk.MustQuery("select @@global.tidb_back_off_weight;").Check(testkit.Rows("10"))
+
+	tk.MustExec("set @@tidb_expensive_query_time_threshold=70")
+	tk.MustQuery("select @@tidb_expensive_query_time_threshold;").Check(testkit.Rows("70"))
 }
 
 func (s *testSuite2) TestSetCharset(c *C) {
@@ -336,9 +429,25 @@ func (s *testSuite2) TestValidateSetVar(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@tidb_batch_delete='On';")
+	tk.MustQuery("select @@tidb_batch_delete;").Check(testkit.Rows("1"))
 	tk.MustExec("set @@tidb_batch_delete='oFf';")
+	tk.MustQuery("select @@tidb_batch_delete;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@tidb_batch_delete=1;")
+	tk.MustQuery("select @@tidb_batch_delete;").Check(testkit.Rows("1"))
 	tk.MustExec("set @@tidb_batch_delete=0;")
+	tk.MustQuery("select @@tidb_batch_delete;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_opt_agg_push_down=off;")
+	tk.MustQuery("select @@tidb_opt_agg_push_down;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_constraint_check_in_place=on;")
+	tk.MustQuery("select @@tidb_constraint_check_in_place;").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_general_log=0;")
+	tk.MustQuery("select @@tidb_general_log;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_enable_streaming=1;")
+	tk.MustQuery("select @@tidb_enable_streaming;").Check(testkit.Rows("1"))
 
 	_, err = tk.Exec("set @@tidb_batch_delete=3;")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
@@ -517,6 +626,52 @@ func (s *testSuite2) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@sql_select_limit;")
 	result.Check(testkit.Rows("18446744073709551615"))
 
+	tk.MustExec("set @@sql_auto_is_null=00")
+	result = tk.MustQuery("select @@sql_auto_is_null;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@sql_warnings=001")
+	result = tk.MustQuery("select @@sql_warnings;")
+	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@sql_warnings=000")
+	result = tk.MustQuery("select @@sql_warnings;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.super_read_only=-0")
+	result = tk.MustQuery("select @@global.super_read_only;")
+	result.Check(testkit.Rows("0"))
+
+	_, err = tk.Exec("set @@global.super_read_only=-1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set @@global.innodb_status_output_locks=-1")
+	result = tk.MustQuery("select @@global.innodb_status_output_locks;")
+	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.innodb_ft_enable_stopword=0000000")
+	result = tk.MustQuery("select @@global.innodb_ft_enable_stopword;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.innodb_stats_on_metadata=1")
+	result = tk.MustQuery("select @@global.innodb_stats_on_metadata;")
+	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.innodb_file_per_table=-50")
+	result = tk.MustQuery("select @@global.innodb_file_per_table;")
+	result.Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("set @@global.innodb_ft_enable_stopword=2")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set @@query_cache_type=0")
+	result = tk.MustQuery("select @@query_cache_type;")
+	result.Check(testkit.Rows("OFF"))
+
+	tk.MustExec("set @@query_cache_type=2")
+	result = tk.MustQuery("select @@query_cache_type;")
+	result.Check(testkit.Rows("DEMAND"))
+
 	tk.MustExec("set @@global.sync_binlog=-1")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '-1'"))
 
@@ -589,6 +744,8 @@ func (s *testSuite2) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@tx_isolation;")
 	result.Check(testkit.Rows("REPEATABLE-READ"))
 
+	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
+	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
 	_, err = tk.Exec("set @@tx_isolation='SERIALIZABLE'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
 }
@@ -607,8 +764,50 @@ func (s *testSuite2) TestSelectGlobalVar(c *C) {
 	tk.MustExec("set @@global.max_connections=151;")
 
 	// test for unknown variable.
-	_, err := tk.Exec("select @@invalid")
+	err := tk.ExecToErr("select @@invalid")
 	c.Assert(terror.ErrorEqual(err, variable.UnknownSystemVar), IsTrue, Commentf("err %v", err))
-	_, err = tk.Exec("select @@global.invalid")
+	err = tk.ExecToErr("select @@global.invalid")
 	c.Assert(terror.ErrorEqual(err, variable.UnknownSystemVar), IsTrue, Commentf("err %v", err))
+}
+
+func (s *testSuite2) TestEnableNoopFunctionsVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// test for tidb_enable_noop_functions
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+
+	_, err := tk.Exec(`select get_lock('lock1', 2);`)
+	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	_, err = tk.Exec(`select release_lock('lock1');`)
+	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+
+	// change session var to 1
+	tk.MustExec(`set tidb_enable_noop_functions=1;`)
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select get_lock("lock", 10)`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select release_lock("lock")`).Check(testkit.Rows("1"))
+
+	// restore to 0
+	tk.MustExec(`set tidb_enable_noop_functions=0;`)
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+
+	_, err = tk.Exec(`select get_lock('lock2', 10);`)
+	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	_, err = tk.Exec(`select release_lock('lock2');`)
+	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+
+	// set test
+	_, err = tk.Exec(`set tidb_enable_noop_functions='abc'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`set tidb_enable_noop_functions=11`)
+	c.Assert(err, NotNil)
+	tk.MustExec(`set tidb_enable_noop_functions="off";`)
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustExec(`set tidb_enable_noop_functions="on";`)
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("1"))
+	tk.MustExec(`set tidb_enable_noop_functions=0;`)
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
 }

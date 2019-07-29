@@ -103,6 +103,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		c_year year
 	)`
 	testKit.MustExec(sql)
+	testKit.MustExec(`set tidb_enable_noop_functions=1;`)
 
 	var tests []typeInferTestCase
 	tests = append(tests, s.createTestCase4Constants()...)
@@ -126,8 +127,9 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4JSONFuncs()...)
 	tests = append(tests, s.createTestCase4MiscellaneousFunc()...)
 
+	ctx := context.Background()
 	for _, tt := range tests {
-		ctx := testKit.Se.(sessionctx.Context)
+		sctx := testKit.Se.(sessionctx.Context)
 		sql := "select " + tt.sql + " from t"
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
@@ -136,10 +138,10 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = plannercore.Preprocess(ctx, stmt, is)
+		is := domain.GetDomain(sctx).InfoSchema()
+		err = plannercore.Preprocess(sctx, stmt, is)
 		c.Assert(err, IsNil, comment)
-		p, err := plannercore.BuildLogicalPlan(ctx, stmt, is)
+		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, is)
 		c.Assert(err, IsNil, comment)
 		tp := p.Schema().Columns[0].RetType
 
@@ -456,10 +458,10 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"quote(c_float_d    )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 26, types.UnspecifiedLength},
 		{"quote(c_double_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 46, types.UnspecifiedLength},
 
-		{"convert(c_double_d using c_text_d)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
-		{"convert(c_binary using c_text_d)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
-		{"convert(c_binary using c_binary)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
-		{"convert(c_text_d using c_binary)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
+		{"convert(c_double_d using utf8mb4)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
+		{"convert(c_binary using utf8mb4)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
+		{"convert(c_binary using 'binary')", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
+		{"convert(c_text_d using 'binary')", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 
 		{"insert(c_varchar, c_int_d, c_int_d, c_varchar)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"insert(c_varchar, c_int_d, c_int_d, c_binary)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},

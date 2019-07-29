@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/pd/client"
 )
 
@@ -32,6 +32,9 @@ var tsMu = struct {
 
 type pdClient struct {
 	cluster *Cluster
+	// SafePoint set by `UpdateGCSafePoint`. Not to be confused with SafePointKV.
+	gcSafePoint   uint64
+	gcSafePointMu sync.Mutex
 }
 
 // NewPDClient creates a mock pd.Client that uses local timestamp and meta data
@@ -88,6 +91,11 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.
 	return region, peer, nil
 }
 
+func (c *pdClient) ScanRegions(ctx context.Context, key []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+	regions, peers := c.cluster.ScanRegions(key, limit)
+	return regions, peers, nil
+}
+
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	select {
 	case <-ctx.Done():
@@ -98,13 +106,27 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	return store, nil
 }
 
-func (c *pdClient) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
-	panic(errors.New("unimplemented"))
+func (c *pdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+	return c.cluster.GetAllStores(), nil
 }
 
 func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
-	panic("unimplemented")
+	c.gcSafePointMu.Lock()
+	defer c.gcSafePointMu.Unlock()
+
+	if safePoint > c.gcSafePoint {
+		c.gcSafePoint = safePoint
+	}
+	return c.gcSafePoint, nil
 }
 
 func (c *pdClient) Close() {
+}
+
+func (c *pdClient) ScatterRegion(ctx context.Context, regionID uint64) error {
+	return nil
+}
+
+func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
+	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }

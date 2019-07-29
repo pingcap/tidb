@@ -36,7 +36,7 @@ const (
 )
 
 // EvalAstExpr evaluates ast expression directly.
-var EvalAstExpr func(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
 // Expression represents all scalar expression in SQL.
 type Expression interface {
@@ -78,6 +78,14 @@ type Expression interface {
 
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
+
+	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
+	// An expression is constant item if it:
+	// refers no tables.
+	// refers no subqueries that refers any tables.
+	// refers no non-deterministic functions.
+	// refers no statement parameters.
+	ConstItem() bool
 
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression
