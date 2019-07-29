@@ -103,6 +103,9 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		if i >= numTop && sorted[i]*3 < sorted[numTop-1]*2 && last != sorted[i] {
 			break
 		}
+		if sorted[i] == 1 {
+			break
+		}
 		last = sorted[i]
 		sumTopN += sorted[i]
 	}
@@ -244,6 +247,14 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
 	}
 }
 
+func (c *CMSketch) subValue(h1, h2 uint64, count uint64) {
+	c.count -= count
+	for i := range c.table {
+		j := (h1 + h2*uint64(i)) % uint64(c.width)
+		c.table[i][j] = c.table[i][j] - uint32(count)
+	}
+}
+
 func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (uint64, error) {
 	bytes, err := codec.EncodeValue(sc, nil, val)
 	if err != nil {
@@ -287,7 +298,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	return uint64(res)
 }
 
-func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*TopNMeta, numTop uint32) {
+func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*TopNMeta, numTop uint32, usingMax bool) {
 	counter := make(map[hack.MutableString]uint64)
 	for _, metas := range lTopN {
 		for _, meta := range metas {
@@ -296,7 +307,11 @@ func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*T
 	}
 	for _, metas := range rTopN {
 		for _, meta := range metas {
-			counter[hack.String(meta.Data)] += meta.Count
+			if usingMax {
+				counter[hack.String(meta.Data)] = mathutil.MaxUint64(counter[hack.String(meta.Data)], meta.Count)
+			} else {
+				counter[hack.String(meta.Data)] += meta.Count
+			}
 		}
 	}
 	sorted := make([]uint64, len(counter))
@@ -326,7 +341,7 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch, numTopN uint32) error {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
 	if c.topN != nil || rc.topN != nil {
-		c.mergeTopN(c.topN, rc.topN, numTopN)
+		c.mergeTopN(c.topN, rc.topN, numTopN, false)
 	}
 	c.count += rc.count
 	for i := range c.table {
@@ -345,12 +360,12 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch, numTopN uint32) error {
 //   (3): For values that appears both in `c` and `rc`, if they do not appear partially in `c` and `rc`, for example,
 //        if `v` appears 5 times in the table, it can appears 5 times in `c` and 3 times in `rc`, then `max` also gives the correct answer.
 // So in fact, if we can know the number of appearances of each value in the first place, it is better to use `max` to construct the CM sketch rather than `sum`.
-func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch) error {
+func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, numTopN uint32) error {
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
 	if c.topN != nil || rc.topN != nil {
-		return errors.New("CMSketch with Top-N does not support merge")
+		c.mergeTopN(c.topN, rc.topN, numTopN, true)
 	}
 	for i := range c.table {
 		c.count = 0
@@ -393,10 +408,10 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 			c.count = c.count + uint64(counter)
 		}
 	}
+	c.defaultValue = protoSketch.DefaultValue
 	if len(protoSketch.TopN) == 0 {
 		return c
 	}
-	c.defaultValue = protoSketch.DefaultValue
 	c.topN = make(map[uint64][]*TopNMeta)
 	for _, e := range protoSketch.TopN {
 		h1, h2 := murmur3.Sum128(e.Data)
@@ -450,9 +465,15 @@ func LoadCMSketchWithTopN(exec sqlexec.RestrictedSQLExecutor, tableID, isIndex, 
 	return decodeCMSketch(cms, topN)
 }
 
-// TotalCount returns the count, it is only used for test.
+// TotalCount returns the total count in the sketch, it is only used for test.
 func (c *CMSketch) TotalCount() uint64 {
-	return c.count
+	res := c.count
+	for _, metas := range c.topN {
+		for _, meta := range metas {
+			res += meta.Count
+		}
+	}
+	return res
 }
 
 // Equal tests if two CM Sketch equal, it is only used for test.
