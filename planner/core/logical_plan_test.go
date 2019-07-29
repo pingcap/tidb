@@ -2066,7 +2066,21 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		// For complex join query
 		{
 			sql:  "select max(t3.b) from (t t1 left join t t2 on t1.a = t2.a) right join t t3 on t1.b = t3.b",
-			best: "DataScan(t3)->TopN([test.t3.b true],0,1)->Aggr(max(test.t3.b))->Projection",
+			best: "Join{Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)->DataScan(t3)->TopN([test.t3.b true],0,1)}(test.t1.b,test.t3.b)->TopN([test.t3.b true],0,1)->Aggr(max(test.t3.b))->Projection",
+		},
+		{
+			sql:  "select t1.a ta, t1.b tb from t t1 left join t t2 on t1.a = t2.a",
+			best: "DataScan(t1)->Projection",
+		},
+		{
+			// Because the `order by` uses t2.a, the `join` can't be eliminated.
+			sql:  "select t1.a, t1.b from t t1 left join t t2 on t1.a = t2.a order by t2.a",
+			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)->Sort->Projection",
+		},
+		// For issue 11167
+		{
+			sql:  "select a.a from t a natural left join t b natural left join t c",
+			best: "DataScan(a)->Projection",
 		},
 	}
 
