@@ -2103,6 +2103,12 @@ func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
 		rows = append(rows, "<nil>")
 	}
 	tk.MustQuery("select * from t1").Check(testkit.Rows(rows...))
+
+	//Fix ISSUE 11256
+	tk.MustQuery(`select DATE_ADD('2000-04-13 07:17:02',INTERVAL -1465647104 YEAR);`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select DATE_ADD('2008-11-23 22:47:31',INTERVAL 266076160 QUARTER);`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select DATE_SUB('2000-04-13 07:17:02',INTERVAL 1465647104 YEAR);`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select DATE_SUB('2008-11-23 22:47:31',INTERVAL -266076160 QUARTER);`).Check(testkit.Rows("<nil>"))
 }
 
 func (s *testIntegrationSuite) TestBuiltin(c *C) {
