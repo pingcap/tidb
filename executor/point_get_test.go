@@ -399,4 +399,6 @@ func (s *testPointGetSuite) TestIssue10677(c *C) {
 	tk.MustQuery("select * from t where pk = 1").Check(testkit.Rows("1"))
 	tk.MustQuery("desc select * from t where pk = '1'").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:1"))
 	tk.MustQuery("select * from t where pk = '1'").Check(testkit.Rows("1"))
+	tk.MustQuery("desc select * from t where pk = '1.0'").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:1"))
+	tk.MustQuery("select * from t where pk = '1.0'").Check(testkit.Rows("1"))
 }
