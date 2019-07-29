@@ -1391,6 +1391,47 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 	}
 }
 
+func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability.Store(1)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), index idx(a))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(`insert into t values (1)`)
+	}
+	h := s.do.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	testKit.MustExec("set @@tidb_enable_fast_analyze = 1")
+	testKit.MustExec("analyze table t with 3 buckets")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(`insert into t values (1)`)
+	}
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	is := s.do.InfoSchema()
+	c.Assert(h.Update(is), IsNil)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+
+	testKit.MustQuery("select * from t use index(idx) where a = 1")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tbl := h.GetTableStats(tblInfo)
+	val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Indices[1].CMSketch.QueryBytes(val), Equals, uint64(40))
+}
+
 func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
