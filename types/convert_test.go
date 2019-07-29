@@ -462,28 +462,41 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 	testStrToFloat(c, "-1e649", -math.MaxFloat64, true, ErrTruncatedWrongVal)
 	testStrToFloat(c, "-1e649", -math.MaxFloat64, false, nil)
 
-	// for issue  #10806
-	testDeleteEmptyStringError(c)
+	// for issue #10806, #11179
+	testSelectUpdateDeleteEmptyStringError(c)
 }
 
-func testDeleteEmptyStringError(c *C) {
+func testSelectUpdateDeleteEmptyStringError(c *C) {
+	testCases := []struct {
+		inSelect bool
+		inUpdate bool
+		inDelete bool
+	}{
+		{true, false, false},
+		{false, true, false},
+		{false, false, true},
+	}
 	sc := new(stmtctx.StatementContext)
-	sc.InDeleteStmt = true
+	for _, tc := range testCases {
+		sc.InSelectStmt = tc.inSelect
+		sc.InUpdateStmt = tc.inUpdate
+		sc.InDeleteStmt = tc.inDelete
 
-	str := ""
-	expect := 0
+		str := ""
+		expect := 0
 
-	val, err := StrToInt(sc, str)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, int64(expect))
+		val, err := StrToInt(sc, str)
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, int64(expect))
 
-	val1, err := StrToUint(sc, str)
-	c.Assert(err, IsNil)
-	c.Assert(val1, Equals, uint64(expect))
+		val1, err := StrToUint(sc, str)
+		c.Assert(err, IsNil)
+		c.Assert(val1, Equals, uint64(expect))
 
-	val2, err := StrToFloat(sc, str)
-	c.Assert(err, IsNil)
-	c.Assert(val2, Equals, float64(expect))
+		val2, err := StrToFloat(sc, str)
+		c.Assert(err, IsNil)
+		c.Assert(val2, Equals, float64(expect))
+	}
 }
 
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
@@ -689,6 +702,95 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 
+func (s *testTypeConvertSuite) TestRoundIntStr(c *C) {
+	cases := []struct {
+		a string
+		b byte
+		c string
+	}{
+		{"+999", '5', "+1000"},
+		{"999", '5', "1000"},
+		{"-999", '5', "-1000"},
+	}
+	for _, cc := range cases {
+		c.Assert(roundIntStr(cc.b, cc.a), Equals, cc.c)
+	}
+}
+
+func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
+	tests := []struct {
+		origin  string
+		valid   string
+		warning bool
+	}{
+		{"100", "100", false},
+		{"-100", "-100", false},
+		{"1abc", "1", true},
+		{"-1-1", "-1", true},
+		{"+1+1", "+1", true},
+		{"123..34", "123", true},
+		{"123.23E-10", "123", true},
+		{"1.1e1.3", "1", true},
+		{"11e1.3", "11", true},
+		{"1.", "1", true},
+		{".1", "0", true},
+		{"", "0", true},
+		{"123e+", "123", true},
+		{"123de", "123", true},
+	}
+	sc := new(stmtctx.StatementContext)
+	sc.TruncateAsWarning = true
+	sc.CastStrToIntStrict = true
+	warningCount := 0
+	for _, tt := range tests {
+		prefix, err := getValidIntPrefix(sc, tt.origin)
+		c.Assert(err, IsNil)
+		c.Assert(prefix, Equals, tt.valid)
+		_, err = strconv.ParseInt(prefix, 10, 64)
+		c.Assert(err, IsNil)
+		warnings := sc.GetWarnings()
+		if tt.warning {
+			c.Assert(warnings, HasLen, warningCount+1)
+			c.Assert(terror.ErrorEqual(warnings[len(warnings)-1].Err, ErrTruncatedWrongVal), IsTrue)
+			warningCount += 1
+		} else {
+			c.Assert(warnings, HasLen, warningCount)
+		}
+	}
+
+	tests2 := []struct {
+		origin  string
+		valid   string
+		warning bool
+	}{
+		{"100", "100", false},
+		{"-100", "-100", false},
+		{"1abc", "1", true},
+		{"-1-1", "-1", true},
+		{"+1+1", "+1", true},
+		{"123..34", "123.", true},
+		{"123.23E-10", "0", false},
+		{"1.1e1.3", "1.1e1", true},
+		{"11e1.3", "11e1", true},
+		{"1.", "1", false},
+		{".1", "0", false},
+		{"", "0", true},
+		{"123e+", "123", true},
+		{"123de", "123", true},
+	}
+	sc.TruncateAsWarning = false
+	sc.CastStrToIntStrict = false
+	for _, tt := range tests2 {
+		prefix, err := getValidIntPrefix(sc, tt.origin)
+		if tt.warning {
+			c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+		}
+		c.Assert(prefix, Equals, tt.valid)
+	}
+}
+
 func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	tests := []struct {
 		origin string
@@ -734,6 +836,7 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{".5", "1"},
 		{"123.456789e5", "12345679"},
 		{"123.456784e5", "12345678"},
+		{"+999.9999e2", "+100000"},
 	}
 	for _, t := range tests2 {
 		str, err := floatStrToIntStr(sc, t.origin, t.origin)
@@ -828,24 +931,26 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 
 func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 	var tests = []struct {
-		In  string
+		In  interface{}
 		Out float64
+		ty  json.TypeCode
 	}{
-		{`{}`, 0},
-		{`[]`, 0},
-		{`3`, 3},
-		{`-3`, -3},
-		{`4.5`, 4.5},
-		{`true`, 1},
-		{`false`, 0},
-		{`null`, 0},
-		{`"hello"`, 0},
-		{`"123.456hello"`, 123.456},
-		{`"1234"`, 1234},
+		{make(map[string]interface{}, 0), 0, json.TypeCodeObject},
+		{make([]interface{}, 0), 0, json.TypeCodeArray},
+		{int64(3), 3, json.TypeCodeInt64},
+		{int64(-3), -3, json.TypeCodeInt64},
+		{uint64(1 << 63), 1 << 63, json.TypeCodeUint64},
+		{float64(4.5), 4.5, json.TypeCodeFloat64},
+		{true, 1, json.TypeCodeLiteral},
+		{false, 0, json.TypeCodeLiteral},
+		{nil, 0, json.TypeCodeLiteral},
+		{"hello", 0, json.TypeCodeString},
+		{"123.456hello", 123.456, json.TypeCodeString},
+		{"1234", 1234, json.TypeCodeString},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseBinaryFromString(tt.In)
-		c.Assert(err, IsNil)
+		j := json.CreateBinary(tt.In)
+		c.Assert(j.TypeCode, Equals, tt.ty)
 		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)
 	}
