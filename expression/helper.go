@@ -34,7 +34,7 @@ func boolToInt64(v bool) int64 {
 	return 0
 }
 
-// IsValidCurrentTimestampExpr returns whether e is a valid CurrentTimestamp expression.
+// IsValidCurrentTimestampExpr returns true if exprNode is a valid CurrentTimestamp expression.
 // Here `valid` means it is consistent with the given fieldType's Decimal.
 func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldType) bool {
 	fn, isFuncCall := exprNode.(*ast.FuncCallExpr)
