@@ -74,6 +74,7 @@ const (
 	maxSketchSize        = 10000
 	defaultCMSketchDepth = 5
 	defaultCMSketchWidth = 2048
+	defaultNumTopN       = uint32(20)
 )
 
 // Next implements the Executor Next interface.
@@ -336,7 +337,8 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 			}
 		}
 	}
-	return hist, cms, nil
+	err := hist.ExtractTopN(cms, len(e.idxInfo.Columns), defaultNumTopN)
+	return hist, cms, err
 }
 
 func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool) (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
@@ -509,6 +511,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		cms = append(cms, nil)
 	}
 	for i, col := range e.colsInfo {
+		collectors[i].ExtractTopN(defaultNumTopN)
 		for j, s := range collectors[i].Samples {
 			collectors[i].Samples[j].Ordinal = j
 			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
@@ -1023,14 +1026,13 @@ func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *s
 			data[i] = append(data[i], sample.Value.GetBytes()[:preLen])
 		}
 	}
-	numTop := uint32(20)
-	cmSketch, ndv, scaleRatio := statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[0], numTop, uint64(rowCount))
+	cmSketch, ndv, scaleRatio := statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[0], defaultNumTopN, uint64(rowCount))
 	// Build CM Sketch for each prefix and merge them into one.
 	for i := 1; i < len(idxInfo.Columns); i++ {
 		var curCMSketch *statistics.CMSketch
 		// `ndv` should be the ndv of full index, so just rewrite it here.
-		curCMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[i], numTop, uint64(rowCount))
-		err := cmSketch.MergeCMSketch(curCMSketch, numTop)
+		curCMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[i], defaultNumTopN, uint64(rowCount))
+		err := cmSketch.MergeCMSketch(curCMSketch, defaultNumTopN)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1207,7 +1209,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
 	if idxExec.oldCMS != nil && cms != nil {
-		err = cms.MergeCMSketch4IncrementalAnalyze(idxExec.oldCMS)
+		err = cms.MergeCMSketch4IncrementalAnalyze(idxExec.oldCMS, defaultNumTopN)
 		if err != nil {
 			return analyzeResult{Err: err, job: idxExec.job}
 		}
