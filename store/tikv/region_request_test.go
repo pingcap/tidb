@@ -118,7 +118,10 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOn
 
 	// send to failed store
 	resp, err = s.regionRequestSender.SendReq(NewBackoffer(context.Background(), 100), req, region.Region, time.Second)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	regionErr, err := resp.GetRegionError()
+	c.Assert(err, IsNil)
+	c.Assert(regionErr, NotNil)
 
 	// retry to send store by old region info
 	region, err = s.cache.LocateRegionByID(s.bo, s.region)
@@ -127,7 +130,10 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOn
 
 	// retry again, reload region info and send to new store.
 	resp, err = s.regionRequestSender.SendReq(NewBackoffer(context.Background(), 100), req, region.Region, time.Second)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	regionErr, err = resp.GetRegionError()
+	c.Assert(err, IsNil)
+	c.Assert(regionErr, NotNil)
 }
 
 func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
