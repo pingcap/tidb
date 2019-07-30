@@ -88,7 +88,11 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
 	origSc := sc
+	oldInSelectStmt := sc.InSelectStmt
 	sc.InSelectStmt = true
+	defer func() {
+		sc.InSelectStmt = oldInSelectStmt
+	}()
 	sc.OverflowAsWarning = true
 
 	// cast('18446744073709551616' as unsigned);

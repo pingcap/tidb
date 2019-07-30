@@ -2068,6 +2068,12 @@ func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
 		rows = append(rows, "<nil>")
 	}
 	tk.MustQuery("select * from t1").Check(testkit.Rows(rows...))
+
+	//Fix ISSUE 11256
+	tk.MustQuery(`select DATE_ADD('2000-04-13 07:17:02',INTERVAL -1465647104 YEAR);`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select DATE_ADD('2008-11-23 22:47:31',INTERVAL 266076160 QUARTER);`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select DATE_SUB('2000-04-13 07:17:02',INTERVAL 1465647104 YEAR);`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select DATE_SUB('2008-11-23 22:47:31',INTERVAL -266076160 QUARTER);`).Check(testkit.Rows("<nil>"))
 }
 
 func (s *testIntegrationSuite) TestBuiltin(c *C) {
@@ -2469,18 +2475,24 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select b regexp 'Xt' from t;`)
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select b regexp binary 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select c regexp 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select d regexp 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select a rlike 'Xt' from t;`)
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select a rlike binary 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select b rlike 'Xt' from t;`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select c rlike 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select d rlike 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select 'a' regexp 'A', 'a' regexp binary 'A'`)
+	result.Check(testkit.Rows("1 0"))
 
 	// testCase is for like and regexp
 	type testCase struct {
@@ -4584,5 +4596,17 @@ func (s *testIntegrationSuite) TestDatetimeMicrosecond(c *C) {
 		testkit.Rows("2007-03-28 22:06:28"))
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL "-2.-2" MICROSECOND);`).Check(
 		testkit.Rows("2007-03-28 22:08:27.999998"))
+}
 
+func (s *testIntegrationSuite) TestFuncCaseWithLeftJoin(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table kankan1(id int, name text)")
+	tk.MustExec("insert into kankan1 values(1, 'a')")
+	tk.MustExec("insert into kankan1 values(2, 'a')")
+
+	tk.MustExec("create table kankan2(id int, h1 text)")
+	tk.MustExec("insert into kankan2 values(2, 'z')")
+
+	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1' order by t1.id").Check(testkit.Rows("1", "2"))
 }
