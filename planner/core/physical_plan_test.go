@@ -1618,12 +1618,13 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 			warning: "[planner:1815]Optimizer aggregation hints are conflicted",
 		},
 	}
+	ctx := context.Background()
 	for i, test := range tests {
 		comment := Commentf("case:%v sql:%s", i, test)
 		stmt, err := s.ParseOneStmt(test.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(se, stmt, s.is)
+		p, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, test.best)
 
