@@ -244,7 +244,7 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
 }
 
 func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (uint64, error) {
-	bytes, err := tablecodec.EncodeValue(sc, nil, val)
+	bytes, err := tablecodec.EncodeValue(sc, val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
