@@ -3360,14 +3360,12 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 }
 
 func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *ast.WindowSpec, orderByItems []property.Item) error {
-	if bound.UnBounded {
+	if bound.Type == ast.CurrentRow || bound.UnBounded {
 		return nil
 	}
+
 	frameType := spec.Frame.Type
 	if frameType == ast.Rows {
-		if bound.Type == ast.CurrentRow || bound.UnBounded {
-			return nil
-		}
 		if bound.Unit != nil {
 			return ErrWindowRowsIntervalUse.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
@@ -3375,9 +3373,6 @@ func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *a
 		if isNull || !isExpectedType {
 			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
-		return nil
-	}
-	if bound.Type == ast.CurrentRow {
 		return nil
 	}
 
