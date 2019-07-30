@@ -1253,7 +1253,9 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
-	close(e.finished)
+	if e.finished != nil {
+		close(e.finished)
+	}
 	e.childrenResults = nil
 	if e.resultPool != nil {
 		for range e.resultPool {
@@ -1350,8 +1352,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
+		sc.CastStrToIntStrict = true
 	case *ast.ExplainStmt:
 		sc.InExplainStmt = true
+		sc.CastStrToIntStrict = true
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true

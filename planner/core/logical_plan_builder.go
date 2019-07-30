@@ -1769,7 +1769,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 		}
 		switch errExprLoc.Loc {
 		case ErrExprInSelect:
-			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.Fields.Fields[errExprLoc.Offset].Text())
+			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, col.DBName.O+"."+col.TblName.O+"."+col.OrigColName.O)
 		case ErrExprInOrderBy:
 			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.OrderBy.Items[errExprLoc.Offset].Expr.Text())
 		}
@@ -2522,6 +2522,85 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	return joinPlan, nil
 }
 
+func getTableOffset(schema *expression.Schema, handleCol *expression.Column) (int, error) {
+	for i, col := range schema.Columns {
+		if col.DBName.L == handleCol.DBName.L && col.TblName.L == handleCol.TblName.L {
+			return i, nil
+		}
+	}
+	return -1, errors.Errorf("Couldn't get column information when do update/delete")
+}
+
+// TblColPosInfo represents an mapper from column index to handle index.
+type TblColPosInfo struct {
+	TblID int64
+	// Start and End represent the ordinal range [Start, End) of the consecutive columns.
+	Start, End int
+	// HandleOrdinal represents the ordinal of the handle column.
+	HandleOrdinal int
+}
+
+// TblColPosInfoSlice attaches the methods of sort.Interface to []TblColPosInfos sorting in increasing order.
+type TblColPosInfoSlice []TblColPosInfo
+
+// Len implements sort.Interface#Len.
+func (c TblColPosInfoSlice) Len() int {
+	return len(c)
+}
+
+// Swap implements sort.Interface#Swap.
+func (c TblColPosInfoSlice) Swap(i, j int) {
+	c[i], c[j] = c[j], c[i]
+}
+
+// Less implements sort.Interface#Less.
+func (c TblColPosInfoSlice) Less(i, j int) bool {
+	return c[i].Start < c[j].Start
+}
+
+// FindHandle finds the ordinal of the corresponding handle column.
+func (c TblColPosInfoSlice) FindHandle(colOrdinal int) (int, bool) {
+	if len(c) == 0 {
+		return 0, false
+	}
+	// find the smallest index of the range that its start great than colOrdinal.
+	// @see https://godoc.org/sort#Search
+	rangeBehindOrdinal := sort.Search(len(c), func(i int) bool { return c[i].Start > colOrdinal })
+	if rangeBehindOrdinal == 0 {
+		return 0, false
+	}
+	return c[rangeBehindOrdinal-1].HandleOrdinal, true
+}
+
+// buildColumns2Handle builds columns to handle mapping.
+func buildColumns2Handle(
+	schema *expression.Schema,
+	tblID2Handle map[int64][]*expression.Column,
+	tblID2Table map[int64]table.Table,
+	onlyWritableCol bool,
+) (TblColPosInfoSlice, error) {
+	var cols2Handles TblColPosInfoSlice
+	for tblID, handleCols := range tblID2Handle {
+		tbl := tblID2Table[tblID]
+		var tblLen int
+		if onlyWritableCol {
+			tblLen = len(tbl.WritableCols())
+		} else {
+			tblLen = len(tbl.Cols())
+		}
+		for _, handleCol := range handleCols {
+			offset, err := getTableOffset(schema, handleCol)
+			if err != nil {
+				return nil, err
+			}
+			end := offset + tblLen
+			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol.Index})
+		}
+	}
+	sort.Sort(cols2Handles)
+	return cols2Handles, nil
+}
+
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
 	if b.pushTableHints(update.TableHints) {
 		// table hints are only visible in the current UPDATE statement.
@@ -2595,6 +2674,14 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		return nil, err
 	}
 	err = updt.ResolveIndices()
+	if err != nil {
+		return nil, err
+	}
+	tblID2table := make(map[int64]table.Table)
+	for id := range updt.SelectPlan.Schema().TblID2Handle {
+		tblID2table[id], _ = b.is.TableByID(id)
+	}
+	updt.TblColPosInfos, err = buildColumns2Handle(updt.SelectPlan.Schema(), updt.SelectPlan.Schema().TblID2Handle, tblID2table, true)
 	return updt, err
 }
 
@@ -2778,13 +2865,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		p = proj
 	}
 
-	var tables []*ast.TableName
-	if delete.Tables != nil {
-		tables = delete.Tables.Tables
-	}
-
 	del := Delete{
-		Tables:       tables,
 		IsMultiTable: delete.IsMultiTable,
 	}.Init(b.ctx)
 
@@ -2851,7 +2932,55 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 	}
 
-	return del, nil
+	tblID2Handles := del.SelectPlan.Schema().TblID2Handle
+	if del.IsMultiTable {
+		// tblID2TableName is the table map value is an array which contains table aliases.
+		// Table ID may not be unique for deleting multiple tables, for statements like
+		// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
+		// by its alias instead of ID.
+		tblID2TableName := make(map[int64][]*ast.TableName, len(delete.Tables.Tables))
+		for _, tn := range delete.Tables.Tables {
+			tblID2TableName[tn.TableInfo.ID] = append(tblID2TableName[tn.TableInfo.ID], tn)
+		}
+		tblID2Handles = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handles)
+	}
+	tblID2table := make(map[int64]table.Table)
+	for id := range tblID2Handles {
+		tblID2table[id], _ = b.is.TableByID(id)
+	}
+	del.TblColPosInfos, err = buildColumns2Handle(del.SelectPlan.Schema(), tblID2Handles, tblID2table, false)
+	return del, err
+}
+
+func (p *Delete) cleanTblID2HandleMap(tablesToDelete map[int64][]*ast.TableName, tblID2Handle map[int64][]*expression.Column) map[int64][]*expression.Column {
+	for id, cols := range tblID2Handle {
+		names, ok := tablesToDelete[id]
+		if !ok {
+			delete(tblID2Handle, id)
+			continue
+		}
+		for i := len(cols) - 1; i >= 0; i-- {
+			if !p.matchingDeletingTable(names, cols[i]) {
+				cols = append(cols[:i], cols[i+1:]...)
+			}
+		}
+		if len(cols) == 0 {
+			delete(tblID2Handle, id)
+			continue
+		}
+		tblID2Handle[id] = cols
+	}
+	return tblID2Handle
+}
+
+// matchingDeletingTable checks whether this column is from the table which is in the deleting list.
+func (p *Delete) matchingDeletingTable(names []*ast.TableName, col *expression.Column) bool {
+	for _, n := range names {
+		if (col.DBName.L == "" || col.DBName.L == n.Schema.L) && col.TblName.L == n.Name.L {
+			return true
+		}
+	}
+	return false
 }
 
 func getWindowName(name string) string {
