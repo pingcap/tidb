@@ -471,13 +471,20 @@ func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 				}
 				return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
 			}
+			sql = fmt.Sprintf(`DELETE IGNORE FROM %s.%s WHERE DEFAULT_ROLE_HOST='%s' and DEFAULT_ROLE_USER='%s' and HOST='%s' and USER='%s'`, mysql.SystemDB, mysql.DefaultRoleTable, role.Hostname, role.Username, user.Hostname, user.Username)
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+					return errors.Trace(err)
+				}
+				return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
+			}
 		}
 	}
 	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
 		return err
 	}
-	err := domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
-	return errors.Trace(err)
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	return nil
 }
 
 func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
@@ -597,6 +604,14 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 
 func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 	failedUsers := make([]string, 0, len(s.Users))
+	sessionVars := e.ctx.GetSessionVars()
+	for i, user := range s.Users {
+		if user.CurrentUser {
+			s.Users[i].Username = sessionVars.User.AuthUsername
+			s.Users[i].Hostname = sessionVars.User.AuthHostname
+		}
+	}
+
 	for _, role := range s.Roles {
 		exists, err := userExists(e.ctx, role.Username, role.Hostname)
 		if err != nil {
