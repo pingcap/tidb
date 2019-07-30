@@ -215,8 +215,8 @@ func (s *testConfigSuite) TestValid(c *C) {
 	}{
 		{"14s", false},
 		{"15s", true},
-		{"60s", true},
-		{"61s", false},
+		{"120s", true},
+		{"121s", false},
 	}
 	for _, tt := range tests {
 		c1.PessimisticTxn.TTL = tt.ttl

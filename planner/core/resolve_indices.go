@@ -441,29 +441,6 @@ func (p *Update) ResolveIndices() (err error) {
 			return err
 		}
 	}
-	for i, cols := range p.TblID2Handle {
-		for j, col := range cols {
-			resolvedCol, err := col.ResolveIndices(p.SelectPlan.Schema())
-			if err != nil {
-				return err
-			}
-			p.TblID2Handle[i][j] = resolvedCol.(*expression.Column)
-		}
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *Delete) ResolveIndices() (err error) {
-	for i, cols := range p.TblID2Handle {
-		for j, col := range cols {
-			resolvedCol, err := col.ResolveIndices(p.SelectPlan.Schema())
-			if err != nil {
-				return err
-			}
-			p.TblID2Handle[i][j] = resolvedCol.(*expression.Column)
-		}
-	}
 	return
 }
 

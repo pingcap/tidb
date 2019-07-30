@@ -455,23 +455,18 @@ type Update struct {
 
 	SelectPlan PhysicalPlan
 
-	// TblID2Handle stores the handle columns for each table id. One table id may map to multiple columns
-	// since there may be something like self-join.
-	TblID2Handle map[int64][]*expression.Column
+	TblColPosInfos TblColPosInfoSlice
 }
 
 // Delete represents a delete plan.
 type Delete struct {
 	baseSchemaProducer
 
-	Tables       []*ast.TableName
 	IsMultiTable bool
 
 	SelectPlan PhysicalPlan
 
-	// TblID2Handle stores the handle columns for each table id. One table id may map to multiple columns
-	// since there may be something like self-join.
-	TblID2Handle map[int64][]*expression.Column
+	TblColPosInfos TblColPosInfoSlice
 }
 
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.

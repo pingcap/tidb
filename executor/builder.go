@@ -1305,106 +1305,42 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.TblID2Handle {
-		tblID2table[id], _ = b.is.TableByID(id)
+	for _, info := range v.TblColPosInfos {
+		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
 	}
-	columns2Handle := buildColumns2Handle(v.SelectPlan.Schema(), v.TblID2Handle, tblID2table)
-	base := newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec)
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	updateExec := &UpdateExec{
 		baseExecutor:   base,
-		SelectExec:     selExec,
 		OrderedList:    v.OrderedList,
 		tblID2table:    tblID2table,
-		tblID2Handle:   v.TblID2Handle,
-		columns2Handle: columns2Handle,
+		tblColPosInfos: v.TblColPosInfos,
 	}
 	return updateExec
 }
 
-// cols2Handle represents an mapper from column index to handle index.
-type cols2Handle struct {
-	// start and end represent the ordinal range [start, end) of the consecutive columns.
-	start, end int32
-	// handleOrdinal represents the ordinal of the handle column.
-	handleOrdinal int32
-}
-
-// cols2HandleSlice attaches the methods of sort.Interface to []cols2Handle sorting in increasing order.
-type cols2HandleSlice []cols2Handle
-
-// Len implements sort.Interface#Len.
-func (c cols2HandleSlice) Len() int {
-	return len(c)
-}
-
-// Swap implements sort.Interface#Swap.
-func (c cols2HandleSlice) Swap(i, j int) {
-	c[i], c[j] = c[j], c[i]
-}
-
-// Less implements sort.Interface#Less.
-func (c cols2HandleSlice) Less(i, j int) bool {
-	return c[i].start < c[j].start
-}
-
-// findHandle finds the ordinal of the corresponding handle column.
-func (c cols2HandleSlice) findHandle(ordinal int32) (int32, bool) {
-	if c == nil || len(c) == 0 {
-		return 0, false
-	}
-	// find the smallest index of the range that its start great than ordinal.
-	// @see https://godoc.org/sort#Search
-	rangeBehindOrdinal := sort.Search(len(c), func(i int) bool { return c[i].start > ordinal })
-	if rangeBehindOrdinal == 0 {
-		return 0, false
-	}
-	return c[rangeBehindOrdinal-1].handleOrdinal, true
-}
-
-// buildColumns2Handle builds columns to handle mapping.
-func buildColumns2Handle(schema *expression.Schema, tblID2Handle map[int64][]*expression.Column, tblID2Table map[int64]table.Table) cols2HandleSlice {
-	if len(tblID2Handle) < 2 {
-		// skip buildColumns2Handle mapping if there are only single table.
-		return nil
-	}
-	var cols2Handles cols2HandleSlice
-	for tblID, handleCols := range tblID2Handle {
-		tbl := tblID2Table[tblID]
-		for _, handleCol := range handleCols {
-			offset := getTableOffset(schema, handleCol)
-			end := offset + len(tbl.WritableCols())
-			cols2Handles = append(cols2Handles, cols2Handle{int32(offset), int32(end), int32(handleCol.Index)})
-		}
-	}
-	sort.Sort(cols2Handles)
-	return cols2Handles
-}
-
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.TblID2Handle {
-		tblID2table[id], _ = b.is.TableByID(id)
+	for _, info := range v.TblColPosInfos {
+		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
 	}
-	base := newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec)
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	deleteExec := &DeleteExec{
-		baseExecutor: base,
-		SelectExec:   selExec,
-		Tables:       v.Tables,
-		IsMultiTable: v.IsMultiTable,
-		tblID2Table:  tblID2table,
-		tblID2Handle: v.TblID2Handle,
+		baseExecutor:   base,
+		tblID2Table:    tblID2table,
+		IsMultiTable:   v.IsMultiTable,
+		tblColPosInfos: v.TblColPosInfos,
 	}
 	return deleteExec
 }

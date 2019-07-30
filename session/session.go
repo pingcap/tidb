@@ -962,23 +962,14 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
-	var db interface{}
-	if len(s.sessionVars.CurrentDB) > 0 {
-		db = s.sessionVars.CurrentDB
-	}
-
-	var info interface{}
-	if len(sql) > 0 {
-		info = sql
-	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
-		DB:               db,
+		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
 		Plan:             s.currentPlan,
 		Time:             t,
 		State:            s.Status(),
-		Info:             info,
+		Info:             sql,
 		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
@@ -1363,6 +1354,10 @@ func (s *session) Close() {
 	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
+	}
+	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
+	if bindValue != nil {
+		bindValue.(*bindinfo.SessionHandle).Close()
 	}
 	ctx := context.TODO()
 	s.RollbackTxn(ctx)

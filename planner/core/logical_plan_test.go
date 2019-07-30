@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -571,6 +572,71 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 		rightConds := fmt.Sprintf("%s", right.pushedDownConds)
 		c.Assert(leftConds, Equals, ca.left, comment)
 		c.Assert(rightConds, Equals, ca.right, comment)
+	}
+}
+
+func buildLogicPlan4GroupBy(s *testPlanSuite, c *C, sql string) (Plan, error) {
+	sqlMode := s.ctx.GetSessionVars().SQLMode
+	mockedTableInfo := MockSignedTable()
+	// mock the table info here for later use
+	// enable only full group by
+	s.ctx.GetSessionVars().SQLMode = sqlMode | mysql.ModeOnlyFullGroupBy
+	defer func() { s.ctx.GetSessionVars().SQLMode = sqlMode }() // restore it
+	comment := Commentf("for %s", sql)
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil, comment)
+
+	stmt.(*ast.SelectStmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).TableInfo = mockedTableInfo
+
+	return BuildLogicalPlan(context.Background(), s.ctx, stmt, s.is)
+}
+
+func (s *testPlanSuite) TestGroupByWhenNotExistCols(c *C) {
+	sqlTests := []struct {
+		sql              string
+		expectedErrMatch string
+	}{
+		{
+			sql:              "select a from t group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+		{
+			// has an as column alias
+			sql:              "select a as tempField from t group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+		{
+			// has as table alias
+			sql:              "select tempTable.a from t as tempTable group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.tempTable\\.a'.*",
+		},
+		{
+			// has a func call
+			sql:              "select length(a) from t  group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+		{
+			// has a func call with two cols
+			sql:              "select length(b + a) from t  group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+		{
+			// has a func call with two cols
+			sql:              "select length(a + b) from t  group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+		{
+			// has a func call with two cols
+			sql:              "select length(a + b) as tempField from t  group by b",
+			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
+		},
+	}
+	for _, test := range sqlTests {
+		sql := test.sql
+		p, err := buildLogicPlan4GroupBy(s, c, sql)
+		c.Assert(err, NotNil)
+		c.Assert(p, IsNil)
+		c.Assert(err, ErrorMatches, test.expectedErrMatch)
 	}
 }
 
@@ -2471,5 +2537,47 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		}
 		paths := ds.skylinePruning(byItemsToProperty(byItems))
 		c.Assert(pathsName(paths), Equals, tt.result)
+	}
+}
+
+func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql      string
+		fastPlan bool
+	}{
+		{
+			"select * from t where a=1",
+			true,
+		},
+		{
+
+			"update t set f=0 where a=43215",
+			true,
+		},
+		{
+			"delete from t where a =43215",
+			true,
+		},
+		{
+			"select * from t where a>1",
+			false,
+		},
+	}
+	for _, tt := range tests {
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil)
+		Preprocess(s.ctx, stmt, s.is)
+		s.ctx.GetSessionVars().StmtCtx.Tables = nil
+		p := TryFastPlan(s.ctx, stmt)
+		if tt.fastPlan {
+			c.Assert(p, NotNil)
+			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 1)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.Tables[0].Table, Equals, "t")
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.Tables[0].DB, Equals, "test")
+		} else {
+			c.Assert(p, IsNil)
+			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 0)
+		}
 	}
 }
