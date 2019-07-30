@@ -515,7 +515,8 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(recordID)
 	sc := sessVars.StmtCtx
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
+	var colSize map[int64]int64
+	writeBufs.RowValBuf, colSize, err = tablecodec.EncodeRowWithColSizeMap(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
 	if err != nil {
 		return 0, err
 	}
@@ -544,14 +545,13 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	sc.AddAffectedRows(1)
-	colSize := make(map[int64]int64)
-	encodedCol := make([]byte, 0, 16)
-	for id, col := range t.Cols() {
-		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], r[id])
-		if err != nil {
-			continue
+	if t.Meta().PKIsHandle {
+		for _, col := range t.Meta().Cols() {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				colSize[col.ID] = 8
+				break
+			}
 		}
-		colSize[col.ID] = int64(len(encodedCol) - 1)
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
 	return recordID, nil
