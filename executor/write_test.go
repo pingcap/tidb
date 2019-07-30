@@ -1845,8 +1845,9 @@ func (s *testSuite4) TestLoadData(c *C) {
 	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
-	err = ld.CheckAndInsertOneBatch(context.Background())
+	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 	c.Assert(err, IsNil)
+	ld.SetMaxRowsInBatch(20000)
 	r := tk.MustQuery(selectSQL)
 	r.Check(nil)
 
@@ -2096,8 +2097,9 @@ func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 
 	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	c.Assert(err, IsNil)
-	err = ld.CheckAndInsertOneBatch(context.Background())
+	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 	c.Assert(err, IsNil)
+	ld.SetMaxRowsInBatch(20000)
 	ld.SetMessage()
 	err = ctx.StmtCommit()
 	c.Assert(err, IsNil)
