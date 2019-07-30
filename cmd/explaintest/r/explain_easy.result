@@ -703,3 +703,12 @@ TableReader_7	1.00	root	data:Selection_6
 └─Selection_6	1.00	cop	eq(test.t.b, 1000-01-01 00:00:00.000000)
   └─TableScan_5	3.00	cop	table:t, range:[-inf,+inf], keep order:false
 drop table t;
+create table t(a int);
+insert into t values (1),(2),(2),(2),(9),(9),(9),(10);
+analyze table t with 1 buckets;
+explain select * from t where a >= 3 and a <= 8;
+id	count	task	operator info
+TableReader_7	0.00	root	data:Selection_6
+└─Selection_6	0.00	cop	ge(test.t.a, 3), le(test.t.a, 8)
+  └─TableScan_5	8.00	cop	table:t, range:[-inf,+inf], keep order:false
+drop table t;

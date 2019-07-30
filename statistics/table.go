@@ -385,6 +385,9 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 		// Try to enum the last range values.
 		if rangePosition != len(ran.LowVal) {
 			rangeVals = enumRangeValues(ran.LowVal[rangePosition], ran.HighVal[rangePosition], ran.LowExclude, ran.HighExclude)
+			if rangeVals != nil {
+				rangePosition++
+			}
 		}
 		// If first one is range, just use the previous way to estimate; if it is [NULL, NULL] range
 		// on single-column index, use previous way as well, because CMSketch does not contain null

@@ -179,7 +179,7 @@ func calcFraction4Datums(lower, upper, value *types.Datum) float64 {
 
 const maxNumStep = 10
 
-func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) (res []types.Datum) {
+func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []types.Datum {
 	if low.Kind() != high.Kind() {
 		return nil
 	}
@@ -192,7 +192,17 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) (res [
 	}
 	switch low.Kind() {
 	case types.KindInt64:
-		remaining := high.GetInt64() - low.GetInt64() + 1 - int64(exclude)
+		// Overflow check.
+		if low.GetInt64() < 0 && high.GetInt64() > 0 {
+			if low.GetInt64() <= -maxNumStep || high.GetInt64() >= maxNumStep {
+				return nil
+			}
+		}
+		remaining := high.GetInt64() - low.GetInt64()
+		if remaining >= maxNumStep+1 {
+			return nil
+		}
+		remaining = remaining + 1 - int64(exclude)
 		if remaining >= maxNumStep {
 			return nil
 		}
@@ -206,7 +216,11 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) (res [
 		}
 		return values
 	case types.KindUint64:
-		remaining := high.GetUint64() - low.GetUint64() + 1 - uint64(exclude)
+		remaining := high.GetUint64() - low.GetUint64()
+		if remaining >= maxNumStep+1 {
+			return nil
+		}
+		remaining = remaining + 1 - uint64(exclude)
 		if remaining >= maxNumStep {
 			return nil
 		}
@@ -225,6 +239,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) (res [
 			return nil
 		}
 		stepSize := int64(math.Pow10(types.MaxFsp-lowDur.Fsp)) * int64(time.Microsecond)
+		lowDur.Duration = lowDur.Duration.Round(time.Duration(stepSize))
 		remaining := int64(highDur.Duration-lowDur.Duration)/stepSize + 1 - int64(exclude)
 		if remaining >= maxNumStep {
 			return nil
@@ -244,12 +259,18 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) (res [
 			return nil
 		}
 		var stepSize int64
+		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		if lowTime.Type == mysql.TypeDate {
 			stepSize = 24 * int64(time.Hour)
+			lowTime.Time = types.FromDate(lowTime.Time.Year(), lowTime.Time.Month(), lowTime.Time.Day(), 0, 0, 0, 0)
 		} else {
+			var err error
+			lowTime, err = lowTime.RoundFrac(sc, lowTime.Fsp)
+			if err != nil {
+				return nil
+			}
 			stepSize = int64(math.Pow10(types.MaxFsp-lowTime.Fsp)) * int64(time.Microsecond)
 		}
-		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		remaining := int64(highTime.Sub(sc, &lowTime).Duration)/stepSize + 1 - int64(exclude)
 		if remaining >= maxNumStep {
 			return nil
