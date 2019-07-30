@@ -322,6 +322,7 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 	return e
 }
 
+// buildIndexLookUpChecker builds check information to IndexLookUpReader.
 func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.PhysicalIndexLookUpReader,
 	readerExec *IndexLookUpExecutor) {
 	is := readerPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
@@ -329,14 +330,12 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 	for i := 0; i <= len(is.Index.Columns); i++ {
 		readerExec.dagPB.OutputOffsets = append(readerExec.dagPB.OutputOffsets, uint32(i))
 	}
-	// set tps
 	tps := make([]*types.FieldType, 0, len(is.Columns)+1)
 	for _, col := range is.Columns {
 		tps = append(tps, &col.FieldType)
 	}
 	tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
-	readerExec.tps = tps
-	readerExec.tbl = readerExec.table
+	readerExec.idxColTps = tps
 	readerExec.idxInfo = readerExec.index
 
 	colNames := make([]string, 0, len(is.Columns))
@@ -345,7 +344,7 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 	}
 
 	var err error
-	readerExec.cols, err = table.FindCols(readerExec.table.Cols(), colNames, true)
+	readerExec.idxTblCols, err = table.FindCols(readerExec.table.Cols(), colNames, true)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return

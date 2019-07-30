@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -507,6 +508,12 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *Ind
 	return errors.Trace(err)
 }
 
+func (e *CheckTableExec) handlePanic(r interface{}) {
+	if r != nil {
+		e.retCh <- errors.Errorf("%v", r)
+	}
+}
+
 // Next implements the Executor Next interface.
 func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.done || len(e.srcs) == 0 {
@@ -533,13 +540,24 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	// The number of table rows is equal to the number of index rows.
+	// TODO: Make the value of concurrency adjustable. And we can consider the number of records.
+	concurrency := 3
+	wg := sync.WaitGroup{}
 	for i := range e.srcs {
+		wg.Add(1)
 		go func(num int) {
-			err1 := e.checkIndexHandle(ctx, num, e.srcs[num])
-			if err1 != nil {
-				logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
-			}
+			defer wg.Done()
+			util.WithRecovery(func() {
+				err1 := e.checkIndexHandle(ctx, num, e.srcs[num])
+				if err1 != nil {
+					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
+				}
+			}, e.handlePanic)
 		}(i)
+
+		if (i+1)%concurrency == 0 {
+			wg.Wait()
+		}
 	}
 
 	for i := 0; i < len(e.srcs); i++ {

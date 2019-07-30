@@ -354,12 +354,11 @@ type IndexLookUpExecutor struct {
 }
 
 type checkIndexValue struct {
-	isCheckOp bool
-	tps       []*types.FieldType
-	tbl       table.Table
-	idxInfo   *model.IndexInfo
-	cols      []*table.Column
-	genExprs  map[model.TableColumnID]expression.Expression
+	isCheckOp  bool
+	idxColTps  []*types.FieldType
+	idxInfo    *model.IndexInfo
+	idxTblCols []*table.Column
+	genExprs   map[model.TableColumnID]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -448,7 +447,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	if e.isCheckOp {
-		tps = e.tps
+		tps = e.idxColTps
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
 	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans))
@@ -652,7 +651,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	}()
 	var chk *chunk.Chunk
 	if w.isCheckOp {
-		chk = chunk.NewChunkWithCapacity(w.tps, w.maxChunkSize)
+		chk = chunk.NewChunkWithCapacity(w.idxColTps, w.maxChunkSize)
 	} else {
 		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
 	}
@@ -701,7 +700,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		}
 		if w.isCheckOp {
 			if retChk == nil {
-				retChk = chunk.NewChunkWithCapacity(w.tps, w.batchSize)
+				retChk = chunk.NewChunkWithCapacity(w.idxColTps, w.batchSize)
 			}
 			retChk.Append(chk, 0, chk.NumRows())
 		}
@@ -796,7 +795,8 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 
 func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, tableReader Executor) error {
 	chk := newFirstChunk(tableReader)
-	vals := make([]types.Datum, 0, len(w.cols))
+	tblInfo := w.idxLookup.table.Meta()
+	vals := make([]types.Datum, 0, len(w.idxTblCols))
 	for {
 		err := tableReader.Next(ctx, chk)
 		if err != nil {
@@ -805,7 +805,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		if chk.NumRows() == 0 {
 			for h := range task.indexOrder {
 				idxRow := task.idxRows.GetRow(task.indexOrder[h])
-				return errors.Errorf("handle %#v, index:%#v != record:%#v", h, idxRow.GetDatum(0, w.tps[0]), nil)
+				return errors.Errorf("handle %#v, index:%#v != record:%#v", h, idxRow.GetDatum(0, w.idxColTps[0]), nil)
 			}
 			break
 		}
@@ -821,9 +821,9 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			delete(task.indexOrder, handle)
 			idxRow := task.idxRows.GetRow(offset)
 			vals = vals[:0]
-			for i, col := range w.cols {
+			for i, col := range w.idxTblCols {
 				if col.IsGenerated() && !col.GeneratedStored {
-					expr := w.genExprs[model.TableColumnID{TableID: w.tbl.Meta().ID, ColumnID: col.ID}]
+					expr := w.genExprs[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
 					// Eval the column value
 					val, err := expr.Eval(row)
 					if err != nil {
@@ -838,9 +838,9 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 					vals = append(vals, row.GetDatum(i, &col.FieldType))
 				}
 			}
-			vals = tables.TruncateIndexValuesIfNeeded(w.tbl.Meta(), w.idxInfo, vals)
+			vals = tables.TruncateIndexValuesIfNeeded(tblInfo, w.idxInfo, vals)
 			for i, val := range vals {
-				col := w.cols[i]
+				col := w.idxTblCols[i]
 				tp := &col.FieldType
 				ret := chunk.Compare(idxRow, i, &val)
 				if ret != 0 {

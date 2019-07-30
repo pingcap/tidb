@@ -14,13 +14,13 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math"
 	"sort"
 	"time"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -293,7 +293,8 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}
-		log.Infof("check indices count, table %s cnt %d, index %s cnt %d", tableName, tblCnt, idx, idxCnt)
+		logutil.Logger(context.Background()).Info("check indices count, table %s cnt %d, index %s cnt %d",
+			zap.String("table", tableName), zap.Int64("cnt", tblCnt), zap.Reflect("index", idx), zap.Int64("cnt", idxCnt))
 		if tblCnt == idxCnt {
 			continue
 		}
