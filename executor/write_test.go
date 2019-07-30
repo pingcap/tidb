@@ -2435,4 +2435,3 @@ func (s *testSuite4) TestDefEnumInsert(c *C) {
 	tk.MustExec("insert into test (id)  values (1)")
 	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
 }
-
