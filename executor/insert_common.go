@@ -447,7 +447,6 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 // fillRow fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
 func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool) ([]types.Datum, error) {
-	gIdx := 0
 	gCols := make([]*table.Column, 0)
 	for i, c := range e.Table.Cols() {
 		var err error
@@ -466,12 +465,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			}
 		}
 	}
-	for _, gCol := range gCols {
-		var err error
-		var val types.Datum
+	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
-		val, err = e.GenExprs[gIdx].Eval(chunk.MutRowFromDatums(row).ToRow())
-		gIdx++
+		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
 		if e.filterErr(err) != nil {
 			return nil, err
 		}
