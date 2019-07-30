@@ -211,14 +211,18 @@ type IndexReaderExecutor struct {
 	keepOrder       bool
 	desc            bool
 	ranges          []*ranger.Range
-	dagPB           *tipb.DAGRequest
+	// kvRanges are only used for union scan.
+	kvRanges []kv.KeyRange
+	dagPB    *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
 	// columns are only required by union scan.
-	columns   []*model.ColumnInfo
-	streaming bool
-	feedback  *statistics.QueryFeedback
+	columns []*model.ColumnInfo
+	// outputColumns are only required by union scan.
+	outputColumns []*expression.Column
+	streaming     bool
+	feedback      *statistics.QueryFeedback
 
 	corColInFilter bool
 	corColInAccess bool
@@ -282,6 +286,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
+	e.kvRanges = kvRanges
 
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaDistSQL)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)

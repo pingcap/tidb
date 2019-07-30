@@ -1826,6 +1826,35 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v.GetMysqlTime().String(), Equals, test.expected)
 	}
+
+	testOverflowYears := []struct {
+		input string
+		year  int
+	}{
+		{"2008-11-23", -1465647104},
+		{"2008-11-23", 1465647104},
+	}
+
+	for _, test := range testOverflowYears {
+		args = types.MakeDatums(test.input, test.year, "YEAR")
+		f, err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v.IsNull(), IsTrue)
+	}
+
+	for _, test := range testOverflowYears {
+		args = types.MakeDatums(test.input, test.year, "YEAR")
+		f, err = fcSub.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v.IsNull(), IsTrue)
+	}
+
 	testDurations := []struct {
 		fc       functionClass
 		dur      string
@@ -2736,5 +2765,31 @@ func (s *testEvaluatorSuite) TestTidbParseTso(c *C) {
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(d.IsNull(), IsTrue)
+	}
+}
+
+func (s *testEvaluatorSuite) TestGetIntervalFromDecimal(c *C) {
+	defer testleak.AfterTest(c)()
+	du := baseDateArithmitical{}
+
+	tests := []struct {
+		param  string
+		expect string
+		unit   string
+	}{
+		{"1.100", "1:100", "MINUTE_SECOND"},
+		{"1.10000", "1-10000", "YEAR_MONTH"},
+		{"1.10000", "1 10000", "DAY_HOUR"},
+		{"11000", "0 00:00:11000", "DAY_MICROSECOND"},
+		{"11000", "00:00:11000", "HOUR_MICROSECOND"},
+		{"11.1000", "00:11:1000", "HOUR_SECOND"},
+		{"1000", "00:1000", "MINUTE_MICROSECOND"},
+	}
+
+	for _, test := range tests {
+		interval, isNull, err := du.getIntervalFromDecimal(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum("CURRENT DATE"), types.NewDecimalDatum(newMyDecimal(c, test.param))}), chunk.Row{}, test.unit)
+		c.Assert(isNull, IsFalse)
+		c.Assert(err, IsNil)
+		c.Assert(interval, Equals, test.expect)
 	}
 }

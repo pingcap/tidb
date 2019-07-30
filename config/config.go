@@ -36,7 +36,7 @@ import (
 const (
 	MaxLogFileSize    = 4096 // MB
 	MinPessimisticTTL = time.Second * 15
-	MaxPessimisticTTL = time.Second * 60
+	MaxPessimisticTTL = time.Second * 120
 	// DefTxnEntryCountLimit is the default value of TxnEntryCountLimit.
 	DefTxnEntryCountLimit = 300 * 1000
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
@@ -408,7 +408,7 @@ var defaultConf = Config{
 		Enable:        false,
 		Default:       false,
 		MaxRetryCount: 256,
-		TTL:           "30s",
+		TTL:           "40s",
 	},
 }
 
