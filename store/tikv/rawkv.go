@@ -328,7 +328,6 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 			Type: tikvrpc.CmdRawScan,
 			RawScan: &kvrpcpb.RawScanRequest{
 				StartKey: startKey,
-				EndKey:   endKey,
 				Limit:    uint32(limit - len(keys)),
 				Reverse:  true,
 			},

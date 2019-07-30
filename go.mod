@@ -85,4 +85,4 @@ require (
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
 
-replace github.com/pingcap/kvproto => github.com/MyonKeminta/kvproto v0.0.0-20190729090238-9f66347a6f8f
+replace github.com/pingcap/kvproto => github.com/MyonKeminta/kvproto v0.0.0-20190729055213-b63af5f5f478

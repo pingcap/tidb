@@ -122,16 +122,6 @@ func (s *testRawKVSuite) mustReverseScan(c *C, startKey []byte, limit int, expec
 	}
 }
 
-func (s *testRawKVSuite) mustReverseScanRange(c *C, startKey, endKey []byte, limit int, expect ...string) {
-	keys, values, err := s.client.ReverseScan(startKey, endKey, limit)
-	c.Assert(err, IsNil)
-	c.Assert(len(keys)*2, Equals, len(expect))
-	for i := range keys {
-		c.Assert(string(keys[i]), Equals, expect[i*2])
-		c.Assert(string(values[i]), Equals, expect[i*2+1])
-	}
-}
-
 func (s *testRawKVSuite) mustDeleteRange(c *C, startKey, endKey []byte, expected map[string]string) {
 	err := s.client.DeleteRange(startKey, endKey)
 	c.Assert(err, IsNil)
@@ -253,8 +243,7 @@ func (s *testRawKVSuite) TestReverseScan(c *C) {
 		s.mustReverseScan(c, append([]byte("k5"), 0), 1, "k5", "v5")
 		s.mustReverseScan(c, []byte("k6"), 3, "k5", "v5", "k3", "v3", "k1", "v1")
 
-		s.mustReverseScanRange(c, []byte("z"), []byte("k3"), 10, "k7", "v7", "k5", "v5", "k3", "v3")
-		s.mustReverseScanRange(c, []byte("k7"), append([]byte("k3"), 0), 10, "k5", "v5")
+		// Tests for endKey need to be added here if endKey support is cherry-picked.
 	}
 
 	check()
