@@ -133,8 +133,8 @@ func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
 
 type mvccKV struct {
 	Key      string                        `json:"key"`
-	Value    *kvrpcpb.MvccGetByKeyResponse `json:"value"`
 	RegionID uint64                        `json:"region_id"`
+	Value    *kvrpcpb.MvccGetByKeyResponse `json:"value"`
 }
 
 func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
@@ -151,7 +151,7 @@ func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error
 	return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data, RegionID: regionID}, err
 }
 
-func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
+func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*mvccKV, error) {
 	bo := tikv.NewBackoffer(context.Background(), 5000)
 	for {
 		curRegion, err := t.RegionCache.LocateKey(bo, startKey)
@@ -203,7 +203,8 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 
 		key := data.GetKey()
 		if len(key) > 0 {
-			return data, nil
+			resp := &kvrpcpb.MvccGetByKeyResponse{Info: data.Info, RegionError: data.RegionError, Error: data.Error}
+			return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(key)), Value: resp, RegionID: curRegion.Region.GetID()}, nil
 		}
 
 		if len(endKey) > 0 && curRegion.Contains(endKey) {
@@ -242,7 +243,7 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 		return nil, err
 	}
 	regionID := keyLocation.Region.GetID()
-	return &mvccKV{strings.ToUpper(hex.EncodeToString(encodedKey)), data, regionID}, err
+	return &mvccKV{strings.ToUpper(hex.EncodeToString(encodedKey)), regionID, data}, err
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
@@ -301,12 +302,20 @@ func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
 	return domain.GetDomain(session.(sessionctx.Context)).InfoSchema(), nil
 }
 
-func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {
+func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (*mvccKV, error) {
 	encodedKey, err := hex.DecodeString(params[pHexKey])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return t.GetMvccByEncodedKey(encodedKey)
+	data, err := t.GetMvccByEncodedKey(encodedKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &mvccKV{Key: strings.ToUpper(params[pHexKey]), Value: data, RegionID: keyLocation.Region.GetID()}, nil
 }
 
 // settingsHandler is the handler for list tidb server settings.
