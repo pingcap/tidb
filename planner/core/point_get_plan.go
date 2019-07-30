@@ -113,6 +113,9 @@ func (p *PointGetPlan) Children() []PhysicalPlan {
 // SetChildren sets the children for the plan.
 func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 
+// SetChild sets a specific child for the plan.
+func (p *PointGetPlan) SetChild(i int, child PhysicalPlan) {}
+
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *PointGetPlan) ResolveIndices() {}
 
