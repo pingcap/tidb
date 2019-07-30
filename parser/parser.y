@@ -319,6 +319,7 @@ import (
 	delayKeyWrite	"DELAY_KEY_WRITE"
 	directory	"DIRECTORY"
 	disable		"DISABLE"
+	disk		"DISK"
 	do		"DO"
 	duplicate	"DUPLICATE"
 	dynamic		"DYNAMIC"
@@ -433,6 +434,7 @@ import (
 	start		"START"
 	statsPersistent	"STATS_PERSISTENT"
 	status		"STATUS"
+	storage		"STORAGE"
 	swaps		"SWAPS"
 	switchesSym	"SWITCHES"
 	systemTime	"SYSTEM_TIME"
@@ -3729,7 +3731,7 @@ UnReservedKeyword:
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "PRECEDING" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "SLOW" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 | "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT" | "INCREMENTAL" | "CPU" | "MEMORY" | "BLOCK" | "IO" | "CONTEXT" | "SWITCHES" | "PAGE" | "FAULTS" | "IPC" | "SWAPS" | "SOURCE"
-| "TRADITIONAL" | "SQL_BUFFER_RESULT" | "DIRECTORY" | "HISTORY" | "LIST" | "NODEGROUP" | "SYSTEM_TIME" | "PARTIAL" | "SIMPLE" | "REMOVE" | "PARTITIONING"
+| "TRADITIONAL" | "SQL_BUFFER_RESULT" | "DIRECTORY" | "HISTORY" | "LIST" | "NODEGROUP" | "SYSTEM_TIME" | "PARTIAL" | "SIMPLE" | "REMOVE" | "PARTITIONING" | "STORAGE" | "DISK"
 
 
 TiDBKeyword:
@@ -7626,6 +7628,20 @@ TableOption:
 	{
 		// Parse it but will ignore it.
 		$$ = &ast.TableOption{Tp: ast.TableOptionPackKeys}
+	}
+|	"STORAGE" "MEMORY"
+	{
+		// Parse it but will ignore it.
+		$$ = &ast.TableOption{Tp: ast.TableOptionStorageMedia, StrValue: "MEMORY"}
+		yylex.AppendError(yylex.Errorf("The STORAGE clause is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"STORAGE" "DISK"
+	{
+		// Parse it but will ignore it.
+		$$ = &ast.TableOption{Tp: ast.TableOptionStorageMedia, StrValue: "DISK"}
+		yylex.AppendError(yylex.Errorf("The STORAGE clause is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 
 StatsPersistentVal:
