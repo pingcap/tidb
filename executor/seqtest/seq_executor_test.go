@@ -1034,6 +1034,7 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 
 func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int not null auto_increment primary key)")
 
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
