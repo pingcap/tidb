@@ -46,37 +46,22 @@ func (s *testUtilSuite) checkPanic(f func()) (ret bool) {
 }
 
 func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
-	c.Assert(s.checkPanic(func() {
-		newBaseBuiltinFuncWithTp(nil, nil, types.ETTimestamp)
-	}), check.IsTrue)
-
 	ctx := mock.NewContext()
-	c.Assert(s.checkPanic(func() {
-		newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp, types.ETTimestamp)
-	}), check.IsTrue)
-
 	bf := newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp)
-	c.Assert(s.checkPanic(func() {
-		bf.evalInt(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalReal(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalString(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalDecimal(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalTime(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalDuration(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalJSON(chunk.Row{})
-	}), check.IsTrue)
+	_, _, err := bf.evalInt(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalReal(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalString(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalDecimal(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalTime(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalDuration(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalJSON(chunk.Row{})
+	c.Assert(err, check.NotNil)
 }
 
 func (s *testUtilSuite) TestClone(c *check.C) {
@@ -398,6 +383,10 @@ type MockExpr struct {
 	err error
 	t   *types.FieldType
 	i   interface{}
+}
+
+func (m *MockExpr) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
 }
 
 func (m *MockExpr) String() string                          { return "" }

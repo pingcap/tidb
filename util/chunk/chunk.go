@@ -626,6 +626,18 @@ func (c *Chunk) Reconstruct() {
 	c.sel = nil
 }
 
+// NumEffectiveRows returns the effective number of rows stored in this Chunk.
+// This method is used in vectorized evaluation.
+func (c *Chunk) NumEffectiveRows() int {
+	if c.sel == nil {
+		return c.NumRows()
+	}
+	if len(c.sel) == 0 {
+		return 0
+	}
+	return c.sel[len(c.sel)-1] + 1
+}
+
 func writeTime(buf []byte, t types.Time) {
 	binary.BigEndian.PutUint16(buf, uint16(t.Time.Year()))
 	buf[2] = uint8(t.Time.Month())
