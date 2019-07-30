@@ -125,6 +125,9 @@ func (p *PointGetPlan) Children() []PhysicalPlan {
 // SetChildren sets the children for the plan.
 func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 
+// SetChild sets a specific child for the plan.
+func (p *PointGetPlan) SetChild(i int, child PhysicalPlan) {}
+
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *PointGetPlan) ResolveIndices() error {
 	return nil
@@ -217,7 +220,10 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 				p.IsTableDual = true
 				return p
 			}
-			return nil
+			// some scenarios cast to int with error, but we may use this value in point get
+			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
+				return nil
+			}
 		}
 		cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &handlePair.value)
 		if err != nil {
