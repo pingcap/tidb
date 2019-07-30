@@ -1031,3 +1031,21 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	cli.mu.checkPrio = false
 	cli.mu.Unlock()
 }
+
+func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (id int not null auto_increment primary key)")
+
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (),()")
+	tk.MustExec("insert into t values ()")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
+	tk.MustExec("commit")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
+
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
