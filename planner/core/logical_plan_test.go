@@ -2199,9 +2199,9 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 	for _, tt := range tests {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil)
-		Preprocess(s.ctx, stmt, s.is)
+		Preprocess(s.ctx, stmt, s.is, false)
 		s.ctx.GetSessionVars().StmtCtx.Tables = nil
-		p := TryFastPlan(s.ctx, stmt)
+		p := tryFastPlan(s.ctx, stmt)
 		if tt.fastPlan {
 			c.Assert(p, NotNil)
 			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 1)
