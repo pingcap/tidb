@@ -1449,6 +1449,7 @@ const (
 	TableOptionNodegroup
 	TableOptionDataDirectory
 	TableOptionIndexDirectory
+	TableOptionStorageMedia
 )
 
 // RowFormat types
@@ -1618,6 +1619,9 @@ func (n *TableOption) Restore(ctx *RestoreCtx) error {
 		ctx.WriteKeyWord("INDEX DIRECTORY ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
+	case TableOptionStorageMedia:
+		ctx.WriteKeyWord("STORAGE ")
+		ctx.WriteKeyWord(n.StrValue)
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
