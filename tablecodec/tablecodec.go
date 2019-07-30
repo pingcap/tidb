@@ -254,6 +254,8 @@ func getEncodeRowValues(sc *stmtctx.StatementContext, row []types.Datum, colIDs 
 	return values, nil
 }
 
+// EncodeRowWithColSizeMap encode row data and column ids into a slice of byte,
+// and record the column value size to colSize map.
 func EncodeRowWithColSizeMap(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, colSize map[int64]int64) ([]byte, map[int64]int64, error) {
 	var err error
 	values, err = getEncodeRowValues(sc, row, colIDs, values)
