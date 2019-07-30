@@ -242,3 +242,21 @@ func (s *testExpressionRewriterSuite) TestCheckFullGroupBy(c *C) {
 	err = tk.ExecToErr("select t1.a, (select t2.a, max(t2.b) from t t2) from t t1")
 	c.Assert(terror.ErrorEqual(err, core.ErrMixOfGroupFuncAndFields), IsTrue, Commentf("err %v", err))
 }
+
+func (s *testExpressionRewriterSuite) TestPatternLikeToExpression(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustQuery("select 0 like 'a string';").Check(testkit.Rows("0"))
+	tk.MustQuery("select 0.0 like 'a string';").Check(testkit.Rows("0"))
+	tk.MustQuery("select 0 like '0.00';").Check(testkit.Rows("0"))
+	tk.MustQuery("select cast(\"2011-5-3\" as datetime) like \"2011-05-03\";").Check(testkit.Rows("0"))
+	tk.MustQuery("select 1 like '1';").Check(testkit.Rows("1"))
+	tk.MustQuery("select 0 like '0';").Check(testkit.Rows("1"))
+	tk.MustQuery("select 0.00 like '0.00';").Check(testkit.Rows("1"))
+}

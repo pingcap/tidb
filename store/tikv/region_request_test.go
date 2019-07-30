@@ -69,7 +69,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	c.Assert(region, NotNil)
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.RawPut, NotNil)
+	c.Assert(resp.Resp, NotNil)
 
 	// stop store.
 	s.cluster.StopStore(s.store)
@@ -86,7 +86,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	c.Assert(region, NotNil)
 	resp, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.RawPut, NotNil)
+	c.Assert(resp.Resp, NotNil)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOne(c *C) {
@@ -99,7 +99,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOn
 	c.Assert(region, NotNil)
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.RawPut, NotNil)
+	c.Assert(resp.Resp, NotNil)
 
 	// add new unknown region
 	store2 := s.cluster.AllocID()
@@ -112,7 +112,10 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOn
 
 	// send to failed store
 	resp, err = s.regionRequestSender.SendReq(NewBackoffer(context.Background(), 100), req, region.Region, time.Second)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	regionErr, err := resp.GetRegionError()
+	c.Assert(err, IsNil)
+	c.Assert(regionErr, NotNil)
 
 	// retry to send store by old region info
 	region, err = s.cache.LocateRegionByID(s.bo, s.region)
@@ -121,7 +124,10 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOn
 
 	// retry again, reload region info and send to new store.
 	resp, err = s.regionRequestSender.SendReq(NewBackoffer(context.Background(), 100), req, region.Region, time.Second)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	regionErr, err = resp.GetRegionError()
+	c.Assert(err, IsNil)
+	c.Assert(regionErr, NotNil)
 }
 
 func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
@@ -134,7 +140,7 @@ func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
 	c.Assert(region, NotNil)
 	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.RawPut, NotNil)
+	c.Assert(resp.Resp, NotNil)
 	c.Assert(ctx, NotNil)
 }
 
@@ -148,7 +154,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	c.Assert(region, NotNil)
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.RawPut, NotNil)
+	c.Assert(resp.Resp, NotNil)
 
 	// set store to cancel state.
 	s.cluster.CancelStore(s.store)
@@ -165,7 +171,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	c.Assert(region, NotNil)
 	resp, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.RawPut, NotNil)
+	c.Assert(resp.Resp, NotNil)
 }
 
 func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {

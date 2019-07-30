@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testEvaluatorSuite) TestLength(c *C) {
+func (s *testEvaluatorSuite) TestLengthAndOctetLength(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
@@ -54,18 +54,21 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{errors.New("must error"), 0, false, true},
 	}
 
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Length, s.primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(chunk.Row{})
-		if t.getErr {
-			c.Assert(err, NotNil)
-		} else {
+	lengthMethods := []string{ast.Length, ast.OctetLength}
+	for _, lengthMethod := range lengthMethods {
+		for _, t := range cases {
+			f, err := newFunctionForTest(s.ctx, lengthMethod, s.primitiveValsToConstants([]interface{}{t.args})...)
 			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			d, err := f.Eval(chunk.Row{})
+			if t.getErr {
+				c.Assert(err, NotNil)
 			} else {
-				c.Assert(d.GetInt64(), Equals, t.expected)
+				c.Assert(err, IsNil)
+				if t.isNil {
+					c.Assert(d.Kind(), Equals, types.KindNull)
+				} else {
+					c.Assert(d.GetInt64(), Equals, t.expected)
+				}
 			}
 		}
 	}
@@ -171,6 +174,50 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestConcatSig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeVarchar},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	concat := &builtinConcatSig{base, 5}
+
+	cases := []struct {
+		args     []interface{}
+		warnings int
+		res      string
+	}{
+		{[]interface{}{"a", "b"}, 0, "ab"},
+		{[]interface{}{"aaa", "bbb"}, 1, ""},
+		{[]interface{}{"中", "a"}, 0, "中a"},
+		{[]interface{}{"中文", "a"}, 2, ""},
+	}
+
+	for _, t := range cases {
+		input := chunk.NewChunkWithCapacity(colTypes, 10)
+		input.AppendString(0, t.args[0].(string))
+		input.AppendString(1, t.args[1].(string))
+
+		res, isNull, err := concat.evalString(input.GetRow(0))
+		c.Assert(res, Equals, t.res)
+		c.Assert(err, IsNil)
+		if t.warnings == 0 {
+			c.Assert(isNull, IsFalse)
+		} else {
+			c.Assert(isNull, IsTrue)
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(warnings, HasLen, t.warnings)
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+		}
+	}
+}
+
 func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
@@ -244,6 +291,53 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 
 	_, err = funcs[ast.ConcatWS].getFunction(s.ctx, s.primitiveValsToConstants([]interface{}{nil, nil}))
 	c.Assert(err, IsNil)
+}
+
+func (s *testEvaluatorSuite) TestConcatWSSig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeVarchar},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+		&Column{Index: 2, RetType: colTypes[2]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	concat := &builtinConcatWSSig{base, 6}
+
+	cases := []struct {
+		args     []interface{}
+		warnings int
+		res      string
+	}{
+		{[]interface{}{",", "a", "b"}, 0, "a,b"},
+		{[]interface{}{",", "aaa", "bbb"}, 1, ""},
+		{[]interface{}{",", "中", "a"}, 0, "中,a"},
+		{[]interface{}{",", "中文", "a"}, 2, ""},
+	}
+
+	for _, t := range cases {
+		input := chunk.NewChunkWithCapacity(colTypes, 10)
+		input.AppendString(0, t.args[0].(string))
+		input.AppendString(1, t.args[1].(string))
+		input.AppendString(2, t.args[2].(string))
+
+		res, isNull, err := concat.evalString(input.GetRow(0))
+		c.Assert(res, Equals, t.res)
+		c.Assert(err, IsNil)
+		if t.warnings == 0 {
+			c.Assert(isNull, IsFalse)
+		} else {
+			c.Assert(isNull, IsTrue)
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(warnings, HasLen, t.warnings)
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestLeft(c *C) {

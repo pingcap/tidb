@@ -54,7 +54,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == strings.ToUpper(ast.CurrentTimestamp) {
-			defaultTime, err := getSystemTimestamp(ctx)
+			defaultTime, err := getStmtTimestamp(ctx)
 			if err != nil {
 				return d, err
 			}
@@ -120,7 +120,9 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 	return d, nil
 }
 
-func getSystemTimestamp(ctx sessionctx.Context) (time.Time, error) {
+// if timestamp session variable set, use session variable as current time, otherwise use cached time
+// during one sql statement, the "current_time" should be the same
+func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	now := time.Now()
 
 	if ctx == nil {
@@ -133,15 +135,16 @@ func getSystemTimestamp(ctx sessionctx.Context) (time.Time, error) {
 		return now, err
 	}
 
-	if timestampStr == "" {
-		return now, nil
+	if timestampStr != "" {
+		timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if timestamp <= 0 {
+			return now, nil
+		}
+		return time.Unix(timestamp, 0), nil
 	}
-	timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr)
-	if err != nil {
-		return time.Time{}, err
-	}
-	if timestamp <= 0 {
-		return now, nil
-	}
-	return time.Unix(timestamp, 0), nil
+	stmtCtx := ctx.GetSessionVars().StmtCtx
+	return stmtCtx.GetNowTsCached(), nil
 }

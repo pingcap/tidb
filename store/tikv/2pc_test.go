@@ -245,8 +245,8 @@ func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	c.Assert(err, IsNil)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Get, NotNil)
-	keyErr := resp.Get.GetError()
+	c.Assert(resp.Resp, NotNil)
+	keyErr := (resp.Resp.(*kvrpcpb.GetResponse)).GetError()
 	return keyErr.GetLocked() != nil
 }
 
@@ -486,4 +486,44 @@ func (s *testCommitterSuite) TestPessimisticLockedKeysDedup(c *C) {
 	err = txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
 	c.Assert(err, IsNil)
 	c.Assert(txn.lockKeys, HasLen, 2)
+}
+
+func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
+	key := kv.Key("key")
+	txn := s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+	time.Sleep(time.Millisecond * 100)
+	err := txn.LockKeys(context.Background(), txn.startTS, key)
+	c.Assert(err, IsNil)
+	time.Sleep(time.Millisecond * 100)
+	key2 := kv.Key("key2")
+	err = txn.LockKeys(context.Background(), txn.startTS, key2)
+	c.Assert(err, IsNil)
+	lockInfo := s.getLockInfo(c, key)
+	elapsedTTL := lockInfo.LockTtl - PessimisticLockTTL
+	c.Assert(elapsedTTL, GreaterEqual, uint64(100))
+	c.Assert(elapsedTTL, Less, uint64(200))
+	lockInfo2 := s.getLockInfo(c, key2)
+	c.Assert(lockInfo2.LockTtl, Equals, lockInfo.LockTtl)
+}
+
+func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
+	txn := s.begin(c)
+	err := txn.Set(key, key)
+	c.Assert(err, IsNil)
+	commiter, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	loc, err := s.store.regionCache.LocateKey(bo, key)
+	c.Assert(err, IsNil)
+	batch := batchKeys{region: loc.Region, keys: [][]byte{key}}
+	req := commiter.buildPrewriteRequest(batch)
+	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+	c.Assert(err, IsNil)
+	c.Assert(resp.Resp, NotNil)
+	keyErrs := (resp.Resp.(*kvrpcpb.PrewriteResponse)).Errors
+	c.Assert(keyErrs, HasLen, 1)
+	locked := keyErrs[0].Locked
+	c.Assert(locked, NotNil)
+	return locked
 }

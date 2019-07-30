@@ -62,7 +62,7 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
-	return kvResp.MvccGetByKey, nil
+	return kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse), nil
 }
 
 // StoreHotRegionInfos records all hog region stores.
@@ -413,9 +413,7 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	timeout, cancelFunc := context.WithTimeout(context.Background(), 5*time.Second)
-	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
-	defer cancelFunc()
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -492,9 +490,7 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	timeout, cancelFunc := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
-	defer cancelFunc()
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

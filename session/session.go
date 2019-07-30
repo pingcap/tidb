@@ -642,7 +642,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
-			schemaVersion, err = st.RebuildPlan()
+			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
 				return err
 			}
@@ -962,23 +962,14 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
-	var db interface{}
-	if len(s.sessionVars.CurrentDB) > 0 {
-		db = s.sessionVars.CurrentDB
-	}
-
-	var info interface{}
-	if len(sql) > 0 {
-		info = sql
-	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
-		DB:               db,
+		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
 		Plan:             s.currentPlan,
 		Time:             t,
 		State:            s.Status(),
-		Info:             info,
+		Info:             sql,
 		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
@@ -991,7 +982,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet) ([]sqlexec.RecordSet, error) {
+func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
 	s.SetValue(sessionctx.QueryString, stmt.OriginText())
 	if _, ok := stmtNode.(ast.DDLNode); ok {
 		s.SetValue(sessionctx.LastExecuteDDL, true)
@@ -1014,6 +1005,16 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
 	} else {
 		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
+	}
+
+	if inMulitQuery && recordSet == nil {
+		recordSet = &multiQueryNoDelayRecordSet{
+			affectedRows: s.AffectedRows(),
+			lastMessage:  s.LastMessage(),
+			warnCount:    s.sessionVars.StmtCtx.WarningCount(),
+			lastInsertID: s.sessionVars.StmtCtx.LastInsertID,
+			status:       s.sessionVars.Status,
+		}
 	}
 
 	if recordSet != nil {
@@ -1062,6 +1063,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	var tempStmtNodes []ast.StmtNode
 	compiler := executor.Compiler{Ctx: s}
+	multiQuery := len(stmtNodes) > 1
 	for idx, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
 
@@ -1098,7 +1100,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		s.currentPlan = stmt.Plan
 
 		// Step3: Execute the physical plan.
-		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
+		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets, multiQuery); err != nil {
 			return nil, err
 		}
 	}
@@ -1206,7 +1208,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
 	s.PrepareTxnCtx(ctx)
-	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args)
+	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1352,6 +1354,10 @@ func (s *session) Close() {
 	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
+	}
+	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
+	if bindValue != nil {
+		bindValue.(*bindinfo.SessionHandle).Close()
 	}
 	ctx := context.TODO()
 	s.RollbackTxn(ctx)
@@ -1526,6 +1532,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	err = executor.LoadOptRuleBlacklist(se)
+	if err != nil {
+		return nil, err
+	}
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -1628,7 +1639,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 33
+	currentBootstrapVersion = 34
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1951,4 +1962,48 @@ func (s *session) recordTransactionCounter(err error) {
 			transactionCounterGeneralOK.Inc()
 		}
 	}
+}
+
+type multiQueryNoDelayRecordSet struct {
+	affectedRows uint64
+	lastMessage  string
+	status       uint16
+	warnCount    uint16
+	lastInsertID uint64
+}
+
+func (c *multiQueryNoDelayRecordSet) Fields() []*ast.ResultField {
+	panic("unsupported method")
+}
+
+func (c *multiQueryNoDelayRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+	panic("unsupported method")
+}
+
+func (c *multiQueryNoDelayRecordSet) NewChunk() *chunk.Chunk {
+	panic("unsupported method")
+}
+
+func (c *multiQueryNoDelayRecordSet) Close() error {
+	return nil
+}
+
+func (c *multiQueryNoDelayRecordSet) AffectedRows() uint64 {
+	return c.affectedRows
+}
+
+func (c *multiQueryNoDelayRecordSet) LastMessage() string {
+	return c.lastMessage
+}
+
+func (c *multiQueryNoDelayRecordSet) WarnCount() uint16 {
+	return c.warnCount
+}
+
+func (c *multiQueryNoDelayRecordSet) Status() uint16 {
+	return c.status
+}
+
+func (c *multiQueryNoDelayRecordSet) LastInsertID() uint64 {
+	return c.lastInsertID
 }

@@ -200,7 +200,6 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
-	e.memTracker.Detach()
 	e.childrenResults = nil
 	e.memTracker = nil
 

@@ -57,7 +57,7 @@ treat-old-version-utf8-as-utf8mb4 = true
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false
 
-# delay-clean-table-lock is used to control whether delayed-release the table lock in the abnormal situation. (Milliseconds)
+# delay-clean-table-lock is used to control the time (Milliseconds) of delay before unlock the table in the abnormal situation.
 delay-clean-table-lock = 0
 
 [log]
@@ -316,5 +316,5 @@ default = false
 max-retry-count = 256
 
 # default TTL in milliseconds for pessimistic lock.
-# The value must between "15s" and "60s".
-ttl = "30s"
+# The value must between "15s" and "120s".
+ttl = "40s"
