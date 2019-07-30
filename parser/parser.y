@@ -433,6 +433,7 @@ import (
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
 	statsPersistent	"STATS_PERSISTENT"
+	statsSamplePages	"STATS_SAMPLE_PAGES"
 	status		"STATUS"
 	storage		"STORAGE"
 	swaps		"SWAPS"
@@ -3731,7 +3732,7 @@ UnReservedKeyword:
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "PRECEDING" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "SLOW" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 | "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT" | "INCREMENTAL" | "CPU" | "MEMORY" | "BLOCK" | "IO" | "CONTEXT" | "SWITCHES" | "PAGE" | "FAULTS" | "IPC" | "SWAPS" | "SOURCE"
-| "TRADITIONAL" | "SQL_BUFFER_RESULT" | "DIRECTORY" | "HISTORY" | "LIST" | "NODEGROUP" | "SYSTEM_TIME" | "PARTIAL" | "SIMPLE" | "REMOVE" | "PARTITIONING" | "STORAGE" | "DISK"
+| "TRADITIONAL" | "SQL_BUFFER_RESULT" | "DIRECTORY" | "HISTORY" | "LIST" | "NODEGROUP" | "SYSTEM_TIME" | "PARTIAL" | "SIMPLE" | "REMOVE" | "PARTITIONING" | "STORAGE" | "DISK" | "STATS_SAMPLE_PAGES"
 
 
 TiDBKeyword:
@@ -7615,6 +7616,23 @@ TableOption:
 |	"STATS_PERSISTENT" EqOpt StatsPersistentVal
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent}
+	}
+|	"STATS_SAMPLE_PAGES" EqOpt LengthNum
+	{
+		// Parse it but will ignore it.	
+		// In MySQL, STATS_SAMPLE_PAGES=N(Where 0<N<=65535) or STAS_SAMPLE_PAGES=DEFAULT.
+		// Cause we don't support it, so we don't check range of the value.
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsSamplePages, UintValue: $3.(uint64)}
+		yylex.AppendError(yylex.Errorf("The STATS_SAMPLE_PAGES is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"STATS_SAMPLE_PAGES" EqOpt "DEFAULT"
+	{
+		// Parse it but will ignore it.	
+		// In MySQL, default value of STATS_SAMPLE_PAGES is 0.
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsSamplePages, UintValue: 0}
+		yylex.AppendError(yylex.Errorf("The STATS_SAMPLE_PAGES is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 |	"SHARD_ROW_ID_BITS" EqOpt LengthNum
 	{
