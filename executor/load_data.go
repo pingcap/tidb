@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	NULL = []byte("NULL")
+	null = []byte("NULL")
 )
 
 // LoadDataExec represents a load data executor.
@@ -506,7 +506,7 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 	for {
 		eol, f := reader.GetField()
 		f = f.escape()
-		if bytes.Compare(f.str, NULL) == 0 && !f.enclosed {
+		if bytes.Compare(f.str, null) == 0 && !f.enclosed {
 			f.str = []byte{'N'}
 			f.maybeNull = true
 		}
