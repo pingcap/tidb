@@ -1612,51 +1612,17 @@ type PrivElem struct {
 
 // Restore implements Node interface.
 func (n *PrivElem) Restore(ctx *RestoreCtx) error {
-	switch n.Priv {
-	case 0:
+	if n.Priv == 0 {
 		ctx.WritePlain("/* UNSUPPORTED TYPE */")
-	case mysql.AllPriv:
+	} else if n.Priv == mysql.AllPriv {
 		ctx.WriteKeyWord("ALL")
-	case mysql.AlterPriv:
-		ctx.WriteKeyWord("ALTER")
-	case mysql.CreatePriv:
-		ctx.WriteKeyWord("CREATE")
-	case mysql.CreateUserPriv:
-		ctx.WriteKeyWord("CREATE USER")
-	case mysql.CreateRolePriv:
-		ctx.WriteKeyWord("CREATE ROLE")
-	case mysql.TriggerPriv:
-		ctx.WriteKeyWord("TRIGGER")
-	case mysql.DeletePriv:
-		ctx.WriteKeyWord("DELETE")
-	case mysql.DropPriv:
-		ctx.WriteKeyWord("DROP")
-	case mysql.ProcessPriv:
-		ctx.WriteKeyWord("PROCESS")
-	case mysql.ExecutePriv:
-		ctx.WriteKeyWord("EXECUTE")
-	case mysql.IndexPriv:
-		ctx.WriteKeyWord("INDEX")
-	case mysql.InsertPriv:
-		ctx.WriteKeyWord("INSERT")
-	case mysql.SelectPriv:
-		ctx.WriteKeyWord("SELECT")
-	case mysql.SuperPriv:
-		ctx.WriteKeyWord("SUPER")
-	case mysql.ShowDBPriv:
-		ctx.WriteKeyWord("SHOW DATABASES")
-	case mysql.UpdatePriv:
-		ctx.WriteKeyWord("UPDATE")
-	case mysql.GrantPriv:
-		ctx.WriteKeyWord("GRANT OPTION")
-	case mysql.ReferencesPriv:
-		ctx.WriteKeyWord("REFERENCES")
-	case mysql.CreateViewPriv:
-		ctx.WriteKeyWord("CREATE VIEW")
-	case mysql.ShowViewPriv:
-		ctx.WriteKeyWord("SHOW VIEW")
-	default:
-		return errors.New("Undefined privilege type")
+	} else {
+		str, ok := mysql.Priv2Str[n.Priv]
+		if ok {
+			ctx.WriteKeyWord(str)
+		} else {
+			return errors.New("Undefined privilege type")
+		}
 	}
 	if n.Cols != nil {
 		ctx.WritePlain(" (")
