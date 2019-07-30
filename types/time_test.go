@@ -15,6 +15,7 @@ package types_test
 
 import (
 	"math"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -1659,5 +1660,14 @@ func (s *testTimeSuite) TestFormatIntWidthN(c *C) {
 	for _, ca := range cases {
 		re := types.FormatIntWidthN(ca.num, ca.width)
 		c.Assert(re, Equals, ca.result)
+	}
+}
+
+func BenchmarkFormat(b *testing.B) {
+	var t1 types.Time
+	t1.Type = mysql.TypeTimestamp
+	t1.Time = types.FromGoTime(time.Now())
+	for i := 0; i < b.N; i++ {
+		t1.DateFormat("%Y-%m-%d %H:%i:%s")
 	}
 }
