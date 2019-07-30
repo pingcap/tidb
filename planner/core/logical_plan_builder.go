@@ -3347,17 +3347,6 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
 
-		needFrame := aggregation.NeedFrame(f.F)
-		if !needFrame && spec.Frame != nil && spec.OrderBy != nil &&
-			len(orderByItems) > 1 && spec.Frame.Type == ast.Ranges {
-			if start.Type == ast.Preceding && !start.UnBounded {
-				return ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
-			}
-			if end.Type == ast.Following && !end.UnBounded {
-				return ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
-			}
-		}
-
 		err := b.checkOriginWindowFrameBound(&start, &spec, orderByItems)
 		if err != nil {
 			return err
