@@ -523,8 +523,8 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	req := commiter.buildPrewriteRequest(batch)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
-	keyErrs := (resp.Resp.(*kvrpcpb.PrewriteResponse)).Errors
+	c.Assert(resp.Prewrite, NotNil)
+	keyErrs := resp.Prewrite.Errors
 	c.Assert(keyErrs, HasLen, 1)
 	locked := keyErrs[0].Locked
 	c.Assert(locked, NotNil)
