@@ -1987,20 +1987,20 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		}
 		buf.WriteString(MonthNames[m-1])
 	case 'm':
-		buf.WriteString(formatIntWidth2(t.Time.Month()))
+		buf.WriteString(FormatIntWidthN(t.Time.Month(), 2))
 	case 'c':
 		buf.WriteString(strconv.FormatInt(int64(t.Time.Month()), 10))
 	case 'D':
 		buf.WriteString(strconv.FormatInt(int64(t.Time.Day()), 10))
 		buf.WriteString(abbrDayOfMonth(t.Time.Day()))
 	case 'd':
-		buf.WriteString(formatIntWidth2(t.Time.Day()))
+		buf.WriteString(FormatIntWidthN(t.Time.Day(), 2))
 	case 'e':
 		buf.WriteString(strconv.FormatInt(int64(t.Time.Day()), 10))
 	case 'j':
 		fmt.Fprintf(buf, "%03d", t.Time.YearDay())
 	case 'H':
-		buf.WriteString(formatIntWidth2(t.Time.Hour()))
+		buf.WriteString(FormatIntWidthN(t.Time.Hour(), 2))
 	case 'k':
 		buf.WriteString(strconv.FormatInt(int64(t.Time.Hour()), 10))
 	case 'h', 'I':
@@ -2008,7 +2008,7 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		if t%12 == 0 {
 			buf.WriteString("12")
 		} else {
-			buf.WriteString(formatIntWidth2(t % 12))
+			buf.WriteString(FormatIntWidthN(t%12, 2))
 		}
 	case 'l':
 		t := t.Time.Hour()
@@ -2018,7 +2018,7 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 			buf.WriteString(strconv.FormatInt(int64(t%12), 10))
 		}
 	case 'i':
-		buf.WriteString(formatIntWidth2(t.Time.Minute()))
+		buf.WriteString(FormatIntWidthN(t.Time.Minute(), 2))
 	case 'p':
 		hour := t.Time.Hour()
 		if hour/12%2 == 0 {
@@ -2042,21 +2042,21 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'T':
 		fmt.Fprintf(buf, "%02d:%02d:%02d", t.Time.Hour(), t.Time.Minute(), t.Time.Second())
 	case 'S', 's':
-		buf.WriteString(formatIntWidth2(t.Time.Second()))
+		buf.WriteString(FormatIntWidthN(t.Time.Second(), 2))
 	case 'f':
 		fmt.Fprintf(buf, "%06d", t.Time.Microsecond())
 	case 'U':
 		w := t.Time.Week(0)
-		buf.WriteString(formatIntWidth2(w))
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'u':
 		w := t.Time.Week(1)
-		buf.WriteString(formatIntWidth2(w))
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'V':
 		w := t.Time.Week(2)
-		buf.WriteString(formatIntWidth2(w))
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'v':
 		_, w := t.Time.YearWeek(3)
-		buf.WriteString(formatIntWidth2(w))
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'a':
 		weekday := t.Time.Weekday()
 		buf.WriteString(abbrevWeekdayName[weekday])
@@ -2069,19 +2069,19 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		if year < 0 {
 			buf.WriteString(strconv.FormatUint(uint64(math.MaxUint32), 10))
 		} else {
-			buf.WriteString(formatIntWidth4(year))
+			buf.WriteString(FormatIntWidthN(year, 4))
 		}
 	case 'x':
 		year, _ := t.Time.YearWeek(3)
 		if year < 0 {
 			buf.WriteString(strconv.FormatUint(uint64(math.MaxUint32), 10))
 		} else {
-			buf.WriteString(formatIntWidth4(year))
+			buf.WriteString(FormatIntWidthN(year, 4))
 		}
 	case 'Y':
-		buf.WriteString(formatIntWidth4(t.Time.Year()))
+		buf.WriteString(FormatIntWidthN(t.Time.Year(), 4))
 	case 'y':
-		str := formatIntWidth4(t.Time.Year())
+		str := FormatIntWidthN(t.Time.Year(), 4)
 		buf.WriteString(str[2:])
 	default:
 		buf.WriteRune(b)
@@ -2090,24 +2090,16 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	return nil
 }
 
-func formatIntWidth2(i int) string {
-	if i < 10 {
-		return "0" + strconv.FormatInt(int64(i), 10)
+func FormatIntWidthN(num, n int) string {
+	numString := strconv.FormatInt(int64(num), 10)
+	if len(numString) >= n {
+		return numString
 	}
-	return strconv.FormatInt(int64(i), 10)
-}
-
-func formatIntWidth4(i int) string {
-	if i > 999 {
-		return strconv.FormatInt(int64(i), 10)
+	padBytes := make([]byte, n-len(numString))
+	for i := range padBytes {
+		padBytes[i] = '0'
 	}
-	if i > 99 {
-		return "0" + strconv.FormatInt(int64(i), 10)
-	}
-	if i > 9 {
-		return "00" + strconv.FormatInt(int64(i), 10)
-	}
-	return "000" + strconv.FormatInt(int64(i), 10)
+	return string(padBytes) + numString
 }
 
 func abbrDayOfMonth(day int) string {
