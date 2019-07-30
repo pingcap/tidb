@@ -1603,7 +1603,7 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 	}{
 		{
 			sql: "select * from t where a <= 50",
-			hist: "column:1 ndv:30 totColSize:10\n" +
+			hist: "column:1 ndv:30 totColSize:80\n" +
 				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
 				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
 				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
@@ -1611,7 +1611,7 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		},
 		{
 			sql: "select count(*) from t",
-			hist: "column:1 ndv:30 totColSize:10\n" +
+			hist: "column:1 ndv:30 totColSize:80\n" +
 				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
 				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
 				"num: 14 lower_bound: 16 upper_bound: 255 repeats: 0",
@@ -1619,7 +1619,7 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		},
 		{
 			sql: "select * from t1 where a <= 50",
-			hist: "column:1 ndv:30 totColSize:10\n" +
+			hist: "column:1 ndv:30 totColSize:80\n" +
 				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
 				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
 				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
@@ -1627,7 +1627,7 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		},
 		{
 			sql: "select count(*) from t1",
-			hist: "column:1 ndv:30 totColSize:10\n" +
+			hist: "column:1 ndv:30 totColSize:80\n" +
 				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
 				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
 				"num: 14 lower_bound: 16 upper_bound: 18446744073709551615 repeats: 0",

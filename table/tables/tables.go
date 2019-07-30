@@ -339,7 +339,7 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 			return err
 		}
 	}
-	colSize := make(map[int64]int64)
+	colSize := make(map[int64]int64, len(t.Cols()))
 	encodedCol := make([]byte, 0, 16)
 	for id, col := range t.Cols() {
 		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], newData[id])
@@ -483,8 +483,10 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 
 	var colIDs, binlogColIDs []int64
 	var row, binlogRow []types.Datum
+	var encodedCol []byte
 	colIDs = make([]int64, 0, len(r))
 	row = make([]types.Datum, 0, len(r))
+	colSize := make(map[int64]int64, len(r))
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
@@ -509,14 +511,31 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		if !t.canSkip(col, value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
+			continue
+		}
+		// Fill column size for statistics.
+		if col.IsPKHandleColumn(t.Meta()) {
+			// The size of primary key column is 8 byte.
+			colSize[col.ID] = 8
+			continue
+		}
+		if col.IsGenerated() && !col.GeneratedStored {
+			// Lazy-initialization buffer.
+			if encodedCol == nil {
+				encodedCol = make([]byte, 0, 16)
+			}
+			encodedCol, err = tablecodec.EncodeValue(sessVars.StmtCtx, encodedCol[:0], value)
+			if err != nil {
+				continue
+			}
+			colSize[col.ID] = int64(len(encodedCol) - 1)
 		}
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(recordID)
 	sc := sessVars.StmtCtx
-	var colSize map[int64]int64
-	writeBufs.RowValBuf, colSize, err = tablecodec.EncodeRowWithColSizeMap(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
+	writeBufs.RowValBuf, colSize, err = tablecodec.EncodeRowWithColSizeMap(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, colSize)
 	if err != nil {
 		return 0, err
 	}
@@ -545,14 +564,6 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	sc.AddAffectedRows(1)
-	if t.Meta().PKIsHandle {
-		for _, col := range t.Meta().Cols() {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				colSize[col.ID] = 8
-				break
-			}
-		}
-	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
 	return recordID, nil
 }
@@ -726,7 +737,7 @@ func (t *tableCommon) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Da
 		}
 		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
 	}
-	colSize := make(map[int64]int64)
+	colSize := make(map[int64]int64, len(t.Cols()))
 	encodedCol := make([]byte, 0, 16)
 	sc := ctx.GetSessionVars().StmtCtx
 	for id, col := range t.Cols() {
