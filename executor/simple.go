@@ -61,7 +61,7 @@ func (e *SimpleExec) getSysSession() (sessionctx.Context, error) {
 		return nil, err
 	}
 	restrictedCtx := ctx.(sessionctx.Context)
-	restrictedCtx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
+	restrictedCtx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	restrictedCtx.GetSessionVars().InRestrictedSQL = true
 	return restrictedCtx, nil
 }
