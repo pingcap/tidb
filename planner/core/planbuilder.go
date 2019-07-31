@@ -15,6 +15,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 
@@ -37,7 +38,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
 )
 
 type visitInfo struct {
@@ -564,42 +567,7 @@ func (b *PlanBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
 	}
 
-	id := 1
-	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
-	for _, idxCol := range idx.Columns {
-		for _, col := range tblInfo.Columns {
-			if idxCol.Name.L == col.Name.L {
-				columns = append(columns, col)
-				schema.Append(&expression.Column{
-					ColName:  col.Name,
-					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  &col.FieldType,
-				})
-			}
-		}
-	}
-	is := PhysicalIndexScan{
-		Table:            tblInfo,
-		TableAsName:      &tblName.Name,
-		DBName:           dbName,
-		Columns:          columns,
-		Index:            idx,
-		dataSourceSchema: schema,
-		Ranges:           ranger.FullRange(),
-		KeepOrder:        false,
-	}.Init(b.ctx)
-	is.stats = &property.StatsInfo{}
-	cop := &copTask{indexPlan: is}
-	// It's double read case.
-	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.Init(b.ctx)
-	ts.SetSchema(is.dataSourceSchema)
-	cop.tablePlan = ts
-	is.initSchema(id, idx, true)
-	t := finishCopTask(b.ctx, cop)
-
-	rootT := t.(*rootTask)
-	return rootT.p, nil
+	return b.buildPhysicalIndexLookUpReader(dbName, tbl, idx, 1)
 }
 
 func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
@@ -683,43 +651,188 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 	return ret, nil
 }
 
-func (b *PlanBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, error) {
-	p := &CheckTable{Tables: as.Tables}
-	p.GenExprs = make(map[model.TableColumnID]expression.Expression, len(p.Tables))
-
+// getGenExprs gets generated expressions map.
+func (b *PlanBuilder) getGenExprs(dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (
+	map[model.TableColumnID]expression.Expression, error) {
+	tblInfo := tbl.Meta()
+	genExprsMap := make(map[model.TableColumnID]expression.Expression)
+	exprs := make([]expression.Expression, 0, len(tbl.Cols()))
+	genExprIdxs := make([]model.TableColumnID, len(tbl.Cols()))
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
-	for _, tbl := range p.Tables {
-		tableInfo := tbl.TableInfo
-		schema := expression.TableInfo2SchemaWithDBName(b.ctx, tbl.Schema, tableInfo)
-		table, ok := b.is.TableByID(tableInfo.ID)
-		if !ok {
-			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
-		}
-
-		mockTablePlan.SetSchema(schema)
-
-		// Calculate generated columns.
-		columns := table.Cols()
-		for _, column := range columns {
-			if !column.IsGenerated() {
-				continue
-			}
-			columnName := &ast.ColumnName{Name: column.Name}
-			columnName.SetText(column.Name.O)
-
-			colExpr, _, err := mockTablePlan.findColumn(columnName)
+	mockTablePlan.SetSchema(expression.TableInfo2SchemaWithDBName(b.ctx, dbName, tblInfo))
+	for i, colExpr := range mockTablePlan.Schema().Columns {
+		col := tbl.Cols()[i]
+		var expr expression.Expression
+		expr = colExpr
+		if col.IsGenerated() && !col.GeneratedStored {
+			var err error
+			expr, _, err = b.rewrite(col.GeneratedExpr, mockTablePlan, nil, true)
 			if err != nil {
-				return nil, err
-			}
-
-			expr, _, err := b.rewrite(column.GeneratedExpr, mockTablePlan, nil, true)
-			if err != nil {
-				return nil, err
+				return nil, errors.Trace(err)
 			}
 			expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
-			p.GenExprs[model.TableColumnID{TableID: tableInfo.ID, ColumnID: column.ColumnInfo.ID}] = expr
+			found := false
+			for _, column := range idx.Columns {
+				if strings.EqualFold(col.Name.L, column.Name.L) {
+					found = true
+					break
+				}
+			}
+			if found {
+				genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ColumnInfo.ID}
+				genExprsMap[genColumnID] = expr
+				genExprIdxs[i] = genColumnID
+			}
+		}
+		exprs = append(exprs, expr)
+	}
+	// Re-iterate expressions to handle those virtual generated columns that refers to the other generated columns.
+	for i, expr := range exprs {
+		exprs[i] = expression.ColumnSubstitute(expr, mockTablePlan.Schema(), exprs)
+		if _, ok := genExprsMap[genExprIdxs[i]]; ok {
+			genExprsMap[genExprIdxs[i]] = exprs[i]
 		}
 	}
+	return genExprsMap, nil
+}
+
+func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, id int) (Plan, error) {
+	genExprsMap, err := b.getGenExprs(dbName, tbl, idx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Get generated columns.
+	var genCols []*expression.Column
+	pkOffset := -1
+	tblInfo := tbl.Meta()
+	colsMap := make(map[int64]struct{})
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
+	idxReaderCols := make([]*model.ColumnInfo, 0, len(idx.Columns))
+	tblReaderCols := make([]*model.ColumnInfo, 0, len(tbl.Cols()))
+	for _, idxCol := range idx.Columns {
+		for _, col := range tblInfo.Columns {
+			if idxCol.Name.L == col.Name.L {
+				idxReaderCols = append(idxReaderCols, col)
+				tblReaderCols = append(tblReaderCols, col)
+				schema.Append(&expression.Column{
+					ColName:  col.Name,
+					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  &col.FieldType})
+				colsMap[col.ID] = struct{}{}
+				if mysql.HasPriKeyFlag(col.Flag) {
+					pkOffset = len(tblReaderCols) - 1
+				}
+			}
+			genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}
+			if expr, ok := genExprsMap[genColumnID]; ok {
+				cols := expression.ExtractColumns(expr)
+				genCols = append(genCols, cols...)
+			}
+		}
+	}
+	// Add generated columns to tblSchema and tblReaderCols.
+	tblSchema := schema.Clone()
+	for _, col := range genCols {
+		if _, ok := colsMap[col.ID]; !ok {
+			c := table.FindCol(tbl.Cols(), col.ColName.O)
+			if c != nil {
+				col.Index = len(tblReaderCols)
+				tblReaderCols = append(tblReaderCols, c.ColumnInfo)
+				tblSchema.Append(&expression.Column{
+					ColName:  c.Name,
+					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  &c.FieldType})
+				colsMap[c.ID] = struct{}{}
+				if mysql.HasPriKeyFlag(c.Flag) {
+					pkOffset = len(tblReaderCols) - 1
+				}
+			}
+		}
+	}
+	if !tbl.Meta().PKIsHandle || pkOffset == -1 {
+		tblReaderCols = append(tblReaderCols, model.NewExtraHandleColInfo())
+		handleCol := &expression.Column{
+			DBName:   dbName,
+			TblName:  tblInfo.Name,
+			ColName:  model.ExtraHandleName,
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       model.ExtraHandleID,
+		}
+		tblSchema.Append(handleCol)
+		pkOffset = len(tblReaderCols) - 1
+	}
+
+	is := PhysicalIndexScan{
+		Table:            tblInfo,
+		TableAsName:      &tblInfo.Name,
+		DBName:           dbName,
+		Columns:          idxReaderCols,
+		Index:            idx,
+		dataSourceSchema: schema,
+		Ranges:           ranger.FullRange(),
+		GenExprs:         genExprsMap,
+	}.Init(b.ctx)
+	is.stats = property.NewSimpleStats(0)
+	// It's double read case.
+	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table}.Init(b.ctx)
+	ts.SetSchema(tblSchema)
+	cop := &copTask{indexPlan: is, tablePlan: ts}
+	ts.HandleIdx = pkOffset
+	is.initSchema(id, idx, true)
+	rootT := finishCopTask(b.ctx, cop).(*rootTask)
+	return rootT.p, nil
+}
+
+func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(dbName model.CIStr, tbl table.Table) ([]Plan, []table.Index, error) {
+	tblInfo := tbl.Meta()
+	// get index information
+	indices := make([]table.Index, 0, len(tblInfo.Indices))
+	indexLookUpReaders := make([]Plan, 0, len(tblInfo.Indices))
+	for i, idx := range tbl.Indices() {
+		idxInfo := idx.Meta()
+		if idxInfo.State != model.StatePublic {
+			logutil.Logger(context.Background()).Info("build physical index lookup reader, the index isn't public",
+				zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
+			continue
+		}
+		indices = append(indices, idx)
+		reader, err := b.buildPhysicalIndexLookUpReader(dbName, tbl, idxInfo, i)
+		if err != nil {
+			return nil, nil, err
+		}
+		indexLookUpReaders = append(indexLookUpReaders, reader)
+	}
+	if len(indexLookUpReaders) == 0 {
+		return nil, nil, nil
+	}
+	return indexLookUpReaders, indices, nil
+}
+
+func (b *PlanBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, error) {
+	tbl := as.Tables[0]
+	p := &CheckTable{
+		DBName:  tbl.Schema.O,
+		TblInfo: tbl.TableInfo,
+	}
+
+	tableInfo := as.Tables[0].TableInfo
+	table, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
+	}
+
+	readerPlans, indices, err := b.buildPhysicalIndexLookUpReaders(tbl.Schema, table)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	readers := make([]*PhysicalIndexLookUpReader, 0, len(readerPlans))
+	for _, plan := range readerPlans {
+		readers = append(readers, plan.(*PhysicalIndexLookUpReader))
+	}
+	p.Indices = indices
+	p.IndexLookUpReaders = readers
 	return p, nil
 }
 

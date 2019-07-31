@@ -74,9 +74,10 @@ type ShowNextRowID struct {
 type CheckTable struct {
 	baseSchemaProducer
 
-	Tables []*ast.TableName
-
-	GenExprs map[model.TableColumnID]expression.Expression
+	DBName             string
+	TblInfo            *model.TableInfo
+	Indices            []table.Index
+	IndexLookUpReaders []*PhysicalIndexLookUpReader
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
