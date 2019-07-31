@@ -137,17 +137,24 @@ type mvccKV struct {
 	Value    *kvrpcpb.MvccGetByKeyResponse `json:"value"`
 }
 
+func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
+	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	if err != nil {
+		return 0, err
+	}
+	return keyLocation.Region.GetID(), nil
+}
+
 func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 	data, err := t.GetMvccByEncodedKey(encodedKey)
 	if err != nil {
 		return nil, err
 	}
-	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	regionID, err := t.getRegionIDByKey(encodedKey)
 	if err != nil {
 		return nil, err
 	}
-	regionID := keyLocation.Region.GetID()
 	return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data, RegionID: regionID}, err
 }
 
@@ -238,11 +245,10 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, err
 	}
-	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	regionID, err := t.getRegionIDByKey(encodedKey)
 	if err != nil {
 		return nil, err
 	}
-	regionID := keyLocation.Region.GetID()
 	return &mvccKV{strings.ToUpper(hex.EncodeToString(encodedKey)), regionID, data}, err
 }
 
@@ -311,11 +317,11 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (*mvccKV,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	regionID, err := t.getRegionIDByKey(encodedKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	return &mvccKV{Key: strings.ToUpper(params[pHexKey]), Value: data, RegionID: keyLocation.Region.GetID()}, nil
+	return &mvccKV{Key: strings.ToUpper(params[pHexKey]), Value: data, RegionID: regionID}, nil
 }
 
 // settingsHandler is the handler for list tidb server settings.
