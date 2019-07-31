@@ -361,6 +361,8 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
+// getEqualCondSelectivity gets the selectivity of the equal conditions. `coverAll` means if the conditions
+// have covered all the index columns.
 func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll bool) float64 {
 	val := types.NewBytesDatum(bytes)
 	if idx.outOfRange(val) {

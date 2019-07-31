@@ -193,6 +193,13 @@ func (s *testStatisticsSuite) TestEnumRangeValues(c *C) {
 			res:         "(0, 1, 2, 3, 4)",
 		},
 		{
+			low:         types.NewIntDatum(math.MinInt64),
+			high:        types.NewIntDatum(math.MaxInt64),
+			lowExclude:  false,
+			highExclude: false,
+			res:         "",
+		},
+		{
 			low:         types.NewUintDatum(0),
 			high:        types.NewUintDatum(5),
 			lowExclude:  false,
