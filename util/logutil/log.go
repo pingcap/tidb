@@ -31,6 +31,8 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+var PrettyPrint = pp
+
 const (
 	defaultLogTimeFormat = "2006/01/02 15:04:05.000"
 	// DefaultLogMaxSize is the default size of log files.

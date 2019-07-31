@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -45,7 +46,7 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64,
 		}
 		if bytes.Equal(splitKey, loc.StartKey) {
 			logutil.BgLogger().Info("skip split region",
-				zap.Binary("at", splitKey))
+				zap.String("at", hex.EncodeToString(splitKey)))
 			return 0, nil
 		}
 		res, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
@@ -65,9 +66,9 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64,
 		}
 		splitRegion := res.Resp.(*kvrpcpb.SplitRegionResponse)
 		logutil.BgLogger().Info("split region complete",
-			zap.Binary("at", splitKey),
-			zap.Stringer("new region left", splitRegion.GetLeft()),
-			zap.Stringer("new region right", splitRegion.GetRight()))
+			zap.String("at", hex.EncodeToString(splitKey)),
+			zap.String("new region left", logutil.ToHex(splitRegion.GetLeft())),
+			zap.String("new region right", logutil.ToHex(splitRegion.GetRight())))
 		left := splitRegion.GetLeft()
 		if left == nil {
 			return 0, nil
