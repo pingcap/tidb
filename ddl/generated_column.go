@@ -51,9 +51,13 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 }
 
 // checkDependedColExist ensure all depended columns exist.
-//
 // NOTE: this will MODIFY parameter `dependCols`.
-func checkDependedColExist(dependCols map[string]struct{}, cols []*table.Column) error {
+func checkDependedColValid(dependCols map[string]struct{}, cols []*table.Column, pos int) error {
+	duplicateMap := make(map[string]struct{})
+	for k, v := range dependCols {
+		duplicateMap[k] = v
+	}
+	// mysql will first check all depended column exist
 	for _, col := range cols {
 		delete(dependCols, col.Name.L)
 	}
@@ -62,7 +66,39 @@ func checkDependedColExist(dependCols map[string]struct{}, cols []*table.Column)
 			return ErrBadField.GenWithStackByArgs(arbitraryCol, "generated column function")
 		}
 	}
+	// mysql then will check relative generated column should be prior to it, so it should be in one loop
+	for _, col := range cols {
+		_, ok := duplicateMap[col.Name.L]
+		if col.Offset >= pos && ok && col.IsGenerated() {
+			// Generated column can refer only to generated columns defined prior to it.
+			return errGeneratedColumnNonPrior.GenWithStackByArgs()
+		}
+	}
+	duplicateMap = nil
 	return nil
+}
+
+// findPositionRelativeColumn return a column relative to Adding column position
+func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (int, error) {
+	position := len(cols)
+	// Get column position.
+	if pos.Tp == ast.ColumnPositionFirst {
+		position = 0
+	} else if pos.Tp == ast.ColumnPositionAfter {
+		var col *table.Column
+		for _, c := range cols {
+			if c.Name.L == pos.RelativeColumn.Name.L {
+				col = c
+				break
+			}
+		}
+		if col == nil {
+			return -1, ErrBadField.GenWithStackByArgs(pos.RelativeColumn, "generated column function")
+		}
+		// Insert position is after the mentioned column.
+		position = col.Offset + 1
+	}
+	return position, nil
 }
 
 // findDependedColumnNames returns a set of string, which indicates
@@ -85,7 +121,7 @@ func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map
 // findColumnNamesInExpr returns a slice of ast.ColumnName which is referred in expr.
 func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	var c generatedColumnChecker
-	expr.Accept(&c)
+	expr.Accept(&c) //会递归遍历左右还在，找到其中的Column表达式，将ColumnName进行记录
 	return c.cols
 }
 
