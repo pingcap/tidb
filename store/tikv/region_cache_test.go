@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -289,6 +290,31 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
 }
 
+func (s *testRegionCacheSuite) TestSendFailInvalidateRegionsInSameStore(c *C) {
+	// key range: ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := s.cluster.AllocIDs(2)
+	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+
+	// Check the two regions.
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+	loc2, err := s.cache.LocateKey(s.bo, []byte("x"))
+	c.Assert(err, IsNil)
+	c.Assert(loc2.Region.id, Equals, region2)
+
+	// Send fail on region1
+	ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
+	s.checkCache(c, 2)
+	s.cache.OnSendFail(s.bo, ctx, false, errors.New("test error"))
+
+	// Get region2 cache will get nil then reload.
+	ctx2, err := s.cache.GetRPCContext(s.bo, loc2.Region)
+	c.Assert(ctx2, IsNil)
+	c.Assert(err, IsNil)
+}
+
 func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	// 3 nodes and no.1 is leader.
 	store3 := s.cluster.AllocID()
@@ -543,7 +569,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 			}
 			r := cache.getCachedRegionWithRLock(rpcCtx.Region)
 			if r == nil {
-				cache.switchNextPeer(r, rpcCtx.PeerIdx)
+				cache.switchNextPeer(r, rpcCtx.PeerIdx, nil)
 			}
 		}
 	})
