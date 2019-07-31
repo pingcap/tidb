@@ -77,7 +77,7 @@ func checkDependedColValid(dependCols map[string]struct{}, cols []*table.Column,
 	return nil
 }
 
-// findPositionRelativeColumn return a column relative to Adding column position
+// findPositionRelativeColumn return a pos relative to added generated column position
 func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (int, error) {
 	position := len(cols)
 	// Get column position.
@@ -120,7 +120,7 @@ func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map
 // findColumnNamesInExpr returns a slice of ast.ColumnName which is referred in expr.
 func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	var c generatedColumnChecker
-	expr.Accept(&c) //会递归遍历左右还在，找到其中的Column表达式，将ColumnName进行记录
+	expr.Accept(&c)
 	return c.cols
 }
 
