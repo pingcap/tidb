@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -33,13 +34,14 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-const splitRegionConcurrency = 100
+const defSplitRegionConcurrency = 100
 
 // SplitIndexRegionExec represents a split index regions executor.
 type SplitIndexRegionExec struct {
@@ -95,7 +97,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	regionIDs := splitRegionByKeys(ctxWithTimeout, s, splitIdxKeys, e.tableInfo.Name.L, e.indexInfo.Name.L)
+	regionIDs := splitRegionByKeysConcurrently(ctxWithTimeout, s, splitIdxKeys, e.tableInfo.Name.L, e.indexInfo.Name.L)
 	e.splitRegions = len(regionIDs)
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
@@ -266,7 +268,7 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	regionIDs := splitRegionByKeys(ctxWithTimeout, s, splitKeys, e.tableInfo.Name.L, "")
+	regionIDs := splitRegionByKeysConcurrently(ctxWithTimeout, s, splitKeys, e.tableInfo.Name.L, "")
 	e.splitRegions = len(regionIDs)
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
@@ -274,6 +276,30 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 
 	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, "")
 	return nil
+}
+
+func splitRegionByKeysConcurrently(ctxWithTimeout context.Context, s kv.SplitableStore, splitKeys [][]byte, tableName, indexName string) []uint64 {
+	regionIDs := make([]uint64, 0, len(splitKeys))
+	concurrency := mathutil.Min(len(splitKeys), defSplitRegionConcurrency)
+	num := len(splitKeys) / concurrency
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 1; i <= concurrency; i++ {
+		var keys [][]byte
+		if i < concurrency {
+			keys = splitKeys[(i-1)*num : i*num]
+		} else {
+			keys = splitKeys[(i-1)*num:]
+		}
+		fmt.Printf("worker %d, num keys: %d, from %d, total: %d\n", i, len(keys), (i-1)*num, len(splitKeys))
+		go util.WithRecovery(func() {
+			defer wg.Done()
+			ids := splitRegionByKeys(ctxWithTimeout, s, keys, tableName, indexName)
+			regionIDs = append(regionIDs, ids...)
+		}, nil)
+	}
+	wg.Wait()
+	return regionIDs
 }
 
 // splitRegionByKeys splits region by keys and return the split regions IDs.
