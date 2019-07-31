@@ -861,6 +861,28 @@ func (s *testSuite3) TestGeneratedColumnRelatedDDL(c *C) {
 	tk.MustExec("drop table t1;")
 }
 
+func (s *testSuite3) TestDependedGeneratedColumnPrior2GeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`a` int(11) DEFAULT NULL," +
+		"`b` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL," +
+		"`c` int(11) GENERATED ALWAYS AS (`b` + 1) VIRTUAL" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	// should check unknown column first, then the prior
+	_, err := tk.Exec("alter table t add column d int as (c + f + 1) first")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1054]Unknown column 'f' in 'generated column function'")
+	// depended generated column should be prior to generated column self
+	_, err = tk.Exec("alter table t add column d int as (c+1) first")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:3107]Generated column can refer only to generated columns defined prior to it.")
+	// correct case
+	_, err = tk.Exec("alter table t add column d int as (c+1) after c")
+	c.Assert(err, IsNil)
+}
+
 func (s *testSuite3) TestSetDDLErrorCountLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
