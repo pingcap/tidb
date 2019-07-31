@@ -64,6 +64,7 @@ unrecognized-option-test = true
 token-limit = 0
 enable-table-lock = true
 delay-clean-table-lock = 5
+split-region-max-num=10000
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
@@ -90,6 +91,7 @@ max-batch-size=128
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
+	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
