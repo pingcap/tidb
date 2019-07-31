@@ -216,17 +216,17 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
-	pkStatus := pkColNotExists
+	pkStatus := tablecodec.PrimaryKeyNotExists
 	// The PKHandle column info has been collected in ctx.
 	if columns[length-1].GetPkHandle() {
 		if mysql.HasUnsignedFlag(uint(columns[length-1].GetFlag())) {
-			pkStatus = pkColIsUnsigned
+			pkStatus = tablecodec.PrimaryKeyIsUnsigned
 		} else {
-			pkStatus = pkColIsSigned
+			pkStatus = tablecodec.PrimaryKeyIsSigned
 		}
 		columns = columns[:length-1]
 	} else if columns[length-1].ColumnId == model.ExtraHandleID {
-		pkStatus = pkColIsSigned
+		pkStatus = tablecodec.PrimaryKeyIsSigned
 		columns = columns[:length-1]
 	}
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
@@ -507,16 +507,10 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 		}
 	}
 	streamResponse := tipb.StreamResponse{
-		Error:    toPBError(err),
-		Data:     data,
-		Warnings: Warnings,
-	}
-	// The counts was the output count of each executor, but now it is the scan count of each range,
-	// so we need a flag to tell them apart.
-	if counts != nil {
-		streamResponse.OutputCounts = make([]int64, 1+len(counts))
-		copy(streamResponse.OutputCounts, counts)
-		streamResponse.OutputCounts[len(counts)] = -1
+		Error:        toPBError(err),
+		Data:         data,
+		Warnings:     Warnings,
+		OutputCounts: counts,
 	}
 	resp.Data, err = proto.Marshal(&streamResponse)
 	if err != nil {

@@ -182,12 +182,3 @@ func resetErrDataTooLong(colName string, rowIdx int, err error) error {
 	logutil.BgLogger().Error("data too long for column", zap.String("colName", colName), zap.Int("rowIndex", rowIdx))
 	return newErr
 }
-
-func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int {
-	for i, col := range schema.Columns {
-		if col.DBName.L == handleCol.DBName.L && col.TblName.L == handleCol.TblName.L {
-			return i
-		}
-	}
-	panic("Couldn't get column information when do update/delete")
-}
