@@ -465,26 +465,6 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.
 	return noIntervalRange, err
 }
 
-func (ds *DataSource) getHandleCol() *expression.Column {
-	if ds.handleCol != nil {
-		return ds.handleCol
-	}
-
-	if !ds.tableInfo.PKIsHandle {
-		ds.handleCol = ds.newExtraHandleSchemaCol()
-		return ds.handleCol
-	}
-
-	for i, col := range ds.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) {
-			ds.handleCol = ds.schema.Columns[i]
-			break
-		}
-	}
-
-	return ds.handleCol
-}
-
 // deriveIndexPathStats will fulfill the information that the accessPath need.
 // And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.

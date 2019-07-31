@@ -786,8 +786,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 // Be careful to avoid data race.
 func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) Executor {
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), reader)}
-	// Get the handle column index of the below plannercore.
-	// We can guarantee that there must be only one col in the map.
+	// Get the handle column index of the below Plan.
 	us.belowHandleIndex = v.HandleCol.Index
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
 	switch x := reader.(type) {

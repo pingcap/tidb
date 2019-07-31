@@ -582,9 +582,11 @@ func (p *PointGetPlan) findHandleCol() *expression.Column {
 	// fields len is 0 for update and delete.
 	var handleCol *expression.Column
 	tbl := p.TblInfo
-	for i, col := range p.TblInfo.Columns {
-		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			handleCol = p.schema.Columns[i]
+	if tbl.PKIsHandle {
+		for i, col := range p.TblInfo.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				handleCol = p.schema.Columns[i]
+			}
 		}
 	}
 	if handleCol == nil {
