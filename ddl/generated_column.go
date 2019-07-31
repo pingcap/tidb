@@ -74,7 +74,6 @@ func checkDependedColValid(dependCols map[string]struct{}, cols []*table.Column,
 			return errGeneratedColumnNonPrior.GenWithStackByArgs()
 		}
 	}
-	duplicateMap = nil
 	return nil
 }
 
