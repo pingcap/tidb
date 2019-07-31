@@ -70,6 +70,11 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
+	// CastStrToIntStrict is used to control the way we cast float format string to int.
+	// If ConvertStrToIntStrict is false, we convert it to a valid float string first,
+	// then cast the float string to int string. Otherwise, we cast string to integer
+	// prefix in a strict way, only extract 0-9 and (+ or - in first bit).
+	CastStrToIntStrict bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
