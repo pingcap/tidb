@@ -336,7 +336,6 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 	}
 	tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	readerExec.idxColTps = tps
-	readerExec.idxInfo = readerExec.index
 
 	colNames := make([]string, 0, len(is.Columns))
 	for _, col := range is.Columns {

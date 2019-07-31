@@ -361,7 +361,6 @@ type IndexLookUpExecutor struct {
 type checkIndexValue struct {
 	isCheckOp  bool
 	idxColTps  []*types.FieldType
-	idxInfo    *model.IndexInfo
 	idxTblCols []*table.Column
 	genExprs   map[model.TableColumnID]expression.Expression
 }
@@ -843,7 +842,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 					vals = append(vals, row.GetDatum(i, &col.FieldType))
 				}
 			}
-			vals = tables.TruncateIndexValuesIfNeeded(tblInfo, w.idxInfo, vals)
+			vals = tables.TruncateIndexValuesIfNeeded(tblInfo, w.idxLookup.index, vals)
 			for i, val := range vals {
 				col := w.idxTblCols[i]
 				tp := &col.FieldType
