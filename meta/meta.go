@@ -163,6 +163,22 @@ func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
 	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
 }
 
+// SetAutoTableID uses to force set the auto ID of the table.
+func (m *Meta) SetAutoTableID(dbID, tableID, value int64) error {
+	// Check if DB exists.
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return errors.Trace(err)
+	}
+	// Check if table exists.
+	tableKey := m.tableKey(tableID)
+	if err := m.checkTableExists(dbKey, tableKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	return m.txn.HSetInt(dbKey, m.autoTableIDKey(tableID), value)
+}
+
 // GetAutoTableID gets current auto id with table id.
 func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(tableID))

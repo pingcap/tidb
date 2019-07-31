@@ -52,6 +52,16 @@ func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 	})
 }
 
+// HSetInt sets the int64 value of a hash field.
+func (t *TxStructure) HSetInt(key []byte, field []byte, value int64) error {
+	if t.readWriter == nil {
+		return errWriteOnSnapshot
+	}
+	return t.updateHash(key, field, func([]byte) ([]byte, error) {
+		return t.hashFieldIntegerVal(value), nil
+	})
+}
+
 // HGet gets the value of a hash field.
 func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	dataKey := t.encodeHashDataKey(key, field)
