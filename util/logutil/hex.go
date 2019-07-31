@@ -42,7 +42,7 @@ func pp(w io.Writer, val reflect.Value) {
 			fmt.Fprintf(w, "%s", val.Interface())
 		}
 	case reflect.Struct:
-		w.Write([]byte{'{'})
+		fmt.Fprintf(w, "{")
 		for i := 0; i < val.NumField(); i++ {
 			fv := val.Field(i)
 			ft := tp.Field(i)
@@ -50,13 +50,12 @@ func pp(w io.Writer, val reflect.Value) {
 				continue
 			}
 			if i != 0 {
-				w.Write([]byte{' '})
+				fmt.Fprintf(w, " ")
 			}
-			fmt.Fprintf(w, "%s", ft.Name)
-			w.Write([]byte{':'})
+			fmt.Fprintf(w, "%s:", ft.Name)
 			pp(w, fv)
 		}
-		w.Write([]byte{'}'})
+		fmt.Fprintf(w, "}")
 	case reflect.Ptr:
 		if val.IsNil() {
 			fmt.Fprintf(w, "%v", val.Interface())
