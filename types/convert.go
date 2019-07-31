@@ -560,10 +560,10 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		if !unsigned {
 			lBound := IntergerSignedLowerBound(mysql.TypeLonglong)
 			uBound := IntergerSignedUpperBound(mysql.TypeLonglong)
-			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeDouble)
+			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
 		}
 		bound := IntergerUnsignedUpperBound(mysql.TypeLonglong)
-		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
+		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeLonglong)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
 		str := string(hack.String(j.GetString()))
