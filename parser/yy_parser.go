@@ -36,6 +36,7 @@ const (
 	codeTooBigDisplayWidth         = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
 	codeErrUnknownAlterLock        = terror.ErrCode(mysql.ErrUnknownAlterLock)
 	codeErrUnknownAlterAlgorithm   = terror.ErrCode(mysql.ErrUnknownAlterAlgorithm)
+	codeErrTooBigPrecision         = terror.ErrCode(mysql.ErrTooBigPrecision)
 )
 
 var (
@@ -53,6 +54,8 @@ var (
 	ErrWrongFieldTerminators = terror.ClassParser.New(codeWrongFieldTerminators, mysql.MySQLErrName[mysql.ErrWrongFieldTerminators])
 	// ErrTooBigDisplayWidth returns for data display width exceed limit .
 	ErrTooBigDisplayWidth = terror.ClassParser.New(codeTooBigDisplayWidth, mysql.MySQLErrName[mysql.ErrTooBigDisplaywidth])
+	// ErrTooBigPrecision returns for data precision exceed limit.
+	ErrTooBigPrecision = terror.ClassParser.New(codeErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
 	// ErrUnknownAlterLock returns for no alter lock type found error.
 	ErrUnknownAlterLock = terror.ClassParser.New(codeErrUnknownAlterLock, mysql.MySQLErrName[mysql.ErrUnknownAlterLock])
 	// ErrUnknownAlterAlgorithm returns for no alter algorithm found error.
@@ -75,6 +78,7 @@ func init() {
 		codeTooBigDisplayWidth:         mysql.ErrTooBigDisplaywidth,
 		codeErrUnknownAlterLock:        mysql.ErrUnknownAlterLock,
 		codeErrUnknownAlterAlgorithm:   mysql.ErrUnknownAlterAlgorithm,
+		codeErrTooBigPrecision:         mysql.ErrTooBigPrecision,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassParser] = parserMySQLErrCodes
 }

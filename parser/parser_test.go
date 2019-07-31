@@ -351,6 +351,54 @@ func (s *testParserSuite) RunRestoreTest(c *C, sourceSQLs, expectSQLs string) {
 	c.Assert(restoreSQLs, Equals, expectSQLs, comment)
 }
 
+func (s *testParserSuite) RunTestInRealAsFloatMode(c *C, table []testCase) {
+	parser := parser.New()
+	parser.EnableWindowFunc(s.enableWindowFunc)
+	parser.SetSQLMode(mysql.ModeRealAsFloat)
+	for _, t := range table {
+		_, _, err := parser.Parse(t.src, "", "")
+		comment := Commentf("source %v", t.src)
+		if !t.ok {
+			c.Assert(err, NotNil, comment)
+			continue
+		}
+		c.Assert(err, IsNil, comment)
+		// restore correctness test
+		if t.ok {
+			s.RunRestoreTestInRealAsFloatMode(c, t.src, t.restore)
+		}
+	}
+}
+
+func (s *testParserSuite) RunRestoreTestInRealAsFloatMode(c *C, sourceSQLs, expectSQLs string) {
+	var sb strings.Builder
+	parser := parser.New()
+	parser.EnableWindowFunc(s.enableWindowFunc)
+	parser.SetSQLMode(mysql.ModeRealAsFloat)
+	comment := Commentf("source %v", sourceSQLs)
+	stmts, _, err := parser.Parse(sourceSQLs, "", "")
+	c.Assert(err, IsNil, comment)
+	restoreSQLs := ""
+	for _, stmt := range stmts {
+		sb.Reset()
+		err = stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &sb))
+		c.Assert(err, IsNil, comment)
+		restoreSQL := sb.String()
+		comment = Commentf("source %v; restore %v", sourceSQLs, restoreSQL)
+		restoreStmt, err := parser.ParseOneStmt(restoreSQL, "", "")
+		c.Assert(err, IsNil, comment)
+		CleanNodeText(stmt)
+		CleanNodeText(restoreStmt)
+		c.Assert(restoreStmt, DeepEquals, stmt, comment)
+		if restoreSQLs != "" {
+			restoreSQLs += "; "
+		}
+		restoreSQLs += restoreSQL
+	}
+	comment = Commentf("restore %v; expect %v", restoreSQLs, expectSQLs)
+	c.Assert(restoreSQLs, Equals, expectSQLs, comment)
+}
+
 func (s *testParserSuite) RunErrMsgTest(c *C, table []testErrMsgCase) {
 	parser := parser.New()
 	for _, t := range table {
@@ -1108,6 +1156,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for cast as double
 		{"select cast(1 as double);", true, "SELECT CAST(1 AS DOUBLE)"},
 
+		// for cast as float
+		{"select cast(1 as float);", true, "SELECT CAST(1 AS FLOAT)"},
+		{"select cast(1 as float(0));", true, "SELECT CAST(1 AS FLOAT)"},
+		{"select cast(1 as float(24));", true, "SELECT CAST(1 AS FLOAT)"},
+		{"select cast(1 as float(25));", true, "SELECT CAST(1 AS DOUBLE)"},
+		{"select cast(1 as float(53));", true, "SELECT CAST(1 AS DOUBLE)"},
+		{"select cast(1 as float(54));", false, ""},
+
 		// for last_insert_id
 		{"SELECT last_insert_id();", true, "SELECT LAST_INSERT_ID()"},
 		{"SELECT last_insert_id(1);", true, "SELECT LAST_INSERT_ID(1)"},
@@ -1610,6 +1666,18 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT `uuid`()", true, "SELECT UUID()"},
 	}
 	s.RunTest(c, table)
+
+	// Test in REAL_AS_FLOAT SQL mode.
+	table2 := []testCase{
+		// for cast as float
+		{"select cast(1 as float);", true, "SELECT CAST(1 AS FLOAT)"},
+		{"select cast(1 as float(0));", true, "SELECT CAST(1 AS FLOAT)"},
+		{"select cast(1 as float(24));", true, "SELECT CAST(1 AS FLOAT)"},
+		{"select cast(1 as float(25));", true, "SELECT CAST(1 AS DOUBLE)"},
+		{"select cast(1 as float(53));", true, "SELECT CAST(1 AS DOUBLE)"},
+		{"select cast(1 as float(54));", false, ""},
+	}
+	s.RunTestInRealAsFloatMode(c, table2)
 }
 
 func (s *testParserSuite) TestIdentifier(c *C) {
