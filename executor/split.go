@@ -39,6 +39,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const splitRegionConcurrency = 100
+
 // SplitIndexRegionExec represents a split index regions executor.
 type SplitIndexRegionExec struct {
 	baseExecutor
@@ -93,26 +95,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	regionIDs := make([]uint64, 0, len(splitIdxKeys))
-	for _, idxKey := range splitIdxKeys {
-		if isCtxDone(ctxWithTimeout) {
-			break
-		}
-
-		regionID, err := s.SplitRegion(idxKey, true)
-		if err != nil {
-			logutil.BgLogger().Warn("split table index region failed",
-				zap.String("table", e.tableInfo.Name.L),
-				zap.String("index", e.indexInfo.Name.L),
-				zap.Error(err))
-			continue
-		}
-		if regionID == 0 {
-			continue
-		}
-		regionIDs = append(regionIDs, regionID)
-
-	}
+	regionIDs := splitRegionByKeys(ctxWithTimeout, s, splitIdxKeys, e.tableInfo.Name.L, e.indexInfo.Name.L)
 	e.splitRegions = len(regionIDs)
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
@@ -283,6 +266,18 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	regionIDs := splitRegionByKeys(ctxWithTimeout, s, splitKeys, e.tableInfo.Name.L, "")
+	e.splitRegions = len(regionIDs)
+	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
+		return nil
+	}
+
+	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, "")
+	return nil
+}
+
+// splitRegionByKeys splits region by keys and return the split regions IDs.
+func splitRegionByKeys(ctxWithTimeout context.Context, s kv.SplitableStore, splitKeys [][]byte, tableName, indexName string) []uint64 {
 	regionIDs := make([]uint64, 0, len(splitKeys))
 	for _, key := range splitKeys {
 		failpoint.Inject("mockSplitRegionTimeout", func(val failpoint.Value) {
@@ -295,24 +290,24 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 		}
 		regionID, err := s.SplitRegion(key, true)
 		if err != nil {
-			logutil.BgLogger().Warn("split table region failed",
-				zap.String("table", e.tableInfo.Name.L),
-				zap.Error(err))
+			if len(indexName) == 0 {
+				logutil.BgLogger().Warn("split table region failed",
+					zap.String("table", tableName),
+					zap.Error(err))
+			} else {
+				logutil.BgLogger().Warn("split table index region failed",
+					zap.String("table", tableName),
+					zap.String("index", indexName),
+					zap.Error(err))
+			}
 			continue
 		}
 		if regionID == 0 {
 			continue
 		}
 		regionIDs = append(regionIDs, regionID)
-
 	}
-	e.splitRegions = len(regionIDs)
-	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
-		return nil
-	}
-
-	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, "")
-	return nil
+	return regionIDs
 }
 
 func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Context, startTime time.Time, store kv.SplitableStore, regionIDs []uint64, tableName, indexName string) int {
