@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/ngaut/pools"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -50,6 +51,25 @@ type SimpleExec struct {
 	Statement ast.StmtNode
 	done      bool
 	is        infoschema.InfoSchema
+}
+
+func (e *SimpleExec) getSysSession() (sessionctx.Context, error) {
+	dom := domain.GetDomain(e.ctx)
+	sysSessionPool := dom.SysSessionPool()
+	ctx, err := sysSessionPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	restrictedCtx := ctx.(sessionctx.Context)
+	restrictedCtx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
+	restrictedCtx.GetSessionVars().InRestrictedSQL = true
+	return restrictedCtx, nil
+}
+
+func (e *SimpleExec) closeSysSession(ctx sessionctx.Context) {
+	dom := domain.GetDomain(e.ctx)
+	sysSessionPool := dom.SysSessionPool()
+	sysSessionPool.Put(ctx.(pools.Resource))
 }
 
 // Next implements the Executor Next interface.
@@ -232,7 +252,6 @@ func (e *SimpleExec) setDefaultRoleAll(s *ast.SetDefaultRoleStmt) error {
 }
 
 func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (err error) {
-	sqlExecutor := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	user, sql := s.UserList[0], ""
 	if user.Hostname == "" {
@@ -257,13 +276,39 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 			}
 		}
 	}
-	deleteSQL := fmt.Sprintf("DELETE IGNORE FROM mysql.default_roles WHERE USER='%s' AND HOST='%s';", user.Username, user.Hostname)
-	_, _, err = sqlExecutor.ExecRestrictedSQL(e.ctx, deleteSQL)
+
+	restrictedCtx, err := e.getSysSession()
 	if err != nil {
-		return
+		return err
 	}
-	_, _, err = sqlExecutor.ExecRestrictedSQL(e.ctx, sql)
-	return
+	defer e.closeSysSession(restrictedCtx)
+
+	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+
+	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
+		return err
+	}
+
+	deleteSQL := fmt.Sprintf("DELETE IGNORE FROM mysql.default_roles WHERE USER='%s' AND HOST='%s';", user.Username, user.Hostname)
+	if _, err := sqlExecutor.Execute(context.Background(), deleteSQL); err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		if _, rollbackErr := sqlExecutor.Execute(context.Background(), "rollback"); rollbackErr != nil {
+			return rollbackErr
+		}
+		return err
+	}
+
+	if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		if _, rollbackErr := sqlExecutor.Execute(context.Background(), "rollback"); rollbackErr != nil {
+			return rollbackErr
+		}
+		return err
+	}
+	if _, err := sqlExecutor.Execute(context.Background(), "commit"); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) (err error) {
