@@ -311,6 +311,21 @@ func (c *Chunk) NumRows() int {
 	return c.columns[0].length
 }
 
+// NumEffectiveRows returns the effective number of rows physically stored in this Chunk.
+// It is different with NumRows when sel is not nil.
+// For example: if sel is [2, 3, 5, 7, 9], then
+//   NumRow() returns 5 to indicate that 5 rows are selected logically in this Chunk, while
+//   NumEffectiveRows() returns 10(9+1) to indicate that at least 10 rows are stored in this Chunk physically.
+func (c *Chunk) NumEffectiveRows() int {
+	if c.sel == nil {
+		return c.NumRows()
+	}
+	if len(c.sel) == 0 {
+		return 0
+	}
+	return c.sel[len(c.sel)-1] + 1
+}
+
 // GetRow gets the Row in the chunk with the row index.
 func (c *Chunk) GetRow(idx int) Row {
 	if c.sel != nil {
@@ -624,18 +639,6 @@ func (c *Chunk) Reconstruct() {
 	}
 	c.numVirtualRows = len(c.sel)
 	c.sel = nil
-}
-
-// NumEffectiveRows returns the effective number of rows stored in this Chunk.
-// This method is used in vectorized evaluation.
-func (c *Chunk) NumEffectiveRows() int {
-	if c.sel == nil {
-		return c.NumRows()
-	}
-	if len(c.sel) == 0 {
-		return 0
-	}
-	return c.sel[len(c.sel)-1] + 1
 }
 
 func writeTime(buf []byte, t types.Time) {
