@@ -46,9 +46,8 @@ func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
 	c.Assert(err, IsNil)
 
 	time.Sleep(time.Second)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop"), IsNil)
-	time.Sleep(time.Second)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop"), IsNil)
 
 	req := &tikvrpc.Request{
 		Type:  tikvrpc.CmdEmpty,
