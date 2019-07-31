@@ -41,7 +41,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const defSplitRegionConcurrency = 100
+const defSplitRegionConcurrency = 16
 
 // SplitIndexRegionExec represents a split index regions executor.
 type SplitIndexRegionExec struct {
@@ -102,7 +102,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
-	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
+	e.finishScatterNum = waitScatterRegionFinishConcurrently(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
 	return nil
 }
 
@@ -274,7 +274,7 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 		return nil
 	}
 
-	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, "")
+	e.finishScatterNum = waitScatterRegionFinishConcurrently(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, "")
 	return nil
 }
 
@@ -291,7 +291,6 @@ func splitRegionByKeysConcurrently(ctxWithTimeout context.Context, s kv.Splitabl
 		} else {
 			keys = splitKeys[(i-1)*num:]
 		}
-		fmt.Printf("worker %d, num keys: %d, from %d, total: %d\n", i, len(keys), (i-1)*num, len(splitKeys))
 		go util.WithRecovery(func() {
 			defer wg.Done()
 			ids := splitRegionByKeys(ctxWithTimeout, s, keys, tableName, indexName)
@@ -334,6 +333,29 @@ func splitRegionByKeys(ctxWithTimeout context.Context, s kv.SplitableStore, spli
 		regionIDs = append(regionIDs, regionID)
 	}
 	return regionIDs
+}
+
+func waitScatterRegionFinishConcurrently(ctxWithTimeout context.Context, sctx sessionctx.Context, startTime time.Time, store kv.SplitableStore, regionIDs []uint64, tableName, indexName string) int {
+	finishScatterNum := 0
+	concurrency := mathutil.Min(len(regionIDs), defSplitRegionConcurrency)
+	num := len(regionIDs) / concurrency
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 1; i <= concurrency; i++ {
+		var ids []uint64
+		if i < concurrency {
+			ids = regionIDs[(i-1)*num : i*num]
+		} else {
+			ids = regionIDs[(i-1)*num:]
+		}
+		go util.WithRecovery(func() {
+			defer wg.Done()
+			num := waitScatterRegionFinish(ctxWithTimeout, sctx, startTime, store, ids, tableName, indexName)
+			finishScatterNum += num
+		}, nil)
+	}
+	wg.Wait()
+	return finishScatterNum
 }
 
 func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Context, startTime time.Time, store kv.SplitableStore, regionIDs []uint64, tableName, indexName string) int {
