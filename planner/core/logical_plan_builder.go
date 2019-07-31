@@ -2699,6 +2699,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		return nil, err
 	}
 	tblID2Handle, err := resolveIndicesForTblID2Handle(b.handleHelper.tailMap(), updt.SelectPlan.Schema())
+	if err != nil {
+		return nil, err
+	}
 	tblID2table := make(map[int64]table.Table)
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
