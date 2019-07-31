@@ -308,8 +308,8 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 		b.err = err
 		return nil
 	}
-	readerExec.ranges = ranger.FullRange()
-	readerExec.isCheckOp = true
+
+	buildIndexLookUpChecker(b, v.IndexLookUpReader, readerExec)
 
 	e := &CheckIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -322,12 +322,59 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 	return e
 }
 
+// buildIndexLookUpChecker builds check information to IndexLookUpReader.
+func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.PhysicalIndexLookUpReader,
+	readerExec *IndexLookUpExecutor) {
+	is := readerPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	readerExec.dagPB.OutputOffsets = make([]uint32, 0, len(is.Index.Columns))
+	for i := 0; i <= len(is.Index.Columns); i++ {
+		readerExec.dagPB.OutputOffsets = append(readerExec.dagPB.OutputOffsets, uint32(i))
+	}
+	readerExec.ranges = ranger.FullRange()
+	ts := readerPlan.TablePlans[0].(*plannercore.PhysicalTableScan)
+	readerExec.handleIdx = ts.HandleIdx
+
+	tps := make([]*types.FieldType, 0, len(is.Columns)+1)
+	for _, col := range is.Columns {
+		tps = append(tps, &col.FieldType)
+	}
+	tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+	readerExec.checkIndexValue = &checkIndexValue{genExprs: is.GenExprs, idxColTps: tps}
+
+	colNames := make([]string, 0, len(is.Columns))
+	for _, col := range is.Columns {
+		colNames = append(colNames, col.Name.O)
+	}
+	var err error
+	readerExec.idxTblCols, err = table.FindCols(readerExec.table.Cols(), colNames, true)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return
+	}
+}
+
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
+	readerExecs := make([]*IndexLookUpExecutor, 0, len(v.IndexLookUpReaders))
+	for _, readerPlan := range v.IndexLookUpReaders {
+		readerExec, err := buildNoRangeIndexLookUpReader(b, readerPlan)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		buildIndexLookUpChecker(b, readerPlan, readerExec)
+
+		readerExecs = append(readerExecs, readerExec)
+	}
+
 	e := &CheckTableExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		tables:       v.Tables,
+		dbName:       v.DBName,
+		tblInfo:      v.TblInfo,
+		indices:      v.Indices,
 		is:           b.is,
-		genExprs:     v.GenExprs,
+		srcs:         readerExecs,
+		exitCh:       make(chan struct{}),
+		retCh:        make(chan error, len(v.Indices)),
 	}
 	return e
 }
