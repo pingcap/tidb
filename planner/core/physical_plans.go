@@ -251,8 +251,6 @@ type PhysicalIndexJoin struct {
 type PhysicalIndexMergeJoin struct {
 	PhysicalIndexJoin
 
-	// IsMergejoin represents whether the index join is index merge join. NeedOuterSort, CompareFuncs and OuterCompareFuncs are
-	// the properties of index merge join.
 	NeedOuterSort     bool
 	CompareFuncs      []expression.CompareFunc
 	OuterCompareFuncs []expression.CompareFunc
