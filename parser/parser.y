@@ -5083,6 +5083,21 @@ CastType:
 		x.Collate = charset.CollationBin
 		$$ = x
 	}
+|	"FLOAT" FloatOpt
+	{
+		x := types.NewFieldType(mysql.TypeFloat)
+		fopt := $2.(*ast.FloatOpt)
+		if fopt.Flen >= 54 {
+			yylex.AppendError(ErrTooBigPrecision.GenWithStackByArgs(fopt.Flen,"CAST",53))
+		} else if fopt.Flen >= 25 {
+			x = types.NewFieldType(mysql.TypeDouble)
+		}
+		x.Flen, x.Decimal = mysql.GetDefaultFieldLengthAndDecimalForCast(x.Tp)
+		x.Flag |= mysql.BinaryFlag
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
+		$$ = x
+	}
 
 PriorityOpt:
 	{
