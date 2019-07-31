@@ -1241,7 +1241,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 	case *ast.WindowFuncExpr:
 		a.inWindowFunc = false
 		if a.curClause == havingClause {
-			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
+			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.F))
 			return node, false
 		}
 		if a.curClause == orderByClause {
