@@ -18,6 +18,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -193,12 +194,13 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 	switch low.Kind() {
 	case types.KindInt64:
 		// Overflow check.
-		if low.GetInt64() < 0 && high.GetInt64() > 0 {
-			if low.GetInt64() <= -maxNumStep || high.GetInt64() >= maxNumStep {
+		lowVal, highVal := low.GetInt64(), high.GetInt64()
+		if lowVal < 0 && highVal > 0 {
+			if lowVal <= -maxNumStep || highVal >= maxNumStep {
 				return nil
 			}
 		}
-		remaining := high.GetInt64() - low.GetInt64()
+		remaining := highVal - lowVal
 		if remaining >= maxNumStep+1 {
 			return nil
 		}
@@ -207,7 +209,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			return nil
 		}
 		values := make([]types.Datum, 0, remaining)
-		startValue := low.GetInt64()
+		startValue := lowVal
 		if lowExclude {
 			startValue++
 		}
@@ -235,10 +237,8 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		return values
 	case types.KindMysqlDuration:
 		lowDur, highDur := low.GetMysqlDuration(), high.GetMysqlDuration()
-		if lowDur.Fsp != highDur.Fsp {
-			return nil
-		}
-		stepSize := int64(math.Pow10(types.MaxFsp-lowDur.Fsp)) * int64(time.Microsecond)
+		fsp := mathutil.Max(lowDur.Fsp, highDur.Fsp)
+		stepSize := int64(math.Pow10(types.MaxFsp-fsp)) * int64(time.Microsecond)
 		lowDur.Duration = lowDur.Duration.Round(time.Duration(stepSize))
 		remaining := int64(highDur.Duration-lowDur.Duration)/stepSize + 1 - int64(exclude)
 		if remaining >= maxNumStep {
@@ -250,14 +250,15 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		}
 		values := make([]types.Datum, 0, remaining)
 		for i := int64(0); i < remaining; i++ {
-			values = append(values, types.NewDurationDatum(types.Duration{Duration: time.Duration(startValue + i*stepSize), Fsp: lowDur.Fsp}))
+			values = append(values, types.NewDurationDatum(types.Duration{Duration: time.Duration(startValue + i*stepSize), Fsp: fsp}))
 		}
 		return values
 	case types.KindMysqlTime:
 		lowTime, highTime := low.GetMysqlTime(), high.GetMysqlTime()
-		if lowTime.Type != highTime.Type || lowTime.Fsp != highTime.Fsp {
+		if lowTime.Type != highTime.Type {
 			return nil
 		}
+		fsp := mathutil.Max(lowTime.Fsp, highTime.Fsp)
 		var stepSize int64
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		if lowTime.Type == mysql.TypeDate {
@@ -265,11 +266,11 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			lowTime.Time = types.FromDate(lowTime.Time.Year(), lowTime.Time.Month(), lowTime.Time.Day(), 0, 0, 0, 0)
 		} else {
 			var err error
-			lowTime, err = lowTime.RoundFrac(sc, lowTime.Fsp)
+			lowTime, err = lowTime.RoundFrac(sc, fsp)
 			if err != nil {
 				return nil
 			}
-			stepSize = int64(math.Pow10(types.MaxFsp-lowTime.Fsp)) * int64(time.Microsecond)
+			stepSize = int64(math.Pow10(types.MaxFsp-fsp)) * int64(time.Microsecond)
 		}
 		remaining := int64(highTime.Sub(sc, &lowTime).Duration)/stepSize + 1 - int64(exclude)
 		if remaining >= maxNumStep {
@@ -278,14 +279,14 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		startValue := lowTime
 		var err error
 		if lowExclude {
-			startValue, err = lowTime.Add(sc, types.Duration{Duration: time.Duration(stepSize), Fsp: lowTime.Fsp})
+			startValue, err = lowTime.Add(sc, types.Duration{Duration: time.Duration(stepSize), Fsp: fsp})
 			if err != nil {
 				return nil
 			}
 		}
 		values := make([]types.Datum, 0, remaining)
 		for i := int64(0); i < remaining; i++ {
-			value, err := startValue.Add(sc, types.Duration{Duration: time.Duration(i * stepSize), Fsp: lowTime.Fsp})
+			value, err := startValue.Add(sc, types.Duration{Duration: time.Duration(i * stepSize), Fsp: fsp})
 			if err != nil {
 				return nil
 			}
