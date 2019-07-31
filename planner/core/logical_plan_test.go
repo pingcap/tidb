@@ -2340,6 +2340,34 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "select sum(a) over (partition by a order by b), sum(b) over (order by a, b, c), sum(c) over(partition by a order by c), sum(d) over() from t",
 			result: "TableReader(Table(t))->Sort->Window(sum(cast(test.t.c)) over(partition by test.t.a order by test.t.c asc range between unbounded preceding and current row))->Sort->Window(sum(cast(test.t.b)) over(order by test.t.a asc, test.t.b asc, test.t.c asc range between unbounded preceding and current row))->Window(sum(cast(test.t.a)) over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row))->Window(sum(cast(test.t.d)) over())->Projection",
 		},
+		// Test issue 11010.
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between current row and 1 following)",
+			result: "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between current row and unbounded following)",
+			result: "TableReader(Table(t))->Sort->Window(dense_rank() over(partition by test.t.b order by test.t.a desc, test.t.b desc))->Projection",
+		},
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between 1 preceding and 1 following)",
+			result: "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		// Test issue 11001.
+		{
+			sql:    "SELECT PERCENT_RANK() OVER w1 AS 'percent_rank', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) t1 WINDOW w1 AS ( ROWS BETWEEN 0 FOLLOWING AND UNBOUNDED PRECEDING)",
+			result: "[planner:3585]Window 'w1': frame end cannot be UNBOUNDED PRECEDING.",
+		},
+		// Test issue 11002.
+		{
+			sql:    "SELECT PERCENT_RANK() OVER w1 AS 'percent_rank', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as t1 WINDOW w1 AS ( ROWS BETWEEN UNBOUNDED FOLLOWING AND UNBOUNDED FOLLOWING)",
+			result: "[planner:3584]Window 'w1': frame start cannot be UNBOUNDED FOLLOWING.",
+		},
+		// Test issue 11011.
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a asc range between 1250951168 following AND 1250951168 preceding)",
+			result: "[planner:3586]Window 'w1': frame start or end is negative, NULL or of non-integral type",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)
