@@ -927,6 +927,32 @@ func validateByUser(s *variable.SessionVars, psw string) (bool, error) {
 }
 
 func validateByMixedDigitSpecial(s *variable.SessionVars, pwd string) (bool, error) {
+	// get system variables
+	v, err := variable.GetGlobalSystemVar(s, variable.ValidatePasswordMixedCaseCount)
+	if err != nil {
+		return false, err
+	}
+	minMixed, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return false, err
+	}
+	v, err = variable.GetGlobalSystemVar(s, variable.ValidatePasswordNumberCount)
+	if err != nil {
+		return false, err
+	}
+	minDigit, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return false, err
+	}
+	v, err = variable.GetGlobalSystemVar(s, variable.ValidatePasswordSpecialCharCount)
+	if err != nil {
+		return false, err
+	}
+	minSpecial, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return false, err
+	}
+
 	numLower := int64(0)
 	numUpper := int64(0)
 	numDigit := int64(0)
@@ -942,31 +968,10 @@ func validateByMixedDigitSpecial(s *variable.SessionVars, pwd string) (bool, err
 			numSpecial++
 		}
 	}
-	v, err := variable.GetGlobalSystemVar(s, variable.ValidatePasswordMixedCaseCount)
-	if err != nil {
-		return false, err
-	}
-	minMixed, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || numLower < minMixed || numUpper < minMixed {
-		return false, err
-	}
-	v, err = variable.GetGlobalSystemVar(s, variable.ValidatePasswordNumberCount)
-	if err != nil {
-		return false, err
-	}
-	minDigit, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || numDigit < minDigit {
-		return false, err
-	}
-	v, err = variable.GetGlobalSystemVar(s, variable.ValidatePasswordSpecialCharCount)
-	if err != nil {
-		return false, err
-	}
-	minSpecial, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || numSpecial < minSpecial {
-		return false, err
-	}
 
+	if numLower < minMixed || numUpper < minMixed || numDigit < minDigit || numSpecial < minSpecial {
+		return false, nil
+	}
 	return true, nil
 }
 
@@ -1015,7 +1020,7 @@ func (c *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool
 	for index := range pwd {
 		l++
 		if l > 100 {
-			pwd = pwd[:index-1]
+			pwd = pwd[:index]
 			break
 		}
 	}
