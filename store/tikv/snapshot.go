@@ -161,7 +161,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		}, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
-			FollowerRead: s.replicaRead.IsFollowerRead(),
+			ReplicaRead:  s.replicaRead.IsFollowerRead(),
 		})
 		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutMedium)
 		if err != nil {
@@ -241,7 +241,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		}, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
-			FollowerRead: s.replicaRead.IsFollowerRead(),
+			ReplicaRead:  s.replicaRead.IsFollowerRead(),
 		})
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)

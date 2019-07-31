@@ -142,7 +142,7 @@ func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	c.Assert(ctx, NotNil)
-	req.FollowerRead = true
+	req.ReplicaRead = true
 	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
