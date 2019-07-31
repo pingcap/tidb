@@ -3176,6 +3176,7 @@ func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupedFuncs map[*ast.
 		if err != nil {
 			return nil, nil, err
 		}
+
 		window := LogicalWindow{
 			PartitionBy: partitionBy,
 			OrderBy:     orderBy,
