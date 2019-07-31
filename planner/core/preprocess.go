@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
@@ -295,7 +296,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		}
 	}
 	if (autoIncrementMustBeKey && !isKey) || count > 1 {
-		p.err = errors.New("Incorrect table definition; there can be only one auto column and it must be defined as a key")
+		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
 	}
 
 	switch autoIncrementCol.Tp.Tp {

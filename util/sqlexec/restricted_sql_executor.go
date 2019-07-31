@@ -78,7 +78,7 @@ type Statement interface {
 	IsReadOnly(vars *variable.SessionVars) bool
 
 	// RebuildPlan rebuilds the plan of the statement.
-	RebuildPlan() (schemaVersion int64, err error)
+	RebuildPlan(ctx context.Context) (schemaVersion int64, err error)
 }
 
 // RecordSet is an abstract result set interface to help get data from Plan.
@@ -89,7 +89,7 @@ type RecordSet interface {
 	// Next reads records into chunk.
 	Next(ctx context.Context, req *chunk.Chunk) error
 
-	//NewChunk create a chunk.
+	// NewChunk create a chunk.
 	NewChunk() *chunk.Chunk
 
 	// Close closes the underlying iterator, call Next after Close will

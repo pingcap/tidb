@@ -27,7 +27,7 @@ import (
 // 1. encode a Chunk to a byte slice.
 // 2. decode a Chunk from a byte slice.
 type Codec struct {
-	// colTypes is used to check whether a column is fixed sized and what the
+	// colTypes is used to check whether a Column is fixed sized and what the
 	// fixed size for every element.
 	// NOTE: It's only used for decoding.
 	colTypes []*types.FieldType
@@ -47,18 +47,18 @@ func (c *Codec) Encode(chk *Chunk) []byte {
 	return buffer
 }
 
-func (c *Codec) encodeColumn(buffer []byte, col *column) []byte {
+func (c *Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	var lenBuffer [4]byte
 	// encode length.
 	binary.LittleEndian.PutUint32(lenBuffer[:], uint32(col.length))
 	buffer = append(buffer, lenBuffer[:4]...)
 
 	// encode nullCount.
-	binary.LittleEndian.PutUint32(lenBuffer[:], uint32(col.nullCount))
+	binary.LittleEndian.PutUint32(lenBuffer[:], uint32(col.nullCount()))
 	buffer = append(buffer, lenBuffer[:4]...)
 
 	// encode nullBitmap.
-	if col.nullCount > 0 {
+	if col.nullCount() > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
 		buffer = append(buffer, col.nullBitmap[:numNullBitmapBytes]...)
 	}
@@ -90,7 +90,7 @@ func (c *Codec) i64SliceToBytes(i64s []int64) (b []byte) {
 func (c *Codec) Decode(buffer []byte) (*Chunk, []byte) {
 	chk := &Chunk{}
 	for ordinal := 0; len(buffer) > 0; ordinal++ {
-		col := &column{}
+		col := &Column{}
 		buffer = c.decodeColumn(buffer, col, ordinal)
 		chk.columns = append(chk.columns, col)
 	}
@@ -105,17 +105,17 @@ func (c *Codec) DecodeToChunk(buffer []byte, chk *Chunk) (remained []byte) {
 	return buffer
 }
 
-func (c *Codec) decodeColumn(buffer []byte, col *column, ordinal int) (remained []byte) {
+func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained []byte) {
 	// decode length.
 	col.length = int(binary.LittleEndian.Uint32(buffer))
 	buffer = buffer[4:]
 
 	// decode nullCount.
-	col.nullCount = int(binary.LittleEndian.Uint32(buffer))
+	nullCount := int(binary.LittleEndian.Uint32(buffer))
 	buffer = buffer[4:]
 
 	// decode nullBitmap.
-	if col.nullCount > 0 {
+	if nullCount > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
 		col.nullBitmap = append(col.nullBitmap[:0], buffer[:numNullBitmapBytes]...)
 		buffer = buffer[numNullBitmapBytes:]
@@ -142,7 +142,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *column, ordinal int) (remained 
 
 var allNotNullBitmap [128]byte
 
-func (c *Codec) setAllNotNull(col *column) {
+func (c *Codec) setAllNotNull(col *Column) {
 	numNullBitmapBytes := (col.length + 7) / 8
 	col.nullBitmap = col.nullBitmap[:0]
 	for i := 0; i < numNullBitmapBytes; {
@@ -163,7 +163,7 @@ func (c *Codec) bytesToI64Slice(b []byte) (i64s []int64) {
 	return i64s
 }
 
-// varElemLen indicates this column is a variable length column.
+// varElemLen indicates this Column is a variable length Column.
 const varElemLen = -1
 
 func getFixedLen(colType *types.FieldType) int {

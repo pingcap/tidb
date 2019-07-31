@@ -14,8 +14,10 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"time"
 
@@ -266,28 +268,46 @@ func getCount(ctx sessionctx.Context, sql string) (int64, error) {
 	return rows[0].GetInt64(0), nil
 }
 
+// Count greater Types
+const (
+	// TblCntGreater means that the number of table rows is more than the number of index rows.
+	TblCntGreater byte = 1
+	// IdxCntGreater means that the number of index rows is more than the number of table rows.
+	IdxCntGreater byte = 2
+)
+
 // CheckIndicesCount compares indices count with table count.
+// It returns the count greater type, the index offset and an error.
 // It returns nil if the count from the index is equal to the count from the table columns,
-// otherwise it returns an error with a different information.
-func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) error {
+// otherwise it returns an error and the corresponding index's offset.
+func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Add `` for some names like `table name`.
 	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
-	for _, idx := range indices {
+	for i, idx := range indices {
 		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, i, errors.Trace(err)
 		}
-		if tblCnt != idxCnt {
-			return errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
+		logutil.Logger(context.Background()).Info("check indices count, table %s cnt %d, index %s cnt %d",
+			zap.String("table", tableName), zap.Int64("cnt", tblCnt), zap.Reflect("index", idx), zap.Int64("cnt", idxCnt))
+		if tblCnt == idxCnt {
+			continue
 		}
-	}
 
-	return nil
+		var ret byte
+		if tblCnt > idxCnt {
+			ret = TblCntGreater
+		} else if idxCnt > tblCnt {
+			ret = IdxCntGreater
+		}
+		return ret, i, errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
+	}
+	return 0, 0, nil
 }
 
 // ScanIndexData scans the index handles and values in a limited number, according to the index information.
@@ -443,7 +463,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	startKey := t.RecordKey(0)
+	startKey := t.RecordKey(math.MinInt64)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
@@ -589,25 +609,16 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 }
 
 func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
-	cols := t.Cols()
-	tblInfo := t.Meta()
-	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
-	for _, v := range decodeCol {
-		col := cols[v.Offset]
-		tpExpr := decoder.Column{
-			Col: col,
-		}
-		if col.IsGenerated() && !col.GeneratedStored {
-			for _, c := range cols {
-				if _, ok := col.Dependences[c.Name.L]; ok {
-					decodeColsMap[c.ID] = decoder.Column{
-						Col: c,
-					}
-				}
-			}
-			tpExpr.GenExpr = genExpr[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
-		}
-		decodeColsMap[col.ID] = tpExpr
+	var containsVirtualCol bool
+	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
+		containsVirtualCol = true
+		return genExpr[model.TableColumnID{TableID: t.Meta().ID, ColumnID: genCol.ID}], nil
+	})
+	_ = ignored
+
+	if containsVirtualCol {
+		decoder.SubstituteGenColsInDecodeColMap(decodeColsMap)
+		decoder.RemoveUnusedVirtualCols(decodeColsMap, decodeCol)
 	}
 	return decoder.NewRowDecoder(t, decodeColsMap)
 }

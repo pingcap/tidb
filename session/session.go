@@ -642,7 +642,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
-			schemaVersion, err = st.RebuildPlan()
+			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
 				return err
 			}
@@ -962,23 +962,14 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
-	var db interface{}
-	if len(s.sessionVars.CurrentDB) > 0 {
-		db = s.sessionVars.CurrentDB
-	}
-
-	var info interface{}
-	if len(sql) > 0 {
-		info = sql
-	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
-		DB:               db,
+		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
 		Plan:             s.currentPlan,
 		Time:             t,
 		State:            s.Status(),
-		Info:             info,
+		Info:             sql,
 		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
@@ -1217,7 +1208,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
 	s.PrepareTxnCtx(ctx)
-	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args)
+	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1363,6 +1354,10 @@ func (s *session) Close() {
 	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
+	}
+	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
+	if bindValue != nil {
+		bindValue.(*bindinfo.SessionHandle).Close()
 	}
 	ctx := context.TODO()
 	s.RollbackTxn(ctx)
@@ -1537,6 +1532,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	err = executor.LoadOptRuleBlacklist(se)
+	if err != nil {
+		return nil, err
+	}
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -1639,7 +1639,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 33
+	currentBootstrapVersion = 34
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
