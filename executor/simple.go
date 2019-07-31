@@ -16,9 +16,9 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/ngaut/pools"
 	"strings"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
