@@ -330,26 +330,27 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 	for i := 0; i <= len(is.Index.Columns); i++ {
 		readerExec.dagPB.OutputOffsets = append(readerExec.dagPB.OutputOffsets, uint32(i))
 	}
+	readerExec.ranges = ranger.FullRange()
+	ts := readerPlan.TablePlans[0].(*plannercore.PhysicalTableScan)
+	readerExec.handleIdx = ts.HandleIdx
+
 	tps := make([]*types.FieldType, 0, len(is.Columns)+1)
 	for _, col := range is.Columns {
 		tps = append(tps, &col.FieldType)
 	}
 	tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
-	readerExec.idxColTps = tps
+	readerExec.checkIndexValue = &checkIndexValue{genExprs: is.GenExprs, idxColTps: tps}
 
 	colNames := make([]string, 0, len(is.Columns))
 	for _, col := range is.Columns {
 		colNames = append(colNames, col.Name.O)
 	}
-
 	var err error
 	readerExec.idxTblCols, err = table.FindCols(readerExec.table.Cols(), colNames, true)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return
 	}
-	readerExec.isCheckOp = true
-	readerExec.ranges = ranger.FullRange()
 }
 
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
@@ -1933,9 +1934,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 	}
-	// These are used to check the consistency of the index data.
-	e.genExprs = is.GenExprs
-	e.handleIdx = ts.HandleIdx
 
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)

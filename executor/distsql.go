@@ -72,7 +72,7 @@ type lookupTableTask struct {
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
 	// to do table request.
 	indexOrder map[int64]int
-	// duplicatedIndexOrder map likes indexOrder. But it's used when isCheckOp is true and
+	// duplicatedIndexOrder map likes indexOrder. But it's used when checkIndexValue isn't nil and
 	// the same handle of index has multiple values.
 	duplicatedIndexOrder map[int64]int
 
@@ -347,7 +347,7 @@ type IndexLookUpExecutor struct {
 	memTracker *memory.Tracker
 
 	// checkIndexValue is used to check the consistency of the index data.
-	checkIndexValue
+	*checkIndexValue
 
 	corColInIdxSide bool
 	idxPlans        []plannercore.PhysicalPlan
@@ -359,7 +359,6 @@ type IndexLookUpExecutor struct {
 }
 
 type checkIndexValue struct {
-	isCheckOp  bool
 	idxColTps  []*types.FieldType
 	idxTblCols []*table.Column
 	genExprs   map[model.TableColumnID]expression.Expression
@@ -450,7 +449,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return err
 	}
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
-	if e.isCheckOp {
+	if e.checkIndexValue != nil {
 		tps = e.idxColTps
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
@@ -629,7 +628,7 @@ type indexWorker struct {
 	maxChunkSize int
 
 	// checkIndexValue is used to check the consistency of the index data.
-	checkIndexValue
+	*checkIndexValue
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -654,7 +653,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		}
 	}()
 	var chk *chunk.Chunk
-	if w.isCheckOp {
+	if w.checkIndexValue != nil {
 		chk = chunk.NewChunkWithCapacity(w.idxColTps, w.maxChunkSize)
 	} else {
 		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
@@ -702,7 +701,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			h := chk.GetRow(i).GetInt64(handleOffset)
 			handles = append(handles, h)
 		}
-		if w.isCheckOp {
+		if w.checkIndexValue != nil {
 			if retChk == nil {
 				retChk = chunk.NewChunkWithCapacity(w.idxColTps, w.batchSize)
 			}
@@ -727,7 +726,7 @@ func (w *indexWorker) buildTableTask(handles []int64, retChk *chunk.Chunk) *look
 		}
 	}
 
-	if w.isCheckOp {
+	if w.checkIndexValue != nil {
 		// Save the index order.
 		indexOrder = make(map[int64]int, len(handles))
 		duplicatedIndexOrder = make(map[int64]int)
@@ -764,7 +763,7 @@ type tableWorker struct {
 	memTracker *memory.Tracker
 
 	// checkIndexValue is used to check the consistency of the index data.
-	checkIndexValue
+	*checkIndexValue
 }
 
 // pickAndExecTask picks tasks from workCh, and execute them.
@@ -867,7 +866,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	}
 	defer terror.Call(tableReader.Close)
 
-	if w.isCheckOp {
+	if w.checkIndexValue != nil {
 		return w.compareData(ctx, task, tableReader)
 	}
 
