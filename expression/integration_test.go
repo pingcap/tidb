@@ -2151,6 +2151,13 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustExec(`insert into tb5 (a, b) select * from (select cast(a as json) as a1, b from tb5) as t where t.a1 = t.b;`)
 	tk.MustExec(`drop table tb5;`)
 
+	tk.MustExec(`create table tb5(a float(64));`)
+	tk.MustExec(`insert into tb5(a) values (13835058055282163712);`)
+	err := tk.QueryToErr(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
+	msg := strings.Split(err.Error(), " ")
+	last := msg[len(msg)-1]
+	c.Assert(last, Equals, "bigint")
+
 	// Test corner cases of cast string as datetime
 	result = tk.MustQuery(`select cast("170102034" as datetime);`)
 	result.Check(testkit.Rows("2017-01-02 03:04:00"))
@@ -2309,7 +2316,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("99999.99"))
 	result = tk.MustQuery("select cast(s1 as decimal(8, 2)) from t1;")
 	result.Check(testkit.Rows("111111.00"))
-	_, err := tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
+	_, err = tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
 	c.Assert(err, NotNil)
 
 	result = tk.MustQuery(`select CAST(0x8fffffffffffffff as signed) a,
