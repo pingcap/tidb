@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -48,10 +49,37 @@ type SplitIndexRegionExec struct {
 	upper      []types.Datum
 	num        int
 	valueLists [][]types.Datum
+
+	done bool
+	splitRegionResult
+}
+
+type splitRegionResult struct {
+	splitRegions     int
+	finishScatterNum int
+}
+
+// Open implements the Executor Open interface.
+func (e *SplitIndexRegionExec) Open(ctx context.Context) error {
+	return e.splitIndexRegion(ctx)
 }
 
 // Next implements the Executor Next interface.
-func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *SplitIndexRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
+	e.done = true
+	return nil
+}
+
+// checkScatterRegionFinishBackOff is the back off time that used to check if a region has finished scattering before split region timeout.
+const checkScatterRegionFinishBackOff = 50
+
+// splitIndexRegion is used to split index regions.
+func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
 	s, ok := store.(kv.SplitableStore)
 	if !ok {
@@ -62,10 +90,15 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 
+	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	regionIDs := make([]uint64, 0, len(splitIdxKeys))
 	for _, idxKey := range splitIdxKeys {
+		if isCtxDone(ctxWithTimeout) {
+			break
+		}
+
 		regionID, err := s.SplitRegion(idxKey, true)
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("split table index region failed",
@@ -74,28 +107,17 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				zap.Error(err))
 			continue
 		}
+		if regionID == 0 {
+			continue
+		}
 		regionIDs = append(regionIDs, regionID)
 
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("wait split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
-		}
 	}
+	e.splitRegions = len(regionIDs)
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
-	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID)
-		if err != nil {
-			logutil.Logger(context.Background()).Warn("wait scatter region failed",
-				zap.Uint64("regionID", regionID),
-				zap.String("table", e.tableInfo.Name.L),
-				zap.String("index", e.indexInfo.Name.L),
-				zap.Error(err))
-		}
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("wait split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
-		}
-	}
+	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
 	return nil
 }
 
@@ -225,16 +247,35 @@ type SplitTableRegionExec struct {
 	upper      types.Datum
 	num        int
 	valueLists [][]types.Datum
+
+	done bool
+	splitRegionResult
+}
+
+// Open implements the Executor Open interface.
+func (e *SplitTableRegionExec) Open(ctx context.Context) error {
+	return e.splitTableRegion(ctx)
 }
 
 // Next implements the Executor Next interface.
-func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *SplitTableRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
+	e.done = true
+	return nil
+}
+
+func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
 	s, ok := store.(kv.SplitableStore)
 	if !ok {
 		return nil
 	}
 
+	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 
@@ -244,6 +285,14 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	regionIDs := make([]uint64, 0, len(splitKeys))
 	for _, key := range splitKeys {
+		failpoint.Inject("mockSplitRegionTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				time.Sleep(time.Second*1 + time.Millisecond*10)
+			}
+		})
+		if isCtxDone(ctxWithTimeout) {
+			break
+		}
 		regionID, err := s.SplitRegion(key, true)
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("split table region failed",
@@ -251,41 +300,63 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				zap.Error(err))
 			continue
 		}
+		if regionID == 0 {
+			continue
+		}
 		regionIDs = append(regionIDs, regionID)
 
-		failpoint.Inject("mockSplitRegionTimeout", func(val failpoint.Value) {
-			if val.(bool) {
-				time.Sleep(time.Second * 1)
-			}
-		})
-
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
-		}
 	}
+	e.splitRegions = len(regionIDs)
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
+
+	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, "")
+	return nil
+}
+
+func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Context, startTime time.Time, store kv.SplitableStore, regionIDs []uint64, tableName, indexName string) int {
+	remainMillisecond := 0
+	finishScatterNum := 0
 	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID)
-		if err != nil {
-			logutil.Logger(context.Background()).Warn("wait scatter region failed",
-				zap.Uint64("regionID", regionID),
-				zap.String("table", e.tableInfo.Name.L),
-				zap.Error(err))
+		if isCtxDone(ctxWithTimeout) {
+			// Do not break here for checking remain regions scatter finished with a very short backoff time.
+			// Consider this situation -  Regions 1, 2, and 3 are to be split.
+			// Region 1 times out before scattering finishes, while Region 2 and Region 3 have finished scattering.
+			// In this case, we should return 2 Regions, instead of 0, have finished scattering.
+			remainMillisecond = checkScatterRegionFinishBackOff
+		} else {
+			remainMillisecond = int((sctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
 		}
 
-		failpoint.Inject("mockScatterRegionTimeout", func(val failpoint.Value) {
-			if val.(bool) {
-				time.Sleep(time.Second * 1)
+		err := store.WaitScatterRegionFinish(regionID, remainMillisecond)
+		if err == nil {
+			finishScatterNum++
+		} else {
+			if len(indexName) == 0 {
+				logutil.Logger(context.Background()).Warn("wait scatter region failed",
+					zap.Uint64("regionID", regionID),
+					zap.String("table", tableName),
+					zap.Error(err))
+			} else {
+				logutil.Logger(context.Background()).Warn("wait scatter region failed",
+					zap.Uint64("regionID", regionID),
+					zap.String("table", tableName),
+					zap.String("index", indexName),
+					zap.Error(err))
 			}
-		})
-
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("wait split region scatter timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
 		}
 	}
-	return nil
+	return finishScatterNum
+}
+
+func appendSplitRegionResultToChunk(chk *chunk.Chunk, totalRegions, finishScatterNum int) {
+	chk.AppendInt64(0, int64(totalRegions))
+	if finishScatterNum > 0 && totalRegions > 0 {
+		chk.AppendFloat64(1, float64(finishScatterNum)/float64(totalRegions))
+	} else {
+		chk.AppendFloat64(1, float64(0))
+	}
 }
 
 func isCtxDone(ctx context.Context) bool {
