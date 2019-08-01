@@ -480,6 +480,17 @@ func (e *CheckTableExec) Open(ctx context.Context) error {
 	return nil
 }
 
+// Close implements the Executor Close interface.
+func (e *CheckTableExec) Close() error {
+	var firstErr error
+	for _, src := range e.srcs {
+		if err := src.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *IndexLookUpExecutor) error {
 	cols := src.schema.Columns
 	retFieldTypes := make([]*types.FieldType, len(cols))
