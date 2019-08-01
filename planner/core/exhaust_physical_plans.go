@@ -388,18 +388,29 @@ func (p *LogicalJoin) constructIndexJoin(
 }
 
 func findIndexScanAndTableScan(p PhysicalPlan) (is *PhysicalIndexScan, ts *PhysicalTableScan) {
-	var children []PhysicalPlan
+	var tblChildren []PhysicalPlan
+	var idxChildren []PhysicalPlan
 	switch x := p.(type) {
 	case *PhysicalTableReader:
-		children = x.TablePlans
+		tblChildren = x.TablePlans
 	case *PhysicalIndexReader:
-		children = x.IndexPlans
+		idxChildren = x.IndexPlans
 	case *PhysicalIndexLookUpReader:
-		children = append(x.IndexPlans, x.TablePlans...)
+		tblChildren = x.TablePlans
+		idxChildren = x.IndexPlans
 	default:
-		children = x.Children()
+		tblChildren = x.Children()
 	}
-	for _, child := range children {
+	for _, child := range tblChildren {
+		tmpIS, tmpTS := findIndexScanAndTableScan(child)
+		if tmpIS != nil {
+			is = tmpIS
+		}
+		if tmpTS != nil {
+			ts = tmpTS
+		}
+	}
+	for _, child := range idxChildren {
 		tmpIS, tmpTS := findIndexScanAndTableScan(child)
 		if tmpIS != nil {
 			is = tmpIS
@@ -428,8 +439,8 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 ) []PhysicalPlan {
 	indexJoins := p.constructIndexJoin(prop, outerIdx, innerPlan, ranges, keyOff2IdxOff, lens, compareFilters)
 	indexMergeJoins := make([]PhysicalPlan, 0, len(indexJoins))
+	is, ts := findIndexScanAndTableScan(innerPlan)
 	for _, plan := range indexJoins {
-		is, ts := findIndexScanAndTableScan(innerPlan)
 		join := plan.(*PhysicalIndexJoin)
 		// needOuterSort means whether the outer join keys are the prefix of the prop items.
 		needOuterSort := len(prop.Items) > 0 && len(join.OuterJoinKeys) <= len(prop.Items)
@@ -444,10 +455,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		}
 		// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
 		canKeepOuterOrder := len(prop.Items) <= len(join.OuterJoinKeys)
-		for i := range prop.Items {
-			if !canKeepOuterOrder {
-				break
-			}
+		for i := 0; canKeepOuterOrder && i < len(prop.Items); i++ {
 			if !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[i]) {
 				canKeepOuterOrder = false
 			}
