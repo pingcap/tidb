@@ -3916,24 +3916,25 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		},
 	}
 
+	ctx := context.Background()
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := tk.Se.(sessionctx.Context)
-		sc := ctx.GetSessionVars().StmtCtx
-		stmts, err := session.Parse(ctx, sql)
+		sctx := tk.Se.(sessionctx.Context)
+		sc := sctx.GetSessionVars().StmtCtx
+		stmts, err := session.Parse(sctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = plannercore.Preprocess(ctx, stmts[0], is)
+		is := domain.GetDomain(sctx).InfoSchema()
+		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(ctx, cond, false))
+			conds = append(conds, expression.PushDownNot(sctx, cond, false))
 		}
-		afterFunc := expression.ExtractFiltersFromDNFs(ctx, conds)
+		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
 			return bytes.Compare(afterFunc[i].HashCode(sc), afterFunc[j].HashCode(sc)) < 0
 		})

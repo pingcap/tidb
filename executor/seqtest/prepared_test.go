@@ -130,13 +130,13 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, err := executor.CompileExecutePreparedStmt(tk.Se, stmtID, 1)
+		stmt, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Se, stmtID, 1)
 		c.Assert(err, IsNil)
 		c.Assert(stmt.OriginText(), Equals, query)
 
 		// Check that rebuild plan works.
 		tk.Se.PrepareTxnCtx(ctx)
-		_, err = stmt.RebuildPlan()
+		_, err = stmt.RebuildPlan(ctx)
 		c.Assert(err, IsNil)
 		rs, err = stmt.Exec(ctx)
 		c.Assert(err, IsNil)
