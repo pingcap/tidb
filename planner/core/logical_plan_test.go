@@ -2452,6 +2452,11 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a asc range between 1250951168 following AND 1250951168 preceding)",
 			result: "[planner:3586]Window 'w1': frame start or end is negative, NULL or of non-integral type",
 		},
+		// Test issue 10556.
+		{
+			sql:    "SELECT FIRST_VALUE(a) IGNORE NULLS OVER () FROM t",
+			result: "[planner:1235]This version of TiDB doesn't yet support 'IGNORE NULLS'",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)
