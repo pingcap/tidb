@@ -41,6 +41,11 @@ type ScalarFunction struct {
 	hashcode []byte
 }
 
+// VecEval evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEval(input, result)
+}
+
 // GetArgs gets arguments of function.
 func (sf *ScalarFunction) GetArgs() []Expression {
 	return sf.Function.getArgs()
