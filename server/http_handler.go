@@ -1499,8 +1499,8 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		dbTblInfo.TableInfo = tbl.Meta()
 		dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
 		if !ok {
-			log.Warnf("can not find the database of table id: %v, table name: %v", dbTblInfo.TableInfo.ID, dbTblInfo.TableInfo.Name)
-			writeData(w, dbTblInfo)
+			logutil.BgLogger().Error("can not find the database of the table", zap.Int64("table id", dbTblInfo.TableInfo.ID), zap.String("table name", dbTblInfo.TableInfo.Name.L))
+			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 			return
 		}
 		dbTblInfo.DBInfo = dbInfo
