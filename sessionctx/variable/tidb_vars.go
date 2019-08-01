@@ -244,6 +244,10 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
+	// deltaSchemaInfos is a queue that maintains the history of schema changes.
+	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
+
 	// tidb_scatter_region will scatter the regions for DDLs when it is ON.
 	TiDBScatterRegion = "tidb_scatter_region"
 
@@ -336,6 +340,7 @@ const (
 	DefTiDBDDLReorgWorkerCount         = 16
 	DefTiDBDDLReorgBatchSize           = 1024
 	DefTiDBDDLErrorCountLimit          = 512
+	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBForcePriority               = mysql.NoPriority
@@ -359,6 +364,7 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
+	maxDetalSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32

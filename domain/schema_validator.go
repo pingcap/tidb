@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -65,6 +67,7 @@ type schemaValidator struct {
 	latestSchemaExpire time.Time
 	// deltaSchemaInfos is a queue that maintain the history of changes.
 	deltaSchemaInfos []deltaSchemaInfo
+	notMergeCnt      int
 }
 
 // NewSchemaValidator returns a SchemaValidator structure.
@@ -72,7 +75,7 @@ func NewSchemaValidator(lease time.Duration) SchemaValidator {
 	return &schemaValidator{
 		isStarted:        true,
 		lease:            lease,
-		deltaSchemaInfos: make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad),
+		deltaSchemaInfos: make([]deltaSchemaInfo, 0, variable.DefTiDBMaxDeltaSchemaCount),
 	}
 }
 
@@ -85,14 +88,17 @@ func (s *schemaValidator) IsStarted() bool {
 
 func (s *schemaValidator) Stop() {
 	logutil.BgLogger().Info("the schema validator stops")
+	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorStop).Inc()
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = false
 	s.latestSchemaVer = 0
-	s.deltaSchemaInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
+	s.notMergeCnt = 0
+	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
 }
 
 func (s *schemaValidator) Restart() {
+	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorRestart).Inc()
 	logutil.BgLogger().Info("the schema validator restarts")
 	s.mux.Lock()
 	defer s.mux.Unlock()
@@ -100,11 +106,13 @@ func (s *schemaValidator) Restart() {
 }
 
 func (s *schemaValidator) Reset() {
+	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorReset).Inc()
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
 	s.latestSchemaVer = 0
-	s.deltaSchemaInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
+	s.notMergeCnt = 0
+	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
 }
 
 func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, changedTableIDs []int64) {
@@ -146,13 +154,15 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 // NOTE, this function should be called under lock!
 func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
 	if len(s.deltaSchemaInfos) == 0 {
+		metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorCacheEmpty).Inc()
 		logutil.BgLogger().Info("schema change history is empty", zap.Int64("currVer", currVer))
 		return true
 	}
 	newerDeltas := s.findNewerDeltas(currVer)
 	if len(newerDeltas) == len(s.deltaSchemaInfos) {
+		metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorCacheMiss).Inc()
 		logutil.BgLogger().Info("the schema version is much older than the latest version", zap.Int64("currVer", currVer),
-			zap.Int64("latestSchemaVer", s.latestSchemaVer))
+			zap.Int64("latestSchemaVer", s.latestSchemaVer), zap.Reflect("deltas", newerDeltas))
 		return true
 	}
 	for _, item := range newerDeltas {
@@ -209,7 +219,35 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 
 func (s *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) {
 	s.deltaSchemaInfos = append(s.deltaSchemaInfos, deltaSchemaInfo{schemaVersion, relatedTableIDs})
-	if len(s.deltaSchemaInfos) > maxNumberOfDiffsToLoad {
+	s.notMergeCnt++
+
+	maxCnt := int(variable.GetMaxDetalSchemaCount())
+	if len(s.deltaSchemaInfos) > maxCnt && s.notMergeCnt > maxCnt/2 {
+		s.merge()
+		s.notMergeCnt = 1
+	}
+	if len(s.deltaSchemaInfos) > maxCnt {
 		s.deltaSchemaInfos = s.deltaSchemaInfos[1:]
+	}
+}
+
+func equal(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *schemaValidator) merge() {
+	// The first item we needn't to merge, because we hope to cover more versions.
+	for i := len(s.deltaSchemaInfos) - 1; i > 1; i-- {
+		if equal(s.deltaSchemaInfos[i].relatedTableIDs, s.deltaSchemaInfos[i-1].relatedTableIDs) {
+			s.deltaSchemaInfos = append(s.deltaSchemaInfos[:i-1], s.deltaSchemaInfos[i:]...)
+		}
 	}
 }

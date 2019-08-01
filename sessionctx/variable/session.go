@@ -831,6 +831,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableIndexMerge = TiDBOptOn(val)
 	case TiDBEnableNoopFuncs:
 		s.EnableNoopFuncs = TiDBOptOn(val)
+	// It's a global variable, but it also wants to be cached in server.
+	case TiDBMaxDeltaSchemaCount:
+		SetMaxDetalSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 	}
 	s.systems[name] = val
 	return nil

@@ -1745,6 +1745,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBExpensiveQueryTimeThreshold,
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
+	variable.TiDBMaxDeltaSchemaCount,
 }
 
 var (

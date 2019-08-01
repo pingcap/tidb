@@ -45,4 +45,18 @@ var (
 			Name:      "load_privilege_total",
 			Help:      "Counter of load privilege",
 		}, []string{LblType})
+
+	SchemaValidatorStop       = "stop"
+	SchemaValidatorRestart    = "restart"
+	SchemaValidatorReset      = "reset"
+	SchemaValidatorCacheEmpty = "cache_empty"
+	SchemaValidatorCacheMiss  = "cache_miss"
+	// HandleSchemaValidate records the counter of handling schema validate.
+	HandleSchemaValidate = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "handle_schema_validate",
+			Help:      "Counter of handle schema validate",
+		}, []string{LblType})
 )

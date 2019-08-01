@@ -73,6 +73,16 @@ func GetDDLErrorCountLimit() int64 {
 	return atomic.LoadInt64(&ddlErrorCountlimit)
 }
 
+// SetMaxDetalSchemaCount sets maxDetalSchemaCount size.
+func SetMaxDetalSchemaCount(cnt int64) {
+	atomic.StoreInt64(&maxDetalSchemaCount, cnt)
+}
+
+// GetMaxDetalSchemaCount gets maxDetalSchemaCount size.
+func GetMaxDetalSchemaCount() int64 {
+	return atomic.LoadInt64(&maxDetalSchemaCount)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -320,6 +330,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case OldPasswords:
 		return checkUInt64SystemVar(name, value, 0, 2, vars)
+	case TiDBMaxDeltaSchemaCount:
+		return checkInt64SystemVar(name, value, 100, 16384, vars)
 	case SessionTrackGtids:
 		if strings.EqualFold(value, "OFF") || value == "0" {
 			return "OFF", nil
