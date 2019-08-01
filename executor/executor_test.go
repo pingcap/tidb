@@ -315,7 +315,7 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 10)
+	c.Assert(row.Len(), Equals, 11)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
@@ -331,7 +331,7 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 10)
+	c.Assert(row.Len(), Equals, 11)
 	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
 	c.Assert(err, IsNil)
 
@@ -399,6 +399,13 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	tk.MustExec("ALTER TABLE t1 ADD COLUMN c4 bit(10) default 127;")
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
 	tk.MustExec("admin check table t1;")
+
+	// Test admin show ddl jobs table name after table has been droped.
+	tk.MustExec("drop table if exists t1;")
+	re := tk.MustQuery("admin show ddl jobs 1")
+	rows := re.Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][2], Equals, "t1")
 
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = s.store.Begin()
