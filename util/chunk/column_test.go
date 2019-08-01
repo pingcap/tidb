@@ -653,3 +653,31 @@ func (s *testChunkSuite) TestNull(c *check.C) {
 	col.SetNull(8, false)
 	c.Assert(col.nullCount(), check.Equals, 8)
 }
+
+func (s *testChunkSuite) TestSetNulls(c *check.C) {
+	col := newFixedLenColumn(sizeFloat64, 32)
+	col.PreAllocFloat64(1024)
+	c.Assert(col.nullCount(), check.Equals, 1024)
+
+	col.SetNulls(0, 1024, false)
+	c.Assert(col.nullCount(), check.Equals, 0)
+
+	nullMap := make(map[int]struct{})
+	for i := 0; i < 100; i++ {
+		begin := rand.Intn(1024)
+		l := rand.Intn(37)
+		end := begin + l
+		if end > 1024 {
+			end = 1024
+		}
+		for i := begin; i < end; i++ {
+			nullMap[i] = struct{}{}
+		}
+		col.SetNulls(begin, end, true)
+
+		c.Assert(col.nullCount(), check.Equals, len(nullMap))
+		for k := range nullMap {
+			c.Assert(col.IsNull(k), check.Equals, true)
+		}
+	}
+}
