@@ -50,13 +50,27 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 	return nil
 }
 
+// verifyColumnGenerationSingle is for ADD GENERATED COLUMN, we just need verify one column itself.
+func verifyColumnGenerationSingle(dependCols map[string]struct{}, cols []*table.Column, position *ast.ColumnPosition) error {
+	// cause the added column hasn't existed, should derive it's offset from ColumnPosition
+	pos, err := findPositionRelativeColumn(cols, position)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// mysql then will check relative generated column should be prior to it, so it should be in one loop
+	for _, col := range cols {
+		_, ok := dependCols[col.Name.L]
+		if col.Offset >= pos && ok && col.IsGenerated() {
+			// Generated column can refer only to generated columns defined prior to it.
+			return errGeneratedColumnNonPrior.GenWithStackByArgs()
+		}
+	}
+	return nil
+}
+
 // checkDependedColExist ensure all depended columns exist.
 // NOTE: this will MODIFY parameter `dependCols`.
-func checkDependedColValid(dependCols map[string]struct{}, cols []*table.Column, pos int) error {
-	duplicateMap := make(map[string]struct{})
-	for k, v := range dependCols {
-		duplicateMap[k] = v
-	}
+func checkDependedColExist(dependCols map[string]struct{}, cols []*table.Column) error {
 	// mysql will first check all depended column exist
 	for _, col := range cols {
 		delete(dependCols, col.Name.L)
@@ -64,14 +78,6 @@ func checkDependedColValid(dependCols map[string]struct{}, cols []*table.Column,
 	if len(dependCols) != 0 {
 		for arbitraryCol := range dependCols {
 			return ErrBadField.GenWithStackByArgs(arbitraryCol, "generated column function")
-		}
-	}
-	// mysql then will check relative generated column should be prior to it, so it should be in one loop
-	for _, col := range cols {
-		_, ok := duplicateMap[col.Name.L]
-		if col.Offset >= pos && ok && col.IsGenerated() {
-			// Generated column can refer only to generated columns defined prior to it.
-			return errGeneratedColumnNonPrior.GenWithStackByArgs()
 		}
 	}
 	return nil

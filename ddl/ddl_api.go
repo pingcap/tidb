@@ -2109,12 +2109,16 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 				return errors.Trace(err)
 			}
-			var pos int
-			if pos, err = findPositionRelativeColumn(t.Cols(), spec.Position); err != nil {
+			duplicateColNames := make(map[string]struct{})
+			for k := range dependColNames {
+				duplicateColNames[k] = struct{}{}
+			}
+
+			if err = checkDependedColExist(dependColNames, t.Cols()); err != nil {
 				return errors.Trace(err)
 			}
 
-			if err = checkDependedColValid(dependColNames, t.Cols(), pos); err != nil {
+			if err = verifyColumnGenerationSingle(duplicateColNames, t.Cols(), spec.Position); err != nil {
 				return errors.Trace(err)
 			}
 		}
