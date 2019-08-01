@@ -1400,6 +1400,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
+<<<<<<< HEAD
 	case *ast.CreateUserStmt:
 		if raw.IsCreateRole {
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
