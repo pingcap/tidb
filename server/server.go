@@ -509,11 +509,11 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool) {
-	s.rwlock.Lock()
-	defer s.rwlock.Unlock()
 	logutil.BgLogger().Info("kill", zap.Uint64("connID", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
 	conn, ok := s.clients[uint32(connectionID)]
 	if !ok {
 		return
@@ -534,13 +534,15 @@ func killConn(conn *clientConn) {
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.
 func (s *Server) KillAllConnections() {
-	s.rwlock.Lock()
-	defer s.rwlock.Unlock()
 	logutil.BgLogger().Info("[server] kill all connections.")
 
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
 	for _, conn := range s.clients {
 		atomic.StoreInt32(&conn.status, connStatusShutdown)
-		terror.Log(errors.Trace(conn.closeWithoutLock()))
+		if err := conn.closeWithoutLock(); err != nil {
+			terror.Log(err)
+		}
 		killConn(conn)
 	}
 }
