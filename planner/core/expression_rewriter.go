@@ -322,7 +322,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			index, ok = er.windowMap[v]
 		}
 		if !ok {
-			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
+			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.F))
 			return inNode, true
 		}
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
