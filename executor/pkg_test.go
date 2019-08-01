@@ -135,7 +135,6 @@ func prepare4RadixPartition(sctx sessionctx.Context, rowCount int) *HashJoinExec
 		baseExecutor:   newBaseExecutor(sctx, joinSchema, stringutil.StringerStr("HashJoin"), childExec0, childExec1),
 		concurrency:    4,
 		joinType:       0, // InnerJoin
-		innerIdx:       0,
 		innerKeys:      []*expression.Column{{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}},
 		innerKeyColIdx: []int{0},
 		outerKeys:      []*expression.Column{{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}},

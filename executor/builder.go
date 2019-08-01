@@ -990,7 +990,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		concurrency:  v.Concurrency,
 		joinType:     v.JoinType,
 		isOuterJoin:  v.JoinType.IsOuterJoin(),
-		innerIdx:     v.InnerChildIdx,
 	}
 
 	defaultValues := v.DefaultValues

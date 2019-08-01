@@ -60,7 +60,6 @@ type HashJoinExec struct {
 	// closeCh add a lock for closing executor.
 	closeCh  chan struct{}
 	joinType plannercore.JoinType
-	innerIdx int
 
 	isOuterJoin  bool
 	requiredRows int64
@@ -262,37 +261,31 @@ var innerResultLabel fmt.Stringer = stringutil.StringerStr("innerResult")
 
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
-func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}) {
+func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan *chunk.Chunk, doneCh <-chan struct{}) {
 	defer close(chkCh)
 	e.innerResult = chunk.NewList(e.innerExec.base().retFieldTypes, e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	var err error
 	for {
+		if e.finished.Load().(bool) {
+			return
+		}
+		chk := chunk.NewChunkWithCapacity(e.innerExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
+		err = e.innerExec.Next(ctx, chk)
+		if err != nil {
+			e.innerFinished <- errors.Trace(err)
+			return
+		}
+		if chk.NumRows() == 0 {
+			return
+		}
 		select {
 		case <-doneCh:
 			return
 		case <-e.closeCh:
 			return
-		default:
-			if e.finished.Load().(bool) {
-				return
-			}
-			chk := chunk.NewChunkWithCapacity(e.children[e.innerIdx].base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
-			err = e.innerExec.Next(ctx, chk)
-			if err != nil {
-				e.innerFinished <- errors.Trace(err)
-				return
-			}
-			if chk.NumRows() == 0 {
-				return
-			}
-			select {
-			case chkCh <- chk:
-				break
-			case <-e.closeCh:
-				return
-			}
+		case chkCh <- chk:
 			e.innerResult.Add(chk)
 		}
 	}
@@ -518,9 +511,6 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
 	req.Reset()
-	if e.joinResultCh == nil {
-		return nil
-	}
 
 	result, ok := <-e.joinResultCh
 	if !ok {
@@ -552,17 +542,14 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	err := e.buildHashTableForList(innerResultCh)
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
-		close(doneCh)
 	}
-	// wait fetchInnerRows be finished.
-	for range innerResultCh {
-	}
+	close(doneCh)
 }
 
 // buildHashTableForList builds hash table from `list`.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) error {
+func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) error {
 	e.hashTable = mvmap.NewMVMap()
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {

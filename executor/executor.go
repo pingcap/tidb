@@ -134,7 +134,7 @@ func retTypes(e Executor) []*types.FieldType {
 	return base.retFieldTypes
 }
 
-// Next fills mutiple rows into a chunk.
+// Next fills multiple rows into a chunk.
 func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }

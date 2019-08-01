@@ -53,13 +53,13 @@ type joiner interface {
 	// rows are appended to `chk`. The size of `chk` is limited to MaxChunkSize.
 	// Note that when the outer row is considered unmatched, we need to differentiate
 	// whether the join conditions return null or false, because that matters for
-	// AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemijoin, and the result is reflected
+	// AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, and the result is reflected
 	// by the second return value; for other join types, we always return false.
 	//
 	// NOTE: Callers need to call this function multiple times to consume all
-	// the inner rows for an outer row, and dicide whether the outer row can be
+	// the inner rows for an outer row, and decide whether the outer row can be
 	// matched with at lease one inner row.
-	tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, bool, error)
+	tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, isNull bool, err error)
 
 	// onMissMatch operates on the unmatched outer row according to the join
 	// type. An outer row can be considered miss matched if:
@@ -354,7 +354,7 @@ type leftOuterJoiner struct {
 }
 
 // tryToMatch implements joiner interface.
-func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, bool, error) {
+func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -374,7 +374,7 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 	}
 
 	// reach here, chkForJoin is j.chk
-	matched, err := j.filter(chkForJoin, chk, outer.Len())
+	matched, err = j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
 		return false, false, err
 	}
@@ -391,7 +391,7 @@ type rightOuterJoiner struct {
 }
 
 // tryToMatch implements joiner interface.
-func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, bool, error) {
+func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -411,7 +411,7 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 		return true, false, nil
 	}
 
-	matched, err := j.filter(chkForJoin, chk, outer.Len())
+	matched, err = j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
 		return false, false, err
 	}
@@ -428,7 +428,7 @@ type innerJoiner struct {
 }
 
 // tryToMatch implements joiner interface.
-func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, bool, error) {
+func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -450,7 +450,7 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 	}
 
 	// reach here, chkForJoin is j.chk
-	matched, err := j.filter(chkForJoin, chk, outer.Len())
+	matched, err = j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
 		return false, false, err
 	}
