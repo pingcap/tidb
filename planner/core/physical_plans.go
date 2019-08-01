@@ -251,8 +251,12 @@ type PhysicalIndexJoin struct {
 type PhysicalIndexMergeJoin struct {
 	PhysicalIndexJoin
 
-	NeedOuterSort     bool
-	CompareFuncs      []expression.CompareFunc
+	// NeedOuterSort means whether outer rows should be sorted to build range.
+	NeedOuterSort bool
+	// CompareFuncs store the compare functions for outer join keys and inner join key.
+	CompareFuncs []expression.CompareFunc
+	// OuterCompareFuncs store the compare functions for outer join keys and outer join
+	// keys, it's for outer rows sort's convenience.
 	OuterCompareFuncs []expression.CompareFunc
 }
 
