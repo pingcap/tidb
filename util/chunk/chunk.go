@@ -102,11 +102,7 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 func renewColumns(oldCol []*Column, cap int) []*Column {
 	columns := make([]*Column, 0, len(oldCol))
 	for _, col := range oldCol {
-		if col.isFixed() {
-			columns = append(columns, newFixedLenColumn(len(col.elemBuf), cap))
-		} else {
-			columns = append(columns, newVarLenColumn(cap, col))
-		}
+		columns = append(columns, newColumn(col.typeSize(), cap))
 	}
 	return columns
 }
@@ -257,7 +253,7 @@ func (c *Chunk) Reset() {
 func (c *Chunk) CopyConstruct() *Chunk {
 	newChk := &Chunk{numVirtualRows: c.numVirtualRows, capacity: c.capacity, columns: make([]*Column, len(c.columns))}
 	for i := range c.columns {
-		newChk.columns[i] = c.columns[i].copyConstruct()
+		newChk.columns[i] = c.columns[i].CopyConstruct(nil)
 	}
 	if c.sel != nil {
 		newChk.sel = make([]int, len(c.sel))
@@ -471,11 +467,6 @@ func (c *Chunk) TruncateTo(numRows int) {
 		} else {
 			col.data = col.data[:col.offsets[numRows]]
 			col.offsets = col.offsets[:numRows+1]
-		}
-		for i := numRows; i < col.length; i++ {
-			if col.IsNull(i) {
-				col.nullCount--
-			}
 		}
 		col.length = numRows
 		bitmapLen := (col.length + 7) / 8

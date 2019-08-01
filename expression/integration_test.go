@@ -2103,6 +2103,12 @@ func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
 		rows = append(rows, "<nil>")
 	}
 	tk.MustQuery("select * from t1").Check(testkit.Rows(rows...))
+
+	//Fix ISSUE 11256
+	tk.MustQuery(`select DATE_ADD('2000-04-13 07:17:02',INTERVAL -1465647104 YEAR);`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select DATE_ADD('2008-11-23 22:47:31',INTERVAL 266076160 QUARTER);`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select DATE_SUB('2000-04-13 07:17:02',INTERVAL 1465647104 YEAR);`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select DATE_SUB('2008-11-23 22:47:31',INTERVAL -266076160 QUARTER);`).Check(testkit.Rows("<nil>"))
 }
 
 func (s *testIntegrationSuite) TestBuiltin(c *C) {
@@ -2172,9 +2178,21 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select cast(cast('2017-01-01 01:01:11.12' as date) as datetime(2));`)
 	result.Check(testkit.Rows("2017-01-01 00:00:00.00"))
-
 	result = tk.MustQuery(`select cast(20170118.999 as datetime);`)
 	result.Check(testkit.Rows("2017-01-18 00:00:00"))
+	tk.MustQuery(`select convert(a2.a, unsigned int) from (select cast('"9223372036854775808"' as json) as a) as a2;`)
+
+	tk.MustExec(`create table tb5(a bigint(64) unsigned, b double);`)
+	tk.MustExec(`insert into tb5 (a, b) values (9223372036854776000, 9223372036854776000);`)
+	tk.MustExec(`insert into tb5 (a, b) select * from (select cast(a as json) as a1, b from tb5) as t where t.a1 = t.b;`)
+	tk.MustExec(`drop table tb5;`)
+
+	tk.MustExec(`create table tb5(a float(64));`)
+	tk.MustExec(`insert into tb5(a) values (13835058055282163712);`)
+	err := tk.QueryToErr(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
+	msg := strings.Split(err.Error(), " ")
+	last := msg[len(msg)-1]
+	c.Assert(last, Equals, "bigint")
 
 	// Test corner cases of cast string as datetime
 	result = tk.MustQuery(`select cast("170102034" as datetime);`)
@@ -2326,6 +2344,34 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(1 as signed int)")
 	result.Check(testkit.Rows("1"))
 
+	// test cast as double
+	result = tk.MustQuery("select cast(1 as double)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(cast(12345 as unsigned) as double)")
+	result.Check(testkit.Rows("12345"))
+	result = tk.MustQuery("select cast(1.1 as double)")
+	result.Check(testkit.Rows("1.1"))
+	result = tk.MustQuery("select cast(-1.1 as double)")
+	result.Check(testkit.Rows("-1.1"))
+	result = tk.MustQuery("select cast('123.321' as double)")
+	result.Check(testkit.Rows("123.321"))
+	result = tk.MustQuery("select cast('12345678901234567890' as double) = 1.2345678901234567e19")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(-1 as double)")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast(null as double)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select cast(12345678901234567890 as double) = 1.2345678901234567e19")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(cast(-1 as unsigned) as double) = 1.8446744073709552e19")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(1e100 as double) = 1e100")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(123456789012345678901234567890 as double) = 1.2345678901234568e29")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(0x12345678 as double)")
+	result.Check(testkit.Rows("305419896"))
+
 	// test cast time as decimal overflow
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(s1 time);")
@@ -2334,7 +2380,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("99999.99"))
 	result = tk.MustQuery("select cast(s1 as decimal(8, 2)) from t1;")
 	result.Check(testkit.Rows("111111.00"))
-	_, err := tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
+	_, err = tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
 	c.Assert(err, NotNil)
 
 	result = tk.MustQuery(`select CAST(0x8fffffffffffffff as signed) a,
@@ -2507,18 +2553,24 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select b regexp 'Xt' from t;`)
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select b regexp binary 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select c regexp 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select d regexp 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select a rlike 'Xt' from t;`)
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select a rlike binary 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select b rlike 'Xt' from t;`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select c rlike 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select d rlike 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select 'a' regexp 'A', 'a' regexp binary 'A'`)
+	result.Check(testkit.Rows("1 0"))
 
 	// testCase is for like and regexp
 	type testCase struct {
@@ -3558,6 +3610,11 @@ func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 	_, err = tk.Exec("select time '20171231235959.999999';")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("20171231235959.999999")), IsTrue)
+
+	_, err = tk.Exec("select ADDDATE('2008-01-34', -1);")
+	c.Assert(err, IsNil)
+	tk.MustQuery("Show warnings;").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '2008-1-34'"))
 }
 
 func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
@@ -4661,4 +4718,22 @@ func (s *testIntegrationSuite) TestFuncCaseWithLeftJoin(c *C) {
 	tk.MustExec("insert into kankan2 values(2, 'z')")
 
 	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1' order by t1.id").Check(testkit.Rows("1", "2"))
+}
+
+func (s *testIntegrationSuite) TestIssue11309(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`CREATE TABLE t (a decimal(6,3),b double(6,3),c float(6,3));`)
+	tk.MustExec(`INSERT INTO t VALUES (1.100,1.100,1.100);`)
+	tk.MustQuery(`SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL a MINUTE_SECOND) FROM t`).Check(testkit.Rows(`2003-11-18 07:27:53`))
+	tk.MustQuery(`SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL b MINUTE_SECOND) FROM t`).Check(testkit.Rows(`2003-11-18 07:27:53`))
+	tk.MustQuery(`SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL c MINUTE_SECOND) FROM t`).Check(testkit.Rows(`2003-11-18 07:27:53`))
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`CREATE TABLE t (a decimal(11,7),b double(11,7),c float(11,7));`)
+	tk.MustExec(`INSERT INTO t VALUES (123.9999999,123.9999999,123.9999999),(-123.9999999,-123.9999999,-123.9999999);`)
+	tk.MustQuery(`SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL a MINUTE_SECOND) FROM t`).Check(testkit.Rows(`2004-03-13 03:14:52`, `2003-07-25 11:35:34`))
+	tk.MustQuery(`SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL b MINUTE_SECOND) FROM t`).Check(testkit.Rows(`2004-03-13 03:14:52`, `2003-07-25 11:35:34`))
+	tk.MustQuery(`SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL c MINUTE_SECOND) FROM t`).Check(testkit.Rows(`2003-11-18 09:29:13`, `2003-11-18 05:21:13`))
+	tk.MustExec(`drop table if exists t;`)
 }

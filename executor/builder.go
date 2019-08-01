@@ -308,8 +308,8 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 		b.err = err
 		return nil
 	}
-	readerExec.ranges = ranger.FullRange()
-	readerExec.isCheckOp = true
+
+	buildIndexLookUpChecker(b, v.IndexLookUpReader, readerExec)
 
 	e := &CheckIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -322,12 +322,59 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 	return e
 }
 
+// buildIndexLookUpChecker builds check information to IndexLookUpReader.
+func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.PhysicalIndexLookUpReader,
+	readerExec *IndexLookUpExecutor) {
+	is := readerPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	readerExec.dagPB.OutputOffsets = make([]uint32, 0, len(is.Index.Columns))
+	for i := 0; i <= len(is.Index.Columns); i++ {
+		readerExec.dagPB.OutputOffsets = append(readerExec.dagPB.OutputOffsets, uint32(i))
+	}
+	readerExec.ranges = ranger.FullRange()
+	ts := readerPlan.TablePlans[0].(*plannercore.PhysicalTableScan)
+	readerExec.handleIdx = ts.HandleIdx
+
+	tps := make([]*types.FieldType, 0, len(is.Columns)+1)
+	for _, col := range is.Columns {
+		tps = append(tps, &col.FieldType)
+	}
+	tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+	readerExec.checkIndexValue = &checkIndexValue{genExprs: is.GenExprs, idxColTps: tps}
+
+	colNames := make([]string, 0, len(is.Columns))
+	for _, col := range is.Columns {
+		colNames = append(colNames, col.Name.O)
+	}
+	var err error
+	readerExec.idxTblCols, err = table.FindCols(readerExec.table.Cols(), colNames, true)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return
+	}
+}
+
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
+	readerExecs := make([]*IndexLookUpExecutor, 0, len(v.IndexLookUpReaders))
+	for _, readerPlan := range v.IndexLookUpReaders {
+		readerExec, err := buildNoRangeIndexLookUpReader(b, readerPlan)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		buildIndexLookUpChecker(b, readerPlan, readerExec)
+
+		readerExecs = append(readerExecs, readerExec)
+	}
+
 	e := &CheckTableExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		tables:       v.Tables,
+		dbName:       v.DBName,
+		tblInfo:      v.TblInfo,
+		indices:      v.Indices,
 		is:           b.is,
-		genExprs:     v.GenExprs,
+		srcs:         readerExecs,
+		exitCh:       make(chan struct{}),
+		retCh:        make(chan error, len(v.Indices)),
 	}
 	return e
 }
@@ -777,25 +824,20 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 	if b.err != nil {
 		return nil
 	}
-	us, err := b.buildUnionScanFromReader(reader, v)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	return us
+	return b.buildUnionScanFromReader(reader, v)
 }
 
 // buildUnionScanFromReader builds union scan executor from child executor.
 // Note that this function may be called by inner workers of index lookup join concurrently.
 // Be careful to avoid data race.
-func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) (Executor, error) {
-	var err error
+func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) Executor {
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), reader)}
 	// Get the handle column index of the below plannercore.
 	// We can guarantee that there must be only one col in the map.
 	for _, cols := range v.Children()[0].Schema().TblID2Handle {
 		us.belowHandleIndex = cols[0].Index
 	}
+	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
@@ -809,7 +851,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAndSortAddedRows(x.table)
+		us.table = x.table
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -824,7 +866,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAndSortAddedRows(x.table)
+		us.table = x.table
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -839,15 +881,12 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAndSortAddedRows(x.table)
+		us.table = x.table
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
-		return reader, nil
+		return reader
 	}
-	if err != nil {
-		return nil, err
-	}
-	return us, nil
+	return us
 }
 
 // buildMergeJoin builds MergeJoinExec executor.
@@ -1314,76 +1353,15 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err != nil {
 		return nil
 	}
-	columns2Handle := buildColumns2Handle(v.SelectPlan.Schema(), tblID2table)
 	base := newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	updateExec := &UpdateExec{
 		baseExecutor:   base,
-		SelectExec:     selExec,
 		OrderedList:    v.OrderedList,
 		tblID2table:    tblID2table,
-		columns2Handle: columns2Handle,
+		tblColPosInfos: v.TblColPosInfos,
 	}
 	return updateExec
-}
-
-// cols2Handle represents an mapper from column index to handle index.
-type cols2Handle struct {
-	// start and end represent the ordinal range [start, end) of the consecutive columns.
-	start, end int32
-	// handleOrdinal represents the ordinal of the handle column.
-	handleOrdinal int32
-}
-
-// cols2HandleSlice attaches the methods of sort.Interface to []cols2Handle sorting in increasing order.
-type cols2HandleSlice []cols2Handle
-
-// Len implements sort.Interface#Len.
-func (c cols2HandleSlice) Len() int {
-	return len(c)
-}
-
-// Swap implements sort.Interface#Swap.
-func (c cols2HandleSlice) Swap(i, j int) {
-	c[i], c[j] = c[j], c[i]
-}
-
-// Less implements sort.Interface#Less.
-func (c cols2HandleSlice) Less(i, j int) bool {
-	return c[i].start < c[j].start
-}
-
-// findHandle finds the ordinal of the corresponding handle column.
-func (c cols2HandleSlice) findHandle(ordinal int32) (int32, bool) {
-	if c == nil || len(c) == 0 {
-		return 0, false
-	}
-	// find the smallest index of the range that its start great than ordinal.
-	// @see https://godoc.org/sort#Search
-	rangeBehindOrdinal := sort.Search(len(c), func(i int) bool { return c[i].start > ordinal })
-	if rangeBehindOrdinal == 0 {
-		return 0, false
-	}
-	return c[rangeBehindOrdinal-1].handleOrdinal, true
-}
-
-// buildColumns2Handle builds columns to handle mapping.
-func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.Table) cols2HandleSlice {
-	if len(schema.TblID2Handle) < 2 {
-		// skip buildColumns2Handle mapping if there are only single table.
-		return nil
-	}
-	var cols2Handles cols2HandleSlice
-	for tblID, handleCols := range schema.TblID2Handle {
-		tbl := tblID2Table[tblID]
-		for _, handleCol := range handleCols {
-			offset := getTableOffset(schema, handleCol)
-			end := offset + len(tbl.WritableCols())
-			cols2Handles = append(cols2Handles, cols2Handle{int32(offset), int32(end), int32(handleCol.Index)})
-		}
-	}
-	sort.Sort(cols2Handles)
-	return cols2Handles
 }
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
@@ -1399,16 +1377,15 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	base := newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	deleteExec := &DeleteExec{
-		baseExecutor: base,
-		SelectExec:   selExec,
-		Tables:       v.Tables,
-		IsMultiTable: v.IsMultiTable,
-		tblID2Table:  tblID2table,
+		baseExecutor:   base,
+		IsMultiTable:   v.IsMultiTable,
+		tblID2Table:    tblID2table,
+		tblColPosInfos: v.TblColPosInfos,
 	}
 	return deleteExec
 }
 
-func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, maxNumBuckets uint64, autoAnalyze string) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeIndexExec{
@@ -1422,24 +1399,24 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		maxNumBuckets: maxNumBuckets,
+		opts: opts,
 	}
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
-		BucketSize: int64(maxNumBuckets),
+		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
 	}
-	depth := int32(defaultCMSketchDepth)
-	width := int32(defaultCMSketchWidth)
+	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
+	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
 	e.analyzePB.IdxReq.CmsketchDepth = &depth
 	e.analyzePB.IdxReq.CmsketchWidth = &width
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	return &analyzeTask{taskType: idxTask, idxExec: e, job: job}
 }
 
-func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeIndexTask, maxNumBuckets uint64) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.PhysicalTableID)
-	analyzeTask := b.buildAnalyzeIndexPushdown(task, maxNumBuckets, "")
+	analyzeTask := b.buildAnalyzeIndexPushdown(task, opts, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
 	}
@@ -1470,7 +1447,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64, autoAnalyze string) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
 	cols := task.ColsInfo
 	if task.PKInfo != nil {
 		cols = append([]*model.ColumnInfo{task.PKInfo}, cols...)
@@ -1490,12 +1467,12 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		maxNumBuckets: maxNumBuckets,
+		opts: opts,
 	}
-	depth := int32(defaultCMSketchDepth)
-	width := int32(defaultCMSketchWidth)
+	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
+	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
-		BucketSize:    int64(maxNumBuckets),
+		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
 		ColumnsInfo:   model.ColumnsToProto(cols, task.PKInfo != nil),
@@ -1507,10 +1484,10 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
-func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64) *analyzeTask {
+func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.PhysicalTableID)
-	analyzeTask := b.buildAnalyzeColumnsPushdown(task, maxNumBuckets, "")
+	analyzeTask := b.buildAnalyzeColumnsPushdown(task, opts, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
 	}
@@ -1541,7 +1518,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64) {
+func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) {
 	findTask := false
 	for _, eTask := range e.tasks {
 		if eTask.fastExec.physicalTableID == task.PhysicalTableID {
@@ -1563,7 +1540,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 				physicalTableID: task.PhysicalTableID,
 				colsInfo:        task.ColsInfo,
 				pkInfo:          task.PKInfo,
-				maxNumBuckets:   maxNumBuckets,
+				opts:            opts,
 				tblInfo:         task.TblInfo,
 				concurrency:     concurrency,
 				wg:              &sync.WaitGroup{},
@@ -1573,7 +1550,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 	}
 }
 
-func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore.AnalyzeIndexTask, maxNumBuckets uint64) {
+func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) {
 	findTask := false
 	for _, eTask := range e.tasks {
 		if eTask.fastExec.physicalTableID == task.PhysicalTableID {
@@ -1594,7 +1571,7 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 				ctx:             b.ctx,
 				physicalTableID: task.PhysicalTableID,
 				idxsInfo:        []*model.IndexInfo{task.IndexInfo},
-				maxNumBuckets:   maxNumBuckets,
+				opts:            opts,
 				tblInfo:         task.TblInfo,
 				concurrency:     concurrency,
 				wg:              &sync.WaitGroup{},
@@ -1617,12 +1594,12 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	}
 	for _, task := range v.ColTasks {
 		if task.Incremental {
-			e.tasks = append(e.tasks, b.buildAnalyzePKIncremental(task, v.MaxNumBuckets))
+			e.tasks = append(e.tasks, b.buildAnalyzePKIncremental(task, v.Opts))
 		} else {
 			if enableFastAnalyze {
-				b.buildAnalyzeFastColumn(e, task, v.MaxNumBuckets)
+				b.buildAnalyzeFastColumn(e, task, v.Opts)
 			} else {
-				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets, autoAnalyze))
+				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze))
 			}
 		}
 		if b.err != nil {
@@ -1631,12 +1608,12 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	}
 	for _, task := range v.IdxTasks {
 		if task.Incremental {
-			e.tasks = append(e.tasks, b.buildAnalyzeIndexIncremental(task, v.MaxNumBuckets))
+			e.tasks = append(e.tasks, b.buildAnalyzeIndexIncremental(task, v.Opts))
 		} else {
 			if enableFastAnalyze {
-				b.buildAnalyzeFastIndex(e, task, v.MaxNumBuckets)
+				b.buildAnalyzeFastIndex(e, task, v.Opts)
 			} else {
-				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets, autoAnalyze))
+				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
 			}
 		}
 		if b.err != nil {
@@ -1881,6 +1858,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		idxCols:         is.IdxCols,
 		colLens:         is.IdxColLens,
 		plans:           v.IndexPlans,
+		outputColumns:   v.OutputColumns,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -2028,13 +2006,9 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	e, err := builder.buildUnionScanFromReader(reader, v)
-	if err != nil {
-		return nil, err
-	}
-	us := e.(*UnionScanExec)
-	us.snapshotChunkBuffer = newFirstChunk(us)
-	return us, nil
+	us := builder.buildUnionScanFromReader(reader, v).(*UnionScanExec)
+	err = us.open(ctx)
+	return us, err
 }
 
 func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader, lookUpContents []*indexJoinLookUpContent) (Executor, error) {
@@ -2067,6 +2041,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
+	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 	e.resultHandler = &tableResultHandler{}
 	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {

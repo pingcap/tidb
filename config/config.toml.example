@@ -60,6 +60,9 @@ enable-table-lock = false
 # delay-clean-table-lock is used to control the time (Milliseconds) of delay before unlock the table in the abnormal situation.
 delay-clean-table-lock = 0
 
+# Maximum number of the splitting region, which is used by the split region statement.
+split-region-max-num = 1000
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -316,5 +319,5 @@ default = false
 max-retry-count = 256
 
 # default TTL in milliseconds for pessimistic lock.
-# The value must between "15s" and "60s".
-ttl = "30s"
+# The value must between "15s" and "120s".
+ttl = "40s"
