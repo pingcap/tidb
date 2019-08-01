@@ -1381,3 +1381,13 @@ func (s *testSuite2) TestInjectProjOnTopN(c *C) {
 		"2",
 	))
 }
+
+func (s *testSuite2) TestIssue11544(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table 11544t(a int)")
+	tk.MustExec("create table 11544tt(a int, b varchar(10), index idx(a, b(3)))")
+	tk.MustExec("insert into 11544t values(1)")
+	tk.MustExec("insert into 11544tt values(1, 'aaaaaaa'), (1, 'aaaabbb'), (1, 'aaaacccc')")
+	tk.MustQuery("select /*+ TIDB_INLJ(11544tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and (tt.b = 'aaaaaaa' or tt.b = 'aaaabbb')").Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb"))
+}
