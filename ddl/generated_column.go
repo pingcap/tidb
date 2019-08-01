@@ -80,7 +80,12 @@ func checkDependedColValid(dependCols map[string]struct{}, cols []*table.Column,
 // findPositionRelativeColumn return a pos relative to added generated column position
 func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (int, error) {
 	position := len(cols)
-	// Get column position.
+	// get column position default is append behind
+	// For "alter table ... add column(...)", the position will be nil.
+	// For "alter table ... add column ... ", the position will be default one.
+	if pos == nil {
+		return position, nil
+	}
 	if pos.Tp == ast.ColumnPositionFirst {
 		position = 0
 	} else if pos.Tp == ast.ColumnPositionAfter {

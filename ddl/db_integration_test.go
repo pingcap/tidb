@@ -615,6 +615,12 @@ func (s *testIntegrationSuite2) TestDependedGeneratedColumnPrior2GeneratedColumn
 		rs.Close()
 	}
 	c.Assert(err, IsNil)
+	// in this sql pattern, position will be nil, so default pos is len(cols)
+	rs, err = tk.Exec("alter table t add column(e int as (c+1))")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite3) TestChangingCharsetToUtf8(c *C) {
