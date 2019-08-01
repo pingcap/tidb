@@ -2328,9 +2328,45 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:3593]You cannot use the window function 'sum' in this context.'",
 		},
 		{
+			sql:    "delete from t order by (SUM(a) over())",
+			result: "[planner:3593]You cannot use the window function 'sum' in this context.'",
+		},
+		{
+			sql:    "SELECT * from t having ROW_NUMBER() over()",
+			result: "[planner:3593]You cannot use the window function 'row_number' in this context.'",
+		},
+		{
 			// The best execution order should be (a,c), (a, b, c), (a, b), (), it requires only 2 sort operations.
 			sql:    "select sum(a) over (partition by a order by b), sum(b) over (order by a, b, c), sum(c) over(partition by a order by c), sum(d) over() from t",
 			result: "TableReader(Table(t))->Sort->Window(sum(cast(test.t.c)) over(partition by test.t.a order by test.t.c asc range between unbounded preceding and current row))->Sort->Window(sum(cast(test.t.b)) over(order by test.t.a asc, test.t.b asc, test.t.c asc range between unbounded preceding and current row))->Window(sum(cast(test.t.a)) over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row))->Window(sum(cast(test.t.d)) over())->Projection",
+		},
+		// Test issue 11010.
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between current row and 1 following)",
+			result: "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between current row and unbounded following)",
+			result: "TableReader(Table(t))->Sort->Window(dense_rank() over(partition by test.t.b order by test.t.a desc, test.t.b desc))->Projection",
+		},
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between 1 preceding and 1 following)",
+			result: "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		// Test issue 11001.
+		{
+			sql:    "SELECT PERCENT_RANK() OVER w1 AS 'percent_rank', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) t1 WINDOW w1 AS ( ROWS BETWEEN 0 FOLLOWING AND UNBOUNDED PRECEDING)",
+			result: "[planner:3585]Window 'w1': frame end cannot be UNBOUNDED PRECEDING.",
+		},
+		// Test issue 11002.
+		{
+			sql:    "SELECT PERCENT_RANK() OVER w1 AS 'percent_rank', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as t1 WINDOW w1 AS ( ROWS BETWEEN UNBOUNDED FOLLOWING AND UNBOUNDED FOLLOWING)",
+			result: "[planner:3584]Window 'w1': frame start cannot be UNBOUNDED FOLLOWING.",
+		},
+		// Test issue 11011.
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a asc range between 1250951168 following AND 1250951168 preceding)",
+			result: "[planner:3586]Window 'w1': frame start or end is negative, NULL or of non-integral type",
 		},
 	}
 
@@ -2459,5 +2495,47 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		}
 		paths := ds.skylinePruning(byItemsToProperty(byItems))
 		c.Assert(pathsName(paths), Equals, tt.result)
+	}
+}
+
+func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql      string
+		fastPlan bool
+	}{
+		{
+			"select * from t where a=1",
+			true,
+		},
+		{
+
+			"update t set f=0 where a=43215",
+			true,
+		},
+		{
+			"delete from t where a =43215",
+			true,
+		},
+		{
+			"select * from t where a>1",
+			false,
+		},
+	}
+	for _, tt := range tests {
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil)
+		Preprocess(s.ctx, stmt, s.is)
+		s.ctx.GetSessionVars().StmtCtx.Tables = nil
+		p := TryFastPlan(s.ctx, stmt)
+		if tt.fastPlan {
+			c.Assert(p, NotNil)
+			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 1)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.Tables[0].Table, Equals, "t")
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.Tables[0].DB, Equals, "test")
+		} else {
+			c.Assert(p, IsNil)
+			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 0)
+		}
 	}
 }

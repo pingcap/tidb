@@ -1240,7 +1240,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 	case *ast.WindowFuncExpr:
 		a.inWindowFunc = false
 		if a.curClause == havingClause {
-			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
+			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.F))
 			return node, false
 		}
 		if a.curClause == orderByClause {
@@ -2986,14 +2986,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 		if bound.Type == ast.CurrentRow {
 			return bound, nil
 		}
-		// Rows type does not support interval range.
-		if boundClause.Unit != nil {
-			return nil, ErrWindowRowsIntervalUse.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
-		numRows, isNull, isExpectedType := getUintFromNode(b.ctx, boundClause.Expr)
-		if isNull || !isExpectedType {
-			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
+		numRows, _, _ := getUintFromNode(b.ctx, boundClause.Expr)
 		bound.Num = numRows
 		return bound, nil
 	}
@@ -3009,23 +3002,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 		return bound, nil
 	}
 
-	if len(orderByItems) != 1 {
-		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
-	}
 	col := orderByItems[0].Col
-	isNumeric, isTemporal := types.IsTypeNumeric(col.RetType.Tp), types.IsTypeTemporal(col.RetType.Tp)
-	if !isNumeric && !isTemporal {
-		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
-	}
-	// Interval bounds only support order by temporal types.
-	if boundClause.Unit != nil && isNumeric {
-		return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(getWindowName(spec.Name.O))
-	}
-	// Non-interval bound only support order by numeric types.
-	if boundClause.Unit == nil && !isNumeric {
-		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(getWindowName(spec.Name.O))
-	}
-
 	// TODO: We also need to raise error for non-deterministic expressions, like rand().
 	val, err := evalAstExpr(b.ctx, boundClause.Expr)
 	if err != nil {
@@ -3110,25 +3087,13 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 	if frameClause == nil {
 		return nil, nil
 	}
-	if frameClause.Type == ast.Groups {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("GROUPS")
-	}
 	frame := &WindowFrame{Type: frameClause.Type}
-	start := frameClause.Extent.Start
-	if start.Type == ast.Following && start.UnBounded {
-		return nil, ErrWindowFrameStartIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-	}
 	var err error
-	frame.Start, err = b.buildWindowFunctionFrameBound(spec, orderByItems, &start)
+	frame.Start, err = b.buildWindowFunctionFrameBound(spec, orderByItems, &frameClause.Extent.Start)
 	if err != nil {
 		return nil, err
 	}
-
-	end := frameClause.Extent.End
-	if end.Type == ast.Preceding && end.UnBounded {
-		return nil, ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-	}
-	frame.End, err = b.buildWindowFunctionFrameBound(spec, orderByItems, &end)
+	frame.End, err = b.buildWindowFunctionFrameBound(spec, orderByItems, &frameClause.Extent.End)
 	return frame, err
 }
 
@@ -3203,6 +3168,10 @@ func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupedFuncs map[*ast.
 		if err != nil {
 			return nil, nil, err
 		}
+		err = b.checkOriginWindowSpecs(funcs, orderBy)
+		if err != nil {
+			return nil, nil, err
+		}
 		frame, err := b.buildWindowFunctionFrame(spec, orderBy)
 		if err != nil {
 			return nil, nil, err
@@ -3241,6 +3210,74 @@ func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupedFuncs map[*ast.
 		p = window
 	}
 	return p, windowMap, nil
+}
+
+// checkOriginWindowSpecs checks the validation for origin window specifications for a group of functions.
+// Because of the grouped specification is different from it, we should especially check them before build window frame.
+func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderByItems []property.Item) error {
+	for _, f := range funcs {
+		spec := f.Spec
+		if spec.Frame == nil {
+			continue
+		}
+		if spec.Frame.Type == ast.Groups {
+			return ErrNotSupportedYet.GenWithStackByArgs("GROUPS")
+		}
+		start, end := spec.Frame.Extent.Start, spec.Frame.Extent.End
+		if start.Type == ast.Following && start.UnBounded {
+			return ErrWindowFrameStartIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+		}
+		if end.Type == ast.Preceding && end.UnBounded {
+			return ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+		}
+		if start.Type == ast.Following && end.Type == ast.Preceding {
+			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+		}
+
+		err := b.checkOriginWindowFrameBound(&start, &spec, orderByItems)
+		if err != nil {
+			return err
+		}
+		err = b.checkOriginWindowFrameBound(&end, &spec, orderByItems)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *ast.WindowSpec, orderByItems []property.Item) error {
+	if bound.Type == ast.CurrentRow || bound.UnBounded {
+		return nil
+	}
+
+	frameType := spec.Frame.Type
+	if frameType == ast.Rows {
+		if bound.Unit != nil {
+			return ErrWindowRowsIntervalUse.GenWithStackByArgs(getWindowName(spec.Name.O))
+		}
+		_, isNull, isExpectedType := getUintFromNode(b.ctx, bound.Expr)
+		if isNull || !isExpectedType {
+			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+		}
+		return nil
+	}
+
+	if len(orderByItems) != 1 {
+		return ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	orderItemType := orderByItems[0].Col.RetType.Tp
+	isNumeric, isTemporal := types.IsTypeNumeric(orderItemType), types.IsTypeTemporal(orderItemType)
+	if !isNumeric && !isTemporal {
+		return ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	if bound.Unit != nil && !isTemporal {
+		return ErrWindowRangeFrameNumericType.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	if bound.Unit == nil && !isNumeric {
+		return ErrWindowRangeFrameTemporalType.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	return nil
 }
 
 func extractWindowFuncs(fields []*ast.SelectField) []*ast.WindowFuncExpr {
@@ -3309,6 +3346,7 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if !ok {
 			return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
 		}
+		windowFunc.Spec = *spec
 		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
 		if !updated {
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
