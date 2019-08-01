@@ -2652,10 +2652,11 @@ func (du *baseDateArithmitical) getIntervalFromString(ctx sessionctx.Context, ar
 }
 
 func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (string, bool, error) {
-	interval, isNull, err := args[1].EvalString(ctx, row)
+	decimal, isNull, err := args[1].EvalDecimal(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
+	interval := decimal.String()
 
 	switch strings.ToUpper(unit) {
 	case "HOUR_MINUTE", "MINUTE_SECOND", "YEAR_MONTH", "DAY_HOUR", "DAY_MINUTE",
@@ -2721,7 +2722,7 @@ func (du *baseDateArithmitical) getIntervalFromReal(ctx sessionctx.Context, args
 	if isNull || err != nil {
 		return "", true, err
 	}
-	return strconv.FormatFloat(interval, 'f', -1, 64), false, nil
+	return strconv.FormatFloat(interval, 'f', args[1].GetType().Decimal, 64), false, nil
 }
 
 func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
@@ -2742,6 +2743,10 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		date.Fsp = 0
 	} else {
 		date.Fsp = 6
+	}
+
+	if goTime.Year() < 0 || goTime.Year() > (1<<16-1) {
+		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
 	date.Time = types.FromGoTime(goTime)
@@ -2799,6 +2804,10 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 		date.Fsp = 0
 	} else {
 		date.Fsp = 6
+	}
+
+	if goTime.Year() < 0 || goTime.Year() > (1<<16-1) {
+		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
 	date.Time = types.FromGoTime(goTime)

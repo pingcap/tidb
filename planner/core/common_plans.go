@@ -75,9 +75,10 @@ type ShowNextRowID struct {
 type CheckTable struct {
 	baseSchemaProducer
 
-	Tables []*ast.TableName
-
-	GenExprs map[model.TableColumnID]expression.Expression
+	DBName             string
+	TblInfo            *model.TableInfo
+	Indices            []table.Index
+	IndexLookUpReaders []*PhysicalIndexLookUpReader
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
@@ -454,16 +455,19 @@ type Update struct {
 	OrderedList []*expression.Assignment
 
 	SelectPlan PhysicalPlan
+
+	TblColPosInfos TblColPosInfoSlice
 }
 
 // Delete represents a delete plan.
 type Delete struct {
 	baseSchemaProducer
 
-	Tables       []*ast.TableName
 	IsMultiTable bool
 
 	SelectPlan PhysicalPlan
+
+	TblColPosInfos TblColPosInfoSlice
 }
 
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.
@@ -495,9 +499,9 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	baseSchemaProducer
 
-	ColTasks      []AnalyzeColumnsTask
-	IdxTasks      []AnalyzeIndexTask
-	MaxNumBuckets uint64
+	ColTasks []AnalyzeColumnsTask
+	IdxTasks []AnalyzeIndexTask
+	Opts     map[ast.AnalyzeOptionType]uint64
 }
 
 // LoadData represents a loaddata plan.
