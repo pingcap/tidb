@@ -50,7 +50,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20190430075617-bf45ab20bfc4
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3 // indirect
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
-	github.com/pingcap/kvproto v0.0.0-20190429124202-32a5ba2af0f7
+	github.com/pingcap/kvproto v0.0.0-20190801050232-8be8979a1b6d
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
 	github.com/pingcap/parser v0.0.0-20190718031118-20e37a65d718
 	github.com/pingcap/pd v2.1.12+incompatible
@@ -84,5 +84,3 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
-
-replace github.com/pingcap/kvproto => github.com/MyonKeminta/kvproto v0.0.0-20190729055213-b63af5f5f478
