@@ -3332,6 +3332,12 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if f.IgnoreNull {
 			return ErrNotSupportedYet.GenWithStackByArgs("IGNORE NULLS")
 		}
+		if f.Distinct {
+			return ErrNotSupportedYet.GenWithStackByArgs("<window function>(DISTINCT ..)")
+		}
+		if f.FromLast {
+			return ErrNotSupportedYet.GenWithStackByArgs("FROM LAST")
+		}
 		spec := f.Spec
 		if spec.Frame == nil {
 			continue
