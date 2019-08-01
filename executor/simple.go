@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/planner/core"
 	"strings"
 
 	"github.com/ngaut/pools"
