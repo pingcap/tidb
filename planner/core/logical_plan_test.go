@@ -2462,11 +2462,11 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:1235]This version of TiDB doesn't yet support '<window function>(DISTINCT ..)'",
 		},
 		{
-			sql:    "SELECT NTH_VALUE(a, 1) FROM LAST over (partition by b order by b), a FROM t1;",
+			sql:    "SELECT NTH_VALUE(a, 1) FROM LAST over (partition by b order by b), a FROM t",
 			result: "[planner:1235]This version of TiDB doesn't yet support 'FROM LAST'",
 		},
 		{
-			sql:    "SELECT NTH_VALUE(a, 1) FROM LAST IGNORE NULLS over (partition by b order by b), a FROM t1",
+			sql:    "SELECT NTH_VALUE(a, 1) FROM LAST IGNORE NULLS over (partition by b order by b), a FROM t",
 			result: "[planner:1235]This version of TiDB doesn't yet support 'IGNORE NULLS'",
 		},
 	}
