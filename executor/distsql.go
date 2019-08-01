@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"fmt"
 	"math"
 	"runtime"
 	"sort"
@@ -830,10 +829,6 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 					if err != nil {
 						return errors.Trace(err)
 					}
-					x := fmt.Sprintf("xxx ------------------------------------------- idx %v, row len %v, cols len %v, col %v, rows %v, handles %v, expr %v, val %#v, tp %v",
-						w.idxLookup.index.Name, row.Len(), len(w.idxLookup.columns), col, chk.NumRows(), len(task.handles), expr, val,
-						col.FieldType.String())
-					logutil.Logger(context.Background()).Warn("111 ----", zap.String("xxx", x))
 					vals = append(vals, val)
 				} else {
 					vals = append(vals, row.GetDatum(i, &col.FieldType))
@@ -843,9 +838,6 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			for i, val := range vals {
 				col := w.idxTblCols[i]
 				tp := &col.FieldType
-				d := idxRow.GetDatum(i, tp)
-				x := fmt.Sprintf("col tp %v, val %v, is null %v, len %v, no.%d", tp, (&d).Kind(), (&d).IsNull(), idxRow.Len(), i)
-				logutil.Logger(context.Background()).Warn("-------", zap.String("xx", x))
 				ret := chunk.Compare(idxRow, i, &val)
 				if ret != 0 {
 					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v", col.Name, handle, idxRow.GetDatum(i, tp), val)
