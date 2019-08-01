@@ -529,3 +529,8 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 	}
 	return dst
 }
+
+// Length returns the length of this column.
+func (c *Column) Length() int {
+	return c.length
+}

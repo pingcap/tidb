@@ -188,7 +188,49 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 
 // VecEval evaluates this expression in a vectorized manner.
 func (col *Column) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	input.Column(col.Index).CopyConstruct(result)
+	sel := input.Sel()
+	src := input.Column(col.Index)
+	if sel == nil {
+		src.CopyConstruct(result)
+	} else if len(sel) == 0 {
+		result.Reset()
+		return nil
+	} else {
+		if len(sel) > input.Capacity()/3 {
+			src.CopyConstruct(result)
+			return nil
+		}
+		pos := result.Length()
+		if pos > sel[0] {
+			result.Reset()
+			pos = 0
+		}
+		for _, i := range sel {
+			for pos < i {
+				result.AppendNull()
+				pos++
+			}
+			switch col.RetType.EvalType() {
+			case types.ETInt:
+				result.AppendInt64(src.GetInt64(i))
+			case types.ETReal:
+				result.AppendFloat64(src.GetFloat64(i))
+			case types.ETDecimal:
+				result.AppendMyDecimal(src.GetDecimal(i))
+			case types.ETDatetime, types.ETTimestamp:
+				result.AppendTime(src.GetTime(i))
+			case types.ETDuration:
+				result.AppendDuration(src.GetDuration(i, 0))
+			case types.ETJson:
+				result.AppendJSON(src.GetJSON(i))
+			case types.ETString:
+				result.AppendString(src.GetString(i))
+			default:
+				return errors.Errorf("unsupported type")
+			}
+			pos++
+		}
+	}
 	return nil
 }
 

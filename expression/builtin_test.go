@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"reflect"
 
 	. "github.com/pingcap/check"
@@ -131,6 +132,71 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 	v, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
+}
+
+func (s *testEvaluatorSuite) TesRow2VecInt(c *C) {
+	defer testleak.AfterTest(c)()
+	rowDouble, input := genMockRowDoubleInt()
+	result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+	c.Assert(rowDouble.vecEval(input, result), IsNil)
+	i64s := result.Int64s()
+	c.Assert(len(i64s), Equals, 1024)
+	for i := 0; i < 1024; i++ {
+		c.Assert(i64s[i], Equals, int64(i*2))
+	}
+
+	sel := []int{3, 4, 5, 6, 12, 23, 322, 787, 999, 1011}
+	input.SetSel(sel)
+	c.Assert(rowDouble.vecEval(input, result), IsNil)
+	i64s = result.Int64s()
+	for _, i := range sel {
+		c.Assert(i64s[i], Equals, int64(i*2))
+	}
+}
+
+func (s *testEvaluatorSuite) TestVec2RowInt(c *C) {
+	defer testleak.AfterTest(c)()
+	vecDouble, input := genMockVecDoubleInt()
+	it := chunk.NewIterator4Chunk(input)
+	i := 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		v, isNull, err := vecDouble.evalInt(row)
+		c.Assert(err, IsNil)
+		c.Assert(isNull, IsFalse)
+		c.Assert(v, Equals, int64(i*2))
+		i++
+	}
+}
+
+func (s *testEvaluatorSuite) TesRow2VecStr(c *C) {
+	defer testleak.AfterTest(c)()
+	rowDouble, input := genMockRowDoubleStr()
+	result := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
+	c.Assert(rowDouble.vecEval(input, result), IsNil)
+	for i := 0; i < 1024; i++ {
+		c.Assert(result.GetString(i), Equals, fmt.Sprintf("%v%v", i, i))
+	}
+
+	sel := []int{3, 4, 5, 6, 12, 23, 322, 787, 999, 1011}
+	input.SetSel(sel)
+	c.Assert(rowDouble.vecEval(input, result), IsNil)
+	for _, i := range sel {
+		c.Assert(result.GetString(i), Equals, fmt.Sprintf("%v%v", i, i))
+	}
+}
+
+func (s *testEvaluatorSuite) TestVec2RowStr(c *C) {
+	defer testleak.AfterTest(c)()
+	vecDouble, input := genMockVecDoubleStr()
+	it := chunk.NewIterator4Chunk(input)
+	i := 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		v, isNull, err := vecDouble.evalString(row)
+		c.Assert(err, IsNil)
+		c.Assert(isNull, IsFalse)
+		c.Assert(v, Equals, fmt.Sprintf("%v%v", i, i))
+		i++
+	}
 }
 
 // newFunctionForTest creates a new ScalarFunction using funcName and arguments,

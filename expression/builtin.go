@@ -36,6 +36,12 @@ type baseBuiltinFunc struct {
 	ctx    sessionctx.Context
 	tp     *types.FieldType
 	pbCode tipb.ScalarFuncSig
+
+	// fields used to support converting between row-based evaluation and vectorized evaluation
+	self   builtinFunc // the actual builtinFunc which inherit this baseBuiltinFunc
+	vec    bool        // if the self support vectorized evaluation actually
+	rowSel []int
+	buf    *chunk.Column
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -173,34 +179,244 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 }
 
 func (b *baseBuiltinFunc) vecEval(input *chunk.Chunk, result *chunk.Column) error {
+	if b.self != nil && !b.vec {
+		return b.row2vec(input, result)
+	}
 	return errors.Errorf("baseBuiltinFunc.vecEval() should never be called, please contact the TiDB team for help")
 }
 
+func (b *baseBuiltinFunc) row2vec(input *chunk.Chunk, result *chunk.Column) error {
+	result.Reset()
+	it := chunk.NewIterator4Chunk(input)
+	sel := input.Sel()
+	if sel == nil {
+		switch b.tp.EvalType() {
+		case types.ETInt:
+			result.PreAllocInt64(input.NumEffectiveRows())
+			i64s := result.Int64s()
+			var isNull bool
+			var err error
+			row := it.Begin()
+			for i := range i64s {
+				i64s[i], isNull, err = b.self.evalInt(row)
+				if err != nil {
+					return err
+				}
+				if !isNull {
+					result.SetNull(i, false)
+				}
+				row = it.Next()
+			}
+		case types.ETReal:
+			result.PreAllocFloat64(input.NumEffectiveRows())
+			f64s := result.Float64s()
+			var isNull bool
+			var err error
+			row := it.Begin()
+			for i := range f64s {
+				f64s[i], isNull, err = b.self.evalReal(row)
+				if err != nil {
+					return err
+				}
+				if !isNull {
+					result.SetNull(i, false)
+				}
+				row = it.Next()
+			}
+		case types.ETDecimal:
+			result.PreAllocFloat64(input.NumEffectiveRows())
+			ds := result.Decimals()
+			var v *types.MyDecimal
+			var isNull bool
+			var err error
+			row := it.Begin()
+			for i := range ds {
+				v, isNull, err = b.self.evalDecimal(row)
+				if err != nil {
+					return err
+				}
+				if !isNull {
+					result.SetNull(i, false)
+					ds[i] = *v
+				}
+				row = it.Next()
+			}
+		default:
+			result.Reset()
+			for row := it.Begin(); row != it.End(); row = it.Next() {
+				if err := b.evalOneRow(row, result); err != nil {
+					return err
+				}
+			}
+		}
+	} else {
+		pos := 0
+		row := it.Begin()
+		for _, i := range sel {
+			for pos < i {
+				result.AppendNull()
+				pos++
+			}
+			if err := b.evalOneRow(row, result); err != nil {
+				return err
+			}
+			row = it.Next()
+			pos++
+		}
+	}
+	return nil
+}
+
+func (b *baseBuiltinFunc) evalOneRow(row chunk.Row, result *chunk.Column) error {
+	isNull := false
+	var err error
+	switch b.tp.EvalType() {
+	case types.ETInt:
+		var v int64
+		if v, isNull, err = b.self.evalInt(row); !isNull && err == nil {
+			result.AppendInt64(v)
+		}
+	case types.ETReal:
+		var v float64
+		if v, isNull, err = b.self.evalReal(row); !isNull && err == nil {
+			result.AppendFloat64(v)
+		}
+	case types.ETDecimal:
+		var v *types.MyDecimal
+		if v, isNull, err = b.self.evalDecimal(row); !isNull && err == nil {
+			result.AppendMyDecimal(v)
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		var v types.Time
+		if v, isNull, err = b.self.evalTime(row); !isNull && err == nil {
+			result.AppendTime(v)
+		}
+	case types.ETDuration:
+		var v types.Duration
+		if v, isNull, err = b.self.evalDuration(row); !isNull && err == nil {
+			result.AppendDuration(v)
+		}
+	case types.ETJson:
+		var v json.BinaryJSON
+		if v, isNull, err = b.self.evalJSON(row); !isNull && err == nil {
+			result.AppendJSON(v)
+		}
+	case types.ETString:
+		var v string
+		if v, isNull, err = b.self.evalString(row); !isNull && err == nil {
+			result.AppendString(v)
+		}
+	default:
+		return errors.Errorf("unsupported converting type for vectorized evaluation")
+	}
+	if err != nil {
+		return err
+	}
+	if isNull {
+		result.AppendNull()
+	}
+	return nil
+}
+
+func (b *baseBuiltinFunc) vec2row(row chunk.Row) (bool, error) {
+	input := row.Chunk()
+	if b.buf == nil {
+		b.buf = chunk.NewColumn(b.tp, input.NumEffectiveRows())
+		b.rowSel = make([]int, 1)
+	}
+	idx := row.Idx()
+	sel := input.Sel()
+	b.rowSel[0] = idx
+	input.SetSel(b.rowSel)
+	err := b.self.vecEval(input, b.buf)
+	input.SetSel(sel)
+	if err != nil {
+		return false, err
+	}
+	return b.buf.IsNull(idx), nil
+}
+
 func (b *baseBuiltinFunc) evalInt(row chunk.Row) (int64, bool, error) {
+	if b.self != nil && b.vec {
+		if isNull, err := b.vec2row(row); err != nil {
+			return 0, false, err
+		} else if isNull {
+			return 0, true, nil
+		}
+		return b.buf.GetInt64(row.Idx()), false, nil
+	}
 	return 0, false, errors.Errorf("baseBuiltinFunc.evalInt() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalReal(row chunk.Row) (float64, bool, error) {
+	if b.self != nil && b.vec {
+		if isNull, err := b.vec2row(row); err != nil {
+			return 0, false, err
+		} else if isNull {
+			return 0, true, nil
+		}
+		return b.buf.GetFloat64(row.Idx()), false, nil
+	}
 	return 0, false, errors.Errorf("baseBuiltinFunc.evalReal() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalString(row chunk.Row) (string, bool, error) {
+	if b.self != nil && b.vec {
+		if isNull, err := b.vec2row(row); err != nil {
+			return "", false, err
+		} else if isNull {
+			return "", true, nil
+		}
+		return b.buf.GetString(row.Idx()), false, nil
+	}
 	return "", false, errors.Errorf("baseBuiltinFunc.evalString() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
+	if b.self != nil && b.vec {
+		if isNull, err := b.vec2row(row); err != nil {
+			return nil, false, err
+		} else if isNull {
+			return nil, true, nil
+		}
+		return b.buf.GetDecimal(row.Idx()), false, nil
+	}
 	return nil, false, errors.Errorf("baseBuiltinFunc.evalDecimal() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalTime(row chunk.Row) (types.Time, bool, error) {
+	if b.self != nil && b.vec {
+		if isNull, err := b.vec2row(row); err != nil {
+			return types.Time{}, false, err
+		} else if isNull {
+			return types.Time{}, true, nil
+		}
+		return b.buf.GetTime(row.Idx()), false, nil
+	}
 	return types.Time{}, false, errors.Errorf("baseBuiltinFunc.evalTime() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalDuration(row chunk.Row) (types.Duration, bool, error) {
+	if b.self != nil && b.vec {
+		if isNull, err := b.vec2row(row); err != nil {
+			return types.Duration{}, false, err
+		} else if isNull {
+			return types.Duration{}, true, nil
+		}
+		return b.buf.GetDuration(row.Idx(), 0), false, nil
+	}
 	return types.Duration{}, false, errors.Errorf("baseBuiltinFunc.evalDuration() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+	if b.self != nil && b.vec {
+		if isNull, err := b.vec2row(row); err != nil {
+			return json.BinaryJSON{}, false, err
+		} else if isNull {
+			return json.BinaryJSON{}, true, nil
+		}
+		return b.buf.GetJSON(row.Idx()), false, nil
+	}
 	return json.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
 }
 
