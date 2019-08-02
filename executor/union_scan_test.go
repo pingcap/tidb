@@ -106,3 +106,110 @@ func (s *testSuite4) TestUnionScanWithCastCondition(c *C) {
 	tk.MustQuery("select * from ta where a = 1").Check(testkit.Rows("1"))
 	tk.MustExec("rollback")
 }
+
+func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int, index idx(b))")
+	tk.MustExec("insert t values (1,1),(2,2)")
+
+	// Test for delete in union scan
+	tk.MustExec("begin")
+	tk.MustExec("delete from t")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert t values (1,1)")
+	tk.MustQuery("select a,b from t").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select a,b from t use index(idx)").Check(testkit.Rows("1 1"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+
+	// Test update with untouched index columns.
+	tk.MustExec("delete from t")
+	tk.MustExec("insert t values (1,1),(2,2)")
+	tk.MustExec("begin")
+	tk.MustExec("update t set a=a+1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1", "3 2"))
+	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
+	tk.MustQuery("select * from t use index (idx) order by b desc").Check(testkit.Rows("3 2", "2 1"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+
+	// Test update with index column.
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1", "3 2"))
+	tk.MustExec("begin")
+	tk.MustExec("update t set b=b+1 where a=2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 2", "3 2"))
+	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("2 2", "3 2"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+
+	// Test index reader order.
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 2", "3 2"))
+	tk.MustExec("begin")
+	tk.MustExec("insert t values (3,3),(1,1),(4,4),(-1,-1);")
+	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("-1 -1", "1 1", "2 2", "3 2", "3 3", "4 4"))
+	tk.MustQuery("select b from t use index (idx) order by b desc").Check(testkit.Rows("4", "3", "2", "2", "1", "-1"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+
+	// test for update unique index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int, unique index idx(b))")
+	tk.MustExec("insert t values (1,1),(2,2)")
+	tk.MustExec("begin")
+	_, err := tk.Exec("update t set b=b+1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'idx'")
+	// update with unchange index column.
+	tk.MustExec("update t set a=a+1")
+	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
+	tk.MustExec("update t set b=b+2 where a=2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 3", "3 2"))
+	tk.MustQuery("select * from t use index (idx) order by b desc").Check(testkit.Rows("2 3", "3 2"))
+	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("3 2", "2 3"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+
+	// Test for getMissIndexRowsByHandle return nil.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int, index idx(a))")
+	tk.MustExec("insert into t values (1,1),(2,2),(3,3)")
+	tk.MustExec("begin")
+	tk.MustExec("update t set b=0 where a=2")
+	tk.MustQuery("select * from t ignore index (idx) where a>0 and b>0;").Check(testkit.Rows("1 1", "3 3"))
+	tk.MustQuery("select * from t use index (idx) where a>0 and b>0;").Check(testkit.Rows("1 1", "3 3"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+
+	// Test index lookup reader corner case.
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt (a bigint, b int,c int,primary key (a,b));")
+	tk.MustExec("insert into tt set a=1,b=1;")
+	tk.MustExec("begin;")
+	tk.MustExec("update tt set c=1;")
+	tk.MustQuery("select * from tt use index (PRIMARY) where c is not null;").Check(testkit.Rows("1 1 1"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table tt")
+
+	// Test index reader corner case.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int,b int,primary key(a,b));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustQuery("select * from t1 use index(primary) where a=1;").Check(testkit.Rows("1 1"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t1;")
+
+	// Test index reader with pk handle.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int unsigned key,b int,c varchar(10), index idx(b,a,c));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 (a,b) values (0, 0), (1, 1);")
+	tk.MustQuery("select a,b from t1 use index(idx) where b>0;").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select a,b,c from t1 ignore index(idx) where a>=1 order by a desc").Check(testkit.Rows("1 1 <nil>"))
+	tk.MustExec("insert into t1 values (2, 2, null), (3, 3, 'a');")
+	tk.MustQuery("select a,b from t1 use index(idx) where b>1 and c is not null;").Check(testkit.Rows("3 3"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t1;")
+}
