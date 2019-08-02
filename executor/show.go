@@ -83,7 +83,7 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
 		e.result = newFirstChunk(e)
-		err := e.fetchAll()
+		err := e.fetchAll(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -109,14 +109,14 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *ShowExec) fetchAll() error {
+func (e *ShowExec) fetchAll(ctx context.Context) error {
 	switch e.Tp {
 	case ast.ShowCharset:
 		return e.fetchShowCharset()
 	case ast.ShowCollation:
 		return e.fetchShowCollation()
 	case ast.ShowColumns:
-		return e.fetchShowColumns()
+		return e.fetchShowColumns(ctx)
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
 	case ast.ShowCreateUser:
@@ -367,7 +367,7 @@ func createOptions(tb *model.TableInfo) string {
 	return ""
 }
 
-func (e *ShowExec) fetchShowColumns() error {
+func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	tb, err := e.getTable()
 
 	if err != nil {
@@ -384,7 +384,7 @@ func (e *ShowExec) fetchShowColumns() error {
 		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
 		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
 		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is)
-		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(e.DBName, tb.Meta())
+		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, e.DBName, tb.Meta())
 		if err != nil {
 			return err
 		}
