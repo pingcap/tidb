@@ -2090,7 +2090,7 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	return nil
 }
 
-// FormatIntWidthN uses to format int with width.
+// FormatIntWidthN uses to format int with width. Insufficient digits are filled by 0.
 func FormatIntWidthN(num, n int) string {
 	numString := strconv.FormatInt(int64(num), 10)
 	if len(numString) >= n {
