@@ -61,12 +61,11 @@ func (e *SimpleExec) getSysSession() (sessionctx.Context, error) {
 		return nil, err
 	}
 	restrictedCtx := ctx.(sessionctx.Context)
-	restrictedCtx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	restrictedCtx.GetSessionVars().InRestrictedSQL = true
 	return restrictedCtx, nil
 }
 
-func (e *SimpleExec) closeSysSession(ctx sessionctx.Context) {
+func (e *SimpleExec) releaseSysSession(ctx sessionctx.Context) {
 	dom := domain.GetDomain(e.ctx)
 	sysSessionPool := dom.SysSessionPool()
 	sysSessionPool.Put(ctx.(pools.Resource))
@@ -281,7 +280,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	if err != nil {
 		return err
 	}
-	defer e.closeSysSession(restrictedCtx)
+	defer e.releaseSysSession(restrictedCtx)
 
 	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
 
