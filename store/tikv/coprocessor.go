@@ -224,9 +224,11 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
 			tasks = append(tasks, &copTask{
-				region:   region,
-				ranges:   ranges.slice(i, nextI),
-				respChan: make(chan *copResponse, 2), // channel buffer is 2 for handling a common region split.
+				region: region,
+				ranges: ranges.slice(i, nextI),
+				// Channel buffer is 2 for handling region split.
+				// In a common case, two region split tasks will not be blocked.
+				respChan: make(chan *copResponse, 2),
 				cmdType:  cmdType,
 			})
 			i = nextI
@@ -488,11 +490,9 @@ forLoop:
 		// It sends one more task if it's notified by recvChan that a task has been received.
 		if sender.recvChan != nil && i >= sender.concurrency {
 			select {
-			case _, ok := <-sender.recvChan:
-				if !ok {
-					// copIterator.Close is called
-					break forLoop
-				}
+			case <-sender.recvChan:
+			case <-sender.finishCh:
+				break forLoop
 			}
 		}
 		exit := sender.sendToTaskCh(t)
@@ -851,9 +851,6 @@ func (worker *copIteratorWorker) calculateRemain(ranges *copRanges, split *copro
 func (it *copIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 		close(it.finishCh)
-		if it.recvChan != nil {
-			close(it.recvChan)
-		}
 	}
 	it.wg.Wait()
 	return nil
