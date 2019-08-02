@@ -113,7 +113,7 @@ func (s *testClientSuite) TestSendWhenReconnect(c *C) {
 		client.lockForRecreate()
 	}
 
-	req := tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{})
+	req := &tikvrpc.Request{Type: tikvrpc.CmdEmpty, Empty: &tikvpb.BatchCommandsEmptyRequest{}}
 	_, err = rpcClient.SendRequest(context.Background(), addr, req, 100*time.Second)
 	c.Assert(err.Error() == "no available connections", IsTrue)
 	conn.Close()
