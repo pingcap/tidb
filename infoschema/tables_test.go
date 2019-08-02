@@ -21,7 +21,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -532,4 +534,22 @@ select * from t_slim;`))
 	re = tk.MustQuery("select query from information_schema.slow_query order by time desc limit 1")
 	rows := re.Rows()
 	c.Assert(rows[0][0], Equals, sql)
+}
+
+func (s *testTableSuite) TestReloadDropDatabase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database test_dbs")
+	tk.MustExec("use test_dbs")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("create table t3 (a int)")
+	is := domain.GetDomain(tk.Se).InfoSchema()
+	t2, err := is.TableByName(model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	tk.MustExec("drop database test_dbs")
+	is = domain.GetDomain(tk.Se).InfoSchema()
+	_, err = is.TableByName(model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
+	c.Assert(terror.ErrorEqual(infoschema.ErrTableNotExists, err), IsTrue)
+	_, ok := is.TableByID(t2.Meta().ID)
+	c.Assert(ok, IsFalse)
 }
