@@ -71,7 +71,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
-	if !it.req.KeepOrder {
+	if it.req.KeepOrder {
+		it.recvChan = make(chan struct{}, len(tasks))
+	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
 	it.open(ctx)
@@ -224,7 +226,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 			tasks = append(tasks, &copTask{
 				region:   region,
 				ranges:   ranges.slice(i, nextI),
-				respChan: make(chan *copResponse, 1),
+				respChan: make(chan *copResponse, 2), // channel buffer is 2 for handling a common region split.
 				cmdType:  cmdType,
 			})
 			i = nextI
@@ -334,6 +336,9 @@ type copIterator struct {
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
 	curr  int
+	// recvChan indicates a copTask has been received by copIterator.Next, if keepOrder.
+	// copIteratorTaskSender uses it to control sending rate.
+	recvChan chan struct{}
 
 	// Otherwise, results are stored in respChan.
 	respChan chan *copResponse
@@ -359,11 +364,13 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	taskCh   chan<- *copTask
-	wg       *sync.WaitGroup
-	tasks    []*copTask
-	finishCh <-chan struct{}
-	respChan chan<- *copResponse
+	taskCh      chan<- *copTask
+	wg          *sync.WaitGroup
+	tasks       []*copTask
+	finishCh    <-chan struct{}
+	respChan    chan<- *copResponse
+	recvChan    <-chan struct{}
+	concurrency int
 }
 
 type copResponse struct {
@@ -460,10 +467,12 @@ func (it *copIterator) open(ctx context.Context) {
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh:   taskCh,
-		wg:       &it.wg,
-		tasks:    it.tasks,
-		finishCh: it.finishCh,
+		taskCh:      taskCh,
+		wg:          &it.wg,
+		tasks:       it.tasks,
+		finishCh:    it.finishCh,
+		recvChan:    it.recvChan,
+		concurrency: it.concurrency,
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
@@ -471,7 +480,19 @@ func (it *copIterator) open(ctx context.Context) {
 
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
-	for _, t := range sender.tasks {
+forLoop:
+	for i, t := range sender.tasks {
+		// If keepOrder, we must control the sending rate to prevent all tasks
+		// being done (aka. all of the responses are buffered) by copIteratorWorker.
+		if sender.recvChan != nil && i >= sender.concurrency {
+			select {
+			case _, ok := <-sender.recvChan:
+				if !ok {
+					// copIterator.Close is called
+					break forLoop
+				}
+			}
+		}
 		exit := sender.sendToTaskCh(t)
 		if exit {
 			break
@@ -559,6 +580,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
+			it.recvChan <- struct{}{}
 		}
 	}
 
@@ -827,6 +849,9 @@ func (worker *copIteratorWorker) calculateRemain(ranges *copRanges, split *copro
 func (it *copIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 		close(it.finishCh)
+		if it.recvChan != nil {
+			close(it.recvChan)
+		}
 	}
 	it.wg.Wait()
 	return nil
