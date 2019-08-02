@@ -2668,7 +2668,7 @@ func (b *builtinQuoteSig) evalString(row chunk.Row) (string, bool, error) {
 	if err != nil {
 		return "", true, err
 	} else if isNull {
-		// If the argument is NULL, the return value is the word “NULL” without enclosing single quotation marks.
+		// If the argument is NULL, the return value is the word "NULL" without enclosing single quotation marks. see ref.
 		return "NULL", false, err
 	}
 
