@@ -366,13 +366,13 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	taskCh      chan<- *copTask
-	wg          *sync.WaitGroup
-	tasks       []*copTask
-	finishCh    <-chan struct{}
-	respChan    chan<- *copResponse
-	recvChan    <-chan struct{}
-	concurrency int
+	taskCh   chan<- *copTask
+	wg       *sync.WaitGroup
+	tasks    []*copTask
+	finishCh <-chan struct{}
+	respChan chan<- *copResponse
+	recvChan <-chan struct{}
+	quota    int
 }
 
 type copResponse struct {
@@ -469,12 +469,12 @@ func (it *copIterator) open(ctx context.Context) {
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh:      taskCh,
-		wg:          &it.wg,
-		tasks:       it.tasks,
-		finishCh:    it.finishCh,
-		recvChan:    it.recvChan,
-		concurrency: it.concurrency,
+		taskCh:   taskCh,
+		wg:       &it.wg,
+		tasks:    it.tasks,
+		finishCh: it.finishCh,
+		recvChan: it.recvChan,
+		quota:    it.concurrency * 2,
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
@@ -486,9 +486,9 @@ forLoop:
 	for i, t := range sender.tasks {
 		// If keepOrder, we must control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
-		// We keep the number of inflight tasks within the number of sender.concurrency.
+		// We keep the number of inflight tasks within the number of copIteratorTaskSender.quota.
 		// It sends one more task if it's notified by recvChan that a task has been received.
-		if sender.recvChan != nil && i >= sender.concurrency {
+		if sender.recvChan != nil && i >= sender.quota {
 			select {
 			case <-sender.recvChan:
 			case <-sender.finishCh:
