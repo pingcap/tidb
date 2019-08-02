@@ -231,43 +231,43 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PlanBuil
 }
 
 // Build builds the ast node to a Plan.
-func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
+func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	b.optFlag = flagPrunColumns
 	switch x := node.(type) {
 	case *ast.AdminStmt:
-		return b.buildAdmin(x)
+		return b.buildAdmin(ctx, x)
 	case *ast.DeallocateStmt:
 		return &Deallocate{Name: x.Name}, nil
 	case *ast.DeleteStmt:
-		return b.buildDelete(x)
+		return b.buildDelete(ctx, x)
 	case *ast.ExecuteStmt:
-		return b.buildExecute(x)
+		return b.buildExecute(ctx, x)
 	case *ast.ExplainStmt:
-		return b.buildExplain(x)
+		return b.buildExplain(ctx, x)
 	case *ast.ExplainForStmt:
 		return b.buildExplainFor(x)
 	case *ast.TraceStmt:
 		return b.buildTrace(x)
 	case *ast.InsertStmt:
-		return b.buildInsert(x)
+		return b.buildInsert(ctx, x)
 	case *ast.LoadDataStmt:
-		return b.buildLoadData(x)
+		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
 		return b.buildLoadStats(x), nil
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
-		return b.buildSelect(x)
+		return b.buildSelect(ctx, x)
 	case *ast.UnionStmt:
-		return b.buildUnion(x)
+		return b.buildUnion(ctx, x)
 	case *ast.UpdateStmt:
-		return b.buildUpdate(x)
+		return b.buildUpdate(ctx, x)
 	case *ast.ShowStmt:
-		return b.buildShow(x)
+		return b.buildShow(ctx, x)
 	case *ast.DoStmt:
-		return b.buildDo(x)
+		return b.buildDo(ctx, x)
 	case *ast.SetStmt:
-		return b.buildSet(x)
+		return b.buildSet(ctx, x)
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
@@ -276,7 +276,7 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
-		return b.buildDDL(x)
+		return b.buildDDL(ctx, x)
 	case *ast.CreateBindingStmt:
 		return b.buildCreateBindPlan(x)
 	case *ast.DropBindingStmt:
@@ -296,10 +296,10 @@ func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
 	return exe, nil
 }
 
-func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
+func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (Plan, error) {
 	vars := make([]expression.Expression, 0, len(v.UsingVars))
 	for _, expr := range v.UsingVars {
-		newExpr, _, err := b.rewrite(expr, nil, nil, true)
+		newExpr, _, err := b.rewrite(ctx, expr, nil, nil, true)
 		if err != nil {
 			return nil, err
 		}
@@ -309,7 +309,7 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
 	return exe, nil
 }
 
-func (b *PlanBuilder) buildDo(v *ast.DoStmt) (Plan, error) {
+func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) {
 	var p LogicalPlan
 	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx)
 	dual.SetSchema(expression.NewSchema())
@@ -317,7 +317,7 @@ func (b *PlanBuilder) buildDo(v *ast.DoStmt) (Plan, error) {
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
-		expr, np, err := b.rewrite(astExpr, p, nil, true)
+		expr, np, err := b.rewrite(ctx, astExpr, p, nil, true)
 		if err != nil {
 			return nil, err
 		}
@@ -335,7 +335,7 @@ func (b *PlanBuilder) buildDo(v *ast.DoStmt) (Plan, error) {
 	return proj, nil
 }
 
-func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
+func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error) {
 	p := &Set{}
 	for _, vars := range v.Variables {
 		if vars.IsGlobal {
@@ -354,7 +354,7 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 			}
 			mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 			var err error
-			assign.Expr, _, err = b.rewrite(vars.Value, mockTablePlan, nil, true)
+			assign.Expr, _, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
 			if err != nil {
 				return nil, err
 			}
@@ -544,7 +544,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Plan, error) {
+func (b *PlanBuilder) buildCheckIndex(ctx context.Context, dbName model.CIStr, as *ast.AdminStmt) (Plan, error) {
 	tblName := as.Tables[0]
 	tbl, err := b.is.TableByName(dbName, tblName.Name)
 	if err != nil {
@@ -567,21 +567,21 @@ func (b *PlanBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
 	}
 
-	return b.buildPhysicalIndexLookUpReader(dbName, tbl, idx, 1)
+	return b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idx, 1)
 }
 
-func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
+func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, error) {
 	var ret Plan
 	var err error
 	switch as.Tp {
 	case ast.AdminCheckTable:
-		ret, err = b.buildAdminCheckTable(as)
+		ret, err = b.buildAdminCheckTable(ctx, as)
 		if err != nil {
 			return ret, err
 		}
 	case ast.AdminCheckIndex:
 		dbName := as.Tables[0].Schema
-		readerPlan, err := b.buildCheckIndex(dbName, as)
+		readerPlan, err := b.buildCheckIndex(ctx, dbName, as)
 		if err != nil {
 			return ret, err
 		}
@@ -652,7 +652,7 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 }
 
 // getGenExprs gets generated expressions map.
-func (b *PlanBuilder) getGenExprs(dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (
+func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (
 	map[model.TableColumnID]expression.Expression, error) {
 	tblInfo := tbl.Meta()
 	genExprsMap := make(map[model.TableColumnID]expression.Expression)
@@ -666,7 +666,7 @@ func (b *PlanBuilder) getGenExprs(dbName model.CIStr, tbl table.Table, idx *mode
 		expr = colExpr
 		if col.IsGenerated() && !col.GeneratedStored {
 			var err error
-			expr, _, err = b.rewrite(col.GeneratedExpr, mockTablePlan, nil, true)
+			expr, _, err = b.rewrite(ctx, col.GeneratedExpr, mockTablePlan, nil, true)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -696,8 +696,8 @@ func (b *PlanBuilder) getGenExprs(dbName model.CIStr, tbl table.Table, idx *mode
 	return genExprsMap, nil
 }
 
-func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, id int) (Plan, error) {
-	genExprsMap, err := b.getGenExprs(dbName, tbl, idx)
+func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, id int) (Plan, error) {
+	genExprsMap, err := b.getGenExprs(ctx, dbName, tbl, idx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -785,7 +785,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 	return rootT.p, nil
 }
 
-func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(dbName model.CIStr, tbl table.Table) ([]Plan, []table.Index, error) {
+func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbName model.CIStr, tbl table.Table) ([]Plan, []table.Index, error) {
 	tblInfo := tbl.Meta()
 	// get index information
 	indices := make([]table.Index, 0, len(tblInfo.Indices))
@@ -798,7 +798,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(dbName model.CIStr, tbl ta
 			continue
 		}
 		indices = append(indices, idx)
-		reader, err := b.buildPhysicalIndexLookUpReader(dbName, tbl, idxInfo, i)
+		reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idxInfo, i)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -810,7 +810,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(dbName model.CIStr, tbl ta
 	return indexLookUpReaders, indices, nil
 }
 
-func (b *PlanBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, error) {
+func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStmt) (*CheckTable, error) {
 	tbl := as.Tables[0]
 	p := &CheckTable{
 		DBName:  tbl.Schema.O,
@@ -823,7 +823,7 @@ func (b *PlanBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, erro
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
 	}
 
-	readerPlans, indices, err := b.buildPhysicalIndexLookUpReaders(tbl.Schema, table)
+	readerPlans, indices, err := b.buildPhysicalIndexLookUpReaders(ctx, tbl.Schema, table)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1200,7 +1200,7 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 	return conditions
 }
 
-func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
+func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, error) {
 	p := Show{
 		Tp:          show.Tp,
 		DBName:      show.DBName,
@@ -1260,13 +1260,13 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
 		}
-		np, err = b.buildSelection(np, show.Pattern, nil)
+		np, err = b.buildSelection(ctx, np, show.Pattern, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if show.Where != nil {
-		np, err = b.buildSelection(np, show.Where, nil)
+		np, err = b.buildSelection(ctx, np, show.Where, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1283,7 +1283,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		}
 		proj.SetSchema(schema)
 		proj.SetChildren(np)
-		physical, err := DoOptimize(b.optFlag|flagEliminateProjection, proj)
+		physical, err := DoOptimize(ctx, b.optFlag|flagEliminateProjection, proj)
 		if err != nil {
 			return nil, err
 		}
@@ -1407,7 +1407,7 @@ func (b *PlanBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 
 // resolveGeneratedColumns resolves generated columns with their generation
 // expressions respectively. onDups indicates which columns are in on-duplicate list.
-func (b *PlanBuilder) resolveGeneratedColumns(columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns, err error) {
+func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns, err error) {
 	for _, column := range columns {
 		if !column.IsGenerated() {
 			continue
@@ -1420,7 +1420,7 @@ func (b *PlanBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 			return igc, err
 		}
 
-		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
+		expr, _, err := b.rewrite(ctx, column.GeneratedExpr, mockPlan, nil, true)
 		if err != nil {
 			return igc, err
 		}
@@ -1442,7 +1442,7 @@ func (b *PlanBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 	return igc, nil
 }
 
-func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
+func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (Plan, error) {
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
@@ -1498,19 +1498,19 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 
 	if len(insert.Setlist) > 0 {
 		// Branch for `INSERT ... SET ...`.
-		err := b.buildSetValuesOfInsert(insert, insertPlan, mockTablePlan, checkRefColumn)
+		err := b.buildSetValuesOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
 		if err != nil {
 			return nil, err
 		}
 	} else if len(insert.Lists) > 0 {
 		// Branch for `INSERT ... VALUES ...`.
-		err := b.buildValuesListOfInsert(insert, insertPlan, mockTablePlan, checkRefColumn)
+		err := b.buildValuesListOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		// Branch for `INSERT ... SELECT ...`.
-		err := b.buildSelectPlanOfInsert(insert, insertPlan)
+		err := b.buildSelectPlanOfInsert(ctx, insert, insertPlan)
 		if err != nil {
 			return nil, err
 		}
@@ -1527,7 +1527,7 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 	}
 	for i, assign := range insert.OnDuplicate {
 		// Construct the function which calculates the assign value of the column.
-		expr, err1 := b.rewriteInsertOnDuplicateUpdate(assign.Expr, mockTablePlan, insertPlan)
+		expr, err1 := b.rewriteInsertOnDuplicateUpdate(ctx, assign.Expr, mockTablePlan, insertPlan)
 		if err1 != nil {
 			return nil, err1
 		}
@@ -1540,7 +1540,7 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 
 	// Calculate generated columns.
 	mockTablePlan.schema = insertPlan.tableSchema
-	insertPlan.GenCols, err = b.resolveGeneratedColumns(insertPlan.Table.Cols(), onDupColSet, mockTablePlan)
+	insertPlan.GenCols, err = b.resolveGeneratedColumns(ctx, insertPlan.Table.Cols(), onDupColSet, mockTablePlan)
 	if err != nil {
 		return nil, err
 	}
@@ -1595,7 +1595,7 @@ func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Inse
 	return affectedValuesCols, nil
 }
 
-func (b *PlanBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
+func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
 	tableInfo := insertPlan.Table.Meta()
 	colNames := make([]string, 0, len(insert.Setlist))
 	exprCols := make([]*expression.Column, 0, len(insert.Setlist))
@@ -1623,7 +1623,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan 
 	}
 
 	for i, assign := range insert.Setlist {
-		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
+		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
 		}
@@ -1636,7 +1636,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan 
 	return nil
 }
 
-func (b *PlanBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
+func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
@@ -1684,7 +1684,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 					RetType: &x.Type,
 				}
 			default:
-				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, nil, true, checkRefColumn)
+				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, mockTablePlan, nil, nil, true, checkRefColumn)
 			}
 			if err != nil {
 				return err
@@ -1697,12 +1697,12 @@ func (b *PlanBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 	return nil
 }
 
-func (b *PlanBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan *Insert) error {
+func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert) error {
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
 	}
-	selectPlan, err := b.Build(insert.Select)
+	selectPlan, err := b.Build(ctx, insert.Select)
 	if err != nil {
 		return err
 	}
@@ -1725,7 +1725,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 		}
 	}
 
-	insertPlan.SelectPlan, err = DoOptimize(b.optFlag, selectPlan.(LogicalPlan))
+	insertPlan.SelectPlan, err = DoOptimize(ctx, b.optFlag, selectPlan.(LogicalPlan))
 	if err != nil {
 		return err
 	}
@@ -1750,7 +1750,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 	return nil
 }
 
-func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
+func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
 	p := &LoadData{
 		IsLocal:     ld.IsLocal,
 		OnDuplicate: ld.OnDuplicate,
@@ -1772,7 +1772,7 @@ func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 	mockTablePlan.SetSchema(schema)
 
 	var err error
-	p.GenCols, err = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
+	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	if err != nil {
 		return nil, err
 	}
@@ -1877,7 +1877,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 			RetType: &x.Type,
 		}
 	default:
-		expr, _, err = b.rewrite(valueItem, mockTablePlan, nil, true)
+		expr, _, err = b.rewrite(context.TODO(), valueItem, mockTablePlan, nil, true)
 		if err != nil {
 			return d, err
 		}
@@ -1965,7 +1965,7 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	return p, nil
 }
 
-func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
+func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, error) {
 	var authErr error
 	switch v := node.(type) {
 	case *ast.AlterDatabaseStmt:
@@ -2048,7 +2048,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
-		plan, err := b.Build(v.Select)
+		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
 			return nil, err
 		}
@@ -2221,11 +2221,11 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 	return b.buildExplainPlan(targetPlan, explainFor.Format, false, nil)
 }
 
-func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
+func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (Plan, error) {
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
-		return b.buildShow(show)
+		return b.buildShow(ctx, show)
 	}
-	targetPlan, err := OptimizeAstNode(b.ctx, explain.Stmt, b.is)
+	targetPlan, err := OptimizeAstNode(ctx, b.ctx, explain.Stmt, b.is)
 	if err != nil {
 		return nil, err
 	}

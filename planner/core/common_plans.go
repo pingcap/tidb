@@ -15,6 +15,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -177,8 +178,8 @@ type Execute struct {
 }
 
 // OptimizePreparedPlan optimizes the prepared statement.
-func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
-	vars := ctx.GetSessionVars()
+func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
+	vars := sctx.GetSessionVars()
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
 	}
@@ -204,13 +205,13 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		err := Preprocess(ctx, prepared.Stmt, is, InPrepare)
+		err := Preprocess(sctx, prepared.Stmt, is, InPrepare)
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
-	p, err := e.getPhysicalPlan(ctx, is, prepared)
+	p, err := e.getPhysicalPlan(ctx, sctx, is, prepared)
 	if err != nil {
 		return err
 	}
@@ -219,13 +220,13 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) (Plan, error) {
+func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) (Plan, error) {
 	var cacheKey kvcache.Key
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := sctx.GetSessionVars()
 	sessionVars.StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
-		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
+		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if metrics.ResettablePlanCacheCounterFortTest {
 				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 			} else {
@@ -239,13 +240,13 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			return plan, nil
 		}
 	}
-	p, err := OptimizeAstNode(ctx, prepared.Stmt, is)
+	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return nil, err
 	}
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
+		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
 }
