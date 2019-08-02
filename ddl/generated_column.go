@@ -51,7 +51,7 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 }
 
 // verifyColumnGenerationSingle is for ADD GENERATED COLUMN, we just need verify one column itself.
-func verifyColumnGenerationSingle(dependCols map[string]struct{}, cols []*table.Column, position *ast.ColumnPosition) error {
+func verifyColumnGenerationSingle(dependColNames map[string]struct{}, cols []*table.Column, position *ast.ColumnPosition) error {
 	// cause the added column hasn't existed, should derive it's offset from ColumnPosition
 	pos, err := findPositionRelativeColumn(cols, position)
 	if err != nil {
@@ -59,7 +59,7 @@ func verifyColumnGenerationSingle(dependCols map[string]struct{}, cols []*table.
 	}
 	// mysql then will check relative generated column should be prior to it, so it should be in one loop
 	for _, col := range cols {
-		if _, ok := dependCols[col.Name.L]; ok {
+		if _, ok := dependColNames[col.Name.L]; ok {
 			if col.IsGenerated() && col.Offset >= pos {
 				// Generated column can refer only to generated columns defined prior to it.
 				return errGeneratedColumnNonPrior.GenWithStackByArgs()
