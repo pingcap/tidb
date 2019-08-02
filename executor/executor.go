@@ -415,7 +415,15 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendInt64(0, e.jobs[i].ID)
 		schemaName := e.jobs[i].SchemaName
-		tableName := e.jobs[i].TableName
+		tableName := ""
+		if e.jobs[i].BinlogInfo != nil {
+			if e.jobs[i].BinlogInfo.TableInfo != nil {
+				tableName = e.jobs[i].BinlogInfo.TableInfo.Name.L
+			}
+			if len(schemaName) == 0 && e.jobs[i].BinlogInfo.DBInfo != nil {
+				schemaName = e.jobs[i].BinlogInfo.DBInfo.Name.L
+			}
+		}
 		// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
 		if len(schemaName) == 0 {
 			schemaName = getSchemaName(e.is, e.jobs[i].SchemaID)

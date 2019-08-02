@@ -33,6 +33,8 @@ github.com/crazycs520/parser v0.0.0-20190801014535-8fddad2565dd h1:sELKj3l9keUcF
 github.com/crazycs520/parser v0.0.0-20190801014535-8fddad2565dd/go.mod h1:xLjI+gnWYexq011WPMEvCNS8rFM9qe1vdojIEzSKPuc=
 github.com/crazycs520/parser v0.0.0-20190801015123-1039a56acb0c h1:OCvqcYqI/9Aqula24IjLMHGcsDL/xOhsU3Mh3gXBS3A=
 github.com/crazycs520/parser v0.0.0-20190801015123-1039a56acb0c/go.mod h1:xLjI+gnWYexq011WPMEvCNS8rFM9qe1vdojIEzSKPuc=
+github.com/crazycs520/parser v0.0.0-20190802065753-33951b6667cf h1:kRq7Rx2JS9AO+TmBZOI8AeHeBhL3I8G2LSHPW4709+I=
+github.com/crazycs520/parser v0.0.0-20190802065753-33951b6667cf/go.mod h1:xLjI+gnWYexq011WPMEvCNS8rFM9qe1vdojIEzSKPuc=
 github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 h1:iwZdTE0PVqJCos1vaoKsclOGD3ADKpshg3SRtYBbwso=
 github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548/go.mod h1:e6NPNENfs9mPDVNRekM7lKScauxd5kXTr1Mfyig6TDM=
 github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65 h1:hxuZop6tSoOi0sxFzoGGYdRqNrPubyaIf9KoBG9tPiE=
