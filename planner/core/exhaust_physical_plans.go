@@ -1198,12 +1198,6 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
-func (ps *PhysicalStreamAgg) convert2Enforced() {
-	for i := range ps.childrenReqProps {
-		ps.childrenReqProps[i].Enforced = true
-	}
-}
-
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	enforcedAggs := make([]PhysicalPlan, 0, 2)
 	childProp := &property.PhysicalProperty{
@@ -1323,7 +1317,9 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 	if streamAggs != nil && preferStream && !preferHash {
 		// The following three lines are used to cover a bug related to possibleProperties.
 		for i := range streamAggs {
-			streamAggs[i].(*PhysicalStreamAgg).convert2Enforced()
+			for j := range streamAggs[i].(*PhysicalStreamAgg).childrenReqProps {
+				streamAggs[i].(*PhysicalStreamAgg).childrenReqProps[j].Enforced = true
+			}
 		}
 		return streamAggs
 	}
