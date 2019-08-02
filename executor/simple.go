@@ -797,6 +797,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	failedUsers := make([]string, 0, len(s.UserList))
 	notExistUsers := make([]string, 0, len(s.UserList))
 	sysSession, err := e.getSysSession()
+	defer e.releaseSysSession(sysSession)
 	if err != nil {
 		return err
 	}
