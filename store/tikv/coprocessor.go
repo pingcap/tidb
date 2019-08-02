@@ -484,6 +484,8 @@ forLoop:
 	for i, t := range sender.tasks {
 		// If keepOrder, we must control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
+		// We keep the number of inflight tasks within the number of sender.concurrency.
+		// It sends one more task if it's notified by recvChan that a task has been received.
 		if sender.recvChan != nil && i >= sender.concurrency {
 			select {
 			case _, ok := <-sender.recvChan:
