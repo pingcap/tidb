@@ -1907,21 +1907,3 @@ func (s *testIntegrationSuite4) TestDropAutoIncrementIndex(c *C) {
 	dropIndexSQL = "alter table t1 drop index a"
 	assertErrorCode(c, tk, dropIndexSQL, mysql.ErrWrongAutoKey)
 }
-
-func (s *testIntegrationSuite4) TestOnUpdateCurrentTimestamp(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_on_update_timestamp")
-	tk.MustExec("create database test_on_update_timestamp")
-	tk.MustExec("use test_on_update_timestamp")
-	tk.MustExec("create table timestamp_table (a datetime not null default current_timestamp on update current_timestamp, " +
-		"b datetime(3) not null default current_timestamp(3) on update current_timestamp(3))")
-	tk.MustQuery("show full columns from timestamp_table").Check(testkit.Rows(
-		"a datetime <nil> NO  CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP select,insert,update,references ",
-		"b datetime(3) <nil> NO  CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references "))
-	tk.MustQuery("select * from information_schema.columns where table_name = 'timestamp_table' and column_name='a'").Check(testkit.Rows(
-		"def test_on_update_timestamp timestamp_table a 1 CURRENT_TIMESTAMP NO datetime <nil> <nil> <nil> <nil> 0 " +
-			"<nil> <nil> datetime  DEFAULT_GENERATED on update CURRENT_TIMESTAMP select,insert,update,references  "))
-	tk.MustQuery("select * from information_schema.columns where table_name = 'timestamp_table' and column_name='b'").Check(testkit.Rows(
-		"def test_on_update_timestamp timestamp_table b 2 CURRENT_TIMESTAMP(3) NO datetime <nil> <nil> <nil> <nil> 3 " +
-			"<nil> <nil> datetime(3)  DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references  "))
-}
