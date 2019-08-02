@@ -282,7 +282,7 @@ func EncodeRowWithColSizeMap(sc *stmtctx.StatementContext, row []types.Datum, co
 		}
 		colSize[colID] = int64(len(valBuf) - lastLen - 1)
 	}
-	return valBuf, colSize, errors.Trace(err)
+	return valBuf, colSize, nil
 }
 
 func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) error {
