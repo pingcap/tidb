@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // ProcessInfo is a struct used for show processlist statement.
@@ -26,12 +27,12 @@ type ProcessInfo struct {
 	ID                        uint64
 	User                      string
 	Host                      string
-	DB                        interface{}
+	DB                        string
 	Command                   byte
 	Plan                      interface{}
 	Time                      time.Time
 	State                     uint16
-	Info                      interface{}
+	Info                      string
 	CurTxnStartTS             uint64
 	StmtCtx                   *stmtctx.StatementContext
 	StatsInfo                 func(interface{}) map[string]uint64
@@ -44,19 +45,23 @@ type ProcessInfo struct {
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
 func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	var info interface{}
-	if pi.Info != nil {
+	if len(pi.Info) > 0 {
 		if full {
-			info = pi.Info.(string)
+			info = pi.Info
 		} else {
-			info = fmt.Sprintf("%.100v", pi.Info.(string))
+			info = fmt.Sprintf("%.100v", pi.Info)
 		}
 	}
 	t := uint64(time.Since(pi.Time) / time.Second)
+	var db interface{}
+	if len(pi.DB) > 0 {
+		db = pi.DB
+	}
 	return []interface{}{
 		pi.ID,
 		pi.User,
 		pi.Host,
-		pi.DB,
+		db,
 		mysql.Command2Str[pi.Command],
 		t,
 		fmt.Sprintf("%d", pi.State),
@@ -64,10 +69,18 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	}
 }
 
+func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
+	if pi.CurTxnStartTS > 0 {
+		physicalTime := oracle.GetTimeFromTS(pi.CurTxnStartTS)
+		txnStart = fmt.Sprintf("%s(%d)", physicalTime.In(tz).Format("01-02 15:04:05.000"), pi.CurTxnStartTS)
+	}
+	return
+}
+
 // ToRow returns []interface{} for the row data of
 // "SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST".
-func (pi *ProcessInfo) ToRow() []interface{} {
-	return append(pi.ToRowForShow(true), pi.StmtCtx.MemTracker.BytesConsumed())
+func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
+	return append(pi.ToRowForShow(true), pi.StmtCtx.MemTracker.BytesConsumed(), pi.txnStartTs(tz))
 }
 
 // SessionManager is an interface for session manage. Show processlist and

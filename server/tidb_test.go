@@ -550,3 +550,17 @@ func (ts *TidbTestSuite) TestSumAvg(c *C) {
 	c.Parallel()
 	runTestSumAvg(c)
 }
+
+func (ts *TidbTestSuite) TestNullFlag(c *C) {
+	// issue #9689
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	rs, err := qctx.Execute(ctx, "select 1")
+	c.Assert(err, IsNil)
+	cols := rs[0].Columns()
+	c.Assert(len(cols), Equals, 1)
+	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+}

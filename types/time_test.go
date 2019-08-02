@@ -15,6 +15,7 @@ package types_test
 
 import (
 	"math"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -1638,5 +1639,35 @@ func (s *testTimeSuite) TestCheckMonthDay(c *C) {
 		} else {
 			c.Check(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 		}
+	}
+}
+func (s *testTimeSuite) TestFormatIntWidthN(c *C) {
+	cases := []struct {
+		num    int
+		width  int
+		result string
+	}{
+		{0, 0, "0"},
+		{1, 0, "1"},
+		{1, 1, "1"},
+		{1, 2, "01"},
+		{10, 2, "10"},
+		{99, 3, "099"},
+		{100, 3, "100"},
+		{999, 3, "999"},
+		{1000, 3, "1000"},
+	}
+	for _, ca := range cases {
+		re := types.FormatIntWidthN(ca.num, ca.width)
+		c.Assert(re, Equals, ca.result)
+	}
+}
+
+func BenchmarkFormat(b *testing.B) {
+	var t1 types.Time
+	t1.Type = mysql.TypeTimestamp
+	t1.Time = types.FromGoTime(time.Now())
+	for i := 0; i < b.N; i++ {
+		t1.DateFormat("%Y-%m-%d %H:%i:%s")
 	}
 }

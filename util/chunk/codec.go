@@ -54,11 +54,11 @@ func (c *Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	buffer = append(buffer, lenBuffer[:4]...)
 
 	// encode nullCount.
-	binary.LittleEndian.PutUint32(lenBuffer[:], uint32(col.nullCount))
+	binary.LittleEndian.PutUint32(lenBuffer[:], uint32(col.nullCount()))
 	buffer = append(buffer, lenBuffer[:4]...)
 
 	// encode nullBitmap.
-	if col.nullCount > 0 {
+	if col.nullCount() > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
 		buffer = append(buffer, col.nullBitmap[:numNullBitmapBytes]...)
 	}
@@ -111,11 +111,11 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	buffer = buffer[4:]
 
 	// decode nullCount.
-	col.nullCount = int(binary.LittleEndian.Uint32(buffer))
+	nullCount := int(binary.LittleEndian.Uint32(buffer))
 	buffer = buffer[4:]
 
 	// decode nullBitmap.
-	if col.nullCount > 0 {
+	if nullCount > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
 		col.nullBitmap = append(col.nullBitmap[:0], buffer[:numNullBitmapBytes]...)
 		buffer = buffer[numNullBitmapBytes:]
