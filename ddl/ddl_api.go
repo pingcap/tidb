@@ -2113,12 +2113,13 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 			for k := range dependColNames {
 				duplicateColNames[k] = struct{}{}
 			}
+			cols := t.Cols()
 
-			if err = checkDependedColExist(dependColNames, t.Cols()); err != nil {
+			if err = checkDependedColExist(dependColNames, cols); err != nil {
 				return errors.Trace(err)
 			}
 
-			if err = verifyColumnGenerationSingle(duplicateColNames, t.Cols(), spec.Position); err != nil {
+			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
 				return errors.Trace(err)
 			}
 		}

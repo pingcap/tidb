@@ -604,12 +604,10 @@ func (s *testIntegrationSuite2) TestDependedGeneratedColumnPrior2GeneratedColumn
 	assertErrorCode(c, tk, sql, mysql.ErrGeneratedColumnNonPrior)
 
 	// correct case
-	_, err := tk.Exec("alter table t add column d int as (c+1) after c")
-	c.Assert(err, IsNil)
+	tk.MustExec("alter table t add column d int as (c+1) after c")
 
-	// check position nil
-	_, err = tk.Exec("alter table t add column(e int as (c+1))")
-	c.Assert(err, IsNil)
+	// check position nil case
+	tk.MustExec("alter table t add column(e int as (c+1))")
 }
 
 func (s *testIntegrationSuite3) TestChangingCharsetToUtf8(c *C) {
