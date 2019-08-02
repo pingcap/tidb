@@ -4765,3 +4765,16 @@ func (s *testIntegrationSuite) TestIssue11309(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL c MINUTE_SECOND) FROM t`).Check(testkit.Rows(`2003-11-18 09:29:13`, `2003-11-18 05:21:13`))
 	tk.MustExec(`drop table if exists t;`)
 }
+
+
+func (s *testIntegrationSuite) TestQuote(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery(`select quote(null) is NULL;`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select quote(null) is NOT NULL;`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select length(quote(null));`).Check(testkit.Rows(`4`))
+	tk.MustQuery(`select quote(null) REGEXP binary 'null'`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select quote(null) REGEXP binary 'NULL'`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select quote(null) REGEXP 'NULL'`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select quote(null) REGEXP 'null'`).Check(testkit.Rows(`1`))
+}
