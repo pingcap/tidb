@@ -2907,6 +2907,7 @@ func (s *testSuite) TestHandleTransfer(c *C) {
 	tk.MustExec("insert into t values(4)")
 	// test single read whose result need handle
 	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustQuery("select * from t use index(idx) order by a desc").Check(testkit.Rows("4", "3", "2", "1"))
 	tk.MustExec("update t set a = 5 where a = 3")
 	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("1", "2", "4", "5"))
 	tk.MustExec("commit")
@@ -3169,7 +3170,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "admin check index t c")
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "isn't equal to value count"), IsTrue)
+	c.Assert(err.Error(), Equals, "handle 3, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:30, b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
