@@ -2180,11 +2180,19 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("2017-01-01 00:00:00.00"))
 	result = tk.MustQuery(`select cast(20170118.999 as datetime);`)
 	result.Check(testkit.Rows("2017-01-18 00:00:00"))
+	tk.MustQuery(`select convert(a2.a, unsigned int) from (select cast('"9223372036854775808"' as json) as a) as a2;`)
 
 	tk.MustExec(`create table tb5(a bigint(64) unsigned, b double);`)
 	tk.MustExec(`insert into tb5 (a, b) values (9223372036854776000, 9223372036854776000);`)
 	tk.MustExec(`insert into tb5 (a, b) select * from (select cast(a as json) as a1, b from tb5) as t where t.a1 = t.b;`)
 	tk.MustExec(`drop table tb5;`)
+
+	tk.MustExec(`create table tb5(a float(64));`)
+	tk.MustExec(`insert into tb5(a) values (13835058055282163712);`)
+	err := tk.QueryToErr(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
+	msg := strings.Split(err.Error(), " ")
+	last := msg[len(msg)-1]
+	c.Assert(last, Equals, "bigint")
 
 	// Test corner cases of cast string as datetime
 	result = tk.MustQuery(`select cast("170102034" as datetime);`)
@@ -2364,6 +2372,34 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(0x12345678 as double)")
 	result.Check(testkit.Rows("305419896"))
 
+	// test cast as float
+	result = tk.MustQuery("select cast(1 as float)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(cast(12345 as unsigned) as float)")
+	result.Check(testkit.Rows("12345"))
+	result = tk.MustQuery("select cast(1.1 as float) = 1.1")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(-1.1 as float) = -1.1")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast('123.321' as float) =123.321")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast('12345678901234567890' as float) = 1.2345678901234567e19")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(-1 as float)")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast(null as float)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select cast(12345678901234567890 as float) = 1.2345678901234567e19")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(cast(-1 as unsigned) as float) = 1.8446744073709552e19")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(1e100 as float(40)) = 1e100")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(123456789012345678901234567890 as float(40)) = 1.2345678901234568e29")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(0x12345678 as float(40)) = 305419896")
+	result.Check(testkit.Rows("1"))
+
 	// test cast time as decimal overflow
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(s1 time);")
@@ -2372,7 +2408,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("99999.99"))
 	result = tk.MustQuery("select cast(s1 as decimal(8, 2)) from t1;")
 	result.Check(testkit.Rows("111111.00"))
-	_, err := tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
+	_, err = tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
 	c.Assert(err, NotNil)
 
 	result = tk.MustQuery(`select CAST(0x8fffffffffffffff as signed) a,

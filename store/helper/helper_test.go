@@ -16,7 +16,6 @@ package helper_test
 import (
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -74,18 +73,24 @@ func (s *HelperTestSuite) SetUpSuite(c *C) {
 }
 
 func (s *HelperTestSuite) TestHotRegion(c *C) {
-	helper := helper.Helper{
+	h := helper.Helper{
 		Store:       s.store,
 		RegionCache: s.store.GetRegionCache(),
 	}
-	regionMetric, err := helper.FetchHotRegion(pdapi.HotRead)
+	regionMetric, err := h.FetchHotRegion(pdapi.HotRead)
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
-	c.Assert(fmt.Sprintf("%v", regionMetric), Equals, "map[1:{100 1 0}]")
+	expected := make(map[uint64]helper.RegionMetric)
+	expected[1] = helper.RegionMetric{
+		FlowBytes:    100,
+		MaxHotDegree: 1,
+		Count:        0,
+	}
+	c.Assert(regionMetric, DeepEquals, expected)
 	dbInfo := &model.DBInfo{
 		Name: model.NewCIStr("test"),
 	}
 	c.Assert(err, IsNil)
-	_, err = helper.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	_, err = h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
 }
 
@@ -94,8 +99,7 @@ func (s *HelperTestSuite) TestGetRegionsTableInfo(c *C) {
 	regionsInfo := getMockTiKVRegionsInfo()
 	schemas := getMockRegionsTableInfoSchema()
 	tableInfos := h.GetRegionsTableInfo(regionsInfo, schemas)
-	ans := getRegionsTableInfoAns(schemas)
-	c.Assert(fmt.Sprintf("%v", tableInfos), Equals, fmt.Sprintf("%v", ans))
+	c.Assert(tableInfos, DeepEquals, getRegionsTableInfoAns(schemas))
 }
 
 func (s *HelperTestSuite) TestTiKVRegionsInfo(c *C) {
@@ -105,7 +109,7 @@ func (s *HelperTestSuite) TestTiKVRegionsInfo(c *C) {
 	}
 	regionsInfo, err := h.GetRegionsInfo()
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
-	c.Assert(fmt.Sprintf("%v", regionsInfo), Equals, fmt.Sprintf("%v", getMockTiKVRegionsInfo()))
+	c.Assert(regionsInfo, DeepEquals, getMockTiKVRegionsInfo())
 }
 
 func (s *HelperTestSuite) TestTiKVStoresStat(c *C) {
@@ -117,7 +121,7 @@ func (s *HelperTestSuite) TestTiKVStoresStat(c *C) {
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
 	data, err := json.Marshal(stat)
 	c.Assert(err, IsNil)
-	c.Assert(fmt.Sprintf("%s", data), Equals, "{\"count\":1,\"stores\":[{\"store\":{\"id\":1,\"address\":\"127.0.0.1:20160\",\"state\":0,\"state_name\":\"Up\",\"version\":\"3.0.0-beta\",\"labels\":[{\"key\":\"test\",\"value\":\"test\"}]},\"status\":{\"capacity\":\"60 GiB\",\"available\":\"100 GiB\",\"leader_count\":10,\"leader_weight\":1,\"leader_score\":1000,\"leader_size\":1000,\"region_count\":200,\"region_weight\":1,\"region_score\":1000,\"region_size\":1000,\"start_ts\":\"2019-04-23T19:30:30+08:00\",\"last_heartbeat_ts\":\"2019-04-23T19:31:30+08:00\",\"uptime\":\"1h30m\"}}]}")
+	c.Assert(string(data), Equals, `{"count":1,"stores":[{"store":{"id":1,"address":"127.0.0.1:20160","state":0,"state_name":"Up","version":"3.0.0-beta","labels":[{"key":"test","value":"test"}]},"status":{"capacity":"60 GiB","available":"100 GiB","leader_count":10,"leader_weight":1,"leader_score":1000,"leader_size":1000,"region_count":200,"region_weight":1,"region_score":1000,"region_size":1000,"start_ts":"2019-04-23T19:30:30+08:00","last_heartbeat_ts":"2019-04-23T19:31:30+08:00","uptime":"1h30m"}}]}`)
 }
 
 func (s *HelperTestSuite) mockPDHTTPServer(c *C) {
@@ -181,8 +185,8 @@ func getMockRegionsTableInfoSchema() []*model.DBInfo {
 	}
 }
 
-func getRegionsTableInfoAns(dbs []*model.DBInfo) map[uint64][]helper.TableInfo {
-	ans := make(map[uint64][]helper.TableInfo)
+func getRegionsTableInfoAns(dbs []*model.DBInfo) map[int64][]helper.TableInfo {
+	ans := make(map[int64][]helper.TableInfo)
 	db := dbs[0]
 	ans[1] = []helper.TableInfo{}
 	ans[2] = []helper.TableInfo{
