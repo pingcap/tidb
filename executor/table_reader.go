@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/errors"
