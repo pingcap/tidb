@@ -24,6 +24,7 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
+// ToHex formats a proto.Message into a string with the []byte fields in hex encoding.
 func ToHex(msg proto.Message) string {
 	val := reflect.ValueOf(msg)
 	var w bytes.Buffer
