@@ -901,7 +901,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select quote("aaaa"), quote(""), quote("\"\""), quote("\n\n");`)
 	result.Check(testkit.Rows("'aaaa' '' '\"\"' '\n\n'"))
 	result = tk.MustQuery(`select quote(0121), quote(0000), quote("中文"), quote(NULL);`)
-	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
+	result.Check(testkit.Rows("'121' '0' '中文' NULL"))
+	tk.MustQuery(`select quote(null) is NULL;`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select quote(null) is NOT NULL;`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select length(quote(null));`).Check(testkit.Rows(`4`))
+	tk.MustQuery(`select quote(null) REGEXP binary 'null'`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select quote(null) REGEXP binary 'NULL'`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select quote(null) REGEXP 'NULL'`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select quote(null) REGEXP 'null'`).Check(testkit.Rows(`1`))
 
 	// for convert
 	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
@@ -4764,17 +4771,4 @@ func (s *testIntegrationSuite) TestIssue11309(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL b MINUTE_SECOND) FROM t`).Check(testkit.Rows(`2004-03-13 03:14:52`, `2003-07-25 11:35:34`))
 	tk.MustQuery(`SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL c MINUTE_SECOND) FROM t`).Check(testkit.Rows(`2003-11-18 09:29:13`, `2003-11-18 05:21:13`))
 	tk.MustExec(`drop table if exists t;`)
-}
-
-
-func (s *testIntegrationSuite) TestQuote(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustQuery(`select quote(null) is NULL;`).Check(testkit.Rows(`0`))
-	tk.MustQuery(`select quote(null) is NOT NULL;`).Check(testkit.Rows(`1`))
-	tk.MustQuery(`select length(quote(null));`).Check(testkit.Rows(`4`))
-	tk.MustQuery(`select quote(null) REGEXP binary 'null'`).Check(testkit.Rows(`0`))
-	tk.MustQuery(`select quote(null) REGEXP binary 'NULL'`).Check(testkit.Rows(`1`))
-	tk.MustQuery(`select quote(null) REGEXP 'NULL'`).Check(testkit.Rows(`1`))
-	tk.MustQuery(`select quote(null) REGEXP 'null'`).Check(testkit.Rows(`1`))
 }
