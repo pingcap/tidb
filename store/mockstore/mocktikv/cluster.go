@@ -278,12 +278,13 @@ func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, peerIDs []uint
 }
 
 // SplitRaw splits a Region at the key (not encoded) and creates new Region.
-func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) {
+func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *Region {
 	c.Lock()
 	defer c.Unlock()
 
 	newRegion := c.regions[regionID].split(newRegionID, rawKey, peerIDs, leaderPeerID)
 	c.regions[newRegionID] = newRegion
+	return newRegion
 }
 
 // Merge merges 2 regions, their key ranges should be adjacent.
