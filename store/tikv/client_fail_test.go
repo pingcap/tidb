@@ -25,11 +25,24 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
+type testClientFailSuite struct {
+	OneByOneSuite
+}
+
+func (s *testClientFailSuite) SetUpSuite(c *C) {
+	// This lock make testClientFailSuite runs exclusively.
+	withTiKVGlobalLock.Lock()
+}
+
+func (s testClientFailSuite) TearDownSuite(c *C) {
+	withTiKVGlobalLock.Unlock()
+}
+
 func setGrpcConnectionCount(count uint) {
 	config.GetGlobalConfig().TiKVClient.GrpcConnectionCount = count
 }
 
-func (s *testClientSuite) TestPanicInRecvLoop(c *C) {
+func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests", `panic`), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop", `return("0")`), IsNil)
 
