@@ -2696,14 +2696,12 @@ func (b *builtinQuoteSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_quote
 func (b *builtinQuoteSig) evalString(row chunk.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
-
 	if err != nil {
 		return "", true, err
 	} else if isNull {
 		// If the argument is NULL, the return value is the word “NULL” without enclosing single quotation marks.
 		return "NULL", false, err
 	}
-
 
 	runes := []rune(str)
 	buffer := bytes.NewBufferString("")
