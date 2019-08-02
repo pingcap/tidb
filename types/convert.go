@@ -560,14 +560,18 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		if !unsigned {
 			lBound := IntergerSignedLowerBound(mysql.TypeLonglong)
 			uBound := IntergerSignedUpperBound(mysql.TypeLonglong)
-			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeDouble)
+			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
 		}
 		bound := IntergerUnsignedUpperBound(mysql.TypeLonglong)
-		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
+		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeLonglong)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
 		str := string(hack.String(j.GetString()))
-		return StrToInt(sc, str)
+		if !unsigned {
+			return StrToInt(sc, str)
+		}
+		u, err := StrToUint(sc, str)
+		return int64(u), errors.Trace(err)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }

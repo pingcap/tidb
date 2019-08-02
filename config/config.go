@@ -36,7 +36,7 @@ import (
 const (
 	MaxLogFileSize    = 4096 // MB
 	MinPessimisticTTL = time.Second * 15
-	MaxPessimisticTTL = time.Second * 60
+	MaxPessimisticTTL = time.Second * 120
 	// DefTxnEntryCountLimit is the default value of TxnEntryCountLimit.
 	DefTxnEntryCountLimit = 300 * 1000
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
@@ -96,6 +96,7 @@ type Config struct {
 	// TODO: remove this after table lock features stable.
 	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
 	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
+	SplitRegionMaxNum   uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
 }
 
 // Log is the log section of config.
@@ -334,6 +335,7 @@ var defaultConf = Config{
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
+	SplitRegionMaxNum:            1000,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 2048000,
@@ -408,7 +410,7 @@ var defaultConf = Config{
 		Enable:        false,
 		Default:       false,
 		MaxRetryCount: 256,
-		TTL:           "30s",
+		TTL:           "40s",
 	},
 }
 

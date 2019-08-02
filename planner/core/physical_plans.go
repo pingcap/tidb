@@ -119,6 +119,8 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	isPartition     bool
 	physicalTableID int64
+
+	GenExprs map[model.TableColumnID]expression.Expression
 }
 
 // PhysicalMemTable reads memory table.
@@ -160,6 +162,9 @@ type PhysicalTableScan struct {
 	physicalTableID int64
 
 	rangeDecidedBy []*expression.Column
+
+	// HandleIdx is the index of handle, which is only used for admin check table.
+	HandleIdx int
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.

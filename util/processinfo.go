@@ -27,12 +27,12 @@ type ProcessInfo struct {
 	ID                        uint64
 	User                      string
 	Host                      string
-	DB                        interface{}
+	DB                        string
 	Command                   byte
 	Plan                      interface{}
 	Time                      time.Time
 	State                     uint16
-	Info                      interface{}
+	Info                      string
 	CurTxnStartTS             uint64
 	StmtCtx                   *stmtctx.StatementContext
 	StatsInfo                 func(interface{}) map[string]uint64
@@ -45,19 +45,23 @@ type ProcessInfo struct {
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
 func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	var info interface{}
-	if pi.Info != nil {
+	if len(pi.Info) > 0 {
 		if full {
-			info = pi.Info.(string)
+			info = pi.Info
 		} else {
-			info = fmt.Sprintf("%.100v", pi.Info.(string))
+			info = fmt.Sprintf("%.100v", pi.Info)
 		}
 	}
 	t := uint64(time.Since(pi.Time) / time.Second)
+	var db interface{}
+	if len(pi.DB) > 0 {
+		db = pi.DB
+	}
 	return []interface{}{
 		pi.ID,
 		pi.User,
 		pi.Host,
-		pi.DB,
+		db,
 		mysql.Command2Str[pi.Command],
 		t,
 		fmt.Sprintf("%d", pi.State),

@@ -658,10 +658,17 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 	}
 	var detail *kvrpcpb.ExecDetails
 	if resp.Resp != nil {
-		detail = resp.Resp.(*coprocessor.Response).ExecDetails
-	} else if resp.Resp != nil && resp.Resp.(*tikvrpc.CopStreamResponse).Response != nil {
-		// streaming request returns io.EOF, so the first resp.CopStream.Response maybe nil.
-		detail = (resp.Resp.(*tikvrpc.CopStreamResponse)).ExecDetails
+		switch r := resp.Resp.(type) {
+		case *coprocessor.Response:
+			detail = r.ExecDetails
+		case *tikvrpc.CopStreamResponse:
+			// streaming request returns io.EOF, so the first CopStreamResponse.Response maybe nil.
+			if r.Response != nil {
+				detail = r.Response.ExecDetails
+			}
+		default:
+			panic("unreachable")
+		}
 	}
 
 	if detail != nil && detail.HandleTime != nil {
@@ -718,7 +725,11 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
-			logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
+			if errors.Cause(err) == context.Canceled {
+				logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
+			} else {
+				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
+			}
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
 		lastRange = resp.Range
