@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
+// Unless required by aprettyPrintlicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
@@ -27,11 +27,11 @@ import (
 func ToHex(msg proto.Message) string {
 	val := reflect.ValueOf(msg)
 	var w bytes.Buffer
-	pp(&w, val)
+	prettyPrint(&w, val)
 	return w.String()
 }
 
-func pp(w io.Writer, val reflect.Value) {
+func prettyPrint(w io.Writer, val reflect.Value) {
 	tp := val.Type()
 	switch val.Kind() {
 	case reflect.Slice:
@@ -53,14 +53,14 @@ func pp(w io.Writer, val reflect.Value) {
 				fmt.Fprintf(w, " ")
 			}
 			fmt.Fprintf(w, "%s:", ft.Name)
-			pp(w, fv)
+			prettyPrint(w, fv)
 		}
 		fmt.Fprintf(w, "}")
 	case reflect.Ptr:
 		if val.IsNil() {
 			fmt.Fprintf(w, "%v", val.Interface())
 		} else {
-			pp(w, reflect.Indirect(val))
+			prettyPrint(w, reflect.Indirect(val))
 		}
 	default:
 		fmt.Fprintf(w, "%v", val.Interface())
