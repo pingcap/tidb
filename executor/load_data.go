@@ -318,10 +318,10 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		}
 		// The field with only "\N" in it is handled as NULL in the csv file.
 		// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-		if cols[i].maybeNull && string(cols[i].str) == "N" {
+		if cols[i].maybeNull && string(hack.String(cols[i].str)) == "N" {
 			e.row[i].SetNull()
 		} else {
-			e.row[i].SetString(string(cols[i].str))
+			e.row[i].SetString(string(hack.String(cols[i].str))) // field str is byte array allocated every line
 		}
 	}
 	row, err := e.getRowInPlace(ctx, e.row, e.rows[e.curBatchCnt])

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -578,13 +579,13 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 	for i, r := range e.toBeCheckedRows {
 		skip := false
 		if r.handleKey != nil {
-			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
+			if _, found := e.dupKVs[string(hack.String(r.handleKey.newKV.key))]; found {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 				continue
 			}
 		}
 		for _, uk := range r.uniqueKeys {
-			if _, found := e.dupKVs[string(uk.newKV.key)]; found {
+			if _, found := e.dupKVs[string(hack.String(uk.newKV.key))]; found {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 				skip = true
@@ -601,10 +602,10 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 				return err
 			}
 			if r.handleKey != nil {
-				e.dupKVs[string(r.handleKey.newKV.key)] = r.handleKey.newKV.value
+				e.dupKVs[string(hack.String(r.handleKey.newKV.key))] = r.handleKey.newKV.value
 			}
 			for _, uk := range r.uniqueKeys {
-				e.dupKVs[string(uk.newKV.key)] = []byte{}
+				e.dupKVs[string(hack.String(uk.newKV.key))] = []byte{}
 			}
 		}
 	}

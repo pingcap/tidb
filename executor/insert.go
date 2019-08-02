@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -91,7 +92,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 
 	for i, r := range e.toBeCheckedRows {
 		if r.handleKey != nil {
-			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
+			if _, found := e.dupKVs[string(hack.String(r.handleKey.newKV.key))]; found {
 				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
 				if err != nil {
 					return err
@@ -104,7 +105,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 			}
 		}
 		for _, uk := range r.uniqueKeys {
-			if val, found := e.dupKVs[string(uk.newKV.key)]; found {
+			if val, found := e.dupKVs[string(hack.String(uk.newKV.key))]; found {
 				handle, err := tables.DecodeHandle(val)
 				if err != nil {
 					return err
@@ -226,7 +227,7 @@ func (e *InsertExec) updateDupKeyValues(oldHandle int64, newHandle int64,
 	}
 
 	if handleChanged {
-		delete(e.dupOldRowValues, string(e.Table.RecordKey(oldHandle)))
+		delete(e.dupOldRowValues, string(hack.String(e.Table.RecordKey(oldHandle))))
 		e.fillBackKeys(e.Table, fillBackKeysInRows[0], newHandle)
 	} else {
 		e.fillBackKeys(e.Table, fillBackKeysInRows[0], oldHandle)

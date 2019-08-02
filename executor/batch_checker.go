@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 type keyValue struct {
@@ -225,8 +226,8 @@ func (b *batchChecker) initDupOldRowFromHandleKey() {
 			continue
 		}
 		k := r.handleKey.newKV.key
-		if val, found := b.dupKVs[string(k)]; found {
-			b.dupOldRowValues[string(k)] = val
+		if val, found := b.dupKVs[string(hack.String(k))]; found {
+			b.dupOldRowValues[string(hack.String(k))] = val
 		}
 	}
 }
@@ -235,7 +236,7 @@ func (b *batchChecker) initDupOldRowFromUniqueKey(ctx sessionctx.Context, newRow
 	batchKeys := make([]kv.Key, 0, len(newRows))
 	for _, r := range b.toBeCheckedRows {
 		for _, uk := range r.uniqueKeys {
-			if val, found := b.dupKVs[string(uk.newKV.key)]; found {
+			if val, found := b.dupKVs[string(hack.String(uk.newKV.key))]; found {
 				handle, err := tables.DecodeHandle(val)
 				if err != nil {
 					return err
@@ -257,13 +258,13 @@ func (b *batchChecker) initDupOldRowValue(ctx sessionctx.Context, t table.Table,
 // fillBackKeys fills the updated key-value pair to the dupKeyValues for further check.
 func (b *batchChecker) fillBackKeys(t table.Table, row toBeCheckedRow, handle int64) {
 	if row.rowValue != nil {
-		b.dupOldRowValues[string(t.RecordKey(handle))] = row.rowValue
+		b.dupOldRowValues[string(hack.String(t.RecordKey(handle)))] = row.rowValue
 	}
 	if row.handleKey != nil {
-		b.dupKVs[string(row.handleKey.newKV.key)] = row.handleKey.newKV.value
+		b.dupKVs[string(hack.String(row.handleKey.newKV.key))] = row.handleKey.newKV.value
 	}
 	for _, uk := range row.uniqueKeys {
-		b.dupKVs[string(uk.newKV.key)] = tables.EncodeHandle(handle)
+		b.dupKVs[string(hack.String(uk.newKV.key))] = tables.EncodeHandle(handle)
 	}
 }
 
@@ -275,10 +276,10 @@ func (b *batchChecker) deleteDupKeys(ctx sessionctx.Context, t table.Table, rows
 	}
 	for _, row := range cleanupRows {
 		if row.handleKey != nil {
-			delete(b.dupKVs, string(row.handleKey.newKV.key))
+			delete(b.dupKVs, string(hack.String(row.handleKey.newKV.key)))
 		}
 		for _, uk := range row.uniqueKeys {
-			delete(b.dupKVs, string(uk.newKV.key))
+			delete(b.dupKVs, string(hack.String(uk.newKV.key)))
 		}
 	}
 	return nil
@@ -288,7 +289,7 @@ func (b *batchChecker) deleteDupKeys(ctx sessionctx.Context, t table.Table, rows
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
 func (b *batchChecker) getOldRow(ctx sessionctx.Context, t table.Table, handle int64,
 	genExprs []expression.Expression) ([]types.Datum, error) {
-	oldValue, ok := b.dupOldRowValues[string(t.RecordKey(handle))]
+	oldValue, ok := b.dupOldRowValues[string(hack.String(t.RecordKey(handle)))]
 	if !ok {
 		return nil, errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", handle)
 	}
