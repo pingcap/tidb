@@ -40,6 +40,11 @@ func (col *CorrelatedColumn) Clone() Expression {
 	return col
 }
 
+// VecEval evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) (err error) {
+	return genVecFromConstExpr(ctx, col, input, result)
+}
+
 // Eval implements Expression interface.
 func (col *CorrelatedColumn) Eval(row chunk.Row) (types.Datum, error) {
 	return *col.Data, nil
@@ -179,6 +184,12 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 		return newCol.UniqueID == col.UniqueID
 	}
 	return false
+}
+
+// VecEval evaluates this expression in a vectorized manner.
+func (col *Column) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyConstruct(result)
+	return nil
 }
 
 // String implements Stringer interface.

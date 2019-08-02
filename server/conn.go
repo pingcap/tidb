@@ -636,7 +636,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				} else {
 					errStack := errors.ErrorStack(err)
 					if !strings.Contains(errStack, "use of closed network connection") {
-						logutil.Logger(ctx).Error("read packet failed, close this connection", zap.Error(err))
+						logutil.Logger(ctx).Warn("read packet failed, close this connection",
+							zap.Error(errors.SuspendStack(err)))
 					}
 				}
 			}
