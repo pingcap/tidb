@@ -59,10 +59,11 @@ func verifyColumnGenerationSingle(dependCols map[string]struct{}, cols []*table.
 	}
 	// mysql then will check relative generated column should be prior to it, so it should be in one loop
 	for _, col := range cols {
-		_, ok := dependCols[col.Name.L]
-		if col.Offset >= pos && ok && col.IsGenerated() {
-			// Generated column can refer only to generated columns defined prior to it.
-			return errGeneratedColumnNonPrior.GenWithStackByArgs()
+		if _, ok := dependCols[col.Name.L]; ok {
+			if col.IsGenerated() && col.Offset >= pos {
+				// Generated column can refer only to generated columns defined prior to it.
+				return errGeneratedColumnNonPrior.GenWithStackByArgs()
+			}
 		}
 	}
 	return nil
