@@ -4477,3 +4477,16 @@ func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_HOUR)`).Check(testkit.Rows("2007-03-31 00:08:28"))
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR_MONTH)`).Check(testkit.Rows("2009-05-28 22:08:28"))
 }
+
+
+func (s *testIntegrationSuite) TestQuote(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery(`select quote(null) is NULL;`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select quote(null) is NOT NULL;`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select length(quote(null));`).Check(testkit.Rows(`4`))
+	tk.MustQuery(`select quote(null) REGEXP binary 'null'`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select quote(null) REGEXP binary 'NULL'`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select quote(null) REGEXP 'NULL'`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select quote(null) REGEXP 'null'`).Check(testkit.Rows(`1`))
+}
