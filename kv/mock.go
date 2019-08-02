@@ -116,9 +116,6 @@ func (t *mockTxn) SetVars(vars *Variables) {
 func (t *mockTxn) SetAssertion(key Key, assertion AssertionType) {}
 func (t *mockTxn) ConfirmAssertions(succ bool)                   {}
 
-func (t *mockTxn) SetFollowerRead()   {}
-func (t *mockTxn) ClearFollowerRead() {}
-
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
 	return &mockTxn{
@@ -233,6 +230,5 @@ func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 	return s.store.IterReverse(k)
 }
 
-func (s *mockSnapshot) SetFollowerRead() {}
-
-func (s *mockSnapshot) ClearFollowerRead() {}
+func (s *mockSnapshot) SetOption(opt Option, val interface{}) {}
+func (s *mockSnapshot) DelOption(opt Option)                  {}

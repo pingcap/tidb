@@ -50,6 +50,8 @@ const (
 	Pessimistic
 	// SnapshotTS is defined to set snapshot ts.
 	SnapshotTS
+	// Set replica read
+	ReplicaRead
 )
 
 // Priority value for transaction priority.
@@ -74,7 +76,7 @@ type ReplicaReadType byte
 
 const (
 	// ReplicaReadLeader stands for 'read from leader'.
-	ReplicaReadLeader ReplicaReadType = iota
+	ReplicaReadLeader ReplicaReadType = 1 << iota
 	// ReplicaReadFollower stands for 'read from follower'.
 	ReplicaReadFollower
 	// ReplicaReadLearner stands for 'read from learner'.
@@ -175,11 +177,6 @@ type Transaction interface {
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	BatchGet(keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
-
-	// SetFollowerRead sets current transaction to read data from follower
-	SetFollowerRead()
-	// ClearFollowerRead disables follower read on current transaction
-	ClearFollowerRead()
 }
 
 // AssertionProto is an interface defined for the assertion protocol.
@@ -278,10 +275,11 @@ type Snapshot interface {
 	// SetPriority snapshot set the priority
 	SetPriority(priority int)
 
-	// SetFollowerRead sets current snapshot to read data from follower
-	SetFollowerRead()
-	// ClearFollowerRead disables follower read on current snapshot
-	ClearFollowerRead()
+	// SetOption sets an option with a value, when val is nil, uses the default
+	// value of this option. Only ReplicaRead is supported for snapshot
+	SetOption(opt Option, val interface{})
+	// DelOption deletes an option.
+	DelOption(opt Option)
 }
 
 // Driver is the interface that must be implemented by a KV storage.

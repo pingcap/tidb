@@ -1248,7 +1248,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 		if s.sessionVars.ReplicaRead.IsFollowerRead() {
-			s.txn.SetFollowerRead()
+			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
 	}
 	return &s.txn, nil
@@ -1311,7 +1311,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	txn.SetCap(s.getMembufCap())
 	txn.SetVars(s.GetSessionVars().KVVars)
 	if s.GetSessionVars().ReplicaRead.IsFollowerRead() {
-		txn.SetFollowerRead()
+		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()

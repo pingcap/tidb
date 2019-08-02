@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -69,11 +68,10 @@ type Region struct {
 // RegionStore represents region stores info
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
-	workStoreIdx      int32    // point to current work peer in meta.Peers and work store in stores(same idx)
-	stores            []*Store // stores in this region
-	storeFails        []uint32 // snapshots of store's fail, need reload when `storeFails[curr] != stores[cur].fail`
-	nextFollowerStore uint32   // point to current follower in followers store
-	followers         []int32  // followers' index in this region
+	workStoreIdx int32    // point to current work peer in meta.Peers and work store in stores(same idx)
+	stores       []*Store // stores in this region
+	storeFails   []uint32 // snapshots of store's fail, need reload when `storeFails[curr] != stores[cur].fail`
+	followers    []int32  // followers' index in this region
 }
 
 // clone clones region store struct.
@@ -83,11 +81,10 @@ func (r *RegionStore) clone() *RegionStore {
 		storeFails[i] = e
 	}
 	return &RegionStore{
-		workStoreIdx:      r.workStoreIdx,
-		stores:            r.stores,
-		storeFails:        storeFails,
-		nextFollowerStore: rand.Uint32(),
-		followers:         r.followers,
+		workStoreIdx: r.workStoreIdx,
+		stores:       r.stores,
+		storeFails:   storeFails,
+		followers:    r.followers,
 	}
 }
 
@@ -102,13 +99,12 @@ func (r *RegionStore) initFollowers() {
 }
 
 // return next follower store's index
-func (r *RegionStore) nextFollower() int32 {
+func (r *RegionStore) follower(seed uint32) int32 {
 	followers := r.followers
 	if len(followers) == 0 {
 		return r.workStoreIdx
 	}
-	nextFollower := atomic.AddUint32(&r.nextFollowerStore, 1)
-	return followers[nextFollower%uint32(len(followers))]
+	return followers[seed%uint32(len(followers))]
 }
 
 // init initializes region after constructed.
@@ -116,11 +112,10 @@ func (r *Region) init(c *RegionCache) {
 	// region store pull used store from global store map
 	// to avoid acquire storeMu in later access.
 	rs := &RegionStore{
-		workStoreIdx:      0,
-		stores:            make([]*Store, 0, len(r.meta.Peers)),
-		storeFails:        make([]uint32, 0, len(r.meta.Peers)),
-		nextFollowerStore: rand.Uint32(),
-		followers:         make([]int32, 0, len(r.meta.Peers)-1),
+		workStoreIdx: 0,
+		stores:       make([]*Store, 0, len(r.meta.Peers)),
+		storeFails:   make([]uint32, 0, len(r.meta.Peers)),
+		followers:    make([]int32, 0, len(r.meta.Peers)-1),
 	}
 	for i, p := range r.meta.Peers {
 		c.storeMu.RLock()
@@ -287,7 +282,7 @@ func (c *RPCContext) String() string {
 
 // GetRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
-func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType) (*RPCContext, error) {
+func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -305,7 +300,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID, replicaRead k
 	var storeIdx int
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
-		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore)
+		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
 	default:
 		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
@@ -961,8 +956,8 @@ func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
-func (r *Region) FollowerStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer, idx int) {
-	return r.getStorePeer(rs, rs.nextFollower())
+func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, idx int) {
+	return r.getStorePeer(rs, rs.follower(followerStoreSeed))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.

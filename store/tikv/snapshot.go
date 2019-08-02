@@ -49,14 +49,15 @@ var (
 
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
-	store        *tikvStore
-	version      kv.Version
-	priority     pb.CommandPri
-	notFillCache bool
-	syncLog      bool
-	keyOnly      bool
-	vars         *kv.Variables
-	replicaRead  kv.ReplicaReadType
+	store           *tikvStore
+	version         kv.Version
+	priority        pb.CommandPri
+	notFillCache    bool
+	syncLog         bool
+	keyOnly         bool
+	vars            *kv.Variables
+	replicaRead     kv.ReplicaReadType
+	replicaReadSeed uint32
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -155,13 +156,12 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 	pending := batch.keys
 	for {
-		req := tikvrpc.NewRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
+		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version.Ver,
-		}, pb.Context{
+		}, s.replicaRead, s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
-			ReplicaRead:  s.replicaRead.IsFollowerRead(),
 		})
 		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutMedium)
 		if err != nil {
@@ -234,14 +234,13 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
 
-	req := tikvrpc.NewRequest(tikvrpc.CmdGet,
+	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
 		&pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
-		}, pb.Context{
+		}, s.replicaRead, s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
-			ReplicaRead:  s.replicaRead.IsFollowerRead(),
 		})
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
@@ -301,14 +300,21 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	return scanner, errors.Trace(err)
 }
 
-// SetFollowerRead sets current transaction to read data from follower
-func (s *tikvSnapshot) SetFollowerRead() {
-	s.replicaRead = kv.ReplicaReadFollower
+// SetOption sets an option with a value, when val is nil, uses the default
+// value of this option. Only ReplicaRead is supported for snapshot
+func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
+	switch opt {
+	case kv.ReplicaRead:
+		s.replicaRead = val.(kv.ReplicaReadType)
+	}
 }
 
 // ClearFollowerRead disables follower read on current transaction
-func (s *tikvSnapshot) ClearFollowerRead() {
-	s.replicaRead = kv.ReplicaReadLeader
+func (s *tikvSnapshot) DelOption(opt kv.Option) {
+	switch opt {
+	case kv.ReplicaRead:
+		s.replicaRead = kv.ReplicaReadLeader
+	}
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/kv"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -137,6 +138,7 @@ type Request struct {
 	Type CmdType
 	req  interface{}
 	kvrpcpb.Context
+	ReplicaReadSeed uint32
 }
 
 // NewRequest returns new kv rpc request.
@@ -152,6 +154,14 @@ func NewRequest(typ CmdType, pointer interface{}, ctxs ...kvrpcpb.Context) *Requ
 		Type: typ,
 		req:  pointer,
 	}
+}
+
+// NewReplicaReadRequest returns new kv rpc request with replica read.
+func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed uint32, ctxs ...kvrpcpb.Context) *Request {
+	req := NewRequest(typ, pointer, ctxs...)
+	req.ReplicaRead = replicaReadType.IsFollowerRead()
+	req.ReplicaReadSeed = replicaReadSeed
+	return req
 }
 
 // Get returns GetRequest in request.

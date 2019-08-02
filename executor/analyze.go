@@ -626,7 +626,8 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		})
 		var resp *tikvrpc.Response
 		var rpcCtx *tikv.RPCContext
-		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region, e.ctx.GetSessionVars().ReplicaRead)
+		// we always use the first follower when follower read is enabled
+		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region, e.ctx.GetSessionVars().ReplicaRead, 0)
 		if *err != nil {
 			return
 		}
@@ -927,7 +928,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 		return 0, err
 	}
 	if e.ctx.GetSessionVars().ReplicaRead.IsFollowerRead() {
-		snapshot.SetFollowerRead()
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(t.StartKey, t.EndKey)
@@ -951,7 +952,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 		return
 	}
 	if e.ctx.GetSessionVars().ReplicaRead.IsFollowerRead() {
-		snapshot.SetFollowerRead()
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	rander := rand.New(rand.NewSource(e.randSeed + int64(workID)))
 

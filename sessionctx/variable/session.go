@@ -456,6 +456,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		EnableIndexMerge:            false,
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
+		ReplicaRead:                 kv.ReplicaReadLeader,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,

@@ -101,7 +101,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		replicaRead = kv.ReplicaReadLeader
 	}
 	for {
-		ctx, err := s.regionCache.GetRPCContext(bo, regionID, replicaRead)
+		ctx, err := s.regionCache.GetRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
