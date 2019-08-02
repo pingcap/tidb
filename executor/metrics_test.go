@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 
 	. "github.com/pingcap/check"
@@ -63,7 +64,7 @@ func (s *testSuite4) TestStmtLabel(c *C) {
 		is := executor.GetInfoSchema(tk.Se)
 		err = plannercore.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is)
 		c.Assert(err, IsNil)
-		_, err = planner.Optimize(tk.Se, stmtNode, is)
+		_, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, is)
 		c.Assert(err, IsNil)
 		c.Assert(executor.GetStmtLabel(stmtNode), Equals, tt.label)
 	}
