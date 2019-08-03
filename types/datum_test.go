@@ -14,7 +14,6 @@
 package types
 
 import (
-	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -170,16 +169,7 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 
 	binLit, err := ParseHexStr("0x9999999999999999999999999999999999999999999")
 	c.Assert(err, IsNil)
-	// Turn this into int64 will cause out of range error when insert
-	d := Datum{}
-	d.SetBinaryLiteral(binLit)
-	sc := new(stmtctx.StatementContext)
-	sc.CastInInsert = true
-	sc.IgnoreTruncate = true
-	b, err := d.ToInt64(sc)
-	c.Assert(err, NotNil)
-	c.Assert(ErrOverflow.Equal(err), Equals, true)
-	c.Assert(b, Equals, int64(math.MaxInt64))
+	testDatumToInt64(c, binLit, -1)
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
