@@ -1483,10 +1483,14 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err := d.GetBinaryLiteral().ToInt(sc)
 		if sc.CastInInsert {
-			return ConvertUintToInt(val, upperBound, tp)
+			ival, err2 := ConvertUintToInt(val, upperBound, tp)
+			if err == nil {
+				err = err2
+			}
+			return ival, errors.Trace(err)
 		}
 		// Only cast(0x`xx` as signed) can get here, we don't need to consider upper bound.
-		return int64(val), err
+		return int64(val), errors.Trace(err)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", d.GetValue(), d.GetValue())
 	}
