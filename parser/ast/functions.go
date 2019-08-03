@@ -345,26 +345,24 @@ func (n *FuncCallExpr) Restore(ctx *RestoreCtx) error {
 		ctx.WriteKeyWord(n.Args[1].GetType().Charset)
 	case "adddate", "subdate", "date_add", "date_sub":
 		if err := n.Args[0].Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
+			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args[0]")
 		}
 		ctx.WritePlain(", ")
 		ctx.WriteKeyWord("INTERVAL ")
 		if err := n.Args[1].Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
+			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args[1]")
 		}
 		ctx.WritePlain(" ")
-		ctx.WriteKeyWord(n.Args[2].(ValueExpr).GetString())
+		if err := n.Args[2].Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args[2]")
+		}
 	case "extract":
-		ctx.WriteKeyWord(n.Args[0].(ValueExpr).GetString())
+		if err := n.Args[0].Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args[0]")
+		}
 		ctx.WriteKeyWord(" FROM ")
 		if err := n.Args[1].Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
-		}
-	case "get_format":
-		ctx.WriteKeyWord(n.Args[0].(ValueExpr).GetString())
-		ctx.WritePlain(", ")
-		if err := n.Args[1].Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
+			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args[1]")
 		}
 	case "position":
 		if err := n.Args[0].Restore(ctx); err != nil {
@@ -376,46 +374,25 @@ func (n *FuncCallExpr) Restore(ctx *RestoreCtx) error {
 		}
 	case "trim":
 		switch len(n.Args) {
-		case 1:
-			if err := n.Args[0].Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
-			}
-		case 2:
-			if err := n.Args[1].Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
-			}
-			ctx.WriteKeyWord(" FROM ")
-			if err := n.Args[0].Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
-			}
 		case 3:
-			switch fmt.Sprint(n.Args[2].(ValueExpr).GetValue()) {
-			case "3":
-				ctx.WriteKeyWord("TRAILING ")
-			case "2":
-				ctx.WriteKeyWord("LEADING ")
-			case "0", "1":
-				ctx.WriteKeyWord("BOTH ")
+			if err := n.Args[2].Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args[2]")
 			}
+			ctx.WritePlain(" ")
+			fallthrough
+		case 2:
 			if n.Args[1].(ValueExpr).GetValue() != nil {
 				if err := n.Args[1].Restore(ctx); err != nil {
-					return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
+					return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args[1]")
 				}
 				ctx.WritePlain(" ")
 			}
 			ctx.WriteKeyWord("FROM ")
+			fallthrough
+		case 1:
 			if err := n.Args[0].Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
+				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args[0]")
 			}
-		}
-	case "timestampdiff", "timestampadd":
-		ctx.WriteKeyWord(n.Args[0].(ValueExpr).GetString())
-		for i := 1; i < len(n.Args); {
-			ctx.WritePlain(", ")
-			if err := n.Args[i].Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
-			}
-			i++
 		}
 	default:
 		for i, argv := range n.Args {
@@ -452,12 +429,7 @@ func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
 		n.Args[0].Format(w)
 		fmt.Fprint(w, ", INTERVAL ")
 		n.Args[1].Format(w)
-		fmt.Fprintf(w, " %s", n.Args[2].(ValueExpr).GetDatumString())
-		return true
-	case TimestampAdd, TimestampDiff:
-		fmt.Fprintf(w, "%s, ", n.Args[0].(ValueExpr).GetDatumString())
-		n.Args[1].Format(w)
-		fmt.Fprint(w, ", ")
+		fmt.Fprint(w, " ")
 		n.Args[2].Format(w)
 		return true
 	}
@@ -582,6 +554,47 @@ const (
 	// TrimTrailing trims from right.
 	TrimTrailing
 )
+
+// String implements fmt.Stringer interface.
+func (direction TrimDirectionType) String() string {
+	switch direction {
+	case TrimBoth, TrimBothDefault:
+		return "BOTH"
+	case TrimLeading:
+		return "LEADING"
+	case TrimTrailing:
+		return "TRAILING"
+	default:
+		return ""
+	}
+}
+
+// TrimDirectionExpr is an expression representing the trim direction used in the TRIM() function.
+type TrimDirectionExpr struct {
+	exprNode
+	// Direction is the trim direction
+	Direction TrimDirectionType
+}
+
+// Restore implements Node interface.
+func (n *TrimDirectionExpr) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord(n.Direction.String())
+	return nil
+}
+
+// Format the ExprNode into a Writer.
+func (n *TrimDirectionExpr) Format(w io.Writer) {
+	fmt.Fprint(w, n.Direction.String())
+}
+
+// Accept implements Node Accept interface.
+func (n *TrimDirectionExpr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(n)
+}
 
 // DateArithType is type for DateArith type.
 type DateArithType byte
@@ -797,5 +810,181 @@ func (n *WindowFuncExpr) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Spec = *node.(*WindowSpec)
+	return v.Leave(n)
+}
+
+// TimeUnitType is the type for time and timestamp units.
+type TimeUnitType int
+
+const (
+	// TimeUnitInvalid is a placeholder for an invalid time or timestamp unit
+	TimeUnitInvalid TimeUnitType = iota
+	// TimeUnitMicrosecond is the time or timestamp unit MICROSECOND.
+	TimeUnitMicrosecond
+	// TimeUnitSecond is the time or timestamp unit SECOND.
+	TimeUnitSecond
+	// TimeUnitMinute is the time or timestamp unit MINUTE.
+	TimeUnitMinute
+	// TimeUnitHour is the time or timestamp unit HOUR.
+	TimeUnitHour
+	// TimeUnitDay is the time or timestamp unit DAY.
+	TimeUnitDay
+	// TimeUnitWeek is the time or timestamp unit WEEK.
+	TimeUnitWeek
+	// TimeUnitMonth is the time or timestamp unit MONTH.
+	TimeUnitMonth
+	// TimeUnitQuarter is the time or timestamp unit QUARTER.
+	TimeUnitQuarter
+	// TimeUnitYear is the time or timestamp unit YEAR.
+	TimeUnitYear
+	// TimeUnitSecondMicrosecond is the time unit SECOND_MICROSECOND.
+	TimeUnitSecondMicrosecond
+	// TimeUnitMinuteMicrosecond is the time unit MINUTE_MICROSECOND.
+	TimeUnitMinuteMicrosecond
+	// TimeUnitMinuteSecond is the time unit MINUTE_SECOND.
+	TimeUnitMinuteSecond
+	// TimeUnitHourMicrosecond is the time unit HOUR_MICROSECOND.
+	TimeUnitHourMicrosecond
+	// TimeUnitHourSecond is the time unit HOUR_SECOND.
+	TimeUnitHourSecond
+	// TimeUnitHourMinute is the time unit HOUR_MINUTE.
+	TimeUnitHourMinute
+	// TimeUnitDayMicrosecond is the time unit DAY_MICROSECOND.
+	TimeUnitDayMicrosecond
+	// TimeUnitDaySecond is the time unit DAY_SECOND.
+	TimeUnitDaySecond
+	// TimeUnitDayMinute is the time unit DAY_MINUTE.
+	TimeUnitDayMinute
+	// TimeUnitDayHour is the time unit DAY_HOUR.
+	TimeUnitDayHour
+	// TimeUnitYearMonth is the time unit YEAR_MONTH.
+	TimeUnitYearMonth
+)
+
+// String implements fmt.Stringer interface.
+func (unit TimeUnitType) String() string {
+	switch unit {
+	case TimeUnitMicrosecond:
+		return "MICROSECOND"
+	case TimeUnitSecond:
+		return "SECOND"
+	case TimeUnitMinute:
+		return "MINUTE"
+	case TimeUnitHour:
+		return "HOUR"
+	case TimeUnitDay:
+		return "DAY"
+	case TimeUnitWeek:
+		return "WEEK"
+	case TimeUnitMonth:
+		return "MONTH"
+	case TimeUnitQuarter:
+		return "QUARTER"
+	case TimeUnitYear:
+		return "YEAR"
+	case TimeUnitSecondMicrosecond:
+		return "SECOND_MICROSECOND"
+	case TimeUnitMinuteMicrosecond:
+		return "MINUTE_MICROSECOND"
+	case TimeUnitMinuteSecond:
+		return "MINUTE_SECOND"
+	case TimeUnitHourMicrosecond:
+		return "HOUR_MICROSECOND"
+	case TimeUnitHourSecond:
+		return "HOUR_SECOND"
+	case TimeUnitHourMinute:
+		return "HOUR_MINUTE"
+	case TimeUnitDayMicrosecond:
+		return "DAY_MICROSECOND"
+	case TimeUnitDaySecond:
+		return "DAY_SECOND"
+	case TimeUnitDayMinute:
+		return "DAY_MINUTE"
+	case TimeUnitDayHour:
+		return "DAY_HOUR"
+	case TimeUnitYearMonth:
+		return "YEAR_MONTH"
+	default:
+		return ""
+	}
+}
+
+// TimeUnitExpr is an expression representing a time or timestamp unit.
+type TimeUnitExpr struct {
+	exprNode
+	// Unit is the time or timestamp unit.
+	Unit TimeUnitType
+}
+
+// Restore implements Node interface.
+func (n *TimeUnitExpr) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord(n.Unit.String())
+	return nil
+}
+
+// Format the ExprNode into a Writer.
+func (n *TimeUnitExpr) Format(w io.Writer) {
+	fmt.Fprint(w, n.Unit.String())
+}
+
+// Accept implements Node Accept interface.
+func (n *TimeUnitExpr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(n)
+}
+
+// GetFormatSelectorType is the type for the first argument of GET_FORMAT() function.
+type GetFormatSelectorType int
+
+const (
+	// GetFormatSelectorDate is the GET_FORMAT selector DATE.
+	GetFormatSelectorDate GetFormatSelectorType = iota + 1
+	// GetFormatSelectorTime is the GET_FORMAT selector TIME.
+	GetFormatSelectorTime
+	// GetFormatSelectorDatetime is the GET_FORMAT selector DATETIME and TIMESTAMP.
+	GetFormatSelectorDatetime
+)
+
+// GetFormatSelectorExpr is an expression used as the first argument of GET_FORMAT() function.
+type GetFormatSelectorExpr struct {
+	exprNode
+	// Selector is the GET_FORMAT() selector.
+	Selector GetFormatSelectorType
+}
+
+// String implements fmt.Stringer interface.
+func (selector GetFormatSelectorType) String() string {
+	switch selector {
+	case GetFormatSelectorDate:
+		return "DATE"
+	case GetFormatSelectorTime:
+		return "TIME"
+	case GetFormatSelectorDatetime:
+		return "DATETIME"
+	default:
+		return ""
+	}
+}
+
+// Restore implements Node interface.
+func (n *GetFormatSelectorExpr) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord(n.Selector.String())
+	return nil
+}
+
+// Format the ExprNode into a Writer.
+func (n *GetFormatSelectorExpr) Format(w io.Writer) {
+	fmt.Fprint(w, n.Selector.String())
+}
+
+// Accept implements Node Accept interface.
+func (n *GetFormatSelectorExpr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
 	return v.Leave(n)
 }
