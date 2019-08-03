@@ -516,6 +516,7 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	}
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
+	sc.CastInInsert = true
 	sc.TimeZone = time.UTC
 	sc.IgnoreTruncate = true
 	casted, err := d.ConvertTo(sc, ft)
@@ -544,6 +545,7 @@ func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	}
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
+	sc.CastInInsert = true
 	casted, err := d.ConvertTo(sc, ft)
 	c.Assert(err, NotNil)
 	if casted.IsNull() {
@@ -563,6 +565,21 @@ func signedDeny(c *C, tp byte, value interface{}, expected string) {
 	deny(c, tp, value, false, expected)
 }
 
+func signedDenyNoyInInsert(c *C, tp byte, value interface{}, expected string) {
+	ft := NewFieldType(tp)
+	d := NewDatum(value)
+	sc := new(stmtctx.StatementContext)
+	casted, err := d.ConvertTo(sc, ft)
+	c.Assert(err, IsNil)
+	if casted.IsNull() {
+		c.Assert(expected, Equals, "<nil>")
+	} else {
+		str, err := casted.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, expected)
+	}
+}
+
 func strvalue(v interface{}) string {
 	return fmt.Sprintf("%v", v)
 }
@@ -575,7 +592,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeTiny, 127, "127")
 	signedDeny(c, mysql.TypeTiny, 128, "127")
 	signedAccept(c, mysql.TypeTiny, NewBinaryLiteralFromUint(127, -1), "127")
-	signedDeny(c, mysql.TypeTiny, NewBinaryLiteralFromUint(128, -1), "128")
+	signedDeny(c, mysql.TypeTiny, NewBinaryLiteralFromUint(128, -1), "127")
 	unsignedDeny(c, mysql.TypeTiny, -1, "255")
 	unsignedAccept(c, mysql.TypeTiny, 0, "0")
 	unsignedAccept(c, mysql.TypeTiny, 255, "255")
@@ -589,7 +606,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeShort, int64(math.MaxInt16), strvalue(int64(math.MaxInt16)))
 	signedDeny(c, mysql.TypeShort, int64(math.MaxInt16)+1, strvalue(int64(math.MaxInt16)))
 	signedAccept(c, mysql.TypeShort, NewBinaryLiteralFromUint(math.MaxInt16, -1), strvalue(int64(math.MaxInt16)))
-	signedDeny(c, mysql.TypeShort, NewBinaryLiteralFromUint(math.MaxInt16+1, -1), strvalue(int64(math.MaxInt16+1)))
+	signedDeny(c, mysql.TypeShort, NewBinaryLiteralFromUint(math.MaxInt16+1, -1), strvalue(int64(math.MaxInt16)))
 	unsignedDeny(c, mysql.TypeShort, -1, "65535")
 	unsignedAccept(c, mysql.TypeShort, 0, "0")
 	unsignedAccept(c, mysql.TypeShort, uint64(math.MaxUint16), strvalue(uint64(math.MaxUint16)))
@@ -603,7 +620,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeInt24, 1<<23-1, strvalue(1<<23-1))
 	signedDeny(c, mysql.TypeInt24, 1<<23, strvalue(1<<23-1))
 	signedAccept(c, mysql.TypeInt24, NewBinaryLiteralFromUint(1<<23-1, -1), strvalue(1<<23-1))
-	signedDeny(c, mysql.TypeInt24, NewBinaryLiteralFromUint(1<<23, -1), strvalue(1<<23))
+	signedDeny(c, mysql.TypeInt24, NewBinaryLiteralFromUint(1<<23, -1), strvalue(1<<23-1))
 	unsignedDeny(c, mysql.TypeInt24, -1, "16777215")
 	unsignedAccept(c, mysql.TypeInt24, 0, "0")
 	unsignedAccept(c, mysql.TypeInt24, 1<<24-1, strvalue(1<<24-1))
@@ -619,8 +636,9 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedDeny(c, mysql.TypeLong, int64(math.MaxInt32)+1, strvalue(int64(math.MaxInt32)))
 	signedDeny(c, mysql.TypeLong, "1343545435346432587475", strvalue(int64(math.MaxInt32)))
 	signedAccept(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxInt32, -1), strvalue(int64(math.MaxInt32)))
-	signedDeny(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(-1))
-	signedDeny(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxInt32+1, -1), strvalue(int64(math.MaxInt32+1)))
+	signedDeny(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(int64(math.MaxInt32)))
+	signedDenyNoyInInsert(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(-1))
+	signedDeny(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxInt32+1, -1), strvalue(int64(math.MaxInt32)))
 	unsignedDeny(c, mysql.TypeLong, -1, "4294967295")
 	unsignedAccept(c, mysql.TypeLong, 0, "0")
 	unsignedAccept(c, mysql.TypeLong, uint64(math.MaxUint32), strvalue(uint64(math.MaxUint32)))
@@ -634,7 +652,8 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeLonglong, int64(math.MaxInt64), strvalue(int64(math.MaxInt64)))
 	signedDeny(c, mysql.TypeLonglong, math.MaxInt64*1.1, strvalue(int64(math.MaxInt64)))
 	signedAccept(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64, -1), strvalue(int64(math.MaxInt64)))
-	signedDeny(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64+1, -1), strvalue(int64(math.MinInt64)))
+	signedDeny(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64+1, -1), strvalue(int64(math.MaxInt64)))
+	signedDenyNoyInInsert(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64+1, -1), strvalue(math.MinInt64))
 	unsignedAccept(c, mysql.TypeLonglong, -1, "18446744073709551615")
 	unsignedAccept(c, mysql.TypeLonglong, 0, "0")
 	unsignedAccept(c, mysql.TypeLonglong, uint64(math.MaxUint64), strvalue(uint64(math.MaxUint64)))
