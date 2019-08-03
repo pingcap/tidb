@@ -1451,6 +1451,8 @@ const (
 	TableOptionIndexDirectory
 	TableOptionStorageMedia
 	TableOptionStatsSamplePages
+	TableOptionSecondaryEngine
+	TableOptionSecondaryEngineNull
 )
 
 // RowFormat types
@@ -1631,6 +1633,14 @@ func (n *TableOption) Restore(ctx *RestoreCtx) error {
 		} else {
 			ctx.WritePlainf("%d", n.UintValue)
 		}
+	case TableOptionSecondaryEngine:
+		ctx.WriteKeyWord("SECONDARY_ENGINE ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case TableOptionSecondaryEngineNull:
+		ctx.WriteKeyWord("SECONDARY_ENGINE ")
+		ctx.WritePlain("= ")
+		ctx.WriteKeyWord("NULL")
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}

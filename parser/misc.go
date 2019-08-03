@@ -464,6 +464,7 @@ var tokenMap = map[string]int{
 	"SCHEMA":                   database,
 	"SCHEMAS":                  databases,
 	"SECOND":                   second,
+	"SECONDARY_ENGINE":         secondaryEngine,
 	"SECOND_MICROSECOND":       secondMicrosecond,
 	"SECURITY":                 security,
 	"SELECT":                   selectKwd,
