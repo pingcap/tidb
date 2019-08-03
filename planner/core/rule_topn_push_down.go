@@ -14,6 +14,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
 )
@@ -22,7 +24,7 @@ import (
 type pushDownTopNOptimizer struct {
 }
 
-func (s *pushDownTopNOptimizer) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (s *pushDownTopNOptimizer) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	return p.pushDownTopN(nil), nil
 }
 

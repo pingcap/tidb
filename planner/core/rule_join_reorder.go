@@ -14,6 +14,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -52,7 +54,7 @@ type jrNode struct {
 	cumCost float64
 }
 
-func (s *joinReOrderSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	return s.optimizeRecursive(p.context(), p)
 }
 

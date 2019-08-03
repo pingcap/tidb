@@ -36,7 +36,7 @@ const (
 )
 
 // EvalAstExpr evaluates ast expression directly.
-var EvalAstExpr func(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
 // Expression represents all scalar expression in SQL.
 type Expression interface {

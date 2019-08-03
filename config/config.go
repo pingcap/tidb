@@ -37,7 +37,7 @@ import (
 const (
 	MaxLogFileSize    = 4096 // MB
 	MinPessimisticTTL = time.Second * 15
-	MaxPessimisticTTL = time.Second * 60
+	MaxPessimisticTTL = time.Second * 120
 )
 
 // Valid config maps
@@ -395,7 +395,7 @@ var defaultConf = Config{
 		Enable:        false,
 		Default:       false,
 		MaxRetryCount: 256,
-		TTL:           "30s",
+		TTL:           "40s",
 	},
 }
 
