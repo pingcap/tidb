@@ -82,7 +82,7 @@ func (sg *sessionPool) close() {
 	if sg.mu.closed || sg.resPool == nil {
 		return
 	}
-	logutil.Logger(ddlLogCtx).Info("[ddl] closing sessionPool")
+	logutil.BgLogger().Info("[ddl] closing sessionPool")
 	sg.resPool.Close()
 	sg.mu.closed = true
 }

@@ -22,10 +22,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
-var _ SchemaSyncer = &MockSchemaSyncer{}
+var _ util.SchemaSyncer = &MockSchemaSyncer{}
 
 const mockCheckVersInterval = 2 * time.Millisecond
 
@@ -37,7 +38,7 @@ type MockSchemaSyncer struct {
 }
 
 // NewMockSchemaSyncer creates a new mock SchemaSyncer.
-func NewMockSchemaSyncer() SchemaSyncer {
+func NewMockSchemaSyncer() util.SchemaSyncer {
 	return &MockSchemaSyncer{}
 }
 
@@ -112,6 +113,15 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 		}
 	}
 }
+
+// NotifyCleanExpiredPaths implements SchemaSyncer.NotifyCleanExpiredPaths interface.
+func (s *MockSchemaSyncer) NotifyCleanExpiredPaths() bool { return true }
+
+// StartCleanWork implements SchemaSyncer.StartCleanWork interface.
+func (s *MockSchemaSyncer) StartCleanWork() {}
+
+// CloseCleanWork implements SchemaSyncer.CloseCleanWork interface.
+func (s *MockSchemaSyncer) CloseCleanWork() {}
 
 type mockDelRange struct {
 }

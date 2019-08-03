@@ -14,6 +14,7 @@
 package statistics_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -60,13 +61,13 @@ func (s *testStatsSuite) SetUpSuite(c *C) {
 	// Add the hook here to avoid data race.
 	s.registerHook()
 	var err error
-	s.store, s.do, err = newStoreWithBootstrap(0)
+	s.store, s.do, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 }
 
 func (s *testStatsSuite) TearDownSuite(c *C) {
 	s.do.Close()
-	s.store.Close()
+	c.Assert(s.store.Close(), IsNil)
 	testleak.AfterTest(c)()
 }
 
@@ -115,13 +116,13 @@ func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.Chec
 	return ce
 }
 
-func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain, error) {
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	session.SetSchemaLease(0)
-	session.SetStatsLease(statsLease)
+	session.DisableStats4Test()
 	domain.RunAutoAnalyze = false
 	do, err := session.BootstrapSession(store)
 	do.SetStatsUpdating(true)
@@ -209,7 +210,8 @@ func (s *testStatsSuite) prepareSelectivity(testKit *testkit.TestKit, c *C) *sta
 	statsTbl := mockStatsTable(tbl, 540)
 
 	// Set the value of columns' histogram.
-	colValues, _ := s.generateIntDatum(1, 54)
+	colValues, err := s.generateIntDatum(1, 54)
+	c.Assert(err, IsNil)
 	for i := 1; i <= 5; i++ {
 		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
 	}
@@ -229,6 +231,10 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 	statsTbl := s.prepareSelectivity(testKit, c)
 	is := s.do.InfoSchema()
 
+	longExpr := "0 < a and a = 1 "
+	for i := 1; i < 64; i++ {
+		longExpr += fmt.Sprintf(" and a > %d ", i)
+	}
 	tests := []struct {
 		exprs       string
 		selectivity float64
@@ -265,18 +271,24 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity: 0,
 		},
+		{
+			exprs:       longExpr,
+			selectivity: 0.001,
+		},
 	}
+
+	ctx := context.Background()
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprs
 		comment := Commentf("for %s", tt.exprs)
-		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(ctx, sql)
+		sctx := testKit.Se.(sessionctx.Context)
+		stmts, err := session.Parse(sctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plannercore.Preprocess(ctx, stmts[0], is)
+		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, comment)
-		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
@@ -284,12 +296,12 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)
 
-		ratio, _, err := histColl.Selectivity(ctx, sel.Conditions)
+		ratio, _, err := histColl.Selectivity(sctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 
 		histColl.Count *= 10
-		ratio, _, err = histColl.Selectivity(ctx, sel.Conditions)
+		ratio, _, err = histColl.Selectivity(sctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 	}
@@ -347,12 +359,12 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
 	h := s.do.StatsHandle()
-	h.DumpStatsDeltaToKV(handle.DumpAll)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	for i := 0; i < 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
 	}
-	h.DumpStatsDeltaToKV(handle.DumpAll)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -442,23 +454,24 @@ func BenchmarkSelectivity(b *testing.B) {
 	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
 	sql := "select * from t where " + exprs
 	comment := Commentf("for %s", exprs)
-	ctx := testKit.Se.(sessionctx.Context)
-	stmts, err := session.Parse(ctx, sql)
+	sctx := testKit.Se.(sessionctx.Context)
+	stmts, err := session.Parse(sctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
-	err = plannercore.Preprocess(ctx, stmts[0], is)
+	err = plannercore.Preprocess(sctx, stmts[0], is)
 	c.Assert(err, IsNil, comment)
-	p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
+	p, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], is)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
-	file, _ := os.Create("cpu.profile")
+	file, err := os.Create("cpu.profile")
+	c.Assert(err, IsNil)
 	defer file.Close()
 	pprof.StartCPUProfile(file)
 
 	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := statsTbl.Selectivity(ctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions)
+			_, _, err := statsTbl.Selectivity(sctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions)
 			c.Assert(err, IsNil)
 		}
 		b.ReportAllocs()

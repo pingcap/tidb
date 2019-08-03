@@ -32,7 +32,7 @@ type memDbBuffer struct {
 	db              *memdb.DB
 	entrySizeLimit  int
 	bufferLenLimit  uint64
-	bufferSizeLimit int
+	bufferSizeLimit uint64
 }
 
 type memDbIter struct {
@@ -46,7 +46,7 @@ func NewMemDbBuffer(cap int) MemBuffer {
 		db:              memdb.New(comparer.DefaultComparer, cap),
 		entrySizeLimit:  TxnEntrySizeLimit,
 		bufferLenLimit:  atomic.LoadUint64(&TxnEntryCountLimit),
-		bufferSizeLimit: TxnTotalSizeLimit,
+		bufferSizeLimit: atomic.LoadUint64(&TxnTotalSizeLimit),
 	}
 }
 
@@ -95,7 +95,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 	}
 
 	err := m.db.Put(k, v)
-	if m.Size() > m.bufferSizeLimit {
+	if m.Size() > int(m.bufferSizeLimit) {
 		return ErrTxnTooLarge.GenWithStack("transaction too large, size:%d", m.Size())
 	}
 	if m.Len() > int(m.bufferLenLimit) {

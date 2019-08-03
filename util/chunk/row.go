@@ -14,7 +14,6 @@
 package chunk
 
 import (
-	"time"
 	"unsafe"
 
 	"github.com/pingcap/parser/mysql"
@@ -46,55 +45,43 @@ func (r Row) Len() int {
 
 // GetInt64 returns the int64 value with the colIdx.
 func (r Row) GetInt64(colIdx int) int64 {
-	col := r.c.columns[colIdx]
-	return *(*int64)(unsafe.Pointer(&col.data[r.idx*8]))
+	return r.c.columns[colIdx].GetInt64(r.idx)
 }
 
 // GetUint64 returns the uint64 value with the colIdx.
 func (r Row) GetUint64(colIdx int) uint64 {
-	col := r.c.columns[colIdx]
-	return *(*uint64)(unsafe.Pointer(&col.data[r.idx*8]))
+	return r.c.columns[colIdx].GetUint64(r.idx)
 }
 
 // GetFloat32 returns the float32 value with the colIdx.
 func (r Row) GetFloat32(colIdx int) float32 {
-	col := r.c.columns[colIdx]
-	return *(*float32)(unsafe.Pointer(&col.data[r.idx*4]))
+	return r.c.columns[colIdx].GetFloat32(r.idx)
 }
 
 // GetFloat64 returns the float64 value with the colIdx.
 func (r Row) GetFloat64(colIdx int) float64 {
-	col := r.c.columns[colIdx]
-	return *(*float64)(unsafe.Pointer(&col.data[r.idx*8]))
+	return r.c.columns[colIdx].GetFloat64(r.idx)
 }
 
 // GetString returns the string value with the colIdx.
 func (r Row) GetString(colIdx int) string {
-	col := r.c.columns[colIdx]
-	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	str := string(hack.String(col.data[start:end]))
-	return str
+	return r.c.columns[colIdx].GetString(r.idx)
 }
 
 // GetBytes returns the bytes value with the colIdx.
 func (r Row) GetBytes(colIdx int) []byte {
-	col := r.c.columns[colIdx]
-	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	return col.data[start:end]
+	return r.c.columns[colIdx].GetBytes(r.idx)
 }
 
 // GetTime returns the Time value with the colIdx.
 // TODO: use Time structure directly.
 func (r Row) GetTime(colIdx int) types.Time {
-	col := r.c.columns[colIdx]
-	return readTime(col.data[r.idx*16:])
+	return r.c.columns[colIdx].GetTime(r.idx)
 }
 
 // GetDuration returns the Duration value with the colIdx.
 func (r Row) GetDuration(colIdx int, fillFsp int) types.Duration {
-	col := r.c.columns[colIdx]
-	dur := *(*int64)(unsafe.Pointer(&col.data[r.idx*8]))
-	return types.Duration{Duration: time.Duration(dur), Fsp: fillFsp}
+	return r.c.columns[colIdx].GetDuration(r.idx, fillFsp)
 }
 
 func (r Row) getNameValue(colIdx int) (string, uint64) {
@@ -110,27 +97,22 @@ func (r Row) getNameValue(colIdx int) (string, uint64) {
 
 // GetEnum returns the Enum value with the colIdx.
 func (r Row) GetEnum(colIdx int) types.Enum {
-	name, val := r.getNameValue(colIdx)
-	return types.Enum{Name: name, Value: val}
+	return r.c.columns[colIdx].GetEnum(r.idx)
 }
 
 // GetSet returns the Set value with the colIdx.
 func (r Row) GetSet(colIdx int) types.Set {
-	name, val := r.getNameValue(colIdx)
-	return types.Set{Name: name, Value: val}
+	return r.c.columns[colIdx].GetSet(r.idx)
 }
 
 // GetMyDecimal returns the MyDecimal value with the colIdx.
 func (r Row) GetMyDecimal(colIdx int) *types.MyDecimal {
-	col := r.c.columns[colIdx]
-	return (*types.MyDecimal)(unsafe.Pointer(&col.data[r.idx*types.MyDecimalStructSize]))
+	return r.c.columns[colIdx].GetDecimal(r.idx)
 }
 
 // GetJSON returns the JSON value with the colIdx.
 func (r Row) GetJSON(colIdx int) json.BinaryJSON {
-	col := r.c.columns[colIdx]
-	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	return json.BinaryJSON{TypeCode: col.data[start], Value: col.data[start+1 : end]}
+	return r.c.columns[colIdx].GetJSON(r.idx)
 }
 
 // GetDatumRow converts chunk.Row to types.DatumRow.
@@ -220,5 +202,5 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 
 // IsNull returns if the datum in the chunk.Row is null.
 func (r Row) IsNull(colIdx int) bool {
-	return r.c.columns[colIdx].isNull(r.idx)
+	return r.c.columns[colIdx].IsNull(r.idx)
 }

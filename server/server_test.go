@@ -682,6 +682,7 @@ func runTestConcurrentUpdate(c *C) {
 		dbt.mustExec("drop table if exists test2")
 		dbt.mustExec("create table test2 (a int, b int)")
 		dbt.mustExec("insert test2 values (1, 1)")
+		dbt.mustExec("set @@tidb_disable_txn_auto_retry = 0")
 
 		txn1, err := dbt.db.Begin()
 		c.Assert(err, IsNil)

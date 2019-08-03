@@ -56,10 +56,10 @@ func (s *SchemaChecker) Check(txnTS uint64) error {
 			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
 			return ErrInfoSchemaChanged
 		case ResultUnknown:
-			metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
 		}
 
 	}
+	metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 	return ErrInfoSchemaExpired
 }

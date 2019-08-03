@@ -38,7 +38,7 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -79,7 +79,7 @@ func checkRegionStartWithTableID(c *C, id int64, store kvStore) {
 		c.Assert(err, IsNil)
 
 		// Region cache may be out of date, so we need to drop this expired region and load it again.
-		cache.DropRegion(loc.Region)
+		cache.InvalidateCachedRegion(loc.Region)
 		if bytes.Equal(loc.StartKey, []byte(regionStartKey)) {
 			return
 		}

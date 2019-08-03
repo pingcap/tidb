@@ -396,3 +396,18 @@ timezone.*
     Param:
     
     - seconds: profile time(s), default is 10s. 
+
+1. Get statistics data of specified table.
+
+    ```shell
+    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}
+    ```
+
+1. Get statistics data of specific table and timestamp.
+
+    ```shell
+    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyyMMddHHmmss}
+    ```
+    ```shell
+    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss}
+    ```

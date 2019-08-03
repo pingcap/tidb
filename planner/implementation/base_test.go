@@ -40,7 +40,7 @@ type testImplSuite struct {
 
 func (s *testImplSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockTable()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	s.sctx = plannercore.MockContext()
 	s.Parser = parser.New()
 }

@@ -16,7 +16,6 @@ package types_test
 import (
 	"context"
 	"flag"
-	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -29,11 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
 
 var _ = Suite(&testMySQLConstSuite{})
 
@@ -62,7 +56,7 @@ func (s *testMySQLConstSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 		session.SetSchemaLease(0)
-		session.SetStatsLease(0)
+		session.DisableStats4Test()
 	}
 	var err error
 	s.dom, err = session.BootstrapSession(s.store)

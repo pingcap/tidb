@@ -35,6 +35,12 @@ explain select if(10, t1.c1, t1.c2) from t1;
 explain select c1 from t2 union select c1 from t2 union all select c1 from t2;
 explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
 
+# https://github.com/pingcap/tidb/issues/9125
+explain select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
+explain select 1 from (select count(c2), count(c3) from t1) k;
+explain select count(1) from (select max(c2), count(c3) as m from t1) k;
+explain select count(1) from (select count(c2) from t1 group by c3) k;
+
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
@@ -79,6 +85,7 @@ drop table if exists t;
 create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
 explain select null or a > 1 from t;
+explain select * from t where a = 1 for update;
 
 drop table if exists ta, tb;
 create table ta (a varchar(20));
@@ -145,3 +152,10 @@ insert into t values (1);
 explain select * from t left outer join t t1 on t.a = t1.a where t.a not between 1 and 2;
 rollback;
 drop table if exists t;
+
+create table t(a time, b date);
+insert into t values (1, "1000-01-01"), (2, "1000-01-02"), (3, "1000-01-03");
+analyze table t;
+explain select * from t where a = 1;
+explain select * from t where b = "1000-01-01";
+drop table t;

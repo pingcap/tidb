@@ -14,6 +14,7 @@
 package privileges_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -162,6 +164,26 @@ func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	c.Assert(pc2.RequestVerification(activeRoles, "test", "test", "", mysql.IndexPriv), IsTrue)
 }
 
+func (s *testPrivilegeSuite) TestCheckViewPrivilege(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'vuser'@'localhost';`)
+	mustExec(c, rootSe, `CREATE VIEW v AS SELECT * FROM test;`)
+
+	se := newSession(c, s.store, s.dbName)
+	activeRoles := make([]*auth.RoleIdentity, 0)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "vuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	pc := privilege.GetPrivilegeManager(se)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "v", "", mysql.SelectPriv), IsFalse)
+
+	mustExec(c, rootSe, `GRANT SELECT ON test.v TO 'vuser'@'localhost';`)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "v", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "v", "", mysql.ShowViewPriv), IsFalse)
+
+	mustExec(c, rootSe, `GRANT SHOW VIEW ON test.v TO 'vuser'@'localhost';`)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "v", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "v", "", mysql.ShowViewPriv), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestCheckPrivilegeWithRoles(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'test_role'@'localhost';`)
@@ -171,6 +193,7 @@ func (s *testPrivilegeSuite) TestCheckPrivilegeWithRoles(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_role", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `SET ROLE r_1, r_2;`)
+	mustExec(c, rootSe, `SET DEFAULT ROLE r_1 TO 'test_role'@'localhost';`)
 
 	mustExec(c, rootSe, `GRANT SELECT ON test.* TO r_1;`)
 	pc := privilege.GetPrivilegeManager(se)
@@ -179,6 +202,16 @@ func (s *testPrivilegeSuite) TestCheckPrivilegeWithRoles(c *C) {
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsFalse)
 	mustExec(c, rootSe, `GRANT UPDATE ON test.* TO r_2;`)
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
+
+	mustExec(c, se, `flush privileges`)
+	mustExec(c, se, `SET ROLE NONE;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 0)
+	mustExec(c, se, `SET ROLE DEFAULT;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 1)
+	mustExec(c, se, `SET ROLE ALL;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 3)
+	mustExec(c, se, `SET ROLE ALL EXCEPT r_1, r_2;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 1)
 }
 
 func (s *testPrivilegeSuite) TestShowGrants(c *C) {
@@ -434,7 +467,7 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	mustExec(c, se1, "drop user 'r3@example.com'@'localhost'")
 }
 
-func (s *testPrivilegeSuite) TestUseDb(c *C) {
+func (s *testPrivilegeSuite) TestUseDB(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
 	// high privileged user
@@ -454,6 +487,20 @@ func (s *testPrivilegeSuite) TestUseDb(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "use mysql")
 	c.Assert(err, IsNil)
+
+	// test `use db` for role.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `CREATE DATABASE app_db`)
+	mustExec(c, se, `CREATE ROLE 'app_developer'`)
+	mustExec(c, se, `GRANT ALL ON app_db.* TO 'app_developer'`)
+	mustExec(c, se, `CREATE USER 'dev'@'localhost'`)
+	mustExec(c, se, `GRANT 'app_developer' TO 'dev'@'localhost'`)
+	mustExec(c, se, `SET DEFAULT ROLE 'app_developer' TO 'dev'@'localhost'`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "use app_db")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use mysql")
+	c.Assert(err, NotNil)
 }
 
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
@@ -530,7 +577,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 
 	_, err = se.Execute(context.Background(), "select * from t1")
-	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'localhost'@'anobody' for table 't1'")
+	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'anobody'@'localhost' for table 't1'")
 
 	// try again after SELECT privilege granted
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
@@ -605,6 +652,30 @@ func (s *testPrivilegeSuite) TestDefaultRoles(c *C) {
 	c.Assert(len(ret), Equals, 0)
 }
 
+func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user superadmin")
+	tk.MustExec("grant all privileges on *.* to 'superadmin'")
+
+	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs))
+
+	var buf bytes.Buffer
+	var res bytes.Buffer
+	buf.WriteString("select ")
+	i := 0
+	for _, priv := range mysql.Priv2UserCol {
+		if i != 0 {
+			buf.WriteString(", ")
+			res.WriteString(" ")
+		}
+		buf.WriteString(priv)
+		res.WriteString("Y")
+		i++
+	}
+	buf.WriteString(" from mysql.user where user = 'superadmin'")
+	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
+}
+
 func mustExec(c *C, se session.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
@@ -613,7 +684,7 @@ func mustExec(c *C, se session.Session, sql string) {
 func newStore(c *C, dbPath string) (*domain.Domain, kv.Storage) {
 	store, err := mockstore.NewMockTikvStore()
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)

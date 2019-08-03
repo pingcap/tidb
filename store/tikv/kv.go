@@ -25,6 +25,7 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -81,9 +82,6 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	})
 
 	if err != nil {
-		if strings.Contains(err.Error(), "i/o timeout") {
-			return nil, errors.Annotate(err, txnRetryableMark)
-		}
 		return nil, errors.Trace(err)
 	}
 
@@ -245,7 +243,7 @@ func (s *tikvStore) runSafePointChecker() {
 				d = gcSafePointUpdateInterval
 			} else {
 				metrics.TiKVLoadSafepointCounter.WithLabelValues("fail").Inc()
-				logutil.Logger(context.Background()).Error("fail to load safepoint from pd", zap.Error(err))
+				logutil.BgLogger().Error("fail to load safepoint from pd", zap.Error(err))
 				d = gcSafePointQuickRepeatInterval
 			}
 		case <-s.Closed():
@@ -298,6 +296,7 @@ func (s *tikvStore) Close() error {
 	if s.txnLatches != nil {
 		s.txnLatches.Close()
 	}
+	s.regionCache.Close()
 	return nil
 }
 
@@ -317,6 +316,16 @@ func (s *tikvStore) CurrentVersion() (kv.Version, error) {
 func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	for {
 		startTS, err := s.oracle.GetTimestamp(bo.ctx)
+		// mockGetTSErrorInRetry should wait MockCommitErrorOnce first, then will run into retry() logic.
+		// Then mockGetTSErrorInRetry will return retryable error when first retry.
+		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
+		// This may cause duplicate data to be written.
+		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
+			if val.(bool) && !kv.IsMockCommitErrorEnable() {
+				err = ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
+			}
+		})
+
 		if err == nil {
 			return startTS, nil
 		}
@@ -399,7 +408,7 @@ func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 	}
 	if strings.ToLower(u.Scheme) != "tikv" {
 		err = errors.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme)
-		logutil.Logger(context.Background()).Error("parsePath error", zap.Error(err))
+		logutil.BgLogger().Error("parsePath error", zap.Error(err))
 		return
 	}
 	switch strings.ToLower(u.Query().Get("disableGC")) {

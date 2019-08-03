@@ -14,6 +14,7 @@
 package core_test
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"time"
@@ -157,17 +158,18 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
+	ctx := context.TODO()
 	for i := 0; i < 2; i++ {
 		stmt, err := s.ParseOneStmt(sql1, "", "")
 		c.Check(err, IsNil)
 		is := tk.Se.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 		builder := core.NewPlanBuilder(tk.Se, is)
-		p, err := builder.Build(stmt)
+		p, err := builder.Build(ctx, stmt)
 		c.Check(err, IsNil)
 		execPlan, ok := p.(*core.Execute)
 		c.Check(ok, IsTrue)
 		executor.ResetContextOfStmt(tk.Se, stmt)
-		err = execPlan.OptimizePreparedPlan(tk.Se, is)
+		err = execPlan.OptimizePreparedPlan(ctx, tk.Se, is)
 		c.Check(err, IsNil)
 		planStr[i] = core.ToString(execPlan.Plan)
 		c.Check(planStr[i], Matches, expectedPattern, Commentf("for %s", sql1))
@@ -294,7 +296,7 @@ func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 		partner_id varchar(35) not null,
 		t1_status_id int(10) unsigned
 	  );`)
-	tk.MustExec(`insert into t1 values ("1", "partner1", "10"), ("2", "partner2", "10"), ("3", "partner3", "10"), ("4", "partner4", "10");"`)
+	tk.MustExec(`insert into t1 values ("1", "partner1", "10"), ("2", "partner2", "10"), ("3", "partner3", "10"), ("4", "partner4", "10");`)
 	tk.MustExec("drop table if exists t3")
 	tk.MustExec(`create table t3 (
 		id int(11) not null default '0',

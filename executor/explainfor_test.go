@@ -25,25 +25,25 @@ import (
 
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager1 struct {
-	PS []util.ProcessInfo
+	PS []*util.ProcessInfo
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager1) ShowProcessList() map[uint64]util.ProcessInfo {
-	ret := make(map[uint64]util.ProcessInfo)
+func (msm *mockSessionManager1) ShowProcessList() map[uint64]*util.ProcessInfo {
+	ret := make(map[uint64]*util.ProcessInfo)
 	for _, item := range msm.PS {
 		ret[item.ID] = item
 	}
 	return ret
 }
 
-func (msm *mockSessionManager1) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
+func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	for _, item := range msm.PS {
 		if item.ID == id {
 			return item, true
 		}
 	}
-	return util.ProcessInfo{}, false
+	return &util.ProcessInfo{}, false
 }
 
 // Kill implements the SessionManager.Kill interface.
@@ -62,7 +62,7 @@ func (s *testSuite) TestExplainFor(c *C) {
 
 	tkRoot.MustQuery("select * from t1;")
 	tkRootProcess := tkRoot.Se.ShowProcess()
-	ps := []util.ProcessInfo{tkRootProcess}
+	ps := []*util.ProcessInfo{tkRootProcess}
 	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
@@ -75,7 +75,7 @@ func (s *testSuite) TestExplainFor(c *C) {
 	c.Check(core.ErrNoSuchThread.Equal(err), IsTrue)
 
 	tkRootProcess.Plan = nil
-	ps = []util.ProcessInfo{tkRootProcess}
+	ps = []*util.ProcessInfo{tkRootProcess}
 	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 }

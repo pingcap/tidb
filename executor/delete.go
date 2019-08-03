@@ -16,9 +16,8 @@ package executor
 import (
 	"context"
 
-	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -30,44 +29,21 @@ import (
 type DeleteExec struct {
 	baseExecutor
 
-	SelectExec Executor
-
-	Tables       []*ast.TableName
 	IsMultiTable bool
 	tblID2Table  map[int64]table.Table
-	// tblMap is the table map value is an array which contains table aliases.
-	// Table ID may not be unique for deleting multiple tables, for statements like
-	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
-	// by its alias instead of ID.
-	tblMap map[int64][]*ast.TableName
+
+	// tblColPosInfos stores relationship between column ordinal to its table handle.
+	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
+	tblColPosInfos plannercore.TblColPosInfoSlice
 }
 
 // Next implements the Executor Next interface.
-func (e *DeleteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("delete.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
+func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.IsMultiTable {
 		return e.deleteMultiTablesByChunk(ctx)
 	}
 	return e.deleteSingleTableByChunk(ctx)
-}
-
-// matchingDeletingTable checks whether this column is from the table which is in the deleting list.
-func (e *DeleteExec) matchingDeletingTable(tableID int64, col *expression.Column) bool {
-	names, ok := e.tblMap[tableID]
-	if !ok {
-		return false
-	}
-	for _, n := range names {
-		if (col.DBName.L == "" || col.DBName.L == n.Schema.L) && col.TblName.L == n.Name.L {
-			return true
-		}
-	}
-	return false
 }
 
 func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column, row []types.Datum) error {
@@ -100,12 +76,12 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
-	fields := e.children[0].retTypes()
-	chk := e.children[0].newFirstChunk()
+	fields := retTypes(e.children[0])
+	chk := newFirstChunk(e.children[0])
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return err
 		}
@@ -138,56 +114,26 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	return nil
 }
 
-func (e *DeleteExec) initialMultiTableTblMap() {
-	e.tblMap = make(map[int64][]*ast.TableName, len(e.Tables))
-	for _, t := range e.Tables {
-		e.tblMap[t.TableInfo.ID] = append(e.tblMap[t.TableInfo.ID], t)
-	}
-}
-
-func (e *DeleteExec) getColPosInfos(schema *expression.Schema) []tblColPosInfo {
-	var colPosInfos []tblColPosInfo
-	// Extract the columns' position information of this table in the delete's schema, together with the table id
-	// and its handle's position in the schema.
-	for id, cols := range schema.TblID2Handle {
-		tbl := e.tblID2Table[id]
-		for _, col := range cols {
-			if !e.matchingDeletingTable(id, col) {
-				continue
-			}
-			offset := getTableOffset(schema, col)
-			end := offset + len(tbl.Cols())
-			colPosInfos = append(colPosInfos, tblColPosInfo{tblID: id, colBeginIndex: offset, colEndIndex: end, handleIndex: col.Index})
-		}
-	}
-	return colPosInfos
-}
-
-func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []tblColPosInfo, joinedRow []types.Datum) {
+func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) {
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
-		if tblRowMap[info.tblID] == nil {
-			tblRowMap[info.tblID] = make(map[int64][]types.Datum)
+		if tblRowMap[info.TblID] == nil {
+			tblRowMap[info.TblID] = make(map[int64][]types.Datum)
 		}
-		handle := joinedRow[info.handleIndex].GetInt64()
-		// tblRowMap[info.tblID][handle] hold the row datas binding to this table and this handle.
-		tblRowMap[info.tblID][handle] = joinedRow[info.colBeginIndex:info.colEndIndex]
+		handle := joinedRow[info.HandleOrdinal].GetInt64()
+		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
+		tblRowMap[info.TblID][handle] = joinedRow[info.Start:info.End]
 	}
 }
 
 func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
-	if len(e.Tables) == 0 {
-		return nil
-	}
-
-	e.initialMultiTableTblMap()
-	colPosInfos := e.getColPosInfos(e.children[0].Schema())
+	colPosInfos := e.tblColPosInfos
 	tblRowMap := make(tableRowMapType)
-	fields := e.children[0].retTypes()
-	chk := e.children[0].newFirstChunk()
+	fields := retTypes(e.children[0])
+	chk := newFirstChunk(e.children[0])
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return err
 		}
@@ -229,19 +175,12 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, d
 
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
-	return e.SelectExec.Close()
+	return e.children[0].Close()
 }
 
 // Open implements the Executor Open interface.
 func (e *DeleteExec) Open(ctx context.Context) error {
-	return e.SelectExec.Open(ctx)
-}
-
-type tblColPosInfo struct {
-	tblID         int64
-	colBeginIndex int
-	colEndIndex   int
-	handleIndex   int
+	return e.children[0].Open(ctx)
 }
 
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.

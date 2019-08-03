@@ -36,7 +36,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables StatsCache
 		physicalID := row.GetInt64(1)
 		table, ok := h.getTableByPhysicalID(is, physicalID)
 		if !ok {
-			logutil.Logger(context.Background()).Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
+			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			continue
 		}
 		tableInfo := table.Meta()
@@ -69,8 +69,8 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (StatsCache, error) {
 		return nil, errors.Trace(err)
 	}
 	tables := StatsCache{}
-	req := rc[0].NewRecordBatch()
-	iter := chunk.NewIterator4Chunk(req.Chunk)
+	req := rc[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
@@ -109,7 +109,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables Stat
 				terror.Log(errors.Trace(err))
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
-			table.Indices[hist.ID] = &statistics.Index{Histogram: *hist, CMSketch: cms, Info: idxInfo, StatsVer: row.GetInt64(8)}
+			table.Indices[hist.ID] = &statistics.Index{Histogram: *hist, CMSketch: cms, Info: idxInfo, StatsVer: row.GetInt64(8), Flag: row.GetInt64(10), LastAnalyzePos: row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))}
 		} else {
 			var colInfo *model.ColumnInfo
 			for _, col := range tbl.Meta().Columns {
@@ -124,11 +124,13 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables Stat
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
 			table.Columns[hist.ID] = &statistics.Column{
-				Histogram:  *hist,
-				PhysicalID: table.PhysicalID,
-				Info:       colInfo,
-				Count:      nullCount,
-				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				Histogram:      *hist,
+				PhysicalID:     table.PhysicalID,
+				Info:           colInfo,
+				Count:          nullCount,
+				IsHandle:       tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				Flag:           row.GetInt64(10),
+				LastAnalyzePos: row.GetDatum(11, types.NewFieldType(mysql.TypeBlob)),
 			}
 		}
 	}
@@ -137,7 +139,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables Stat
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables StatsCache) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation from mysql.stats_histograms"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -145,8 +147,8 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables StatsCache
 	if err != nil {
 		return errors.Trace(err)
 	}
-	req := rc[0].NewRecordBatch()
-	iter := chunk.NewIterator4Chunk(req.Chunk)
+	req := rc[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
@@ -190,14 +192,14 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables StatsCache, iter *chu
 			var err error
 			lower, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				logutil.Logger(context.Background()).Debug("decode bucket lower bound failed", zap.Error(err))
+				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
 			upper, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				logutil.Logger(context.Background()).Debug("decode bucket upper bound failed", zap.Error(err))
+				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
@@ -217,8 +219,8 @@ func (h *Handle) initStatsBuckets(tables StatsCache) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	req := rc[0].NewRecordBatch()
-	iter := chunk.NewIterator4Chunk(req.Chunk)
+	req := rc[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {

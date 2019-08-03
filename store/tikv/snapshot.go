@@ -22,12 +22,12 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -140,7 +140,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 	}
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			logutil.Logger(context.Background()).Debug("snapshot batchGet failed",
+			logutil.BgLogger().Debug("snapshot batchGet failed",
 				zap.Error(e),
 				zap.Uint64("txnStartTS", s.version.Ver))
 			err = e
@@ -154,17 +154,13 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 	pending := batch.keys
 	for {
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdBatchGet,
-			BatchGet: &pb.BatchGetRequest{
-				Keys:    pending,
-				Version: s.version.Ver,
-			},
-			Context: pb.Context{
-				Priority:     s.priority,
-				NotFillCache: s.notFillCache,
-			},
-		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
+			Keys:    pending,
+			Version: s.version.Ver,
+		}, pb.Context{
+			Priority:     s.priority,
+			NotFillCache: s.notFillCache,
+		})
 		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
@@ -181,10 +177,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			err = s.batchGetKeysByRegions(bo, pending, collectF)
 			return errors.Trace(err)
 		}
-		batchGetResp := resp.BatchGet
-		if batchGetResp == nil {
+		if resp.Resp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}
+		batchGetResp := resp.Resp.(*pb.BatchGetResponse)
 		var (
 			lockedKeys [][]byte
 			locks      []*Lock
@@ -203,12 +199,12 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			locks = append(locks, lock)
 		}
 		if len(lockedKeys) > 0 {
-			ok, err := s.store.lockResolver.ResolveLocks(bo, locks)
+			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, locks)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !ok {
-				err = bo.Backoff(boTxnLockFast, errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+			if msBeforeExpired > 0 {
+				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -236,17 +232,14 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
 
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGet,
-		Get: &pb.GetRequest{
+	req := tikvrpc.NewRequest(tikvrpc.CmdGet,
+		&pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
-		},
-		Context: pb.Context{
+		}, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
-		},
-	}
+		})
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
@@ -267,22 +260,22 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			}
 			continue
 		}
-		cmdGetResp := resp.Get
-		if cmdGetResp == nil {
+		if resp.Resp == nil {
 			return nil, errors.Trace(ErrBodyMissing)
 		}
+		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
 			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			ok, err := s.store.lockResolver.ResolveLocks(bo, []*Lock{lock})
+			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if !ok {
-				err = bo.Backoff(boTxnLockFast, errors.New(keyErr.String()))
+			if msBeforeExpired > 0 {
+				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -295,47 +288,51 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 
 // Iter return a list of key-value pair after `k`.
 func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	scanner, err := newScanner(s, k, upperBound, scanBatchSize)
+	scanner, err := newScanner(s, k, upperBound, scanBatchSize, false)
 	return scanner, errors.Trace(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
-	return nil, kv.ErrNotImplemented
+	scanner, err := newScanner(s, nil, k, scanBatchSize, true)
+	return scanner, errors.Trace(err)
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return NewLock(locked), nil
 	}
+	return nil, extractKeyErr(keyErr)
+}
+
+func extractKeyErr(keyErr *pb.KeyError) error {
+	failpoint.Inject("ErrMockRetryableOnly", func(val failpoint.Value) {
+		if val.(bool) {
+			keyErr.Conflict = nil
+			keyErr.Retryable = "mock retryable error"
+		}
+	})
+
 	if keyErr.Conflict != nil {
-		err := errors.New(conflictToString(keyErr.Conflict))
-		return nil, errors.Annotate(err, txnRetryableMark)
+		return newWriteConflictError(keyErr.Conflict)
 	}
 	if keyErr.Retryable != "" {
-		err := errors.Errorf("tikv restarts txn: %s", keyErr.GetRetryable())
-		logutil.Logger(context.Background()).Debug("error", zap.Error(err))
-		return nil, errors.Annotate(err, txnRetryableMark)
+		return kv.ErrTxnRetryable.FastGenByArgs("tikv restarts txn: " + keyErr.GetRetryable())
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
-		logutil.Logger(context.Background()).Warn("error", zap.Error(err))
-		return nil, errors.Trace(err)
+		logutil.BgLogger().Warn("error", zap.Error(err))
+		return errors.Trace(err)
 	}
-	return nil, errors.Errorf("unexpected KeyError: %s", keyErr.String())
+	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }
 
-func conflictToString(conflict *pb.WriteConflict) string {
+func newWriteConflictError(conflict *pb.WriteConflict) error {
 	var buf bytes.Buffer
-	_, err := fmt.Fprintf(&buf, "%s txnStartTS=%d, conflictTS=%d, key=",
-		util.WriteConflictMarker, conflict.StartTs, conflict.ConflictTs)
-	if err != nil {
-		logutil.Logger(context.Background()).Error("error", zap.Error(err))
-	}
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
-	return buf.String()
+	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {
@@ -343,12 +340,12 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 	if err == nil {
 		_, err1 := fmt.Fprintf(buf, "{tableID=%d, indexID=%d, indexValues={", tableID, indexID)
 		if err1 != nil {
-			logutil.Logger(context.Background()).Error("error", zap.Error(err1))
+			logutil.BgLogger().Error("error", zap.Error(err1))
 		}
 		for _, v := range indexValues {
 			_, err2 := fmt.Fprintf(buf, "%s, ", v)
 			if err2 != nil {
-				logutil.Logger(context.Background()).Error("error", zap.Error(err2))
+				logutil.BgLogger().Error("error", zap.Error(err2))
 			}
 		}
 		buf.WriteString("}}")
@@ -359,13 +356,13 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 	if err == nil {
 		_, err3 := fmt.Fprintf(buf, "{tableID=%d, handle=%d}", tableID, handle)
 		if err3 != nil {
-			logutil.Logger(context.Background()).Error("error", zap.Error(err3))
+			logutil.BgLogger().Error("error", zap.Error(err3))
 		}
 		return
 	}
 
 	_, err4 := fmt.Fprintf(buf, "%#v", key)
 	if err4 != nil {
-		logutil.Logger(context.Background()).Error("error", zap.Error(err4))
+		logutil.BgLogger().Error("error", zap.Error(err4))
 	}
 }

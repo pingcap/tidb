@@ -83,6 +83,16 @@ func (s *testTxStructureSuite) TestString(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 
+	tx1 := structure.NewStructure(txn, nil, []byte{0x01})
+	err = tx1.Set(key, value)
+	c.Assert(err, NotNil)
+
+	_, err = tx1.Inc(key, 1)
+	c.Assert(err, NotNil)
+
+	err = tx1.Clear(key)
+	c.Assert(err, NotNil)
+
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
@@ -125,6 +135,9 @@ func (s *testTxStructureSuite) TestList(c *C) {
 
 	err = tx.LSet(key, 1, []byte("2"))
 	c.Assert(err, IsNil)
+
+	err = tx.LSet(key, 100, []byte("2"))
+	c.Assert(err, NotNil)
 
 	value, err = tx.LIndex(key, -1)
 	c.Assert(err, IsNil)
@@ -175,6 +188,19 @@ func (s *testTxStructureSuite) TestList(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(l, Equals, int64(0))
 
+	tx1 := structure.NewStructure(txn, nil, []byte{0x01})
+	err = tx1.LPush(key, []byte("1"))
+	c.Assert(err, NotNil)
+
+	_, err = tx1.RPop(key)
+	c.Assert(err, NotNil)
+
+	err = tx1.LSet(key, 1, []byte("2"))
+	c.Assert(err, NotNil)
+
+	err = tx1.LClear(key)
+	c.Assert(err, NotNil)
+
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
@@ -187,6 +213,8 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	tx := structure.NewStructure(txn, txn, []byte{0x00})
 
 	key := []byte("a")
+
+	tx.EncodeHashAutoIDKeyValue(key, key, 5)
 
 	err = tx.HSet(key, []byte("1"), []byte("1"))
 	c.Assert(err, IsNil)
@@ -215,6 +243,17 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	c.Assert(res, DeepEquals, []structure.HashPair{
 		{Field: []byte("1"), Value: []byte("1")},
 		{Field: []byte("2"), Value: []byte("2")}})
+
+	res, err = tx.HGetLastN(key, 1)
+	c.Assert(err, IsNil)
+	c.Assert(res, DeepEquals, []structure.HashPair{
+		{Field: []byte("2"), Value: []byte("2")}})
+
+	res, err = tx.HGetLastN(key, 2)
+	c.Assert(err, IsNil)
+	c.Assert(res, DeepEquals, []structure.HashPair{
+		{Field: []byte("2"), Value: []byte("2")},
+		{Field: []byte("1"), Value: []byte("1")}})
 
 	err = tx.HDel(key, []byte("1"))
 	c.Assert(err, IsNil)
@@ -333,6 +372,13 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	value, err = tx.HGet(key, []byte("nil_key"))
 	c.Assert(err, IsNil)
 	c.Assert(value, DeepEquals, []byte("2"))
+
+	tx1 := structure.NewStructure(txn, nil, []byte{0x01})
+	_, err = tx1.HInc(key, []byte("1"), 1)
+	c.Assert(err, NotNil)
+
+	err = tx1.HDel(key, []byte("1"))
+	c.Assert(err, NotNil)
 
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)

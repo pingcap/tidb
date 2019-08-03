@@ -22,3 +22,8 @@ func OSVersion() (osVersion string, err error) {
 	osVersion = runtime.GOOS + "." + runtime.GOARCH
 	return
 }
+
+// SetAffinity sets cpu affinity.
+func SetAffinity(cpus []int) error {
+	return nil
+}

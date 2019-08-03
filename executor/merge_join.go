@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -142,7 +141,7 @@ func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 		if t.curRow == t.curIter.End() {
 			t.reallocReaderResult()
 			oldMemUsage := t.curResult.MemoryUsage()
-			err := t.reader.Next(t.ctx, chunk.NewRecordBatch(t.curResult))
+			err := Next(t.ctx, t.reader, t.curResult)
 			// error happens or no more data.
 			if err != nil || t.curResult.NumRows() == 0 {
 				t.curRow = t.curIter.End()
@@ -185,7 +184,7 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 	// Create a new Chunk and append it to "resourceQueue" if there is no more
 	// available chunk in "resourceQueue".
 	if len(t.resourceQueue) == 0 {
-		newChunk := t.reader.newFirstChunk()
+		newChunk := newFirstChunk(t.reader)
 		t.memTracker.Consume(newChunk.MemoryUsage())
 		t.resourceQueue = append(t.resourceQueue, newChunk)
 	}
@@ -201,7 +200,6 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
-	e.memTracker.Detach()
 	e.childrenResults = nil
 	e.memTracker = nil
 
@@ -222,7 +220,7 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 
 	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
 	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, child.newFirstChunk())
+		e.childrenResults = append(e.childrenResults, newFirstChunk(child))
 	}
 
 	e.innerTable.memTracker = memory.NewTracker(innerTableLabel, -1)
@@ -267,11 +265,7 @@ func (e *MergeJoinExec) prepare(ctx context.Context, requiredRows int) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
+func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.prepared {
 		if err := e.prepare(ctx, req.RequiredRows()); err != nil {
@@ -280,7 +274,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 
 	for !req.IsFull() {
-		hasMore, err := e.joinToChunk(ctx, req.Chunk)
+		hasMore, err := e.joinToChunk(ctx, req)
 		if err != nil || !hasMore {
 			return err
 		}
@@ -389,7 +383,7 @@ func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context, requiredRows int
 		e.outerTable.chk.SetRequiredRows(requiredRows, e.maxChunkSize)
 	}
 
-	err = e.outerTable.reader.Next(ctx, chunk.NewRecordBatch(e.outerTable.chk))
+	err = Next(ctx, e.outerTable.reader, e.outerTable.chk)
 	if err != nil {
 		return err
 	}

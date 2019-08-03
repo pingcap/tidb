@@ -25,7 +25,8 @@ func (s *testBaseFuncSuite) TestClone(c *check.C) {
 		UniqueID: 0,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
-	desc := newBaseFuncDesc(s.ctx, ast.AggFuncFirstRow, []expression.Expression{col})
+	desc, err := newBaseFuncDesc(s.ctx, ast.AggFuncFirstRow, []expression.Expression{col})
+	c.Assert(err, check.IsNil)
 	cloned := desc.clone()
 	c.Assert(desc.equal(s.ctx, cloned), check.IsTrue)
 

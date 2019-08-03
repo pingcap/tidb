@@ -16,7 +16,6 @@ package plugin
 import (
 	"context"
 
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
@@ -77,7 +76,7 @@ type AuditManifest struct {
 	Manifest
 	// OnConnectionEvent will be called when TiDB receive or disconnect from client.
 	// return error will ignore and close current connection.
-	OnConnectionEvent func(ctx context.Context, identity *auth.UserIdentity, event ConnectionEvent, info *variable.ConnectionInfo) error
+	OnConnectionEvent func(ctx context.Context, event ConnectionEvent, info *variable.ConnectionInfo) error
 	// OnGeneralEvent will be called during TiDB execution.
 	OnGeneralEvent func(ctx context.Context, sctx *variable.SessionVars, event GeneralEvent, cmd string)
 	// OnGlobalVariableEvent will be called when Change GlobalVariable.
@@ -85,3 +84,8 @@ type AuditManifest struct {
 	// OnParseEvent will be called around parse logic.
 	OnParseEvent func(ctx context.Context, sctx *variable.SessionVars, event ParseEvent) error
 }
+
+const (
+	// ExecStartTimeCtxKey indicates stmt start execution time.
+	ExecStartTimeCtxKey = "ExecStartTime"
+)
