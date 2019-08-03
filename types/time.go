@@ -1987,37 +1987,38 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		}
 		buf.WriteString(MonthNames[m-1])
 	case 'm':
-		fmt.Fprintf(buf, "%02d", t.Time.Month())
+		buf.WriteString(FormatIntWidthN(t.Time.Month(), 2))
 	case 'c':
-		fmt.Fprintf(buf, "%d", t.Time.Month())
+		buf.WriteString(strconv.FormatInt(int64(t.Time.Month()), 10))
 	case 'D':
-		fmt.Fprintf(buf, "%d%s", t.Time.Day(), abbrDayOfMonth(t.Time.Day()))
+		buf.WriteString(strconv.FormatInt(int64(t.Time.Day()), 10))
+		buf.WriteString(abbrDayOfMonth(t.Time.Day()))
 	case 'd':
-		fmt.Fprintf(buf, "%02d", t.Time.Day())
+		buf.WriteString(FormatIntWidthN(t.Time.Day(), 2))
 	case 'e':
-		fmt.Fprintf(buf, "%d", t.Time.Day())
+		buf.WriteString(strconv.FormatInt(int64(t.Time.Day()), 10))
 	case 'j':
 		fmt.Fprintf(buf, "%03d", t.Time.YearDay())
 	case 'H':
-		fmt.Fprintf(buf, "%02d", t.Time.Hour())
+		buf.WriteString(FormatIntWidthN(t.Time.Hour(), 2))
 	case 'k':
-		fmt.Fprintf(buf, "%d", t.Time.Hour())
+		buf.WriteString(strconv.FormatInt(int64(t.Time.Hour()), 10))
 	case 'h', 'I':
 		t := t.Time.Hour()
 		if t%12 == 0 {
-			fmt.Fprintf(buf, "%02d", 12)
+			buf.WriteString("12")
 		} else {
-			fmt.Fprintf(buf, "%02d", t%12)
+			buf.WriteString(FormatIntWidthN(t%12, 2))
 		}
 	case 'l':
 		t := t.Time.Hour()
 		if t%12 == 0 {
-			fmt.Fprintf(buf, "%d", 12)
+			buf.WriteString("12")
 		} else {
-			fmt.Fprintf(buf, "%d", t%12)
+			buf.WriteString(strconv.FormatInt(int64(t%12), 10))
 		}
 	case 'i':
-		fmt.Fprintf(buf, "%02d", t.Time.Minute())
+		buf.WriteString(FormatIntWidthN(t.Time.Minute(), 2))
 	case 'p':
 		hour := t.Time.Hour()
 		if hour/12%2 == 0 {
@@ -2041,52 +2042,65 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'T':
 		fmt.Fprintf(buf, "%02d:%02d:%02d", t.Time.Hour(), t.Time.Minute(), t.Time.Second())
 	case 'S', 's':
-		fmt.Fprintf(buf, "%02d", t.Time.Second())
+		buf.WriteString(FormatIntWidthN(t.Time.Second(), 2))
 	case 'f':
 		fmt.Fprintf(buf, "%06d", t.Time.Microsecond())
 	case 'U':
 		w := t.Time.Week(0)
-		fmt.Fprintf(buf, "%02d", w)
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'u':
 		w := t.Time.Week(1)
-		fmt.Fprintf(buf, "%02d", w)
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'V':
 		w := t.Time.Week(2)
-		fmt.Fprintf(buf, "%02d", w)
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'v':
 		_, w := t.Time.YearWeek(3)
-		fmt.Fprintf(buf, "%02d", w)
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'a':
 		weekday := t.Time.Weekday()
 		buf.WriteString(abbrevWeekdayName[weekday])
 	case 'W':
 		buf.WriteString(t.Time.Weekday().String())
 	case 'w':
-		fmt.Fprintf(buf, "%d", t.Time.Weekday())
+		buf.WriteString(strconv.FormatInt(int64(t.Time.Weekday()), 10))
 	case 'X':
 		year, _ := t.Time.YearWeek(2)
 		if year < 0 {
-			fmt.Fprintf(buf, "%v", uint64(math.MaxUint32))
+			buf.WriteString(strconv.FormatUint(uint64(math.MaxUint32), 10))
 		} else {
-			fmt.Fprintf(buf, "%04d", year)
+			buf.WriteString(FormatIntWidthN(year, 4))
 		}
 	case 'x':
 		year, _ := t.Time.YearWeek(3)
 		if year < 0 {
-			fmt.Fprintf(buf, "%v", uint64(math.MaxUint32))
+			buf.WriteString(strconv.FormatUint(uint64(math.MaxUint32), 10))
 		} else {
-			fmt.Fprintf(buf, "%04d", year)
+			buf.WriteString(FormatIntWidthN(year, 4))
 		}
 	case 'Y':
-		fmt.Fprintf(buf, "%04d", t.Time.Year())
+		buf.WriteString(FormatIntWidthN(t.Time.Year(), 4))
 	case 'y':
-		str := fmt.Sprintf("%04d", t.Time.Year())
+		str := FormatIntWidthN(t.Time.Year(), 4)
 		buf.WriteString(str[2:])
 	default:
 		buf.WriteRune(b)
 	}
 
 	return nil
+}
+
+// FormatIntWidthN uses to format int with width. Insufficient digits are filled by 0.
+func FormatIntWidthN(num, n int) string {
+	numString := strconv.FormatInt(int64(num), 10)
+	if len(numString) >= n {
+		return numString
+	}
+	padBytes := make([]byte, n-len(numString))
+	for i := range padBytes {
+		padBytes[i] = '0'
+	}
+	return string(padBytes) + numString
 }
 
 func abbrDayOfMonth(day int) string {

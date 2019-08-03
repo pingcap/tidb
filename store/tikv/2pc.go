@@ -103,10 +103,11 @@ type twoPhaseCommitter struct {
 	maxTxnTimeUse uint64
 	detail        *execdetails.CommitDetails
 	// For pessimistic transaction
-	isPessimistic bool
-	primaryKey    []byte
-	forUpdateTS   uint64
-	isFirstLock   bool
+	isPessimistic  bool
+	primaryKey     []byte
+	forUpdateTS    uint64
+	isFirstLock    bool
+	pessimisticTTL uint64
 }
 
 type mutationEx struct {
@@ -571,7 +572,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 		PrimaryLock:  c.primary(),
 		StartVersion: c.startTS,
 		ForUpdateTs:  c.forUpdateTS,
-		LockTtl:      PessimisticLockTTL,
+		LockTtl:      c.pessimisticTTL,
 		IsFirstLock:  c.isFirstLock,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	for {

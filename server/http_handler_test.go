@@ -586,7 +586,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&lt)
 	c.Assert(err, IsNil)
-	c.Assert(lt[0].Name.L, Equals, "test")
+	c.Assert(len(lt), Greater, 0)
 
 	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/abc"))
 	c.Assert(err, IsNil)
