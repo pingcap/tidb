@@ -40,13 +40,12 @@ func (s *testSchemaSuite) TearDownSuite(c *C) {
 }
 
 func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
-	var err error
 	dbInfo := &model.DBInfo{
 		Name: model.NewCIStr(name),
 	}
-
-	dbInfo.ID, err = d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	c.Assert(err, IsNil)
+	dbInfo.ID = genIDs[0]
 	return dbInfo
 }
 
@@ -206,8 +205,9 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	// d2 must not be owner.
 	c.Assert(d2.ownerManager.IsOwner(), IsFalse)
 
-	schemaID, err := d2.genGlobalID()
+	genIDs, err := d2.genGlobalIDs(1)
 	c.Assert(err, IsNil)
+	schemaID := genIDs[0]
 	doDDLJobErr(c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
 }
 

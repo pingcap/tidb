@@ -60,7 +60,7 @@ type CheckIndexRangeExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	handleIdx := e.schema.Len() - 1
 	for {
@@ -102,7 +102,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		FieldType: *colTypeForHandle,
 	})
 
-	e.srcChunk = e.newFirstChunk()
+	e.srcChunk = newFirstChunk(e)
 	dagPB, err := e.buildDAGPB()
 	if err != nil {
 		return err
@@ -135,7 +135,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	dagReq.StartTs = txn.StartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Flags = sc.PushDownFlags()
 	for i := range e.schema.Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
@@ -233,7 +233,7 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	dagReq.StartTs = txn.StartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Flags = sc.PushDownFlags()
 	for i := range e.columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
@@ -394,7 +394,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 				}
 
 				if handle != rows[i].handle {
-					logutil.Logger(context.Background()).Warn("recover index: the constraint of unique index is broken, handle in index is not equal to handle in table",
+					logutil.BgLogger().Warn("recover index: the constraint of unique index is broken, handle in index is not equal to handle in table",
 						zap.String("index", e.index.Meta().Name.O), zap.ByteString("indexKey", key),
 						zap.Int64("handleInTable", rows[i].handle), zap.Int64("handleInIndex", handle))
 				}
@@ -436,7 +436,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			return result, err
 		}
 
-		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle)
+		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle, table.WithAssertion(txn))
 		if err != nil {
 			return result, err
 		}
@@ -446,7 +446,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 }
 
 // Next implements the Executor Next interface.
-func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
@@ -522,7 +522,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				}
 				e.removeCnt++
 				if e.removeCnt%e.batchSize == 0 {
-					logutil.Logger(context.Background()).Info("clean up dangling index", zap.String("table", e.table.Meta().Name.String()),
+					logutil.BgLogger().Info("clean up dangling index", zap.String("table", e.table.Meta().Name.String()),
 						zap.String("index", e.index.Meta().Name.String()), zap.Uint64("count", e.removeCnt))
 				}
 			}
@@ -582,7 +582,7 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 }
 
 // Next implements the Executor Next interface.
-func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
@@ -670,7 +670,7 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 	dagReq.StartTs = txn.StartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Flags = sc.PushDownFlags()
 	for i := range e.idxCols {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}

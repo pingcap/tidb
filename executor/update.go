@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -33,7 +34,6 @@ import (
 type UpdateExec struct {
 	baseExecutor
 
-	SelectExec  Executor
 	OrderedList []*expression.Assignment
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
@@ -46,9 +46,9 @@ type UpdateExec struct {
 	fetched     bool
 	cursor      int
 	matched     uint64 // a counter of matched rows during update
-	// columns2Handle stores relationship between column ordinal to its table handle.
-	// the columns ordinals is present in ordinal range format, @see executor.cols2Handle
-	columns2Handle cols2HandleSlice
+	// tblColPosInfos stores relationship between column ordinal to its table handle.
+	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
+	tblColPosInfos plannercore.TblColPosInfoSlice
 	evalBuffer     chunk.MutRow
 }
 
@@ -65,57 +65,53 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 	}
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
-	for id, cols := range schema.TblID2Handle {
-		tbl := e.tblID2table[id]
-		if e.updatedRowKeys[id] == nil {
-			e.updatedRowKeys[id] = make(map[int64]bool)
+	for _, content := range e.tblColPosInfos {
+		tbl := e.tblID2table[content.TblID]
+		if e.updatedRowKeys[content.TblID] == nil {
+			e.updatedRowKeys[content.TblID] = make(map[int64]bool)
 		}
-		for _, col := range cols {
-			offset := getTableOffset(schema, col)
-			end := offset + len(tbl.WritableCols())
-			handleDatum := row[col.Index]
-			if e.canNotUpdate(handleDatum) {
-				continue
-			}
-			handle := row[col.Index].GetInt64()
-			oldData := row[offset:end]
-			newTableData := newData[offset:end]
-			updatable := false
-			flags := assignFlag[offset:end]
-			for _, flag := range flags {
-				if flag {
-					updatable = true
-					break
-				}
-			}
-			if !updatable {
-				// If there's nothing to update, we can just skip current row
-				continue
-			}
-			changed, ok := e.updatedRowKeys[id][handle]
-			if !ok {
-				// Row is matched for the first time, increment `matched` counter
-				e.matched++
-			}
-			if changed {
-				// Each matched row is updated once, even if it matches the conditions multiple times.
-				continue
-			}
-
-			// Update row
-			changed, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
-			if err1 == nil {
-				e.updatedRowKeys[id][handle] = changed
-				continue
-			}
-
-			sc := e.ctx.GetSessionVars().StmtCtx
-			if kv.ErrKeyExists.Equal(err1) && sc.DupKeyAsWarning {
-				sc.AppendWarning(err1)
-				continue
-			}
-			return nil, err1
+		handleDatum := row[content.HandleOrdinal]
+		if e.canNotUpdate(handleDatum) {
+			continue
 		}
+		handle := row[content.HandleOrdinal].GetInt64()
+		oldData := row[content.Start:content.End]
+		newTableData := newData[content.Start:content.End]
+		updatable := false
+		flags := assignFlag[content.Start:content.End]
+		for _, flag := range flags {
+			if flag {
+				updatable = true
+				break
+			}
+		}
+		if !updatable {
+			// If there's nothing to update, we can just skip current row
+			continue
+		}
+		changed, ok := e.updatedRowKeys[content.TblID][handle]
+		if !ok {
+			// Row is matched for the first time, increment `matched` counter
+			e.matched++
+		}
+		if changed {
+			// Each matched row is updated once, even if it matches the conditions multiple times.
+			continue
+		}
+
+		// Update row
+		changed, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+		if err1 == nil {
+			e.updatedRowKeys[content.TblID][handle] = changed
+			continue
+		}
+
+		sc := e.ctx.GetSessionVars().StmtCtx
+		if kv.ErrKeyExists.Equal(err1) && sc.DupKeyAsWarning {
+			sc.AppendWarning(err1)
+			continue
+		}
+		return nil, err1
 	}
 	e.cursor++
 	return []types.Datum{}, nil
@@ -132,7 +128,7 @@ func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
 }
 
 // Next implements the Executor Next interface.
-func (e *UpdateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("update.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -165,23 +161,19 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 }
 
 func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
-	fields := e.children[0].retTypes()
-	schema := e.children[0].Schema()
+	fields := retTypes(e.children[0])
 	colsInfo := make([]*table.Column, len(fields))
-	for id, cols := range schema.TblID2Handle {
-		tbl := e.tblID2table[id]
-		for _, col := range cols {
-			offset := getTableOffset(schema, col)
-			for i, c := range tbl.WritableCols() {
-				colsInfo[offset+i] = c
-			}
+	for _, content := range e.tblColPosInfos {
+		tbl := e.tblID2table[content.TblID]
+		for i, c := range tbl.WritableCols() {
+			colsInfo[content.Start+i] = c
 		}
 	}
 	globalRowIdx := 0
-	chk := e.children[0].newFirstChunk()
+	chk := newFirstChunk(e.children[0])
 	e.evalBuffer = chunk.MutRowFromTypes(fields)
 	for {
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return err
 		}
@@ -226,7 +218,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 	newRowData := types.CloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
 	for _, assign := range e.OrderedList {
-		handleIdx, handleFound := e.columns2Handle.findHandle(int32(assign.Col.Index))
+		handleIdx, handleFound := e.tblColPosInfos.FindHandle(assign.Col.Index)
 		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
 			continue
 		}
@@ -253,12 +245,12 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
 	e.setMessage()
-	return e.SelectExec.Close()
+	return e.children[0].Close()
 }
 
 // Open implements the Executor Open interface.
 func (e *UpdateExec) Open(ctx context.Context) error {
-	return e.SelectExec.Open(ctx)
+	return e.children[0].Open(ctx)
 }
 
 func (e *UpdateExec) getUpdateColumns(ctx sessionctx.Context, schemaLen int) ([]bool, error) {

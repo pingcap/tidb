@@ -14,7 +14,6 @@
 package systimemon
 
 import (
-	"context"
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
@@ -23,7 +22,7 @@ import (
 
 // StartMonitor calls systimeErrHandler if system time jump backward.
 func StartMonitor(now func() time.Time, systimeErrHandler func(), successCallback func()) {
-	logutil.Logger(context.Background()).Info("start system time monitor")
+	logutil.BgLogger().Info("start system time monitor")
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	tickCount := 0
@@ -31,7 +30,7 @@ func StartMonitor(now func() time.Time, systimeErrHandler func(), successCallbac
 		last := now().UnixNano()
 		<-tick.C
 		if now().UnixNano() < last {
-			logutil.Logger(context.Background()).Error("system time jump backward", zap.Int64("last", last))
+			logutil.BgLogger().Error("system time jump backward", zap.Int64("last", last))
 			systimeErrHandler()
 		}
 		// call sucessCallback per second.

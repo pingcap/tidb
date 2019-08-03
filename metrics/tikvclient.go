@@ -180,13 +180,13 @@ var (
 		})
 
 	// TiKVPendingBatchRequests indicates the number of requests pending in the batch channel.
-	TiKVPendingBatchRequests = prometheus.NewGauge(
+	TiKVPendingBatchRequests = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "pending_batch_requests",
 			Help:      "Pending batch requests",
-		})
+		}, []string{"store"})
 
 	TiKVBatchWaitDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{

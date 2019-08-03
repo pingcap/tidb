@@ -117,7 +117,7 @@ func saveSafePoint(kv SafePointKV, key string, t uint64) error {
 	s := strconv.FormatUint(t, 10)
 	err := kv.Put(GcSavedSafePoint, s)
 	if err != nil {
-		logutil.Logger(context.Background()).Error("save safepoint failed", zap.Error(err))
+		logutil.BgLogger().Error("save safepoint failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return nil

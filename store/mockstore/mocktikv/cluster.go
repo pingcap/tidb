@@ -17,11 +17,14 @@ import (
 	"bytes"
 	"context"
 	"math"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 )
 
@@ -40,14 +43,24 @@ type Cluster struct {
 	id      uint64
 	stores  map[uint64]*Store
 	regions map[uint64]*Region
+
+	// delayEvents is used to control the execution sequence of rpc requests for test.
+	delayEvents map[delayKey]time.Duration
+	delayMu     sync.Mutex
+}
+
+type delayKey struct {
+	startTS  uint64
+	regionID uint64
 }
 
 // NewCluster creates an empty cluster. It needs to be bootstrapped before
 // providing service.
 func NewCluster() *Cluster {
 	return &Cluster{
-		stores:  make(map[uint64]*Store),
-		regions: make(map[uint64]*Region),
+		stores:      make(map[uint64]*Store),
+		regions:     make(map[uint64]*Region),
+		delayEvents: make(map[delayKey]time.Duration),
 	}
 }
 
@@ -257,6 +270,49 @@ func (c *Cluster) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer) 
 	return nil, nil
 }
 
+// ScanRegions returns at most `limit` regions from given `key` and their leaders.
+func (c *Cluster) ScanRegions(key []byte, limit int) ([]*metapb.Region, []*metapb.Peer) {
+	c.RLock()
+	defer c.RUnlock()
+
+	regions := make([]*Region, 0, len(c.regions))
+	for _, region := range c.regions {
+		regions = append(regions, region)
+	}
+
+	sort.Slice(regions, func(i, j int) bool {
+		return bytes.Compare(regions[i].Meta.GetStartKey(), regions[j].Meta.GetStartKey()) < 0
+	})
+
+	keyLocation := sort.Search(len(regions), func(i int) bool {
+		endKey := regions[i].Meta.GetEndKey()
+		if len(endKey) == 0 {
+			return true
+		}
+		return bytes.Compare(regions[i].Meta.GetEndKey(), key) > 0
+	})
+	regions = regions[keyLocation:]
+	if len(regions) > limit {
+		regions = regions[:limit]
+	}
+
+	metas := make([]*metapb.Region, 0, len(regions))
+	leaders := make([]*metapb.Peer, 0, len(regions))
+	for _, region := range regions {
+		leader := region.leaderPeer()
+		if leader == nil {
+			leader = &metapb.Peer{}
+		} else {
+			leader = proto.Clone(leader).(*metapb.Peer)
+		}
+
+		metas = append(metas, proto.Clone(region.Meta).(*metapb.Region))
+		leaders = append(leaders, leader)
+	}
+
+	return metas, leaders
+}
+
 // Bootstrap creates the first Region. The Stores should be in the Cluster before
 // bootstrap.
 func (c *Cluster) Bootstrap(regionID uint64, storeIDs, peerIDs []uint64, leaderPeerID uint64) {
@@ -307,12 +363,13 @@ func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, peerIDs []uint
 }
 
 // SplitRaw splits a Region at the key (not encoded) and creates new Region.
-func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) {
+func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *Region {
 	c.Lock()
 	defer c.Unlock()
 
 	newRegion := c.regions[regionID].split(newRegionID, rawKey, peerIDs, leaderPeerID)
 	c.regions[newRegionID] = newRegion
+	return newRegion
 }
 
 // Merge merges 2 regions, their key ranges should be adjacent.
@@ -338,6 +395,32 @@ func (c *Cluster) SplitIndex(mvccStore MVCCStore, tableID, indexID int64, count 
 	indexStart := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 	indexEnd := indexStart.PrefixNext()
 	c.splitRange(mvccStore, NewMvccKey(indexStart), NewMvccKey(indexEnd), count)
+}
+
+// SplitKeys evenly splits the start, end key into "count" regions.
+// Only works for single store.
+func (c *Cluster) SplitKeys(mvccStore MVCCStore, start, end kv.Key, count int) {
+	c.splitRange(mvccStore, NewMvccKey(start), NewMvccKey(end), count)
+}
+
+// ScheduleDelay schedules a delay event for a transaction on a region.
+func (c *Cluster) ScheduleDelay(startTS, regionID uint64, dur time.Duration) {
+	c.delayMu.Lock()
+	c.delayEvents[delayKey{startTS: startTS, regionID: regionID}] = dur
+	c.delayMu.Unlock()
+}
+
+func (c *Cluster) handleDelay(startTS, regionID uint64) {
+	key := delayKey{startTS: startTS, regionID: regionID}
+	c.delayMu.Lock()
+	dur, ok := c.delayEvents[key]
+	if ok {
+		delete(c.delayEvents, key)
+	}
+	c.delayMu.Unlock()
+	if ok {
+		time.Sleep(dur)
+	}
 }
 
 func (c *Cluster) splitRange(mvccStore MVCCStore, start, end MvccKey, count int) {

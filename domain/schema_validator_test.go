@@ -41,6 +41,7 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	go serverFunc(lease, leaseGrantCh, oracleCh, exit, &wg)
 
 	validator := NewSchemaValidator(lease).(*schemaValidator)
+	c.Assert(validator.IsStarted(), IsTrue)
 
 	for i := 0; i < 10; i++ {
 		delay := time.Duration(100+rand.Intn(900)) * time.Microsecond
@@ -58,6 +59,7 @@ func (*testSuite) TestSchemaValidator(c *C) {
 
 	// Stop the validator, validator's items value is nil.
 	validator.Stop()
+	c.Assert(validator.IsStarted(), IsFalse)
 	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
 	c.Assert(isTablesChanged, IsTrue)
 	valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})

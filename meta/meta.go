@@ -14,7 +14,6 @@
 package meta
 
 import (
-	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -133,6 +132,11 @@ func (m *Meta) autoTableIDKey(tableID int64) []byte {
 
 func (m *Meta) tableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
+}
+
+// DDLJobHistoryKey is only used for testing.
+func DDLJobHistoryKey(m *Meta, jobID int64) []byte {
+	return m.txn.EncodeHashDataKey(mDDLJobHistoryKey, m.jobIDKey(jobID))
 }
 
 // GenAutoTableIDKeyValue generates meta key by dbID, tableID and corresponding value by autoID.
@@ -637,10 +641,23 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	jobs := make([]*model.Job, 0, len(pairs))
-	for _, pair := range pairs {
+	return decodeAndSortJob(pairs)
+}
+
+// GetLastNHistoryDDLJobs gets latest N history ddl jobs.
+func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
+	pairs, err := m.txn.HGetLastN(mDDLJobHistoryKey, num)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return decodeAndSortJob(pairs)
+}
+
+func decodeAndSortJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
+	jobs := make([]*model.Job, 0, len(jobPairs))
+	for _, pair := range jobPairs {
 		job := &model.Job{}
-		err = job.Decode(pair.Value)
+		err := job.Decode(pair.Value)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -708,10 +725,10 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 		return errors.Trace(err)
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID)); err != nil {
-		logutil.Logger(context.Background()).Warn("remove DDL reorg end handle", zap.Error(err))
+		logutil.BgLogger().Warn("remove DDL reorg end handle", zap.Error(err))
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID)); err != nil {
-		logutil.Logger(context.Background()).Warn("remove DDL reorg physical ID", zap.Error(err))
+		logutil.BgLogger().Warn("remove DDL reorg physical ID", zap.Error(err))
 	}
 	return nil
 }
@@ -742,7 +759,7 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, physic
 			endHandle = math.MaxInt64
 		}
 		physicalTableID = job.TableID
-		logutil.Logger(context.Background()).Warn("new TiDB binary running on old TiDB DDL reorg data",
+		logutil.BgLogger().Warn("new TiDB binary running on old TiDB DDL reorg data",
 			zap.Int64("partition ID", physicalTableID),
 			zap.Int64("startHandle", startHandle),
 			zap.Int64("endHandle", endHandle))

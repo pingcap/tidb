@@ -35,8 +35,8 @@ func (s *testStatsSuite) TestConversion(c *C) {
 	tk.MustExec("insert into t(a,b) values (1, 1),(3, 1),(5, 10)")
 	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-	h.DumpStatsDeltaToKV(handle.DumpAll)
-	h.Update(is)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
 
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -73,7 +73,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t")
 	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -105,9 +105,9 @@ func (s *testStatsSuite) TestDumpAlteredTable(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	h := s.do.StatsHandle()
-	oriLease := h.Lease
-	h.Lease = 1
-	defer func() { h.Lease = oriLease }()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() { h.SetLease(oriLease) }()
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("analyze table t")
 	tk.MustExec("alter table t drop column a")
@@ -131,7 +131,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := s.do.StatsHandle()
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 
 	// Insert 30 fake data
 	fakeData := make([][]byte, 0, 30)
@@ -157,4 +157,21 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	stat = h.GetTableStats(tableInfo)
 	cmsFromJSON := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
 	c.Check(cms.Equal(cmsFromJSON), IsTrue)
+}
+
+func (s *testStatsSuite) TestDumpPseudoColumns(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int, index idx(a))")
+	// Force adding an pseudo tables in stats cache.
+	testKit.MustQuery("select * from t")
+	testKit.MustExec("analyze table t index idx")
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	h := s.do.StatsHandle()
+	_, err = h.DumpStatsToJSON("test", tbl.Meta(), nil)
+	c.Assert(err, IsNil)
 }

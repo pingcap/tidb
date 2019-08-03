@@ -101,6 +101,8 @@ func (s *testPointGetSuite) TestPointGet(c *C) {
 	tk.MustQuery(`select a, a, b, a, b, c, b, c, c from t where a = 5;`).Check(testkit.Rows(
 		`5 5 6 5 6 7 6 7 7`,
 	))
+	tk.MustQuery(`select b, b from t where a = 1`).Check(testkit.Rows(
+		"<nil> <nil>"))
 }
 
 func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
@@ -340,4 +342,63 @@ func (s *testPointGetSuite) TestIndexLookupBinaryPK(c *C) {
 	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a  b `))
 	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+}
+
+func (s *testPointGetSuite) TestIssue10448(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int1 primary key)")
+	tk.MustExec("insert into t values(125)")
+	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 128").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int8 primary key)")
+	tk.MustExec("insert into t values(9223372036854775807)")
+	tk.MustQuery("select * from t where pk = 9223372036854775807").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:9223372036854775807"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int1 unsigned primary key)")
+	tk.MustExec("insert into t values(255)")
+	tk.MustQuery("select * from t where pk = 255").Check(testkit.Rows("255"))
+	tk.MustQuery("desc select * from t where pk = 256").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int8 unsigned primary key)")
+	tk.MustExec("insert into t value(18446744073709551615)")
+	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:18446744073709551615"))
+	tk.MustQuery("select * from t where pk = 18446744073709551615").Check(testkit.Rows("18446744073709551615"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:9223372036854775807"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:9223372036854775808"))
+}
+
+func (s *testPointGetSuite) TestIssue10677(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int1 primary key)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("desc select * from t where pk = 1.1").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("select * from t where pk = 1.1").Check(testkit.Rows())
+	tk.MustQuery("desc select * from t where pk = '1.1'").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("select * from t where pk = '1.1'").Check(testkit.Rows())
+	tk.MustQuery("desc select * from t where pk = 1").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:1"))
+	tk.MustQuery("select * from t where pk = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("desc select * from t where pk = '1'").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:1"))
+	tk.MustQuery("select * from t where pk = '1'").Check(testkit.Rows("1"))
+	tk.MustQuery("desc select * from t where pk = '1.0'").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:1"))
+	tk.MustQuery("select * from t where pk = '1.0'").Check(testkit.Rows("1"))
 }

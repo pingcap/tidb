@@ -167,14 +167,14 @@ func mockAutoIDRetry() bool {
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
 	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
-		logutil.Logger(context.Background()).Error("the code should never run here",
+		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Stack("something must be wrong"))
 		return errors.New("invalid transaction")
 	}
 	if st.doNotCommit != nil {
 		if err1 := st.Transaction.Rollback(); err1 != nil {
-			logutil.Logger(context.Background()).Error("rollback error", zap.Error(err1))
+			logutil.BgLogger().Error("rollback error", zap.Error(err1))
 		}
 		return errors.Trace(st.doNotCommit)
 	}
@@ -314,13 +314,7 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 		if !keyNeedToLock(k, v) {
 			return nil
 		}
-		if mb := st.Transaction.GetMemBuffer(); mb != nil {
-			_, err1 := mb.Get(k)
-			if err1 == nil {
-				// Key is already in txn MemBuffer, must already been locked, we don't need to lock it again.
-				return nil
-			}
-		}
+		// If the key is already locked, it will be deduplicated in LockKeys method later.
 		// The statement MemBuffer will be reused, so we must copy the key here.
 		keys = append(keys, append([]byte{}, k...))
 		return nil
@@ -444,6 +438,7 @@ func (s *session) StmtCommit() error {
 	})
 	if err != nil {
 		st.doNotCommit = err
+		st.ConfirmAssertions(false)
 		return err
 	}
 
@@ -459,12 +454,14 @@ func (s *session) StmtCommit() error {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	st.ConfirmAssertions(true)
 	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback() {
 	s.txn.cleanup()
+	s.txn.ConfirmAssertions(false)
 	return
 }
 

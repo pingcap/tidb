@@ -70,6 +70,15 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
+	t1, err = o.GetLowResolutionTimestamp(ctx)
+	c.Assert(err, IsNil)
+	t2, err = o.GetLowResolutionTimestamp(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(t1, Less, t2)
+	f := o.GetLowResolutionTimestampAsync(ctx)
+	c.Assert(f, NotNil)
+	_ = o.UntilExpired(0, 0)
+
 	// Check retry.
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -159,6 +168,16 @@ func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*met
 	return c.client.GetRegionByID(ctx, regionID)
 }
 
+func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.stop {
+		return nil, nil, errors.Trace(errStopped)
+	}
+	return c.client.ScanRegions(ctx, startKey, limit)
+}
+
 func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	c.RLock()
 	defer c.RUnlock()
@@ -201,8 +220,8 @@ type checkRequestClient struct {
 func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
-		if resp.Get != nil {
-			resp.Get.Error = &pb.KeyError{
+		if resp.Resp != nil {
+			(resp.Resp.(*pb.GetResponse)).Error = &pb.KeyError{
 				Abort: "request check error",
 			}
 		}

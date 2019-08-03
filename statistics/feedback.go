@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"context"
 	"encoding/gob"
 	"math"
 	"math/rand"
@@ -35,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/spaolacci/murmur3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -158,12 +156,12 @@ func (q *QueryFeedback) DecodeIntValues() *QueryFeedback {
 	for _, fb := range q.Feedback {
 		_, lowInt, err := codec.DecodeInt(fb.Lower.GetBytes())
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("decode feedback lower bound value to integer failed", zap.Binary("value", fb.Lower.GetBytes()), zap.Error(err))
+			logutil.BgLogger().Debug("decode feedback lower bound value to integer failed", zap.Binary("value", fb.Lower.GetBytes()), zap.Error(err))
 			continue
 		}
 		_, highInt, err := codec.DecodeInt(fb.Upper.GetBytes())
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("decode feedback upper bound value to integer failed", zap.Binary("value", fb.Upper.GetBytes()), zap.Error(err))
+			logutil.BgLogger().Debug("decode feedback upper bound value to integer failed", zap.Binary("value", fb.Upper.GetBytes()), zap.Error(err))
 			continue
 		}
 		low, high := types.NewIntDatum(lowInt), types.NewIntDatum(highInt)
@@ -309,7 +307,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 	for _, fb := range feedback.Feedback {
 		skip, err := fb.adjustFeedbackBoundaries(sc, &min, &max)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("adjust feedback boundaries failed", zap.Error(err))
+			logutil.BgLogger().Debug("adjust feedback boundaries failed", zap.Error(err))
 			continue
 		}
 		if skip {
@@ -337,7 +335,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		// Update the bound if necessary.
 		res, err := bkt.lower.CompareDatum(nil, fb.Lower)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("compare datum failed", zap.Any("value1", bkt.lower), zap.Any("value2", fb.Lower), zap.Error(err))
+			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", bkt.lower), zap.Any("value2", fb.Lower), zap.Error(err))
 			continue
 		}
 		if res > 0 {
@@ -345,7 +343,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		}
 		res, err = bkt.upper.CompareDatum(nil, fb.Upper)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("compare datum failed", zap.Any("value1", bkt.upper), zap.Any("value2", fb.Upper), zap.Error(err))
+			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", bkt.upper), zap.Any("value2", fb.Upper), zap.Error(err))
 			continue
 		}
 		if res < 0 {
@@ -365,10 +363,8 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	vals = append(vals, *b.lower)
 	err := types.SortDatums(nil, vals)
 	if err != nil {
-		logutil.Logger(context.Background()).Debug("sort datums failed", zap.Error(err))
-		vals = vals[:0]
-		vals = append(vals, *b.lower, *b.upper)
-		return vals
+		logutil.BgLogger().Debug("sort datums failed", zap.Error(err))
+		return []types.Datum{*b.lower, *b.upper}
 	}
 	total, interval := 0, len(vals)/num
 	// Pick values per `interval`.
@@ -383,7 +379,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	for i := 1; i < len(vals); i++ {
 		cmp, err := vals[total-1].CompareDatum(nil, &vals[i])
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("compare datum failed", zap.Any("value1", vals[total-1]), zap.Any("value2", vals[i]), zap.Error(err))
+			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", vals[total-1]), zap.Any("value2", vals[i]), zap.Error(err))
 			continue
 		}
 		if cmp == 0 {
@@ -690,8 +686,11 @@ func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 type queryFeedback struct {
 	IntRanges []int64
 	// HashValues is the murmur hash values for each index point.
+	// Note that index points will be stored in `IndexPoints`, we keep it here only for compatibility.
 	HashValues  []uint64
 	IndexRanges [][]byte
+	// IndexPoints stores the value of each equal condition.
+	IndexPoints [][]byte
 	// Counts is the number of scan keys in each range. It first stores the count for `IntRanges`, `IndexRanges` or `ColumnRanges`.
 	// After that, it stores the Ranges for `HashValues`.
 	Counts       []int64
@@ -724,8 +723,7 @@ func encodeIndexFeedback(q *QueryFeedback) *queryFeedback {
 	var pointCounts []int64
 	for _, fb := range q.Feedback {
 		if bytes.Compare(kv.Key(fb.Lower.GetBytes()).PrefixNext(), fb.Upper.GetBytes()) >= 0 {
-			h1, h2 := murmur3.Sum128(fb.Lower.GetBytes())
-			pb.HashValues = append(pb.HashValues, h1, h2)
+			pb.IndexPoints = append(pb.IndexPoints, fb.Lower.GetBytes())
 			pointCounts = append(pointCounts, fb.Count)
 		} else {
 			pb.IndexRanges = append(pb.IndexRanges, fb.Lower.GetBytes(), fb.Upper.GetBytes())
@@ -772,10 +770,7 @@ func EncodeFeedback(q *QueryFeedback) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	err = enc.Encode(pb)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return buf.Bytes(), nil
+	return buf.Bytes(), errors.Trace(err)
 }
 
 func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
@@ -788,9 +783,18 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
 	if c != nil {
 		// decode the index point feedback, just set value count in CM Sketch
 		start := len(pb.IndexRanges) / 2
-		for i := 0; i < len(pb.HashValues); i += 2 {
-			// TODO: update using raw bytes instead of hash values.
-			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint64(pb.Counts[start+i/2]))
+		if len(pb.HashValues) > 0 {
+			// It needs raw values to update the top n, so just skip it here.
+			if len(c.topN) > 0 {
+				return
+			}
+			for i := 0; i < len(pb.HashValues); i += 2 {
+				c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint64(pb.Counts[start+i/2]))
+			}
+			return
+		}
+		for i := 0; i < len(pb.IndexPoints); i++ {
+			c.updateValueBytes(pb.IndexPoints[i], uint64(pb.Counts[start+i]))
 		}
 	}
 }
@@ -811,16 +815,40 @@ func decodeFeedbackForPK(q *QueryFeedback, pb *queryFeedback, isUnsigned bool) {
 	}
 }
 
-func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback) error {
+// ConvertDatumsType converts the datums type to `ft`.
+func ConvertDatumsType(vals []types.Datum, ft *types.FieldType, loc *time.Location) error {
+	for i, val := range vals {
+		if val.Kind() == types.KindMinNotNull || val.Kind() == types.KindMaxValue {
+			continue
+		}
+		newVal, err := tablecodec.UnflattenDatums([]types.Datum{val}, []*types.FieldType{ft}, loc)
+		if err != nil {
+			return err
+		}
+		vals[i] = newVal[0]
+	}
+	return nil
+}
+
+func decodeColumnBounds(data []byte, ft *types.FieldType) ([]types.Datum, error) {
+	vals, err := codec.DecodeRange(data, 1)
+	if err != nil {
+		return nil, err
+	}
+	err = ConvertDatumsType(vals, ft, time.UTC)
+	return vals, err
+}
+
+func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback, ft *types.FieldType) error {
 	q.Tp = ColType
 	for i := 0; i < len(pb.ColumnRanges); i += 2 {
-		low, err := codec.DecodeRange(pb.ColumnRanges[i], 1)
+		low, err := decodeColumnBounds(pb.ColumnRanges[i], ft)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		high, err := codec.DecodeRange(pb.ColumnRanges[i+1], 1)
+		high, err := decodeColumnBounds(pb.ColumnRanges[i+1], ft)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		q.Feedback = append(q.Feedback, Feedback{&low[0], &high[0], pb.Counts[i/2], 0})
 	}
@@ -828,7 +856,7 @@ func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback) error {
 }
 
 // DecodeFeedback decodes a byte slice to feedback.
-func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, isUnsigned bool) error {
+func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, ft *types.FieldType) error {
 	buf := bytes.NewBuffer(val)
 	dec := gob.NewDecoder(buf)
 	pb := &queryFeedback{}
@@ -836,46 +864,14 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, isUnsigned bool) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 {
+	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 || len(pb.IndexPoints) > 0 {
 		decodeFeedbackForIndex(q, pb, c)
 	} else if len(pb.IntRanges) > 0 {
-		decodeFeedbackForPK(q, pb, isUnsigned)
+		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.Flag))
 	} else {
-		err := decodeFeedbackForColumn(q, pb)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		err = decodeFeedbackForColumn(q, pb, ft)
 	}
-	return nil
-}
-
-// Equal tests if two query feedback equal, it is only used in test.
-func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
-	if len(q.Feedback) != len(rq.Feedback) {
-		return false
-	}
-	for i, fb := range q.Feedback {
-		rfb := rq.Feedback[i]
-		if fb.Count != rfb.Count {
-			return false
-		}
-		if fb.Lower.Kind() == types.KindInt64 {
-			if fb.Lower.GetInt64() != rfb.Lower.GetInt64() {
-				return false
-			}
-			if fb.Upper.GetInt64() != rfb.Upper.GetInt64() {
-				return false
-			}
-		} else {
-			if !bytes.Equal(fb.Lower.GetBytes(), rfb.Lower.GetBytes()) {
-				return false
-			}
-			if !bytes.Equal(fb.Upper.GetBytes(), rfb.Upper.GetBytes()) {
-				return false
-			}
-		}
-	}
-	return true
+	return err
 }
 
 // SplitFeedbackByQueryType splits the feedbacks into equality feedbacks and range feedbacks.
@@ -923,9 +919,8 @@ func SupportColumnType(ft *types.FieldType) bool {
 		mysql.TypeDouble, mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeNewDecimal, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return true
-	default:
-		return false
 	}
+	return false
 }
 
 // GetMaxValue returns the max value datum for each type.
@@ -946,13 +941,13 @@ func GetMaxValue(ft *types.FieldType) (max types.Datum) {
 		bytes, err := codec.EncodeKey(nil, nil, val)
 		// should not happen
 		if err != nil {
-			logutil.Logger(context.Background()).Error("encode key fail", zap.Error(err))
+			logutil.BgLogger().Error("encode key fail", zap.Error(err))
 		}
 		max.SetBytes(bytes)
 	case mysql.TypeNewDecimal:
 		max.SetMysqlDecimal(types.NewMaxOrMinDec(false, ft.Flen, ft.Decimal))
 	case mysql.TypeDuration:
-		max.SetMysqlDuration(types.Duration{Duration: math.MaxInt64})
+		max.SetMysqlDuration(types.Duration{Duration: types.MaxTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
 			max.SetMysqlTime(types.Time{Time: types.MaxDatetime, Type: ft.Tp})
@@ -981,13 +976,13 @@ func GetMinValue(ft *types.FieldType) (min types.Datum) {
 		bytes, err := codec.EncodeKey(nil, nil, val)
 		// should not happen
 		if err != nil {
-			logutil.Logger(context.Background()).Error("encode key fail", zap.Error(err))
+			logutil.BgLogger().Error("encode key fail", zap.Error(err))
 		}
 		min.SetBytes(bytes)
 	case mysql.TypeNewDecimal:
 		min.SetMysqlDecimal(types.NewMaxOrMinDec(true, ft.Flen, ft.Decimal))
 	case mysql.TypeDuration:
-		min.SetMysqlDuration(types.Duration{Duration: math.MinInt64})
+		min.SetMysqlDuration(types.Duration{Duration: types.MinTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
 			min.SetMysqlTime(types.Time{Time: types.MinDatetime, Type: ft.Tp})

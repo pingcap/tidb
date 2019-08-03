@@ -58,6 +58,7 @@ var (
 	_ builtinFunc = &builtinJSONUnquoteSig{}
 	_ builtinFunc = &builtinJSONArraySig{}
 	_ builtinFunc = &builtinJSONArrayAppendSig{}
+	_ builtinFunc = &builtinJSONArrayInsertSig{}
 	_ builtinFunc = &builtinJSONObjectSig{}
 	_ builtinFunc = &builtinJSONExtractSig{}
 	_ builtinFunc = &builtinJSONSetSig{}
@@ -816,8 +817,74 @@ type jsonArrayInsertFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONArrayInsertSig struct {
+	baseBuiltinFunc
+}
+
 func (c *jsonArrayInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_ARRAY_INSERT")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	if len(args)&1 != 1 {
+		return nil, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
+	}
+
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETJson)
+	for i := 1; i < len(args)-1; i += 2 {
+		argTps = append(argTps, types.ETString, types.ETJson)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
+	for i := 2; i < len(args); i += 2 {
+		DisableParseJSONFlag4Expr(args[i])
+	}
+	sig := &builtinJSONArrayInsertSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonArrayInsertSig)
+	return sig, nil
+}
+
+func (b *builtinJSONArrayInsertSig) Clone() builtinFunc {
+	newSig := &builtinJSONArrayInsertSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONArrayInsertSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+	if err != nil || isNull {
+		return res, true, err
+	}
+
+	for i := 1; i < len(b.args)-1; i += 2 {
+		// If JSON path is NULL, MySQL breaks and returns NULL.
+		s, isNull, err := b.args[i].EvalString(b.ctx, row)
+		if err != nil || isNull {
+			return res, true, err
+		}
+
+		pathExpr, err := json.ParseJSONPathExpr(s)
+		if err != nil {
+			return res, true, json.ErrInvalidJSONPath.GenWithStackByArgs(s)
+		}
+		if pathExpr.ContainsAnyAsterisk() {
+			return res, true, json.ErrInvalidJSONPathWildcard.GenWithStackByArgs(s)
+		}
+
+		value, isnull, err := b.args[i+1].EvalJSON(b.ctx, row)
+		if err != nil {
+			return res, true, err
+		}
+
+		if isnull {
+			value = json.CreateBinary(nil)
+		}
+
+		res, err = res.ArrayInsert(pathExpr, value)
+		if err != nil {
+			return res, true, err
+		}
+	}
+	return res, false, nil
 }
 
 type jsonMergePatchFunctionClass struct {

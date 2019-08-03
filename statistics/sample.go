@@ -25,8 +25,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/spaolacci/murmur3"
 )
 
 // SampleItem is an item of sampled column value.
@@ -91,7 +93,7 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 	c.TotalSize += rc.TotalSize
 	c.FMSketch.mergeFMSketch(rc.FMSketch)
 	if rc.CMSketch != nil {
-		err := c.CMSketch.MergeCMSketch(rc.CMSketch)
+		err := c.CMSketch.MergeCMSketch(rc.CMSketch, 0)
 		terror.Log(errors.Trace(err))
 	}
 	for _, item := range rc.Samples {
@@ -217,8 +219,8 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		}
 	}
 	ctx := context.TODO()
-	req := s.RecordSet.NewRecordBatch()
-	it := chunk.NewIterator4Chunk(req.Chunk)
+	req := s.RecordSet.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
 	for {
 		err := s.RecordSet.Next(ctx, req)
 		if err != nil {
@@ -256,4 +258,33 @@ func RowToDatums(row chunk.Row, fields []*ast.ResultField) []types.Datum {
 		datums[i] = row.GetDatum(i, &f.Column.FieldType)
 	}
 	return datums
+}
+
+// ExtractTopN extracts the topn from the CM Sketch.
+func (c *SampleCollector) ExtractTopN(numTop uint32) {
+	if numTop == 0 {
+		return
+	}
+	values := make([][]byte, 0, len(c.Samples))
+	for _, sample := range c.Samples {
+		values = append(values, sample.Value.GetBytes())
+	}
+	helper := newTopNHelper(values, numTop)
+	cms := c.CMSketch
+	cms.topN = make(map[uint64][]*TopNMeta)
+	dataCnts := make([]dataCnt, 0, len(helper.counter))
+	for key, cnt := range helper.counter {
+		if cnt >= helper.lastVal {
+			dataCnts = append(dataCnts, dataCnt{hack.Slice(string(key)), cnt})
+		}
+	}
+	// Sort them decreasingly so we can handle most frequent values first and reduce the probability of hash collision
+	// by small values.
+	sort.SliceStable(dataCnts, func(i, j int) bool { return dataCnts[i].cnt >= dataCnts[j].cnt })
+	for _, dc := range dataCnts {
+		h1, h2 := murmur3.Sum128(dc.data)
+		realCnt := cms.queryHashValue(h1, h2)
+		cms.subValue(h1, h2, realCnt)
+		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, dc.data, realCnt})
+	}
 }

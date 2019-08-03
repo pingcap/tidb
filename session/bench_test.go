@@ -37,16 +37,16 @@ var bigCount = 10000
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
-		logutil.Logger(context.Background()).Fatal(err.Error())
+		logutil.BgLogger().Fatal(err.Error())
 	}
 	domain, err := BootstrapSession(store)
 	if err != nil {
-		logutil.Logger(context.Background()).Fatal(err.Error())
+		logutil.BgLogger().Fatal(err.Error())
 	}
 	log.SetLevel(zapcore.ErrorLevel)
 	se, err := CreateSession4Test(store)
 	if err != nil {
-		logutil.Logger(context.Background()).Fatal(err.Error())
+		logutil.BgLogger().Fatal(err.Error())
 	}
 	mustExecute(se, "use test")
 	return se, domain, store
@@ -88,7 +88,7 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 }
 
 func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	for count > 0 {
 		err := rs.Next(ctx, req)
 		if err != nil {

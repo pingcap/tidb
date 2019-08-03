@@ -15,6 +15,7 @@ package kv
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 	"time"
 
@@ -105,6 +106,12 @@ func (s *testKeySuite) TestIsPoint(c *C) {
 		}
 		c.Check(kr.IsPoint(), Equals, tt.isPoint)
 	}
+}
+
+func (s *testKeySuite) TestBasicFunc(c *C) {
+	c.Assert(IsTxnRetryableError(nil), IsFalse)
+	c.Assert(IsTxnRetryableError(ErrTxnRetryable), IsTrue)
+	c.Assert(IsTxnRetryableError(errors.New("test")), IsFalse)
 }
 
 func BenchmarkIsPoint(b *testing.B) {

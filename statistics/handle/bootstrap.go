@@ -36,7 +36,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables StatsCache
 		physicalID := row.GetInt64(1)
 		table, ok := h.getTableByPhysicalID(is, physicalID)
 		if !ok {
-			logutil.Logger(context.Background()).Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
+			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			continue
 		}
 		tableInfo := table.Meta()
@@ -69,8 +69,8 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (StatsCache, error) {
 		return nil, errors.Trace(err)
 	}
 	tables := StatsCache{}
-	req := rc[0].NewRecordBatch()
-	iter := chunk.NewIterator4Chunk(req.Chunk)
+	req := rc[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
@@ -147,8 +147,8 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables StatsCache
 	if err != nil {
 		return errors.Trace(err)
 	}
-	req := rc[0].NewRecordBatch()
-	iter := chunk.NewIterator4Chunk(req.Chunk)
+	req := rc[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
@@ -192,14 +192,14 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables StatsCache, iter *chu
 			var err error
 			lower, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				logutil.Logger(context.Background()).Debug("decode bucket lower bound failed", zap.Error(err))
+				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
 			upper, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				logutil.Logger(context.Background()).Debug("decode bucket upper bound failed", zap.Error(err))
+				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
@@ -219,8 +219,8 @@ func (h *Handle) initStatsBuckets(tables StatsCache) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	req := rc[0].NewRecordBatch()
-	iter := chunk.NewIterator4Chunk(req.Chunk)
+	req := rc[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {

@@ -204,13 +204,28 @@ func regionContainsTable(c *C, regionID uint64, tableID int64) bool {
 	return false
 }
 
-func (ts *HTTPHandlerTestSuite) TestListTableRegionsWithError(c *C) {
+func (ts *HTTPHandlerTestSuite) TestListTableRegions(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
+	ts.prepareData(c)
+	// Test list table regions with error
 	resp, err := http.Get("http://127.0.0.1:10090/tables/fdsfds/aaa/regions")
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = http.Get("http://127.0.0.1:10090/tables/tidb/pt/regions")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+
+	var data []*TableRegions
+	dec := json.NewDecoder(resp.Body)
+	err = dec.Decode(&data)
+	c.Assert(err, IsNil)
+
+	region := data[1]
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%d", region.TableID))
+	c.Assert(err, IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
@@ -305,6 +320,11 @@ func (ts *HTTPHandlerTestSuite) prepareData(c *C) {
 	c.Assert(err, IsNil)
 	dbt.mustExec("alter table tidb.test add index idx1 (a, b);")
 	dbt.mustExec("alter table tidb.test add unique index idx2 (a, b);")
+
+	dbt.mustExec(`create table tidb.pt (a int) partition by range (a)
+(partition p0 values less than (256),
+ partition p1 values less than (512),
+ partition p2 values less than (1024))`)
 }
 
 func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
@@ -566,7 +586,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&lt)
 	c.Assert(err, IsNil)
-	c.Assert(lt[0].Name.L, Equals, "test")
+	c.Assert(len(lt), Greater, 0)
 
 	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/abc"))
 	c.Assert(err, IsNil)
@@ -790,4 +810,13 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	c.Assert(serverInfo.Version, Equals, mysql.ServerVersion)
 	c.Assert(serverInfo.GitHash, Equals, printer.TiDBGitHash)
 	c.Assert(serverInfo.ID, Equals, ddl.GetID())
+}
+
+func (ts *HTTPHandlerTestSuite) TestHotRegionInfo(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/regions/hot")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 }

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 )
 
@@ -210,7 +210,7 @@ func (sr *simpleRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	if sr.err != nil {
 		return
 	}
-	if sr.rewriteFuncCall(v) {
+	if sr.rewriteFuncCall(v, args) {
 		return
 	}
 	var function Expression
@@ -218,15 +218,15 @@ func (sr *simpleRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	sr.push(function)
 }
 
-func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
+func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr, args []Expression) bool {
 	switch v.FnName.L {
 	case ast.Nullif:
-		if len(v.Args) != 2 {
+		if len(args) != 2 {
 			sr.err = ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
 			return true
 		}
-		param2 := sr.pop()
-		param1 := sr.pop()
+		param2 := args[1]
+		param1 := args[0]
 		// param1 = param2
 		funcCompare, err := sr.constructBinaryOpFunction(param1, param2, ast.EQ)
 		if err != nil {
@@ -468,10 +468,15 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 		return
 	}
 	leftEt := leftFt.EvalType()
+
 	if leftEt == types.ETInt {
 		for i := 0; i < len(elems); i++ {
 			if c, ok := elems[i].(*Constant); ok {
-				elems[i], _ = RefineComparedConstant(sr.ctx, mysql.HasUnsignedFlag(leftFt.Flag), c, opcode.EQ)
+				var isExceptional bool
+				elems[i], isExceptional = RefineComparedConstant(sr.ctx, *leftFt, c, opcode.EQ)
+				if isExceptional {
+					elems[i] = c
+				}
 			}
 		}
 	}

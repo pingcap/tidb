@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -40,6 +42,8 @@ var (
 	RunWorker = true
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = int32(0)
+	// WaitTimeWhenErrorOccured is waiting interval when processing DDL jobs encounter errors.
+	WaitTimeWhenErrorOccured = 1 * time.Second
 )
 
 type workerType byte
@@ -103,9 +107,10 @@ func (w *worker) String() string {
 }
 
 func (w *worker) close() {
+	startTime := time.Now()
 	close(w.quitCh)
 	w.wg.Wait()
-	logutil.Logger(w.logCtx).Info("[ddl] close DDL worker")
+	logutil.Logger(w.logCtx).Info("[ddl] DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
 
 // start is used for async online schema changing, it will try to become the owner firstly,
@@ -171,7 +176,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 			return errors.Trace(err)
 		}
 		if isDependent {
-			logutil.Logger(ddlLogCtx).Info("[ddl] current DDL job depends on other job", zap.String("currentJob", curJob.String()), zap.String("dependentJob", job.String()))
+			logutil.BgLogger().Info("[ddl] current DDL job depends on other job", zap.String("currentJob", curJob.String()), zap.String("dependentJob", job.String()))
 			curJob.DependencyID = job.ID
 			break
 		}
@@ -332,7 +337,7 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 	if historyJob == nil {
 		return false, nil
 	}
-	logutil.Logger(ddlLogCtx).Info("[ddl] current DDL job dependent job is finished", zap.String("currentJob", job.String()), zap.Int64("dependentJobID", job.DependencyID))
+	logutil.BgLogger().Info("[ddl] current DDL job dependent job is finished", zap.String("currentJob", job.String()), zap.Int64("dependentJobID", job.DependencyID))
 	job.DependencyID = noneDependencyJob
 	return true, nil
 }
@@ -396,7 +401,14 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
-			schemaVer, runJobErr = w.runDDLJob(d, t, job)
+			tidbutil.WithRecovery(func() {
+				schemaVer, runJobErr = w.runDDLJob(d, t, job)
+			}, func(r interface{}) {
+				if r != nil {
+					// If run ddl job panic, just cancel the ddl jobs.
+					job.State = model.JobStateCancelling
+				}
+			})
 			if job.IsCancelled() {
 				txn.Reset()
 				err = w.finishDDLJob(t, job)
@@ -468,6 +480,9 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	// Mock for run ddl job panic.
+	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {})
+
 	logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	timeStart := time.Now()
 	defer func() {
@@ -536,6 +551,10 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onModifyTableCharsetAndCollate(t, job)
 	case model.ActionRecoverTable:
 		ver, err = w.onRecoverTable(d, t, job)
+	case model.ActionLockTable:
+		ver, err = onLockTables(t, job)
+	case model.ActionUnlockTable:
+		ver, err = onUnlockTables(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -632,12 +651,17 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			return
 		}
+		d.schemaSyncer.NotifyCleanExpiredPaths()
+		// Wait until timeout.
 		select {
 		case <-ctx.Done():
 			return
 		}
 	}
-	logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version changed", zap.Int64("ver", latestSchemaVersion), zap.Duration("takeTime", time.Since(timeStart)), zap.String("job", job.String()))
+	logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version changed",
+		zap.Int64("ver", latestSchemaVersion),
+		zap.Duration("take time", time.Since(timeStart)),
+		zap.String("job", job.String()))
 }
 
 // waitSchemaSynced handles the following situation:

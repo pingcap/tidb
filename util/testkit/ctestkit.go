@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build !codes
+
 package testkit
 
 import (
@@ -22,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -98,7 +101,11 @@ func (tk *CTestKit) Exec(ctx context.Context, sql string, args ...interface{}) (
 	if err != nil {
 		return nil, err
 	}
-	rs, err := getSession(ctx).ExecutePreparedStmt(ctx, stmtID, args...)
+	params := make([]types.Datum, len(args))
+	for i := 0; i < len(params); i++ {
+		params[i] = types.NewDatum(args[i])
+	}
+	rs, err := getSession(ctx).ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return nil, err
 	}

@@ -42,9 +42,33 @@ const (
 	maxFlag          byte = 250
 )
 
+func preRealloc(b []byte, vals []types.Datum, comparable bool) []byte {
+	var size int
+	for i := range vals {
+		switch vals[i].Kind() {
+		case types.KindInt64, types.KindUint64, types.KindMysqlEnum, types.KindMysqlSet, types.KindMysqlBit, types.KindBinaryLiteral:
+			size += sizeInt(comparable)
+		case types.KindString, types.KindBytes:
+			size += sizeBytes(vals[i].GetBytes(), comparable)
+		case types.KindMysqlTime, types.KindMysqlDuration, types.KindFloat32, types.KindFloat64:
+			size += 9
+		case types.KindNull, types.KindMinNotNull, types.KindMaxValue:
+			size += 1
+		case types.KindMysqlJSON:
+			size += 2 + len(vals[i].GetBytes())
+		case types.KindMysqlDecimal:
+			size += 1 + types.MyDecimalStructSize
+		default:
+			return b
+		}
+	}
+	return reallocBytes(b, size)
+}
+
 // encode will encode a datum and append it to a byte slice. If comparable is true, the encoded bytes can be sorted as it's original order.
 // If hash is true, the encoded bytes can be checked equal as it's original value.
 func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparable bool, hash bool) (_ []byte, err error) {
+	b = preRealloc(b, vals, comparable)
 	for i, length := 0, len(vals); i < length; i++ {
 		switch vals[i].Kind() {
 		case types.KindInt64:
@@ -69,7 +93,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = append(b, uintFlag)
 			b, err = EncodeMySQLTime(sc, vals[i], mysql.TypeUnspecified, b)
 			if err != nil {
-				return nil, err
+				return b, err
 			}
 		case types.KindMysqlDuration:
 			// duration may have negative value, so we cannot use String to encode directly.
@@ -83,7 +107,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				var bin []byte
 				bin, err = dec.ToHashKey()
 				if err != nil {
-					return nil, errors.Trace(err)
+					return b, errors.Trace(err)
 				}
 				b = append(b, bin...)
 			} else {
@@ -116,7 +140,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 		case types.KindMaxValue:
 			b = append(b, maxFlag)
 		default:
-			return nil, errors.Errorf("unsupport encode type %d", vals[i].Kind())
+			return b, errors.Errorf("unsupport encode type %d", vals[i].Kind())
 		}
 	}
 
@@ -157,6 +181,15 @@ func encodeBytes(b []byte, v []byte, comparable bool) []byte {
 	return b
 }
 
+func sizeBytes(v []byte, comparable bool) int {
+	if comparable {
+		reallocSize := (len(v)/encGroupSize + 1) * (encGroupSize + 1)
+		return 1 + reallocSize
+	}
+	reallocSize := binary.MaxVarintLen64 + len(v)
+	return 1 + reallocSize
+}
+
 func encodeSignedInt(b []byte, v int64, comparable bool) []byte {
 	if comparable {
 		b = append(b, intFlag)
@@ -177,6 +210,13 @@ func encodeUnsignedInt(b []byte, v uint64, comparable bool) []byte {
 		b = EncodeUvarint(b, v)
 	}
 	return b
+}
+
+func sizeInt(comparable bool) int {
+	if comparable {
+		return 9
+	}
+	return 1 + binary.MaxVarintLen64
 }
 
 // EncodeKey appends the encoded values to byte slice b, returns the appended

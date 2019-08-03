@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -121,6 +122,8 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
 	s.checkCache(c, 1)
+	c.Assert(r.GetMeta(), DeepEquals, r.meta)
+	c.Assert(r.GetLeaderID(), Equals, r.meta.Peers[r.getStore().workStoreIdx].Id)
 	s.cache.mu.regions[r.VerID()].lastAccess = 0
 	r = s.cache.searchCachedRegion([]byte("a"), true)
 	c.Assert(r, IsNil)
@@ -239,7 +242,7 @@ func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
 	c.Assert(len(ctx.Meta.Peers), Equals, 3)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false)
+	s.cache.OnSendFail(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -267,7 +270,7 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 	c.Assert(len(ctx.Meta.Peers), Equals, 3)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false)
+	s.cache.OnSendFail(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -287,6 +290,31 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
 }
 
+func (s *testRegionCacheSuite) TestSendFailInvalidateRegionsInSameStore(c *C) {
+	// key range: ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := s.cluster.AllocIDs(2)
+	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+
+	// Check the two regions.
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+	loc2, err := s.cache.LocateKey(s.bo, []byte("x"))
+	c.Assert(err, IsNil)
+	c.Assert(loc2.Region.id, Equals, region2)
+
+	// Send fail on region1
+	ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
+	s.checkCache(c, 2)
+	s.cache.OnSendFail(s.bo, ctx, false, errors.New("test error"))
+
+	// Get region2 cache will get nil then reload.
+	ctx2, err := s.cache.GetRPCContext(s.bo, loc2.Region)
+	c.Assert(ctx2, IsNil)
+	c.Assert(err, IsNil)
+}
+
 func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	// 3 nodes and no.1 is leader.
 	store3 := s.cluster.AllocID()
@@ -303,13 +331,13 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	c.Assert(len(ctx.Meta.Peers), Equals, 3)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false)
+	s.cache.OnSendFail(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
 
 	// send 2 fail leader switch to 3
-	s.cache.OnSendFail(s.bo, ctx, false)
+	s.cache.OnSendFail(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, peer3)
@@ -455,6 +483,35 @@ func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 	c.Assert(getVal, BytesEquals, testValue)
 }
 
+func (s *testRegionCacheSuite) TestReplaceAddrWithNewStore(c *C) {
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+
+	client := &RawKVClient{
+		clusterID:   0,
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+	}
+	defer client.Close()
+	testKey := []byte("test_key")
+	testValue := []byte("test_value")
+	err := client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
+
+	// make store2 using store1's addr and store1 offline
+	store1Addr := s.storeAddr(s.store1)
+	s.cluster.UpdateStoreAddr(s.store1, s.storeAddr(s.store2))
+	s.cluster.UpdateStoreAddr(s.store2, store1Addr)
+	s.cluster.RemoveStore(s.store1)
+	s.cluster.ChangeLeader(s.region1, s.peer2)
+	s.cluster.RemovePeer(s.region1, s.store1)
+
+	getVal, err := client.Get(testKey)
+
+	c.Assert(err, IsNil)
+	c.Assert(getVal, BytesEquals, testValue)
+}
+
 func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
 	// ['' - 'm' - 'z']
 	region2 := s.cluster.AllocID()
@@ -471,6 +528,102 @@ func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
 	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("m"))
 	c.Assert(err, IsNil)
 	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
+}
+
+func (s *testRegionCacheSuite) TestScanRegions(c *C) {
+	// Split at "a", "b", "c", "d"
+	regions := s.cluster.AllocIDs(4)
+	regions = append([]uint64{s.region1}, regions...)
+
+	peers := [][]uint64{{s.peer1, s.peer2}}
+	for i := 0; i < 4; i++ {
+		peers = append(peers, s.cluster.AllocIDs(2))
+	}
+
+	for i := 0; i < 4; i++ {
+		s.cluster.Split(regions[i], regions[i+1], []byte{'a' + byte(i)}, peers[i+1], peers[i+1][0])
+	}
+
+	scannedRegions, err := s.cache.scanRegions(s.bo, []byte(""), 100)
+	c.Assert(err, IsNil)
+	c.Assert(len(scannedRegions), Equals, 5)
+	for i := 0; i < 5; i++ {
+		r := scannedRegions[i]
+		_, p, _ := r.WorkStorePeer(r.getStore())
+
+		c.Assert(r.meta.Id, Equals, regions[i])
+		c.Assert(p.Id, Equals, peers[i][0])
+	}
+
+	scannedRegions, err = s.cache.scanRegions(s.bo, []byte("a"), 3)
+	c.Assert(err, IsNil)
+	c.Assert(len(scannedRegions), Equals, 3)
+	for i := 1; i < 4; i++ {
+		r := scannedRegions[i-1]
+		_, p, _ := r.WorkStorePeer(r.getStore())
+
+		c.Assert(r.meta.Id, Equals, regions[i])
+		c.Assert(p.Id, Equals, peers[i][0])
+	}
+
+	scannedRegions, err = s.cache.scanRegions(s.bo, []byte("a1"), 1)
+	c.Assert(err, IsNil)
+	c.Assert(len(scannedRegions), Equals, 1)
+
+	r0 := scannedRegions[0]
+	_, p0, _ := r0.WorkStorePeer(r0.getStore())
+	c.Assert(r0.meta.Id, Equals, regions[1])
+	c.Assert(p0.Id, Equals, peers[1][0])
+
+	// Test region with no leader
+	s.cluster.GiveUpLeader(regions[1])
+	s.cluster.GiveUpLeader(regions[3])
+	scannedRegions, err = s.cache.scanRegions(s.bo, []byte(""), 5)
+	c.Assert(err, IsNil)
+	for i := 0; i < 3; i++ {
+		r := scannedRegions[i]
+		_, p, _ := r.WorkStorePeer(r.getStore())
+
+		c.Assert(r.meta.Id, Equals, regions[i*2])
+		c.Assert(p.Id, Equals, peers[i*2][0])
+	}
+}
+
+func (s *testRegionCacheSuite) TestBatchLoadRegions(c *C) {
+	// Split at "a", "b", "c", "d"
+	regions := s.cluster.AllocIDs(4)
+	regions = append([]uint64{s.region1}, regions...)
+
+	peers := [][]uint64{{s.peer1, s.peer2}}
+	for i := 0; i < 4; i++ {
+		peers = append(peers, s.cluster.AllocIDs(2))
+	}
+
+	for i := 0; i < 4; i++ {
+		s.cluster.Split(regions[i], regions[i+1], []byte{'a' + byte(i)}, peers[i+1], peers[i+1][0])
+	}
+
+	key, err := s.cache.BatchLoadRegionsFromKey(s.bo, []byte(""), 1)
+	c.Assert(err, IsNil)
+	c.Assert(key, DeepEquals, []byte("a"))
+
+	key, err = s.cache.BatchLoadRegionsFromKey(s.bo, []byte("a"), 2)
+	c.Assert(err, IsNil)
+	c.Assert(key, DeepEquals, []byte("c"))
+
+	key, err = s.cache.BatchLoadRegionsFromKey(s.bo, []byte("a1"), 2)
+	c.Assert(err, IsNil)
+	c.Assert(key, DeepEquals, []byte("c"))
+
+	key, err = s.cache.BatchLoadRegionsFromKey(s.bo, []byte("c"), 2)
+	c.Assert(err, IsNil)
+	c.Assert(len(key), Equals, 0)
+
+	key, err = s.cache.BatchLoadRegionsFromKey(s.bo, []byte("d"), 2)
+	c.Assert(err, IsNil)
+	c.Assert(len(key), Equals, 0)
+
+	s.checkCache(c, len(regions))
 }
 
 func createSampleRegion(startKey, endKey []byte) *Region {
@@ -541,7 +694,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 			}
 			r := cache.getCachedRegionWithRLock(rpcCtx.Region)
 			if r == nil {
-				cache.switchNextPeer(r, rpcCtx.PeerIdx)
+				cache.switchNextPeer(r, rpcCtx.PeerIdx, nil)
 			}
 		}
 	})

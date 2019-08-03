@@ -458,7 +458,7 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if !mysql.HasUnsignedFlag(b.tp.Flag) {
+	if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = float64(val)
 	} else if b.inUnion && val < 0 {
 		res = 0

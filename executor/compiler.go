@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
@@ -76,70 +75,59 @@ func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind 
 		return nil, err
 	}
 
-	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema)
+	finalPlan, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, err
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
-	isExpensive := logExpensiveQuery(stmtNode, finalPlan)
-
+	lowerPriority := needLowerPriority(finalPlan)
 	return &ExecStmt{
-		InfoSchema: infoSchema,
-		Plan:       finalPlan,
-		Expensive:  isExpensive,
-		Cacheable:  plannercore.Cacheable(stmtNode),
-		Text:       stmtNode.Text(),
-		StmtNode:   stmtNode,
-		Ctx:        c.Ctx,
+		InfoSchema:    infoSchema,
+		Plan:          finalPlan,
+		LowerPriority: lowerPriority,
+		Cacheable:     plannercore.Cacheable(stmtNode),
+		Text:          stmtNode.Text(),
+		StmtNode:      stmtNode,
+		Ctx:           c.Ctx,
 	}, nil
 }
 
-func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plannercore.Plan) (expensive bool) {
-	expensive = isExpensiveQuery(finalPlan)
-	if !expensive {
-		return
-	}
-
-	const logSQLLen = 1024
-	sql := stmtNode.Text()
-	if len(sql) > logSQLLen {
-		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
-	}
-	logutil.Logger(context.Background()).Warn("EXPENSIVE_QUERY", zap.String("SQL", sql))
-	return
-}
-
-func isExpensiveQuery(p plannercore.Plan) bool {
+// needLowerPriority checks whether it's needed to lower the execution priority
+// of a query.
+// If the estimated output row count of any operator in the physical plan tree
+// is greater than the specific threshold, we'll set it to lowPriority when
+// sending it to the coprocessor.
+func needLowerPriority(p plannercore.Plan) bool {
 	switch x := p.(type) {
 	case plannercore.PhysicalPlan:
-		return isPhysicalPlanExpensive(x)
+		return isPhysicalPlanNeedLowerPriority(x)
 	case *plannercore.Execute:
-		return isExpensiveQuery(x.Plan)
+		return needLowerPriority(x.Plan)
 	case *plannercore.Insert:
 		if x.SelectPlan != nil {
-			return isPhysicalPlanExpensive(x.SelectPlan)
+			return isPhysicalPlanNeedLowerPriority(x.SelectPlan)
 		}
 	case *plannercore.Delete:
 		if x.SelectPlan != nil {
-			return isPhysicalPlanExpensive(x.SelectPlan)
+			return isPhysicalPlanNeedLowerPriority(x.SelectPlan)
 		}
 	case *plannercore.Update:
 		if x.SelectPlan != nil {
-			return isPhysicalPlanExpensive(x.SelectPlan)
+			return isPhysicalPlanNeedLowerPriority(x.SelectPlan)
 		}
 	}
 	return false
 }
 
-func isPhysicalPlanExpensive(p plannercore.PhysicalPlan) bool {
-	expensiveRowThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
-	if int64(p.StatsCount()) > expensiveRowThreshold {
+func isPhysicalPlanNeedLowerPriority(p plannercore.PhysicalPlan) bool {
+	expensiveThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
+	if int64(p.StatsCount()) > expensiveThreshold {
 		return true
 	}
 
 	for _, child := range p.Children() {
-		if isPhysicalPlanExpensive(child) {
+		if isPhysicalPlanNeedLowerPriority(child) {
 			return true
 		}
 	}
@@ -378,7 +366,7 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 	var is infoschema.InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(infoschema.InfoSchema)
-		logutil.Logger(context.Background()).Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
+		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
 	} else {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
@@ -416,6 +404,7 @@ func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt as
 			return stmt
 		}
 		if bindRecord.Status == bindinfo.Using {
+			metrics.BindUsageCounter.WithLabelValues(metrics.ScopeSession).Inc()
 			return bindinfo.BindHint(stmt, bindRecord.Ast)
 		}
 	}
@@ -425,6 +414,7 @@ func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt as
 		bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
 	}
 	if bindRecord != nil {
+		metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Inc()
 		return bindinfo.BindHint(stmt, bindRecord.Ast)
 	}
 	return stmt

@@ -213,20 +213,16 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGet,
-		Get: &kvrpcpb.GetRequest{
-			Key:     key,
-			Version: ver.Ver,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
+		Key:     key,
+		Version: ver.Ver,
+	})
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	cmdGetResp := resp.Get
-	c.Assert(cmdGetResp, NotNil)
-	keyErr := cmdGetResp.GetError()
+	c.Assert(resp.Resp, NotNil)
+	keyErr := resp.Resp.(*kvrpcpb.GetResponse).GetError()
 	c.Assert(keyErr, NotNil)
 	lock, err := extractLockFromKeyErr(keyErr)
 	c.Assert(err, IsNil)
@@ -275,6 +271,11 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	s.prewriteTxn(c, txn.(*tikvTxn))
 	l = s.mustGetLock(c, []byte("key"))
 	s.ttlEquals(c, l.TTL, defaultLockTTL+uint64(time.Since(start)/time.Millisecond))
+}
+
+func (s *testLockSuite) TestNewLockZeroTTL(c *C) {
+	l := NewLock(&kvrpcpb.LockInfo{})
+	c.Assert(l.TTL, Equals, uint64(0))
 }
 
 func init() {

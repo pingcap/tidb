@@ -150,5 +150,5 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk.MustQuery("execute stmt7 using @p2").Check(testkit.Rows("1"))
 	counter.Write(pb)
 	hit = pb.GetCounter().GetValue()
-	c.Check(hit, Equals, float64(3))
+	c.Check(hit, Equals, float64(2))
 }

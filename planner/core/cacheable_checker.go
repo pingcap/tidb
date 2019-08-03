@@ -82,6 +82,11 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
+	case *ast.FrameBound:
+		if _, ok := node.Expr.(*driver.ParamMarkerExpr); ok {
+			checker.cacheable = false
+			return in, true
+		}
 	}
 	return in, false
 }

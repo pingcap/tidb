@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
+	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -32,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -339,99 +338,6 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 	return gcutil.ValidateSnapshot(ctx, snapshotTS)
 }
 
-type splitableStore interface {
-	SplitRegion(splitKey kv.Key) error
-	SplitRegionAndScatter(splitKey kv.Key) (uint64, error)
-	WaitScatterRegionFinish(regionID uint64) error
-}
-
-func splitPartitionTableRegion(store kv.Storage, pi *model.PartitionInfo) {
-	// Max partition count is 4096, should we sample and just choose some of the partition to split?
-	for _, def := range pi.Definitions {
-		splitTableRegion(store, def.ID)
-	}
-}
-
-func splitTableRegion(store kv.Storage, tableID int64) {
-	s, ok := store.(splitableStore)
-	if !ok {
-		return
-	}
-	tableStartKey := tablecodec.GenTablePrefix(tableID)
-	if err := s.SplitRegion(tableStartKey); err != nil {
-		// It will be automatically split by TiKV later.
-		logutil.Logger(ddlLogCtx).Warn("[ddl] split table region failed", zap.Error(err))
-	}
-}
-
-func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSplitFinish bool) {
-	s, ok := store.(splitableStore)
-	if !ok {
-		return
-	}
-	regionIDs := make([]uint64, 0, 1<<(tblInfo.PreSplitRegions-1)+len(tblInfo.Indices))
-
-	// Example:
-	// ShardRowIDBits = 5
-	// PreSplitRegions = 3
-	//
-	// then will pre-split 2^(3-1) = 4 regions.
-	//
-	// in this code:
-	// max   = 1 << (tblInfo.ShardRowIDBits - 1) = 1 << (5-1) = 16
-	// step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions)) = 1 << (5-3) = 4;
-	//
-	// then split regionID is below:
-	// 4  << 59 = 2305843009213693952
-	// 8  << 59 = 4611686018427387904
-	// 12 << 59 = 6917529027641081856
-	//
-	// The 4 pre-split regions range is below:
-	// 0                   ~ 2305843009213693952
-	// 2305843009213693952 ~ 4611686018427387904
-	// 4611686018427387904 ~ 6917529027641081856
-	// 6917529027641081856 ~ 9223372036854775807 ( (1 << 63) - 1 )
-	//
-	// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
-
-	// Split table region.
-	step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions))
-	// The highest bit is the symbol bit,and alloc _tidb_rowid will always be positive number.
-	// So we only need to split the region for the positive number.
-	max := int64(1 << (tblInfo.ShardRowIDBits - 1))
-	for p := int64(step); p < max; p += step {
-		recordID := p << (64 - tblInfo.ShardRowIDBits)
-		recordPrefix := tablecodec.GenTableRecordPrefix(tblInfo.ID)
-		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
-		regionID, err := s.SplitRegionAndScatter(key)
-		if err != nil {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table region failed", zap.Int64("recordID", recordID), zap.Error(err))
-		} else {
-			regionIDs = append(regionIDs, regionID)
-		}
-	}
-
-	// Split index region.
-	for _, idx := range tblInfo.Indices {
-		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
-		regionID, err := s.SplitRegionAndScatter(indexPrefix)
-		if err != nil {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table index region failed", zap.String("index", idx.Name.L), zap.Error(err))
-		} else {
-			regionIDs = append(regionIDs, regionID)
-		}
-	}
-	if !waitTableSplitFinish {
-		return
-	}
-	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID)
-		if err != nil {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
-		}
-	}
-}
-
 func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
 	alloc := autoid.NewAllocator(store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
@@ -453,12 +359,21 @@ func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64)
 }
 
 func checkTableExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
-	tableID := job.TableID
+	tblInfo, err := getTableInfo(t, job.TableID, schemaID)
+	if err == nil {
+		return tblInfo, nil
+	}
+	if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+		job.State = model.JobStateCancelled
+	}
+	return nil, err
+}
+
+func getTableInfo(t *meta.Meta, tableID, schemaID int64) (*model.TableInfo, error) {
 	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobStateCancelled
 			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
 			))
@@ -468,7 +383,6 @@ func checkTableExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, schemaID 
 
 	// Check the table.
 	if tblInfo == nil {
-		job.State = model.JobStateCancelled
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
@@ -745,7 +659,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	tblInfo.Collate = toCollate
 	// update column charset.
 	for _, col := range tblInfo.Columns {
-		if typesNeedCharset(col.Tp) {
+		if field_types.HasCharset(&col.FieldType) {
 			col.Charset = toCharset
 			col.Collate = toCollate
 		} else {
@@ -764,7 +678,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 
 func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
 	// d.infoHandle maybe nil in some test.
-	if d.infoHandle == nil {
+	if d.infoHandle == nil || !d.infoHandle.IsValid() {
 		return checkTableNotExistsFromStore(t, schemaID, tableName)
 	}
 	// Try to use memory schema info to check first.

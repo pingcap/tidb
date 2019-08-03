@@ -21,9 +21,11 @@ import (
 	"time"
 
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 const (
@@ -54,6 +56,7 @@ type StatementContext struct {
 	InDeleteStmt           bool
 	InSelectStmt           bool
 	InLoadDataStmt         bool
+	InExplainStmt          bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
 	DupKeyAsWarning        bool
@@ -67,6 +70,11 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
+	// CastStrToIntStrict is used to control the way we cast float format string to int.
+	// If ConvertStrToIntStrict is false, we convert it to a valid float string first,
+	// then cast the float string to int string. Otherwise, we cast string to integer
+	// prefix in a strict way, only extract 0-9 and (+ or - in first bit).
+	CastStrToIntStrict bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -117,8 +125,8 @@ type StatementContext struct {
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexIDs         []int64
-	NowTs            time.Time
-	SysTs            time.Time
+	nowTs            time.Time // use this variable for now/current_timestamp calculation/cache for one stmt
+	stmtTimeCached   bool
 	StmtType         string
 	OriginalSQL      string
 	digestMemo       struct {
@@ -127,6 +135,21 @@ type StatementContext struct {
 		digest     string
 	}
 	Tables []TableEntry
+}
+
+// GetNowTsCached getter for nowTs, if not set get now time and cache it
+func (sc *StatementContext) GetNowTsCached() time.Time {
+	if !sc.stmtTimeCached {
+		now := time.Now()
+		sc.nowTs = now
+		sc.stmtTimeCached = true
+	}
+	return sc.nowTs
+}
+
+// ResetNowTs resetter for nowTs, clear cached time flag
+func (sc *StatementContext) ResetNowTs() {
+	sc.stmtTimeCached = false
 }
 
 // SQLDigest gets normalized and digest for provided sql.
@@ -343,14 +366,6 @@ func (sc *StatementContext) SetHistogramsNotLoad() {
 	sc.mu.Unlock()
 }
 
-// HistogramsNotLoad gets histogramsNotLoad.
-func (sc *StatementContext) HistogramsNotLoad() bool {
-	sc.mu.Lock()
-	notLoad := sc.mu.histogramsNotLoad
-	sc.mu.Unlock()
-	return notLoad
-}
-
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
@@ -444,6 +459,39 @@ func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
 	return false
 }
 
+// PushDownFlags converts StatementContext to tipb.SelectRequest.Flags.
+func (sc *StatementContext) PushDownFlags() uint64 {
+	var flags uint64
+	if sc.InInsertStmt {
+		flags |= model.FlagInInsertStmt
+	} else if sc.InUpdateStmt || sc.InDeleteStmt {
+		flags |= model.FlagInUpdateOrDeleteStmt
+	} else if sc.InSelectStmt {
+		flags |= model.FlagInSelectStmt
+	}
+	if sc.IgnoreTruncate {
+		flags |= model.FlagIgnoreTruncate
+	} else if sc.TruncateAsWarning {
+		flags |= model.FlagTruncateAsWarning
+	}
+	if sc.OverflowAsWarning {
+		flags |= model.FlagOverflowAsWarning
+	}
+	if sc.IgnoreZeroInDate {
+		flags |= model.FlagIgnoreZeroInDate
+	}
+	if sc.DividedByZeroAsWarning {
+		flags |= model.FlagDividedByZeroAsWarning
+	}
+	if sc.PadCharToFullLength {
+		flags |= model.FlagPadCharToFullLength
+	}
+	if sc.InLoadDataStmt {
+		flags |= model.FlagInLoadDataStmt
+	}
+	return flags
+}
+
 // CopTasksDetails returns some useful information of cop-tasks during execution.
 func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	sc.mu.Lock()
@@ -485,4 +533,22 @@ type CopTasksDetails struct {
 	P90WaitTime    time.Duration
 	MaxWaitAddress string
 	MaxWaitTime    time.Duration
+}
+
+// ToZapFields wraps the CopTasksDetails as zap.Fileds.
+func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
+	if d.NumCopTasks == 0 {
+		return
+	}
+	fields = make([]zap.Field, 0, 10)
+	fields = append(fields, zap.Int("num_cop_tasks", d.NumCopTasks))
+	fields = append(fields, zap.String("process_avg_time", strconv.FormatFloat(d.AvgProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("process_p90_time", strconv.FormatFloat(d.P90ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("process_max_time", strconv.FormatFloat(d.MaxProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("process_max_addr", d.MaxProcessAddress))
+	fields = append(fields, zap.String("wait_avg_time", strconv.FormatFloat(d.AvgWaitTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("wait_p90_time", strconv.FormatFloat(d.P90WaitTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
+	return fields
 }

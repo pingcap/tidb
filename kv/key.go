@@ -109,17 +109,3 @@ func (r *KeyRange) IsPoint() bool {
 	return r.StartKey[diffOneIdx]+1 == r.EndKey[diffOneIdx] &&
 		bytes.Equal(r.StartKey[:diffOneIdx], r.EndKey[:diffOneIdx])
 }
-
-// EncodedKey represents encoded key in low-level storage engine.
-type EncodedKey []byte
-
-// Cmp returns the comparison result of two key.
-// The result will be 0 if a==b, -1 if a < b, and +1 if a > b.
-func (k EncodedKey) Cmp(another EncodedKey) int {
-	return bytes.Compare(k, another)
-}
-
-// Next returns the next key in byte-order.
-func (k EncodedKey) Next() EncodedKey {
-	return EncodedKey(bytes.Join([][]byte{k, Key{0}}, nil))
-}

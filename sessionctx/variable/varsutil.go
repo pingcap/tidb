@@ -103,6 +103,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
+	case TiDBExpensiveQueryTimeThreshold:
+		return fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), true, nil
 	case TiDBConfig:
 		conf := config.GetGlobalConfig()
 		j, err := json.MarshalIndent(conf, "", "\t")
@@ -372,9 +374,16 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "1", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
+	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
+		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
+		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
+		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace:
+		fallthrough
+	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
-		SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace, serverReadOnly, SlaveAllowBatching,
+		SkipNameResolve, SQLSafeUpdates, serverReadOnly, SlaveAllowBatching,
 		Flush, PerformanceSchema, LocalInFile, ShowOldTemporals, KeepFilesOnCreate, AutoCommit,
 		SQLWarnings, UniqueChecks, OldAlterTable, LogBinTrustFunctionCreators, SQLBigSelects,
 		BinlogDirectNonTransactionalUpdates, SQLQuoteShowCreate, AutomaticSpPrivileges,
@@ -413,15 +422,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			}
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
-		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
-		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
-		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO:
-		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
-			return value, nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case MaxExecutionTime:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case TiDBEnableTablePartition:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
@@ -436,6 +438,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, uint64(MinDDLReorgBatchSize), uint64(MaxDDLReorgBatchSize), vars)
 	case TiDBDDLErrorCountLimit:
 		return checkUInt64SystemVar(name, value, uint64(0), math.MaxInt64, vars)
+	case TiDBExpensiveQueryTimeThreshold:
+		return checkUInt64SystemVar(name, value, MinExpensiveQueryTimeThreshold, math.MaxInt64, vars)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
 		TiDBIndexLookupSize,
 		TiDBHashJoinConcurrency,
@@ -547,6 +551,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		if v < 0 || v >= 64 {
 			return value, errors.Errorf("tidb_join_order_algo_threshold(%d) cannot be smaller than 0 or larger than 63", v)
+		}
+	case TiDBWaitSplitRegionTimeout:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v <= 0 {
+			return value, errors.Errorf("tidb_wait_split_region_timeout(%d) cannot be smaller than 1", v)
 		}
 	}
 	return value, nil

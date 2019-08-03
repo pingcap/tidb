@@ -43,6 +43,8 @@ func (s *testUnionStoreSuite) TestGetSet(c *C) {
 	v, err = s.us.Get([]byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("2"))
+	c.Assert(s.us.Size(), Equals, 2)
+	c.Assert(s.us.Len(), Equals, 1)
 }
 
 func (s *testUnionStoreSuite) TestDelete(c *C) {
@@ -159,4 +161,17 @@ func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
 		c.Assert(iter.Next(), IsNil)
 	}
 	c.Assert(iter.Valid(), IsFalse)
+}
+
+func (s *testUnionStoreSuite) TestBasic(c *C) {
+	iter := invalidIterator{}
+	c.Assert(iter.Valid(), IsFalse)
+	c.Assert(iter.Next(), IsNil)
+	c.Assert(iter.Key(), IsNil)
+	c.Assert(iter.Value(), IsNil)
+
+	s.us.SetOption(1, 1)
+	c.Assert(s.us.GetOption(1), Equals, 1)
+	s.us.DelOption(1)
+	c.Assert(s.us.GetOption(1), IsNil)
 }

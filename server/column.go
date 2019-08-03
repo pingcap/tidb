@@ -66,6 +66,9 @@ func dumpFlag(tp byte, flag uint16) uint16 {
 	case mysql.TypeEnum:
 		return flag | uint16(mysql.EnumFlag)
 	default:
+		if mysql.HasBinaryFlag(uint(flag)) {
+			return flag | uint16(mysql.NotNullFlag)
+		}
 		return flag
 	}
 }

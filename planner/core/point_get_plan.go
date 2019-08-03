@@ -22,10 +22,12 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tipb/go-tipb"
@@ -46,6 +48,9 @@ type PointGetPlan struct {
 	IndexValueParams []*driver.ParamMarkerExpr
 	expr             expression.Expression
 	ctx              sessionctx.Context
+	IsTableDual      bool
+	Lock             bool
+	IsForUpdate      bool
 }
 
 type nameValuePair struct {
@@ -84,7 +89,11 @@ func (p *PointGetPlan) ExplainInfo() string {
 			}
 		}
 	} else {
-		fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+		if p.UnsignedHandle {
+			fmt.Fprintf(buffer, ", handle:%d", uint64(p.Handle))
+		} else {
+			fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+		}
 	}
 	return buffer.String()
 }
@@ -116,6 +125,9 @@ func (p *PointGetPlan) Children() []PhysicalPlan {
 // SetChildren sets the children for the plan.
 func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 
+// SetChild sets a specific child for the plan.
+func (p *PointGetPlan) SetChild(i int, child PhysicalPlan) {}
+
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *PointGetPlan) ResolveIndices() error {
 	return nil
@@ -129,6 +141,15 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 		if fp != nil {
 			if checkFastPlanPrivilege(ctx, fp, mysql.SelectPriv) != nil {
 				return nil
+			}
+			if fp.IsTableDual {
+				tableDual := PhysicalTableDual{}
+				tableDual.SetSchema(fp.Schema())
+				return tableDual.Init(ctx, &property.StatsInfo{})
+			}
+			if x.LockTp == ast.SelectLockForUpdate {
+				fp.Lock = true
+				fp.IsForUpdate = true
 			}
 			return fp
 		}
@@ -148,7 +169,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 // 3. All the columns must be public and generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetPlan {
-	if selStmt.Having != nil || selStmt.LockTp != ast.SelectLockNone {
+	if selStmt.Having != nil {
 		return nil
 	} else if selStmt.Limit != nil {
 		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
@@ -186,19 +207,33 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if pairs == nil {
 		return nil
 	}
-	handlePair, unsigned := findPKHandle(tbl, pairs)
+	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
 		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, selStmt.Fields.Fields)
 		if schema == nil {
 			return nil
 		}
 		p := newPointGetPlan(ctx, schema, tbl)
-		var err error
-		p.Handle, err = handlePair.value.ToInt64(ctx.GetSessionVars().StmtCtx)
+		intDatum, err := handlePair.value.ConvertTo(ctx.GetSessionVars().StmtCtx, fieldType)
+		if err != nil {
+			if terror.ErrorEqual(types.ErrOverflow, err) {
+				p.IsTableDual = true
+				return p
+			}
+			// some scenarios cast to int with error, but we may use this value in point get
+			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
+				return nil
+			}
+		}
+		cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &handlePair.value)
 		if err != nil {
 			return nil
+		} else if cmp != 0 {
+			p.IsTableDual = true
+			return p
 		}
-		p.UnsignedHandle = unsigned
+		p.Handle = intDatum.GetInt64()
+		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
 		return p
 	}
@@ -233,6 +268,7 @@ func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *mod
 		schema:   schema,
 		TblInfo:  tbl,
 	}
+	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
 	return p
 }
 
@@ -364,20 +400,20 @@ func getNameValuePairs(nvPairs []nameValuePair, expr ast.ExprNode) []nameValuePa
 	return nil
 }
 
-func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, unsigned bool) {
+func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, fieldType *types.FieldType) {
 	if !tblInfo.PKIsHandle {
-		return handlePair, unsigned
+		return handlePair, nil
 	}
 	for _, col := range tblInfo.Columns {
 		if mysql.HasPriKeyFlag(col.Flag) {
 			i := findInPairs(col.Name.L, pairs)
 			if i == -1 {
-				return handlePair, unsigned
+				return handlePair, nil
 			}
-			return pairs[i], mysql.HasUnsignedFlag(col.Flag)
+			return pairs[i], &col.FieldType
 		}
 	}
-	return handlePair, unsigned
+	return handlePair, nil
 }
 
 func getIndexValues(idxInfo *model.IndexInfo, pairs []nameValuePair) ([]types.Datum, []*driver.ParamMarkerExpr) {
@@ -427,13 +463,31 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	if checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.UpdatePriv) != nil {
 		return nil
 	}
+	if fastSelect.IsTableDual {
+		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
+	}
+	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		fastSelect.Lock = true
+	}
 	orderedList := buildOrderedList(ctx, fastSelect, updateStmt.List)
 	if orderedList == nil {
 		return nil
 	}
+	var handleCol *expression.Column
+	for _, handles := range fastSelect.schema.TblID2Handle {
+		handleCol = handles[0]
+	}
 	updatePlan := Update{
 		SelectPlan:  fastSelect,
 		OrderedList: orderedList,
+		TblColPosInfos: TblColPosInfoSlice{
+			TblColPosInfo{
+				TblID:         fastSelect.TblInfo.ID,
+				Start:         0,
+				End:           fastSelect.schema.Len(),
+				HandleOrdinal: handleCol.Index,
+			},
+		},
 	}.Init(ctx)
 	updatePlan.SetSchema(fastSelect.schema)
 	return updatePlan
@@ -484,8 +538,26 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	if checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
+	if fastSelect.IsTableDual {
+		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
+	}
+	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		fastSelect.Lock = true
+	}
+	var handleCol *expression.Column
+	for _, handles := range fastSelect.schema.TblID2Handle {
+		handleCol = handles[0]
+	}
 	delPlan := Delete{
 		SelectPlan: fastSelect,
+		TblColPosInfos: TblColPosInfoSlice{
+			TblColPosInfo{
+				TblID:         fastSelect.TblInfo.ID,
+				Start:         0,
+				End:           fastSelect.schema.Len(),
+				HandleOrdinal: handleCol.Index,
+			},
+		},
 	}.Init(ctx)
 	delPlan.SetSchema(fastSelect.schema)
 	return delPlan

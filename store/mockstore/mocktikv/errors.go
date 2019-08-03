@@ -39,7 +39,7 @@ func (e *ErrKeyAlreadyExist) Error() string {
 	return fmt.Sprintf("key already exist, key: %q", e.Key)
 }
 
-// ErrRetryable suggests that client may restart the txn. e.g. write conflict.
+// ErrRetryable suggests that client may restart the txn.
 type ErrRetryable string
 
 func (e ErrRetryable) Error() string {
@@ -61,7 +61,7 @@ func (e ErrAlreadyCommitted) Error() string {
 	return "txn already committed"
 }
 
-// ErrConflict is turned when the commitTS of key in the DB is greater than startTS.
+// ErrConflict is returned when the commitTS of key in the DB is greater than startTS.
 type ErrConflict struct {
 	StartTS    uint64
 	ConflictTS uint64
@@ -70,4 +70,15 @@ type ErrConflict struct {
 
 func (e *ErrConflict) Error() string {
 	return "write conflict"
+}
+
+// ErrDeadlock is returned when deadlock error is detected.
+type ErrDeadlock struct {
+	LockTS         uint64
+	LockKey        []byte
+	DealockKeyHash uint64
+}
+
+func (e *ErrDeadlock) Error() string {
+	return "deadlock"
 }

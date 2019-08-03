@@ -16,7 +16,7 @@ In the current row format, each column is encoded with the column ID followed by
 
 The new format is defined as follows:
 
-![row-format](./row-format.jpeg)
+![row-format](./imgs/row-format.jpeg)
 
 * 1 byte codec version
 

@@ -14,6 +14,8 @@
 package statistics
 
 import (
+	"bytes"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -236,7 +238,7 @@ func (s *testFeedbackSuite) TestFeedbackEncoding(c *C) {
 	val, err := EncodeFeedback(q)
 	c.Assert(err, IsNil)
 	rq := &QueryFeedback{}
-	c.Assert(DecodeFeedback(val, rq, nil, false), IsNil)
+	c.Assert(DecodeFeedback(val, rq, nil, hist.Tp), IsNil)
 	for _, fb := range rq.Feedback {
 		fb.Lower.SetBytes(codec.EncodeInt(nil, fb.Lower.GetInt64()))
 		fb.Upper.SetBytes(codec.EncodeInt(nil, fb.Upper.GetInt64()))
@@ -251,8 +253,37 @@ func (s *testFeedbackSuite) TestFeedbackEncoding(c *C) {
 	c.Assert(err, IsNil)
 	rq = &QueryFeedback{}
 	cms := NewCMSketch(4, 4)
-	c.Assert(DecodeFeedback(val, rq, cms, false), IsNil)
+	c.Assert(DecodeFeedback(val, rq, cms, hist.Tp), IsNil)
 	c.Assert(cms.QueryBytes(codec.EncodeInt(nil, 0)), Equals, uint64(1))
 	q.Feedback = q.Feedback[:1]
 	c.Assert(q.Equal(rq), IsTrue)
+}
+
+// Equal tests if two query feedback equal, it is only used in test.
+func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
+	if len(q.Feedback) != len(rq.Feedback) {
+		return false
+	}
+	for i, fb := range q.Feedback {
+		rfb := rq.Feedback[i]
+		if fb.Count != rfb.Count {
+			return false
+		}
+		if fb.Lower.Kind() == types.KindInt64 {
+			if fb.Lower.GetInt64() != rfb.Lower.GetInt64() {
+				return false
+			}
+			if fb.Upper.GetInt64() != rfb.Upper.GetInt64() {
+				return false
+			}
+		} else {
+			if !bytes.Equal(fb.Lower.GetBytes(), rfb.Lower.GetBytes()) {
+				return false
+			}
+			if !bytes.Equal(fb.Upper.GetBytes(), rfb.Upper.GetBytes()) {
+				return false
+			}
+		}
+	}
+	return true
 }

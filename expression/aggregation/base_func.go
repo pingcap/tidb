@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -37,10 +38,10 @@ type baseFuncDesc struct {
 	RetTp *types.FieldType
 }
 
-func newBaseFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) baseFuncDesc {
+func newBaseFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (baseFuncDesc, error) {
 	b := baseFuncDesc{Name: strings.ToLower(name), Args: args}
-	b.typeInfer(ctx)
-	return b
+	err := b.typeInfer(ctx)
+	return b, err
 }
 
 func (a *baseFuncDesc) equal(ctx sessionctx.Context, other *baseFuncDesc) bool {
@@ -81,7 +82,7 @@ func (a *baseFuncDesc) String() string {
 }
 
 // typeInfer infers the arguments and return types of an function.
-func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) {
+func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 	switch a.Name {
 	case ast.AggFuncCount:
 		a.typeInfer4Count(ctx)
@@ -107,8 +108,9 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) {
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		a.typeInfer4LeadLag(ctx)
 	default:
-		panic("unsupported agg function: " + a.Name)
+		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
+	return nil
 }
 
 func (a *baseFuncDesc) typeInfer4Count(ctx sessionctx.Context) {

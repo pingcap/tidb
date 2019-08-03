@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -44,44 +43,8 @@ var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogr
 
 // CopClient is coprocessor client.
 type CopClient struct {
+	kv.RequestTypeSupportedChecker
 	store *tikvStore
-}
-
-// IsRequestTypeSupported checks whether reqType is supported.
-func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
-	switch reqType {
-	case kv.ReqTypeSelect, kv.ReqTypeIndex:
-		switch subType {
-		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic, kv.ReqSubTypeTopN:
-			return true
-		default:
-			return c.supportExpr(tipb.ExprType(subType))
-		}
-	case kv.ReqTypeDAG:
-		return c.supportExpr(tipb.ExprType(subType))
-	case kv.ReqTypeAnalyze:
-		return true
-	}
-	return false
-}
-
-func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
-	switch exprType {
-	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
-		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
-		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_ColumnRef:
-		return true
-	// aggregate functions.
-	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg,
-		tipb.ExprType_Agg_BitXor, tipb.ExprType_Agg_BitAnd, tipb.ExprType_Agg_BitOr:
-		return true
-	case kv.ReqSubTypeDesc:
-		return true
-	case kv.ReqSubTypeSignature:
-		return true
-	default:
-		return false
-	}
 }
 
 // Send builds the request and gets the coprocessor iterator response.
@@ -277,7 +240,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		reverseTasks(tasks)
 	}
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		logutil.Logger(context.Background()).Warn("buildCopTasks takes too much time",
+		logutil.BgLogger().Warn("buildCopTasks takes too much time",
 			zap.Duration("elapsed", elapsed),
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
@@ -404,8 +367,8 @@ type copIteratorTaskSender struct {
 }
 
 type copResponse struct {
-	pbResp *coprocessor.Response
-	execdetails.ExecDetails
+	pbResp   *coprocessor.Response
+	detail   *execdetails.ExecDetails
 	startKey kv.Key
 	err      error
 	respSize int64
@@ -427,7 +390,7 @@ func (rs *copResponse) GetStartKey() kv.Key {
 }
 
 func (rs *copResponse) GetExecDetails() *execdetails.ExecDetails {
-	return &rs.ExecDetails
+	return rs.detail
 }
 
 // MemSize returns how many bytes of memory this response use
@@ -438,9 +401,11 @@ func (rs *copResponse) MemSize() int64 {
 
 	// ignore rs.err
 	rs.respSize += int64(cap(rs.startKey))
-	rs.respSize += int64(sizeofExecDetails)
-	if rs.CommitDetail != nil {
-		rs.respSize += int64(sizeofCommitDetails)
+	if rs.detail != nil {
+		rs.respSize += int64(sizeofExecDetails)
+		if rs.detail.CommitDetail != nil {
+			rs.respSize += int64(sizeofCommitDetails)
+		}
 	}
 	if rs.pbResp != nil {
 		// Using a approximate size since it's hard to get a accurate value.
@@ -613,12 +578,12 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.Logger(context.Background()).Error("copIteratorWork meet panic",
+			logutil.BgLogger().Error("copIteratorWork meet panic",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: errors.Errorf("%v", r)}
 			// if panic has happened, set checkOOM to false to avoid another panic.
-			worker.sendToRespCh(resp, task.respChan, false)
+			worker.sendToRespCh(resp, respCh, false)
 		}
 	}()
 	remainTasks := []*copTask{task}
@@ -647,21 +612,17 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 
 	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
-	req := &tikvrpc.Request{
-		Type: task.cmdType,
-		Cop: &coprocessor.Request{
-			Tp:     worker.req.Tp,
-			Data:   worker.req.Data,
-			Ranges: task.ranges.toPBRanges(),
-		},
-		Context: kvrpcpb.Context{
-			IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
-			Priority:       kvPriorityToCommandPri(worker.req.Priority),
-			NotFillCache:   worker.req.NotFillCache,
-			HandleTime:     true,
-			ScanDetail:     true,
-		},
-	}
+	req := tikvrpc.NewRequest(task.cmdType, &coprocessor.Request{
+		Tp:     worker.req.Tp,
+		Data:   worker.req.Data,
+		Ranges: task.ranges.toPBRanges(),
+	}, kvrpcpb.Context{
+		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
+		Priority:       kvPriorityToCommandPri(worker.req.Priority),
+		NotFillCache:   worker.req.NotFillCache,
+		HandleTime:     true,
+		ScanDetail:     true,
+	})
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium)
 	if err != nil {
@@ -676,11 +637,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 
 	if task.cmdType == tikvrpc.CmdCopStream {
-		return worker.handleCopStreamResult(bo, rpcCtx, resp.CopStream, task, ch)
+		return worker.handleCopStreamResult(bo, rpcCtx, resp.Resp.(*tikvrpc.CopStreamResponse), task, ch)
 	}
 
 	// Handles the response for non-streaming copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Cop}, task, ch, nil)
+	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, nil)
 }
 
 const (
@@ -696,11 +657,18 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
 	}
 	var detail *kvrpcpb.ExecDetails
-	if resp.Cop != nil {
-		detail = resp.Cop.ExecDetails
-	} else if resp.CopStream != nil && resp.CopStream.Response != nil {
-		// streaming request returns io.EOF, so the first resp.CopStream.Response maybe nil.
-		detail = resp.CopStream.ExecDetails
+	if resp.Resp != nil {
+		switch r := resp.Resp.(type) {
+		case *coprocessor.Response:
+			detail = r.ExecDetails
+		case *tikvrpc.CopStreamResponse:
+			// streaming request returns io.EOF, so the first CopStreamResponse.Response maybe nil.
+			if r.Response != nil {
+				detail = r.Response.ExecDetails
+			}
+		default:
+			panic("unreachable")
+		}
 	}
 
 	if detail != nil && detail.HandleTime != nil {
@@ -721,7 +689,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			}
 		}
 	}
-	logutil.Logger(context.Background()).Info(logStr)
+	logutil.BgLogger().Info(logStr)
 }
 
 func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
@@ -757,7 +725,11 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
-			logutil.Logger(context.Background()).Info("stream recv timeout", zap.Error(err))
+			if errors.Cause(err) == context.Canceled {
+				logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
+			} else {
+				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
+			}
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
 		lastRange = resp.Range
@@ -777,7 +749,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		logutil.Logger(context.Background()).Debug("coprocessor encounters",
+		logutil.BgLogger().Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
 		msBeforeExpired, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
@@ -792,7 +764,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
-		logutil.Logger(context.Background()).Warn("other error",
+		logutil.BgLogger().Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.id),
 			zap.String("storeAddr", task.storeAddr),
@@ -805,19 +777,22 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	} else {
 		resp.startKey = task.ranges.at(0).StartKey
 	}
-	resp.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
+	if resp.detail == nil {
+		resp.detail = new(execdetails.ExecDetails)
+	}
+	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
 	if rpcCtx != nil {
-		resp.CalleeAddress = rpcCtx.Addr
+		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
 		if handleTime := pbDetails.HandleTime; handleTime != nil {
-			resp.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
-			resp.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
+			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
+			resp.detail.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				resp.TotalKeys += scanDetail.Write.Total
-				resp.ProcessedKeys += scanDetail.Write.Processed
+				resp.detail.TotalKeys += scanDetail.Write.Total
+				resp.detail.ProcessedKeys += scanDetail.Write.Processed
 			}
 		}
 	}
