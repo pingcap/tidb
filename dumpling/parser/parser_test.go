@@ -1278,7 +1278,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT GET_FORMAT(DATE, 'USA');", true, "SELECT GET_FORMAT(DATE, 'USA')"},
 		{"SELECT GET_FORMAT(DATETIME, 'USA');", true, "SELECT GET_FORMAT(DATETIME, 'USA')"},
 		{"SELECT GET_FORMAT(TIME, 'USA');", true, "SELECT GET_FORMAT(TIME, 'USA')"},
-		{"SELECT GET_FORMAT(TIMESTAMP, 'USA');", true, "SELECT GET_FORMAT(TIMESTAMP, 'USA')"},
+		{"SELECT GET_FORMAT(TIMESTAMP, 'USA');", true, "SELECT GET_FORMAT(DATETIME, 'USA')"},
 
 		// for LOCALTIME, LOCALTIMESTAMP
 		{"SELECT LOCALTIME(), LOCALTIME(1)", true, "SELECT LOCALTIME(),LOCALTIME(1)"},
@@ -2978,12 +2978,12 @@ func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	expr := fields[0].Expr
 	f, ok := expr.(*ast.FuncCallExpr)
 	c.Assert(ok, IsTrue)
-	c.Assert(f.Args[0].(ast.ValueExpr).GetDatumString(), Equals, "MONTH")
+	c.Assert(f.Args[0].(*ast.TimeUnitExpr).Unit, Equals, ast.TimeUnitMonth)
 
 	expr = fields[1].Expr
 	f, ok = expr.(*ast.FuncCallExpr)
 	c.Assert(ok, IsTrue)
-	c.Assert(f.Args[0].(ast.ValueExpr).GetDatumString(), Equals, "MONTH")
+	c.Assert(f.Args[0].(*ast.TimeUnitExpr).Unit, Equals, ast.TimeUnitMonth)
 
 	// Test Illegal TimeUnit for TimestampDiff
 	table := []testCase{
@@ -3474,17 +3474,17 @@ func (s *testParserSuite) TestWindowFunctions(c *C) {
 }
 
 type windowFrameBoundChecker struct {
-	fb         *ast.FrameBound
-	exprRc     int
-	timeUnitRc int
-	c          *C
+	fb     *ast.FrameBound
+	exprRc int
+	unit   ast.TimeUnitType
+	c      *C
 }
 
 // Enter implements ast.Visitor interface.
 func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	if _, ok := inNode.(*ast.FrameBound); ok {
 		wfc.fb = inNode.(*ast.FrameBound)
-		if wfc.fb.Unit != nil {
+		if wfc.fb.Unit != ast.TimeUnitInvalid {
 			_, ok := wfc.fb.Expr.(ast.ValueExpr)
 			wfc.c.Assert(ok, IsFalse)
 		}
@@ -3499,10 +3499,9 @@ func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bo
 	}
 	if wfc.fb != nil {
 		if inNode == wfc.fb.Expr {
-			wfc.exprRc += 1
-		} else if inNode == wfc.fb.Unit {
-			wfc.timeUnitRc += 1
+			wfc.exprRc++
 		}
+		wfc.unit = wfc.fb.Unit
 	}
 	return inNode, true
 }
@@ -3513,13 +3512,13 @@ func (s *testParserSuite) TestVisitFrameBound(c *C) {
 	parser := parser.New()
 	parser.EnableWindowFunc(true)
 	table := []struct {
-		s          string
-		exprRc     int
-		timeUnitRc int
+		s      string
+		exprRc int
+		unit   ast.TimeUnitType
 	}{
-		{`SELECT AVG(val) OVER (RANGE INTERVAL 1+3 MINUTE_SECOND PRECEDING) FROM t;`, 1, 1},
-		{`SELECT AVG(val) OVER (RANGE 5 PRECEDING) FROM t;`, 1, 0},
-		{`SELECT AVG(val) OVER () FROM t;`, 0, 0},
+		{`SELECT AVG(val) OVER (RANGE INTERVAL 1+3 MINUTE_SECOND PRECEDING) FROM t;`, 1, ast.TimeUnitMinuteSecond},
+		{`SELECT AVG(val) OVER (RANGE 5 PRECEDING) FROM t;`, 1, ast.TimeUnitInvalid},
+		{`SELECT AVG(val) OVER () FROM t;`, 0, ast.TimeUnitInvalid},
 	}
 	for _, t := range table {
 		stmt, err := parser.ParseOneStmt(t.s, "", "")
@@ -3527,7 +3526,7 @@ func (s *testParserSuite) TestVisitFrameBound(c *C) {
 		checker := windowFrameBoundChecker{c: c}
 		stmt.Accept(&checker)
 		c.Assert(checker.exprRc, Equals, t.exprRc)
-		c.Assert(checker.timeUnitRc, Equals, t.timeUnitRc)
+		c.Assert(checker.unit, Equals, t.unit)
 	}
 
 }

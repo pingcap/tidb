@@ -14,8 +14,6 @@
 package ast
 
 import (
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	. "github.com/pingcap/parser/format"
@@ -2448,7 +2446,7 @@ type PartitionMethod struct {
 	// RANGE COLUMNS and LIST COLUMNS types
 	ColumnNames []*ColumnName
 	// Unit is a time unit used as argument of SYSTEM_TIME type
-	Unit ValueExpr
+	Unit TimeUnitType
 	// Limit is a row count used as argument of the SYSTEM_TIME type
 	Limit uint64
 
@@ -2465,20 +2463,13 @@ func (n *PartitionMethod) Restore(ctx *RestoreCtx) error {
 
 	switch {
 	case n.Tp == model.PartitionTypeSystemTime:
-		if n.Expr != nil && n.Unit != nil {
+		if n.Expr != nil && n.Unit != TimeUnitInvalid {
 			ctx.WriteKeyWord(" INTERVAL ")
 			if err := n.Expr.Restore(ctx); err != nil {
 				return errors.Annotate(err, "An error occurred while restore PartitionMethod.Expr")
 			}
-
-			// Here the Unit string should not be quoted.
-			// TODO: This is a temporary workaround that should be changed once something like "Keyword Expression" is implemented.
-			var sb strings.Builder
-			if err := n.Unit.Restore(NewRestoreCtx(0, &sb)); err != nil {
-				return errors.Annotate(err, "An error occurred while restore PartitionMethod.Unit")
-			}
 			ctx.WritePlain(" ")
-			ctx.WriteKeyWord(sb.String())
+			ctx.WriteKeyWord(n.Unit.String())
 		}
 
 	case n.Expr != nil:
@@ -2527,13 +2518,6 @@ func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 			return false
 		}
 		n.ColumnNames[i] = newColName.(*ColumnName)
-	}
-	if n.Unit != nil {
-		unit, ok := n.Unit.Accept(v)
-		if !ok {
-			return false
-		}
-		n.Unit = unit.(ValueExpr)
 	}
 	return true
 }
