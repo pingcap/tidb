@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -71,7 +72,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	// Send coprocessor request when the table split.
 	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
@@ -86,7 +87,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	// Check again.
 	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	req = rs.NewRecordBatch()
+	req = rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
@@ -95,7 +96,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	// Check there is no goroutine leak.
 	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
-	req = rs.NewRecordBatch()
+	req = rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	rs.Close()
@@ -214,7 +215,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), int64(100+i))
+		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), int64(100+i), table.WithAssertion(txn))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)

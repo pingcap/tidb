@@ -51,14 +51,14 @@ type RevokeExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *RevokeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
 	e.done = true
 
 	// Revoke for each user.
-	for _, user := range e.Users {
+	for idx, user := range e.Users {
 		// Check if user exists.
 		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
@@ -68,6 +68,13 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 			return errors.Errorf("Unknown user: %s", user.User)
 		}
 
+		if idx == 0 {
+			// Commit the old transaction, like DDL.
+			if err := e.ctx.NewTxn(ctx); err != nil {
+				return err
+			}
+			defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()
+		}
 		err = e.revokeOneUser(user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err

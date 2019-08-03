@@ -49,6 +49,22 @@ func (s *Server) startStatusHTTP() {
 	go s.startHTTPServer()
 }
 
+func serveError(w http.ResponseWriter, status int, txt string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Go-Pprof", "1")
+	w.Header().Del("Content-Disposition")
+	w.WriteHeader(status)
+	_, err := fmt.Fprintln(w, txt)
+	terror.Log(err)
+}
+
+func sleepWithCtx(ctx context.Context, d time.Duration) {
+	select {
+	case <-time.After(d):
+	case <-ctx.Done():
+	}
+}
+
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
@@ -109,7 +125,7 @@ func (s *Server) startHTTPServer() {
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
 		sr := router.PathPrefix("/web/trace/").Subrouter()
 		if _, err := traceapp.New(traceapp.NewRouter(sr), baseURL); err != nil {
-			logutil.Logger(context.Background()).Error("new failed", zap.Error(err))
+			logutil.BgLogger().Error("new failed", zap.Error(err))
 		}
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
@@ -122,26 +138,6 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-
-	serveError := func(w http.ResponseWriter, status int, txt string) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("X-Go-Pprof", "1")
-		w.Header().Del("Content-Disposition")
-		w.WriteHeader(status)
-		_, err := fmt.Fprintln(w, txt)
-		terror.Log(err)
-	}
-
-	sleep := func(w http.ResponseWriter, d time.Duration) {
-		var clientGone <-chan bool
-		if cn, ok := w.(http.CloseNotifier); ok {
-			clientGone = cn.CloseNotify()
-		}
-		select {
-		case <-time.After(d):
-		case <-clientGone:
-		}
-	}
 
 	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))
@@ -191,7 +187,7 @@ func (s *Server) startHTTPServer() {
 		if sec <= 0 || err != nil {
 			sec = 10
 		}
-		sleep(w, time.Duration(sec)*time.Second)
+		sleepWithCtx(r.Context(), time.Duration(sec)*time.Second)
 		rpprof.StopCPUProfile()
 
 		// dump config
@@ -220,17 +216,19 @@ func (s *Server) startHTTPServer() {
 		err = zw.Close()
 		terror.Log(err)
 	})
+	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
+	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
 
 	var (
-		err            error
 		httpRouterPage bytes.Buffer
 		pathTemplate   string
+		err            error
 	)
 	httpRouterPage.WriteString("<html><head><title>TiDB Status and Metrics Report</title></head><body><h1>TiDB Status and Metrics Report</h1><table>")
 	err = router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		pathTemplate, err = route.GetPathTemplate()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("get HTTP router path failed", zap.Error(err))
+			logutil.BgLogger().Error("get HTTP router path failed", zap.Error(err))
 		}
 		name := route.GetName()
 		// If the name attribute is not set, GetName returns "".
@@ -241,18 +239,18 @@ func (s *Server) startHTTPServer() {
 		return nil
 	})
 	if err != nil {
-		logutil.Logger(context.Background()).Error("generate root failed", zap.Error(err))
+		logutil.BgLogger().Error("generate root failed", zap.Error(err))
 	}
 	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
 	httpRouterPage.WriteString("</table></body></html>")
 	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
 		_, err = responseWriter.Write([]byte(httpRouterPage.String()))
 		if err != nil {
-			logutil.Logger(context.Background()).Error("write HTTP index page failed", zap.Error(err))
+			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
 		}
 	})
 
-	logutil.Logger(context.Background()).Info("for status and metrics report", zap.String("listening on addr", addr))
+	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
 	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
@@ -262,7 +260,7 @@ func (s *Server) startHTTPServer() {
 	}
 
 	if err != nil {
-		logutil.Logger(context.Background()).Info("listen failed", zap.Error(err))
+		logutil.BgLogger().Info("listen failed", zap.Error(err))
 	}
 }
 
@@ -284,7 +282,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	js, err := json.Marshal(st)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		logutil.Logger(context.Background()).Error("encode json failed", zap.Error(err))
+		logutil.BgLogger().Error("encode json failed", zap.Error(err))
 	} else {
 		_, err = w.Write(js)
 		terror.Log(errors.Trace(err))

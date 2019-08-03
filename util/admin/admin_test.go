@@ -458,14 +458,14 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	c.Assert(err, IsNil)
 
 	idxNames := []string{idx.Meta().Name.L}
-	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
+	_, _, err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
 	c.Assert(err, IsNil)
 
 	mockCtx := mock.NewContext()
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3, table.WithAssertion(txn))
 	c.Assert(err, IsNil)
 	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
@@ -480,13 +480,13 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	diffMsg := newDiffRetError("index", record1, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
+	_, _, err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
 	c.Assert(err, IsNil)
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4, table.WithAssertion(txn))
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(31)))
@@ -539,7 +539,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	diffMsg = newDiffRetError("index", record1, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
+	_, _, err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
 	c.Assert(err.Error(), Equals, "table count 3 != index(c) count 4")
 
 	// set data to:
@@ -559,7 +559,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	diffMsg = newDiffRetError("index", nil, record1)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
+	_, _, err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
 	c.Assert(err.Error(), Equals, "table count 4 != index(c) count 3")
 }
 

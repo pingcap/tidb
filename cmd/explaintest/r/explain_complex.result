@@ -156,9 +156,9 @@ Projection_10	0.00	root	test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.d
     ├─TableReader_41	0.00	root	data:Selection_40
     │ └─Selection_40	0.00	cop	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
     │   └─TableScan_39	10000.00	cop	table:dt, range:[0,+inf], keep order:false, stats:pseudo
-    └─IndexLookUp_18	3.33	root	
+    └─IndexLookUp_18	0.00	root	
       ├─IndexScan_15	10.00	cop	table:rr, index:aid, dic, range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false, stats:pseudo
-      └─Selection_17	3.33	cop	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
+      └─Selection_17	0.00	cop	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
         └─TableScan_16	10.00	cop	table:rr, keep order:false, stats:pseudo
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	count	task	operator info
@@ -200,3 +200,62 @@ HashAgg_34	72000.00	root	group by:col_1, funcs:sum(col_0)
     │ └─TableScan_58	10000.00	cop	table:tbl_008, range:[-inf,+inf], keep order:false, stats:pseudo
     └─TableReader_62	10000.00	root	data:TableScan_61
       └─TableScan_61	10000.00	cop	table:tbl_009, range:[-inf,+inf], keep order:false, stats:pseudo
+CREATE TABLE org_department (
+id int(11) NOT NULL AUTO_INCREMENT,
+ctx int(11) DEFAULT '0' COMMENT 'organization id',
+name varchar(128) DEFAULT NULL,
+left_value int(11) DEFAULT NULL,
+right_value int(11) DEFAULT NULL,
+depth int(11) DEFAULT NULL,
+leader_id bigint(20) DEFAULT NULL,
+status int(11) DEFAULT '1000',
+created_on datetime DEFAULT NULL,
+updated_on datetime DEFAULT NULL,
+PRIMARY KEY (id),
+UNIQUE KEY org_department_id_uindex (id),
+KEY org_department_leader_id_index (leader_id),
+KEY org_department_ctx_index (ctx)
+);
+CREATE TABLE org_position (
+id int(11) NOT NULL AUTO_INCREMENT,
+ctx int(11) DEFAULT NULL,
+name varchar(128) DEFAULT NULL,
+left_value int(11) DEFAULT NULL,
+right_value int(11) DEFAULT NULL,
+depth int(11) DEFAULT NULL,
+department_id int(11) DEFAULT NULL,
+status int(2) DEFAULT NULL,
+created_on datetime DEFAULT NULL,
+updated_on datetime DEFAULT NULL,
+PRIMARY KEY (id),
+UNIQUE KEY org_position_id_uindex (id),
+KEY org_position_department_id_index (department_id)
+) ENGINE=InnoDB AUTO_INCREMENT=22 DEFAULT CHARSET=utf8;
+CREATE TABLE org_employee_position (
+hotel_id int(11) DEFAULT NULL,
+user_id bigint(20) DEFAULT NULL,
+position_id int(11) DEFAULT NULL,
+status int(11) DEFAULT NULL,
+created_on datetime DEFAULT NULL,
+updated_on datetime DEFAULT NULL,
+UNIQUE KEY org_employee_position_pk (hotel_id,user_id,position_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+explain SELECT d.id, d.ctx, d.name, d.left_value, d.right_value, d.depth, d.leader_id, d.status, d.created_on, d.updated_on FROM org_department AS d LEFT JOIN org_position AS p ON p.department_id = d.id AND p.status = 1000 LEFT JOIN org_employee_position AS ep ON ep.position_id = p.id AND ep.status = 1000 WHERE (d.ctx = 1 AND (ep.user_id = 62 OR d.id = 20 OR d.id = 20) AND d.status = 1000) GROUP BY d.id ORDER BY d.left_value;
+id	count	task	operator info
+Sort_10	1.00	root	test.d.left_value:asc
+└─HashAgg_15	1.00	root	group by:test.d.id, funcs:firstrow(test.d.id), firstrow(test.d.ctx), firstrow(test.d.name), firstrow(test.d.left_value), firstrow(test.d.right_value), firstrow(test.d.depth), firstrow(test.d.leader_id), firstrow(test.d.status), firstrow(test.d.created_on), firstrow(test.d.updated_on)
+  └─Selection_22	0.01	root	or(eq(test.ep.user_id, 62), or(eq(test.d.id, 20), eq(test.d.id, 20)))
+    └─HashLeftJoin_23	0.02	root	left outer join, inner:TableReader_58, equal:[eq(test.p.id, test.ep.position_id)]
+      ├─IndexJoin_32	0.01	root	left outer join, inner:IndexLookUp_31, outer key:test.d.id, inner key:test.p.department_id
+      │ ├─IndexLookUp_48	0.01	root	
+      │ │ ├─IndexScan_45	10.00	cop	table:d, index:ctx, range:[1,1], keep order:false, stats:pseudo
+      │ │ └─Selection_47	0.01	cop	eq(test.d.status, 1000)
+      │ │   └─TableScan_46	10.00	cop	table:org_department, keep order:false, stats:pseudo
+      │ └─IndexLookUp_31	0.01	root	
+      │   ├─Selection_29	9.99	cop	not(isnull(test.p.department_id))
+      │   │ └─IndexScan_27	10.00	cop	table:p, index:department_id, range: decided by [eq(test.p.department_id, test.d.id)], keep order:false, stats:pseudo
+      │   └─Selection_30	0.01	cop	eq(test.p.status, 1000)
+      │     └─TableScan_28	9.99	cop	table:org_position, keep order:false, stats:pseudo
+      └─TableReader_58	9.99	root	data:Selection_57
+        └─Selection_57	9.99	cop	eq(test.ep.status, 1000), not(isnull(test.ep.position_id))
+          └─TableScan_56	10000.00	cop	table:ep, range:[-inf,+inf], keep order:false, stats:pseudo

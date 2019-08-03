@@ -460,7 +460,7 @@ func (t *tester) analyze(tableName string) error {
 }
 
 func (t *tester) executeStmt(query string) error {
-	if session.IsQuery(query) {
+	if isQuery(query) {
 		rows, err := t.tx.Query(query)
 		if err != nil {
 			return errors.Trace(err)
@@ -695,4 +695,36 @@ func main() {
 	}
 
 	println("\nGreat, All tests passed")
+}
+
+var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
+
+func trimSQL(sql string) string {
+	// Trim space.
+	sql = strings.TrimSpace(sql)
+	// Trim leading /*comment*/
+	// There may be multiple comments
+	for strings.HasPrefix(sql, "/*") {
+		i := strings.Index(sql, "*/")
+		if i != -1 && i < len(sql)+1 {
+			sql = sql[i+2:]
+			sql = strings.TrimSpace(sql)
+			continue
+		}
+		break
+	}
+	// Trim leading '('. For `(select 1);` is also a query.
+	return strings.TrimLeft(sql, "( ")
+}
+
+// isQuery checks if a sql statement is a query statement.
+func isQuery(sql string) bool {
+	sqlText := strings.ToLower(trimSQL(sql))
+	for _, key := range queryStmtTable {
+		if strings.HasPrefix(sqlText, key) {
+			return true
+		}
+	}
+
+	return false
 }

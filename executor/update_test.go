@@ -52,7 +52,7 @@ func (s *testUpdateSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 		session.SetSchemaLease(0)
-		session.SetStatsLease(0)
+		session.DisableStats4Test()
 	}
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -86,4 +86,129 @@ func (s *testUpdateSuite) TestUpdateGenColInTxn(c *C) {
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
 		`1 2`))
+}
+
+func (s *testUpdateSuite) TestUpdateWithAutoidSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1(id int primary key auto_increment, n int);`)
+	tk.MustExec(`create table t2(id int primary key, n float auto_increment, key I_n(n));`)
+	tk.MustExec(`create table t3(id int primary key, n double auto_increment, key I_n(n));`)
+
+	tests := []struct {
+		exec   string
+		query  string
+		result [][]interface{}
+	}{
+		{
+			`insert into t1 set n = 1`,
+			`select * from t1 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`update t1 set id = id+1`,
+			`select * from t1 where id = 2`,
+			testkit.Rows(`2 1`),
+		},
+		{
+			`insert into t1 set n = 2`,
+			`select * from t1 where id = 3`,
+			testkit.Rows(`3 2`),
+		},
+		{
+			`update t1 set id = id + '1.1' where id = 3`,
+			`select * from t1 where id = 4`,
+			testkit.Rows(`4 2`),
+		},
+		{
+			`insert into t1 set n = 3`,
+			`select * from t1 where id = 5`,
+			testkit.Rows(`5 3`),
+		},
+		{
+			`update t1 set id = id + '0.5' where id = 5`,
+			`select * from t1 where id = 6`,
+			testkit.Rows(`6 3`),
+		},
+		{
+			`insert into t1 set n = 4`,
+			`select * from t1 where id = 7`,
+			testkit.Rows(`7 4`),
+		},
+		{
+			`insert into t2 set id = 1`,
+			`select * from t2 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`update t2 set n = n+1`,
+			`select * from t2 where id = 1`,
+			testkit.Rows(`1 2`),
+		},
+		{
+			`insert into t2 set id = 2`,
+			`select * from t2 where id = 2`,
+			testkit.Rows(`2 3`),
+		},
+		{
+			`update t2 set n = n + '2.2'`,
+			`select * from t2 where id = 2`,
+			testkit.Rows(`2 5.2`),
+		},
+		{
+			`insert into t2 set id = 3`,
+			`select * from t2 where id = 3`,
+			testkit.Rows(`3 6`),
+		},
+		{
+			`update t2 set n = n + '0.5' where id = 3`,
+			`select * from t2 where id = 3`,
+			testkit.Rows(`3 6.5`),
+		},
+		{
+			`insert into t2 set id = 4`,
+			`select * from t2 where id = 4`,
+			testkit.Rows(`4 7`),
+		},
+		{
+			`insert into t3 set id = 1`,
+			`select * from t3 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`update t3 set n = n+1`,
+			`select * from t3 where id = 1`,
+			testkit.Rows(`1 2`),
+		},
+		{
+			`insert into t3 set id = 2`,
+			`select * from t3 where id = 2`,
+			testkit.Rows(`2 3`),
+		},
+		{
+			`update t3 set n = n + '3.3'`,
+			`select * from t3 where id = 2`,
+			testkit.Rows(`2 6.3`),
+		},
+		{
+			`insert into t3 set id = 3`,
+			`select * from t3 where id = 3`,
+			testkit.Rows(`3 7`),
+		},
+		{
+			`update t3 set n = n + '0.5' where id = 3`,
+			`select * from t3 where id = 3`,
+			testkit.Rows(`3 7.5`),
+		},
+		{
+			`insert into t3 set id = 4`,
+			`select * from t3 where id = 4`,
+			testkit.Rows(`4 8`),
+		},
+	}
+
+	for _, tt := range tests {
+		tk.MustExec(tt.exec)
+		tk.MustQuery(tt.query).Check(tt.result)
+	}
 }

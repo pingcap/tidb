@@ -47,6 +47,31 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
+// WindowFuncExtractor visits Expr tree.
+// It converts ColunmNameExpr to WindowFuncExpr and collects WindowFuncExpr.
+type WindowFuncExtractor struct {
+	// WindowFuncs is the collected WindowFuncExprs.
+	windowFuncs []*ast.WindowFuncExpr
+}
+
+// Enter implements Visitor interface.
+func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+	switch n.(type) {
+	case *ast.SelectStmt, *ast.UnionStmt:
+		return n, true
+	}
+	return n, false
+}
+
+// Leave implements Visitor interface.
+func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	switch v := n.(type) {
+	case *ast.WindowFuncExpr:
+		a.windowFuncs = append(a.windowFuncs, v)
+	}
+	return n, true
+}
+
 // logicalSchemaProducer stores the schema for the logical plans who can produce schema directly.
 type logicalSchemaProducer struct {
 	schema *expression.Schema
@@ -126,4 +151,28 @@ func buildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 		return newSchema
 	}
 	return expression.MergeSchema(join.Children()[0].Schema(), join.Children()[1].Schema())
+}
+
+// GetStatsInfo gets the statistics info from a physical plan tree.
+func GetStatsInfo(i interface{}) map[string]uint64 {
+	p := i.(Plan)
+	var physicalPlan PhysicalPlan
+	switch x := p.(type) {
+	case *Insert:
+		physicalPlan = x.SelectPlan
+	case *Update:
+		physicalPlan = x.SelectPlan
+	case *Delete:
+		physicalPlan = x.SelectPlan
+	case PhysicalPlan:
+		physicalPlan = x
+	}
+
+	if physicalPlan == nil {
+		return nil
+	}
+
+	statsInfos := make(map[string]uint64)
+	statsInfos = CollectPlanStatsVersion(physicalPlan, statsInfos)
+	return statsInfos
 }

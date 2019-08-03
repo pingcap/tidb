@@ -250,6 +250,7 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 		{NewStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
 		{NewStringDatum("{}"), `{}`, true},
 		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
+		{NewStringDatum(`{"a": "9223372036854775809"}`), `{"a": "9223372036854775809"}`, true},
 
 		// can not parse JSON from this string, so error occurs.
 		{NewStringDatum("hello, 世界"), "", false},
@@ -351,7 +352,7 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 	}
 }
 
-func (ts *testDatumSuite) TestCopyDatum(c *C) {
+func (ts *testDatumSuite) TestCloneDatum(c *C) {
 	var raw Datum
 	raw.b = []byte("raw")
 	raw.k = KindRaw
@@ -366,7 +367,7 @@ func (ts *testDatumSuite) TestCopyDatum(c *C) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
-		tt1 := CopyDatum(tt)
+		tt1 := CloneDatum(tt)
 		res, err := tt.CompareDatum(sc, &tt1)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, 0)

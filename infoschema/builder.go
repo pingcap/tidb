@@ -43,6 +43,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	} else if diff.Type == model.ActionDropSchema {
 		tblIDs := b.applyDropSchema(diff.SchemaID)
 		return tblIDs, nil
+	} else if diff.Type == model.ActionModifySchemaCharsetAndCollate {
+		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	}
 
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
@@ -127,6 +129,23 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 	return nil
 }
 
+func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDbInfo := b.copySchemaTables(di.Name.O)
+	newDbInfo.Charset = di.Charset
+	newDbInfo.Collate = di.Collate
+	return nil
+}
+
 func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	di, ok := b.is.SchemaByID(schemaID)
 	if !ok {
@@ -135,22 +154,22 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	delete(b.is.schemaMap, di.Name.L)
 
 	// Copy the sortedTables that contain the table we are going to drop.
+	tableIDs := make([]int64, 0, len(di.Tables))
 	bucketIdxMap := make(map[int]struct{})
 	for _, tbl := range di.Tables {
 		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
+		// TODO: If the table ID doesn't exist.
+		tableIDs = append(tableIDs, tbl.ID)
 	}
 	for bucketIdx := range bucketIdxMap {
 		b.copySortedTablesBucket(bucketIdx)
 	}
 
-	ids := make([]int64, 0, len(di.Tables))
 	di = di.Clone()
-	for _, tbl := range di.Tables {
-		b.applyDropTable(di, tbl.ID)
-		// TODO: If the table ID doesn't exist.
-		ids = append(ids, tbl.ID)
+	for _, id := range tableIDs {
+		b.applyDropTable(di, id)
 	}
-	return ids
+	return tableIDs
 }
 
 func (b *Builder) copySortedTablesBucket(bucketIdx int) {

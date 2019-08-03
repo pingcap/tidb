@@ -205,12 +205,6 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *PhysicalApply) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.PhysicalJoin.ExplainInfo())
-	return buffer.String()
-}
-
-// ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	fmt.Fprintf(buffer, ", inner:%s", p.Children()[1-p.OuterIndex].ExplainID())
@@ -239,7 +233,13 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalHashJoin) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.JoinType.String())
+	buffer := new(bytes.Buffer)
+
+	if len(p.EqualConditions) == 0 {
+		buffer.WriteString("CARTESIAN ")
+	}
+
+	buffer.WriteString(p.JoinType.String())
 	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
 	if len(p.EqualConditions) > 0 {
 		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
@@ -329,7 +329,8 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalWindow) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.WindowFuncDesc.String())
+	buffer := bytes.NewBufferString("")
+	formatWindowFuncDescs(buffer, p.WindowFuncDescs)
 	buffer.WriteString(" over(")
 	isFirst := true
 	if len(p.PartitionBy) > 0 {
@@ -375,4 +376,14 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	}
 	buffer.WriteString(")")
 	return buffer.String()
+}
+
+func formatWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc) *bytes.Buffer {
+	for i, desc := range descs {
+		if i != 0 {
+			buffer.WriteString(", ")
+		}
+		buffer.WriteString(desc.String())
+	}
+	return buffer
 }

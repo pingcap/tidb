@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
@@ -39,13 +40,12 @@ func (s *testSchemaSuite) TearDownSuite(c *C) {
 }
 
 func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
-	var err error
 	dbInfo := &model.DBInfo{
 		Name: model.NewCIStr(name),
 	}
-
-	dbInfo.ID, err = d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	c.Assert(err, IsNil)
+	dbInfo.ID = genIDs[0]
 	return dbInfo
 }
 
@@ -205,8 +205,9 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	// d2 must not be owner.
 	c.Assert(d2.ownerManager.IsOwner(), IsFalse)
 
-	schemaID, err := d2.genGlobalID()
+	genIDs, err := d2.genGlobalIDs(1)
 	c.Assert(err, IsNil)
+	schemaID := genIDs[0]
 	doDDLJobErr(c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
 }
 
@@ -261,4 +262,21 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	}
 	testRunInterruptedJob(c, d1, job)
 	testCheckSchemaState(c, d1, dbInfo, model.StateNone)
+}
+
+func testGetSchemaInfoWithError(d *ddl, schemaID int64) (*model.DBInfo, error) {
+	var dbInfo *model.DBInfo
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		dbInfo, err1 = t.GetDatabase(schemaID)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return dbInfo, nil
 }

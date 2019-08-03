@@ -35,7 +35,7 @@ type testCacheSuite struct {
 func (s *testCacheSuite) SetUpSuite(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	c.Assert(err, IsNil)
 	s.domain, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -276,7 +276,7 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)

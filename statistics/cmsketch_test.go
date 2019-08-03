@@ -49,12 +49,13 @@ func prepareCMSWithTopN(d, w int32, vals []*types.Datum, n uint32, total uint64)
 	return cms, nil
 }
 
-func buildCMSketchAndMap(d, w int32, seed int64, total, imax uint64, s float64) (*CMSketch, map[int64]uint32, error) {
+// buildCMSketchAndMapWithOffset builds cm sketch using zipf and the generated values starts from `offset`.
+func buildCMSketchAndMapWithOffset(d, w int32, seed int64, total, imax uint64, s float64, offset int64) (*CMSketch, map[int64]uint32, error) {
 	cms := NewCMSketch(d, w)
 	mp := make(map[int64]uint32)
 	zipf := rand.NewZipf(rand.New(rand.NewSource(seed)), s, 1, imax)
 	for i := uint64(0); i < total; i++ {
-		val := types.NewIntDatum(int64(zipf.Uint64()))
+		val := types.NewIntDatum(int64(zipf.Uint64()) + offset)
 		err := cms.insert(&val)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -62,6 +63,10 @@ func buildCMSketchAndMap(d, w int32, seed int64, total, imax uint64, s float64) 
 		mp[val.GetInt64()]++
 	}
 	return cms, mp, nil
+}
+
+func buildCMSketchAndMap(d, w int32, seed int64, total, imax uint64, s float64) (*CMSketch, map[int64]uint32, error) {
+	return buildCMSketchAndMapWithOffset(d, w, seed, total, imax, s, 0)
 }
 
 func buildCMSketchTopNAndMap(d, w, n, sample int32, seed int64, total, imax uint64, s float64) (*CMSketch, map[int64]uint32, error) {
@@ -131,7 +136,7 @@ func (s *testStatisticsSuite) TestCMSketch(c *C) {
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
 
-		err = lSketch.MergeCMSketch(rSketch)
+		err = lSketch.MergeCMSketch(rSketch, 0)
 		c.Assert(err, IsNil)
 		for val, count := range rMap {
 			lMap[val] += count
@@ -167,21 +172,21 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 		// The first two tests produces almost same avg.
 		{
 			zipfFactor: 1.0000001,
-			avgError:   48,
+			avgError:   30,
 		},
 		{
 			zipfFactor: 1.1,
-			avgError:   48,
+			avgError:   30,
 		},
 		{
 			zipfFactor: 2,
-			avgError:   128,
+			avgError:   89,
 		},
 		// If the most data lies in a narrow range, our guess may have better result.
 		// The error mainly comes from huge numbers.
 		{
 			zipfFactor: 5,
-			avgError:   256,
+			avgError:   208,
 		},
 	}
 	d, w := int32(5), int32(2048)
@@ -192,6 +197,56 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 		avg, err := averageAbsoluteError(lSketch, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
+	}
+}
+
+func (s *testStatisticsSuite) TestMergeCMSketch4IncrementalAnalyze(c *C) {
+	tests := []struct {
+		zipfFactor float64
+		avgError   uint64
+	}{
+		{
+			zipfFactor: 1.0000001,
+			avgError:   48,
+		},
+		{
+			zipfFactor: 1.1,
+			avgError:   48,
+		},
+		{
+			zipfFactor: 2,
+			avgError:   128,
+		},
+		{
+			zipfFactor: 5,
+			avgError:   256,
+		},
+	}
+	d, w := int32(5), int32(2048)
+	total, imax := uint64(100000), uint64(1000000)
+	for _, t := range tests {
+		lSketch, lMap, err := buildCMSketchAndMap(d, w, 0, total, imax, t.zipfFactor)
+		c.Check(err, IsNil)
+		avg, err := averageAbsoluteError(lSketch, lMap)
+		c.Assert(err, IsNil)
+		c.Check(avg, LessEqual, t.avgError)
+
+		rSketch, rMap, err := buildCMSketchAndMapWithOffset(d, w, 1, total, imax, t.zipfFactor, int64(imax))
+		c.Check(err, IsNil)
+		avg, err = averageAbsoluteError(rSketch, rMap)
+		c.Assert(err, IsNil)
+		c.Check(avg, LessEqual, t.avgError)
+
+		for key, val := range rMap {
+			lMap[key] += val
+		}
+		c.Assert(lSketch.MergeCMSketch4IncrementalAnalyze(rSketch, 0), IsNil)
+		avg, err = averageAbsoluteError(lSketch, lMap)
+		c.Assert(err, IsNil)
+		c.Check(avg, LessEqual, t.avgError)
+		width, depth := lSketch.GetWidthAndDepth()
+		c.Assert(width, Equals, int32(2048))
+		c.Assert(depth, Equals, int32(5))
 	}
 }
 

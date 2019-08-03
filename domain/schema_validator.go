@@ -14,7 +14,6 @@
 package domain
 
 import (
-	"context"
 	"sync"
 	"time"
 
@@ -85,7 +84,7 @@ func (s *schemaValidator) IsStarted() bool {
 }
 
 func (s *schemaValidator) Stop() {
-	logutil.Logger(context.Background()).Info("the schema validator stops")
+	logutil.BgLogger().Info("the schema validator stops")
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = false
@@ -94,7 +93,7 @@ func (s *schemaValidator) Stop() {
 }
 
 func (s *schemaValidator) Restart() {
-	logutil.Logger(context.Background()).Info("the schema validator restarts")
+	logutil.BgLogger().Info("the schema validator restarts")
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
@@ -113,7 +112,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	defer s.mux.Unlock()
 
 	if !s.isStarted {
-		logutil.Logger(context.Background()).Info("the schema validator stopped before updating")
+		logutil.BgLogger().Info("the schema validator stopped before updating")
 		return
 	}
 
@@ -125,7 +124,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 
 	// Update the schema deltaItem information.
 	if currVer != oldVer {
-		logutil.Logger(context.Background()).Debug("update schema validator", zap.Int64("oldVer", oldVer),
+		logutil.BgLogger().Debug("update schema validator", zap.Int64("oldVer", oldVer),
 			zap.Int64("currVer", currVer), zap.Int64s("changedTableIDs", changedTableIDs))
 		s.enqueue(currVer, changedTableIDs)
 	}
@@ -147,12 +146,12 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 // NOTE, this function should be called under lock!
 func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
 	if len(s.deltaSchemaInfos) == 0 {
-		logutil.Logger(context.Background()).Info("schema change history is empty", zap.Int64("currVer", currVer))
+		logutil.BgLogger().Info("schema change history is empty", zap.Int64("currVer", currVer))
 		return true
 	}
 	newerDeltas := s.findNewerDeltas(currVer)
 	if len(newerDeltas) == len(s.deltaSchemaInfos) {
-		logutil.Logger(context.Background()).Info("the schema version is much older than the latest version", zap.Int64("currVer", currVer),
+		logutil.BgLogger().Info("the schema version is much older than the latest version", zap.Int64("currVer", currVer),
 			zap.Int64("latestSchemaVer", s.latestSchemaVer))
 		return true
 	}
@@ -178,7 +177,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 	if !s.isStarted {
-		logutil.Logger(context.Background()).Info("the schema validator stopped before checking")
+		logutil.BgLogger().Info("the schema validator stopped before checking")
 		return ResultUnknown
 	}
 	if s.lease == 0 {
@@ -189,7 +188,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	if schemaVer < s.latestSchemaVer {
 		// The DDL relatedTableIDs is empty.
 		if len(relatedTableIDs) == 0 {
-			logutil.Logger(context.Background()).Info("the related table ID is empty", zap.Int64("schemaVer", schemaVer),
+			logutil.BgLogger().Info("the related table ID is empty", zap.Int64("schemaVer", schemaVer),
 				zap.Int64("latestSchemaVer", s.latestSchemaVer))
 			return ResultFail
 		}

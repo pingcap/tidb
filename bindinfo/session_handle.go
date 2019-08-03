@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -38,8 +39,9 @@ func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 // removed from the cache after this operation.
 func (h *SessionHandle) appendBindMeta(hash string, meta *BindMeta) {
 	// Make sure there is only one goroutine writes the cache.
-	h.ch.removeStaleBindMetas(hash, meta)
+	h.ch.removeStaleBindMetas(hash, meta, metrics.ScopeSession)
 	h.ch[hash] = append(h.ch[hash], meta)
+	meta.updateMetrics(metrics.ScopeSession, true)
 }
 
 func (h *SessionHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
@@ -74,7 +76,7 @@ func (h *SessionHandle) DropBindRecord(record *BindRecord) {
 	meta := &BindMeta{BindRecord: record}
 	meta.Status = deleted
 	hash := parser.DigestHash(record.OriginalSQL)
-	h.ch.removeDeletedBindMeta(hash, meta)
+	h.ch.removeDeletedBindMeta(hash, meta, metrics.ScopeSession)
 	h.appendBindMeta(hash, meta)
 }
 
@@ -98,6 +100,15 @@ func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
 		bindRecords = append(bindRecords, bindRecord...)
 	}
 	return bindRecords
+}
+
+// Close closes the session handle.
+func (h *SessionHandle) Close() {
+	for _, bindRecords := range h.ch {
+		for _, bindRecord := range bindRecords {
+			bindRecord.updateMetrics(metrics.ScopeSession, false)
+		}
+	}
 }
 
 // sessionBindInfoKeyType is a dummy type to avoid naming collision in context.

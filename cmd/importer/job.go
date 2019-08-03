@@ -96,6 +96,12 @@ func doProcess(table *table, dbs []*sql.DB, jobCount int, workerCount int, batch
 	start := time.Now()
 	go addJobs(jobCount, jobChan)
 
+	for _, col := range table.columns {
+		if col.incremental {
+			workerCount = 1
+			break
+		}
+	}
 	for i := 0; i < workerCount; i++ {
 		go doJob(table, dbs[i], batch, jobChan, doneChan)
 	}

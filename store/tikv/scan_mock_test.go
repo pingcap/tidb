@@ -42,7 +42,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()})
-	scanner, err := newScanner(snapshot, []byte("a"), nil, 10)
+	scanner, err := newScanner(snapshot, []byte("a"), nil, 10, false)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert([]byte{ch}, BytesEquals, []byte(scanner.Key()))
@@ -50,10 +50,43 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	}
 	c.Assert(scanner.Valid(), IsFalse)
 
-	scanner, err = newScanner(snapshot, []byte("a"), []byte("i"), 10)
+	scanner, err = newScanner(snapshot, []byte("a"), []byte("i"), 10, false)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('h'); ch++ {
 		c.Assert([]byte{ch}, BytesEquals, []byte(scanner.Key()))
+		c.Assert(scanner.Next(), IsNil)
+	}
+	c.Assert(scanner.Valid(), IsFalse)
+}
+
+func (s *testScanMockSuite) TestReverseScan(c *C) {
+	store := NewTestStore(c).(*tikvStore)
+	defer store.Close()
+
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	for ch := byte('a'); ch <= byte('z'); ch++ {
+		err = txn.Set([]byte{ch}, []byte{ch})
+		c.Assert(err, IsNil)
+	}
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	txn, err = store.Begin()
+	c.Assert(err, IsNil)
+	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()})
+	scanner, err := newScanner(snapshot, nil, []byte("z"), 10, true)
+	c.Assert(err, IsNil)
+	for ch := byte('y'); ch >= byte('a'); ch-- {
+		c.Assert(string([]byte{ch}), Equals, string([]byte(scanner.Key())))
+		c.Assert(scanner.Next(), IsNil)
+	}
+	c.Assert(scanner.Valid(), IsFalse)
+
+	scanner, err = newScanner(snapshot, []byte("a"), []byte("i"), 10, true)
+	c.Assert(err, IsNil)
+	for ch := byte('h'); ch >= byte('a'); ch-- {
+		c.Assert(string([]byte{ch}), Equals, string([]byte(scanner.Key())))
 		c.Assert(scanner.Next(), IsNil)
 	}
 	c.Assert(scanner.Valid(), IsFalse)

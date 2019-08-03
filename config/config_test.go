@@ -38,6 +38,8 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
+	conf.Performance.TxnEntryCountLimit = 1000
+	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
@@ -60,7 +62,12 @@ unrecognized-option-test = true
 
 	_, err = f.WriteString(`
 token-limit = 0
+enable-table-lock = true
+delay-clean-table-lock = 5
+split-region-max-num=10000
 [performance]
+txn-entry-count-limit=2000
+txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -75,9 +82,16 @@ max-batch-size=128
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")
 
+	// Test that the value will be overwritten by the config file.
+	c.Assert(conf.Performance.TxnEntryCountLimit, Equals, uint64(2000))
+	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
+
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
+	c.Assert(conf.EnableTableLock, IsTrue)
+	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
+	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -193,4 +207,39 @@ func (s *testConfigSuite) TestConfigDiff(c *C) {
 	c.Assert(diffs["Performance.CrossJoin"][1], Equals, false)
 	c.Assert(diffs["Performance.FeedbackProbability"][0], Equals, float64(2333))
 	c.Assert(diffs["Performance.FeedbackProbability"][1], Equals, float64(23.33))
+}
+
+func (s *testConfigSuite) TestValid(c *C) {
+	c1 := NewConfig()
+	tests := []struct {
+		ttl   string
+		valid bool
+	}{
+		{"14s", false},
+		{"15s", true},
+		{"120s", true},
+		{"121s", false},
+	}
+	for _, tt := range tests {
+		c1.PessimisticTxn.TTL = tt.ttl
+		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
+}
+
+func (s *testConfigSuite) TestOOMActionValid(c *C) {
+	c1 := NewConfig()
+	tests := []struct {
+		oomAction string
+		valid     bool
+	}{
+		{"log", true},
+		{"Log", true},
+		{"Cancel", true},
+		{"cANceL", true},
+		{"quit", false},
+	}
+	for _, tt := range tests {
+		c1.OOMAction = tt.oomAction
+		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
 }

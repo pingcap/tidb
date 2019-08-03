@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 )
@@ -22,18 +23,12 @@ import (
 var (
 	// ErrBodyMissing response body is missing error
 	ErrBodyMissing = errors.New("response body is missing")
+	// When TiDB is closing and send request to tikv fail, do not retry, return this error.
+	errTiDBShuttingDown = errors.New("tidb server shutting down")
 )
 
 // mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
 const mismatchClusterID = "mismatch cluster id"
-
-// TiDB decides whether to retry transaction by checking if error message contains
-// string "try again later" literally.
-// In TiClient we use `errors.Annotate(err, txnRetryableMark)` to direct TiDB to
-// restart a transaction.
-// Note that it should be only used if i) the error occurs inside a transaction
-// and ii) the error is not totally unexpected and hopefully will recover soon.
-const txnRetryableMark = "[try again later]"
 
 // MySQL error instances.
 var (
@@ -44,6 +39,17 @@ var (
 	ErrTiKVServerBusy     = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy])
 	ErrGCTooEarly         = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
 )
+
+// ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.
+// It also marks if the deadlock is retryable.
+type ErrDeadlock struct {
+	*kvrpcpb.Deadlock
+	IsRetryable bool
+}
+
+func (d *ErrDeadlock) Error() string {
+	return d.Deadlock.String()
+}
 
 func init() {
 	tikvMySQLErrCodes := map[terror.ErrCode]uint16{

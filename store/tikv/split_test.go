@@ -69,7 +69,7 @@ func (s *testSplitSuite) TestSplitBatchGet(c *C) {
 	}
 
 	s.split(c, loc.Region.id, []byte("b"))
-	s.store.regionCache.DropRegion(loc.Region)
+	s.store.regionCache.InvalidateCachedRegion(loc.Region)
 
 	// mocktikv will panic if it meets a not-in-region key.
 	err = snapshot.batchGetSingleRegion(s.bo, batch, func([]byte, []byte) {})

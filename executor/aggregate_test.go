@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
@@ -334,6 +335,22 @@ func (s *testSuite1) TestAggregation(c *C) {
 	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
 	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
+	_, err = tk.Exec("select std(a) from t")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
+	_, err = tk.Exec("select stddev(a) from t")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev")
+	_, err = tk.Exec("select stddev_pop(a) from t")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
+	_, err = tk.Exec("select std_samp(a) from t")
+	// TODO: Fix this error message.
+	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION std_samp does not exist")
+	_, err = tk.Exec("select variance(a) from t")
+	// TODO: Fix this error message.
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")
+	_, err = tk.Exec("select var_pop(a) from t")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")
+	_, err = tk.Exec("select var_samp(a) from t")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
 }
 
 func (s *testSuite1) TestStreamAggPushDown(c *C) {
@@ -709,4 +726,15 @@ func (s *testSuite1) TestIssue10098(c *C) {
 	tk.MustExec("create table t(a char(10), b char(10))")
 	tk.MustExec("insert into t values('1', '222'), ('12', '22')")
 	tk.MustQuery("select group_concat(distinct a, b) from t").Check(testkit.Rows("1222,1222"))
+}
+
+func (s *testSuite1) TestIssue10608(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t, s;`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table s(a int, b int)")
+	tk.MustExec("insert into s values(100292, 508931), (120002, 508932)")
+	tk.MustExec("insert into t values(508931), (508932)")
+	tk.MustQuery("select (select group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
+
 }

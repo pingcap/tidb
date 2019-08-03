@@ -254,7 +254,12 @@ func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
 
 // LoadUserTable loads the mysql.user table from database.
 func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
-	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Create_view_priv,Show_view_priv,Index_priv,Create_user_priv,Trigger_priv,Create_role_priv,Drop_role_priv,account_locked from mysql.user;", p.decodeUserTableRow)
+	userPrivCols := make([]string, 0, len(mysql.Priv2UserCol))
+	for _, v := range mysql.Priv2UserCol {
+		userPrivCols = append(userPrivCols, v)
+	}
+	query := fmt.Sprintf("select HIGH_PRIORITY Host,User,Password,%s,account_locked from mysql.user;", strings.Join(userPrivCols, ", "))
+	err := p.loadTable(ctx, query, p.decodeUserTableRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -380,7 +385,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	defer terror.Call(rs.Close)
 
 	fs := rs.Fields()
-	req := rs.NewRecordBatch()
+	req := rs.NewChunk()
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
@@ -389,7 +394,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 		if req.NumRows() == 0 {
 			return nil
 		}
-		it := chunk.NewIterator4Chunk(req.Chunk)
+		it := chunk.NewIterator4Chunk(req)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			err = decodeTableRow(row, fs)
 			if err != nil {
@@ -399,7 +404,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
 		// The result will reference memory in the chunk, so the chunk must not be reused
 		// here, otherwise some werid bug will happen!
-		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
+		req = chunk.Renew(req, sctx.GetSessionVars().MaxChunkSize)
 	}
 }
 
@@ -848,13 +853,19 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	edgeTable, ok := p.RoleGraph[graphKey]
 	g = ""
 	if ok {
+		sortedRes := make([]string, 0, 10)
 		for k := range edgeTable.roleList {
 			role := strings.Split(k, "@")
 			roleName, roleHost := role[0], role[1]
-			if g != "" {
+			tmp := fmt.Sprintf("'%s'@'%s'", roleName, roleHost)
+			sortedRes = append(sortedRes, tmp)
+		}
+		sort.Strings(sortedRes)
+		for i, r := range sortedRes {
+			g += r
+			if i != len(sortedRes)-1 {
 				g += ", "
 			}
-			g += fmt.Sprintf("'%s'@'%s'", roleName, roleHost)
 		}
 		s := fmt.Sprintf(`GRANT %s TO '%s'@'%s'`, g, user, host)
 		gs = append(gs, s)

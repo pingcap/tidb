@@ -95,9 +95,13 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoid, err := tb.AllocAutoID(nil)
+	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
+
+	handle, err := tb.AllocHandle(nil)
+	c.Assert(err, IsNil)
+	c.Assert(handle, Greater, int64(0))
 
 	ctx := ts.se
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
@@ -182,7 +186,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	req := rs[0].NewRecordBatch()
+	req := rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -196,7 +200,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	req = rs[0].NewRecordBatch()
+	req = rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -212,7 +216,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select c1 + 1 from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	req = rs[0].NewRecordBatch()
+	req = rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
@@ -239,10 +243,15 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoid, err := tb.AllocAutoID(nil)
-	sctx := ts.se
+	handle, err := tb.AllocHandle(nil)
+	c.Assert(err, IsNil)
+	c.Assert(handle, Greater, int64(0))
+
+	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
+
+	sctx := ts.se
 	c.Assert(sctx.NewTxn(ctx), IsNil)
 	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil))
 	c.Assert(err, IsNil)
@@ -373,13 +382,13 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
 	tb, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
 	c.Assert(err, IsNil)
-	_, err = tb.AllocAutoID(tk.Se)
+	_, err = tb.AllocHandle(tk.Se)
 	c.Assert(err, IsNil)
 
 	maxID := 1<<(64-15-1) - 1
 	err = tb.RebaseAutoID(tk.Se, int64(maxID), false)
 	c.Assert(err, IsNil)
 
-	_, err = tb.AllocAutoID(tk.Se)
+	_, err = tb.AllocHandle(tk.Se)
 	c.Assert(err, NotNil)
 }
