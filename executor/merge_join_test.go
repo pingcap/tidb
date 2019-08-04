@@ -328,7 +328,7 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(1),(2)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
-		"Sort_6 100000000.00 root t1.a:asc, t2.a:asc",
+		"Sort_6 100000000.00 root test.t1.a:asc, test.t2.a:asc",
 		"└─MergeJoin_9 100000000.00 root inner join",
 		"  ├─TableReader_11 10000.00 root data:TableScan_10",
 		"  │ └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",

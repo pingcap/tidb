@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -39,8 +38,8 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 	for i := uint(0); i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("RunInNewTxn", zap.Error(err))
-			return errors.Trace(err)
+			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
+			return err
 		}
 
 		// originalTxnTS is used to trace the original transaction when the function is retryable.
@@ -51,32 +50,32 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		err = f(txn)
 		if err != nil {
 			err1 := txn.Rollback()
-			terror.Log(errors.Trace(err1))
-			if retryable && IsRetryableError(err) {
-				logutil.Logger(context.Background()).Warn("RunInNewTxn",
+			terror.Log(err1)
+			if retryable && IsTxnRetryableError(err) {
+				logutil.BgLogger().Warn("RunInNewTxn",
 					zap.Uint64("retry txn", txn.StartTS()),
 					zap.Uint64("original txn", originalTxnTS),
 					zap.Error(err))
 				continue
 			}
-			return errors.Trace(err)
+			return err
 		}
 
 		err = txn.Commit(context.Background())
 		if err == nil {
 			break
 		}
-		if retryable && IsRetryableError(err) {
-			logutil.Logger(context.Background()).Warn("RunInNewTxn",
+		if retryable && IsTxnRetryableError(err) {
+			logutil.BgLogger().Warn("RunInNewTxn",
 				zap.Uint64("retry txn", txn.StartTS()),
 				zap.Uint64("original txn", originalTxnTS),
 				zap.Error(err))
 			BackOff(i)
 			continue
 		}
-		return errors.Trace(err)
+		return err
 	}
-	return errors.Trace(err)
+	return err
 }
 
 var (

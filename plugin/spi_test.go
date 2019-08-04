@@ -36,15 +36,14 @@ func TestExportManifest(t *testing.T) {
 				return nil
 			},
 		},
-		NotifyEvent: func(ctx context.Context, sctx *variable.SessionVars) error {
+		OnGeneralEvent: func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
 			callRecorder.NotifyEventCalled = true
-			return nil
 		},
 	}
 	exported := plugin.ExportManifest(manifest)
 	exported.OnInit(context.Background(), exported)
 	audit := plugin.DeclareAuditManifest(exported)
-	audit.NotifyEvent(context.Background(), nil)
+	audit.OnGeneralEvent(context.Background(), nil, plugin.Log, "QUERY")
 	if !callRecorder.NotifyEventCalled || !callRecorder.OnInitCalled {
 		t.Fatalf("export test failure")
 	}

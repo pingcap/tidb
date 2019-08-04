@@ -16,9 +16,12 @@ package infoschema
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
@@ -40,6 +43,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	} else if diff.Type == model.ActionDropSchema {
 		tblIDs := b.applyDropSchema(diff.SchemaID)
 		return tblIDs, nil
+	} else if diff.Type == model.ActionModifySchemaCharsetAndCollate {
+		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	}
 
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
@@ -51,7 +56,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	var oldTableID, newTableID int64
 	tblIDs := make([]int64, 0, 2)
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionRestoreTable:
+	case model.ActionCreateTable, model.ActionRecoverTable:
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, newTableID)
 	case model.ActionDropTable, model.ActionDropView:
@@ -124,6 +129,23 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 	return nil
 }
 
+func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDbInfo := b.copySchemaTables(di.Name.O)
+	newDbInfo.Charset = di.Charset
+	newDbInfo.Collate = di.Collate
+	return nil
+}
+
 func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	di, ok := b.is.SchemaByID(schemaID)
 	if !ok {
@@ -132,22 +154,22 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	delete(b.is.schemaMap, di.Name.L)
 
 	// Copy the sortedTables that contain the table we are going to drop.
+	tableIDs := make([]int64, 0, len(di.Tables))
 	bucketIdxMap := make(map[int]struct{})
 	for _, tbl := range di.Tables {
 		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
+		// TODO: If the table ID doesn't exist.
+		tableIDs = append(tableIDs, tbl.ID)
 	}
 	for bucketIdx := range bucketIdxMap {
 		b.copySortedTablesBucket(bucketIdx)
 	}
 
-	ids := make([]int64, 0, len(di.Tables))
 	di = di.Clone()
-	for _, tbl := range di.Tables {
-		b.applyDropTable(di, tbl.ID)
-		// TODO: If the table ID doesn't exist.
-		ids = append(ids, tbl.ID)
+	for _, id := range tableIDs {
+		b.applyDropTable(di, id)
 	}
-	return ids
+	return tableIDs
 }
 
 func (b *Builder) copySortedTablesBucket(bucketIdx int) {
@@ -170,6 +192,9 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
+	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
+	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
+
 	if alloc == nil {
 		schemaID := dbInfo.ID
 		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
@@ -191,6 +216,37 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
 	}
 	return nil
+}
+
+// ConvertCharsetCollateToLowerCaseIfNeed convert the charset / collation of table and its columns to lower case,
+// if the table's version is prior to TableInfoVersion3.
+func ConvertCharsetCollateToLowerCaseIfNeed(tbInfo *model.TableInfo) {
+	if tbInfo.Version >= model.TableInfoVersion3 {
+		return
+	}
+	tbInfo.Charset = strings.ToLower(tbInfo.Charset)
+	tbInfo.Collate = strings.ToLower(tbInfo.Collate)
+	for _, col := range tbInfo.Columns {
+		col.Charset = strings.ToLower(col.Charset)
+		col.Collate = strings.ToLower(col.Collate)
+	}
+}
+
+// ConvertOldVersionUTF8ToUTF8MB4IfNeed convert old version UTF8 to UTF8MB4 if config.TreatOldVersionUTF8AsUTF8MB4 is enable.
+func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
+	if tbInfo.Version >= model.TableInfoVersion2 || !config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {
+		return
+	}
+	if tbInfo.Charset == charset.CharsetUTF8 {
+		tbInfo.Charset = charset.CharsetUTF8MB4
+		tbInfo.Collate = charset.CollationUTF8MB4
+	}
+	for _, col := range tbInfo.Columns {
+		if col.Version < model.ColumnInfoVersion2 && col.Charset == charset.CharsetUTF8 {
+			col.Charset = charset.CharsetUTF8MB4
+			col.Collate = charset.CollationUTF8MB4
+		}
+	}
 }
 
 func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64) {

@@ -41,6 +41,11 @@ type ScalarFunction struct {
 	hashcode []byte
 }
 
+// VecEval evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEval(input, result)
+}
+
 // GetArgs gets arguments of function.
 func (sf *ScalarFunction) GetArgs() []Expression {
 	return sf.Function.getArgs()
@@ -81,6 +86,11 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	fc, ok := funcs[funcName]
 	if !ok {
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
+	}
+	if !ctx.GetSessionVars().EnableNoopFuncs {
+		if _, ok := noopFuncs[funcName]; ok {
+			return nil, ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+		}
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
@@ -163,6 +173,20 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 		}
 	}
 	return false
+}
+
+// ConstItem implements Expression interface.
+func (sf *ScalarFunction) ConstItem() bool {
+	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
+	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
+		return false
+	}
+	for _, arg := range sf.GetArgs() {
+		if !arg.ConstItem() {
+			return false
+		}
+	}
+	return true
 }
 
 // Decorrelate implements Expression interface.

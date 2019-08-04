@@ -19,14 +19,15 @@ import (
 	"math"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/twinj/uuid"
 )
 
 var (
@@ -113,6 +114,7 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, isNull, err
 	}
+
 	sessVars := b.ctx.GetSessionVars()
 	if isNull {
 		if sessVars.StrictSQLMode {
@@ -131,12 +133,25 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 	}
+
 	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
-	select {
-	case <-time.After(dur):
-		// TODO: Handle Ctrl-C is pressed in `mysql` client.
-		// return 1 when SLEEP() is KILLed
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	start := time.Now()
+	finish := false
+	for !finish {
+		select {
+		case now := <-ticker.C:
+			if now.Sub(start) > dur {
+				finish = true
+			}
+		default:
+			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+				return 1, false, nil
+			}
+		}
 	}
+
 	return 0, false, nil
 }
 
@@ -980,7 +995,13 @@ func (b *builtinUUIDSig) Clone() builtinFunc {
 // evalString evals a builtinUUIDSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
 func (b *builtinUUIDSig) evalString(_ chunk.Row) (d string, isNull bool, err error) {
-	return uuid.NewV1().String(), false, nil
+	var id uuid.UUID
+	id, err = uuid.NewUUID()
+	if err != nil {
+		return
+	}
+	d = id.String()
+	return
 }
 
 type uuidShortFunctionClass struct {

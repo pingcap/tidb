@@ -13,20 +13,25 @@
 
 package chunk
 
+import "github.com/pingcap/errors"
+
 // CopySelectedJoinRows copies the selected joined rows from the source Chunk
 // to the destination Chunk.
 // Return true if at least one joined row was selected.
 //
 // NOTE: All the outer rows in the source Chunk should be the same.
-func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) bool {
+func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) (bool, error) {
 	if src.NumRows() == 0 {
-		return false
+		return false, nil
+	}
+	if src.sel != nil || dst.sel != nil {
+		return false, errors.New(msgErrSelNotNil)
 	}
 
 	numSelected := copySelectedInnerRows(innerColOffset, outerColOffset, src, selected, dst)
 	copyOuterRows(innerColOffset, outerColOffset, src, numSelected, dst)
 	dst.numVirtualRows += numSelected
-	return numSelected > 0
+	return numSelected > 0, nil
 }
 
 // copySelectedInnerRows copies the selected inner rows from the source Chunk
@@ -34,7 +39,7 @@ func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, select
 // return the number of rows which is selected.
 func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selected []bool, dst *Chunk) int {
 	oldLen := dst.columns[innerColOffset].length
-	var srcCols []*column
+	var srcCols []*Column
 	if innerColOffset == 0 {
 		srcCols = src.columns[:outerColOffset]
 	} else {
@@ -47,7 +52,7 @@ func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selec
 				if !selected[i] {
 					continue
 				}
-				dstCol.appendNullBitmap(!srcCol.isNull(i))
+				dstCol.appendNullBitmap(!srcCol.IsNull(i))
 				dstCol.length++
 
 				elemLen := len(srcCol.elemBuf)
@@ -59,12 +64,12 @@ func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selec
 				if !selected[i] {
 					continue
 				}
-				dstCol.appendNullBitmap(!srcCol.isNull(i))
+				dstCol.appendNullBitmap(!srcCol.IsNull(i))
 				dstCol.length++
 
 				start, end := srcCol.offsets[i], srcCol.offsets[i+1]
 				dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
-				dstCol.offsets = append(dstCol.offsets, int32(len(dstCol.data)))
+				dstCol.offsets = append(dstCol.offsets, int64(len(dstCol.data)))
 			}
 		}
 	}
@@ -78,7 +83,7 @@ func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, 
 		return
 	}
 	row := src.GetRow(0)
-	var srcCols []*column
+	var srcCols []*Column
 	if innerColOffset == 0 {
 		srcCols = src.columns[outerColOffset:]
 	} else {
@@ -86,7 +91,7 @@ func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, 
 	}
 	for i, srcCol := range srcCols {
 		dstCol := dst.columns[outerColOffset+i]
-		dstCol.appendMultiSameNullBitmap(!srcCol.isNull(row.idx), numRows)
+		dstCol.appendMultiSameNullBitmap(!srcCol.IsNull(row.idx), numRows)
 		dstCol.length += numRows
 		if srcCol.isFixed() {
 			elemLen := len(srcCol.elemBuf)
@@ -99,7 +104,7 @@ func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, 
 			offsets := dstCol.offsets
 			elemLen := srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx]
 			for j := 0; j < numRows; j++ {
-				offsets = append(offsets, int32(offsets[len(offsets)-1]+elemLen))
+				offsets = append(offsets, int64(offsets[len(offsets)-1]+elemLen))
 			}
 			dstCol.offsets = offsets
 		}

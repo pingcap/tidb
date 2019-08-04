@@ -15,15 +15,10 @@ package aggregation
 
 import (
 	"bytes"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -47,15 +42,6 @@ type Aggregation interface {
 
 	// ResetContext resets the content of the evaluate context.
 	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
-
-	// GetFinalAggFunc constructs the final agg functions, only used in parallel execution.
-	GetFinalAggFunc(ctx sessionctx.Context, idx int) (int, Aggregation)
-
-	// GetArgs gets the args of the aggregate function.
-	GetArgs() []expression.Expression
-
-	// Clone deep copy the Aggregation.
-	Clone(ctx sessionctx.Context) Aggregation
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
@@ -173,56 +159,6 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	}
 	evalCtx.Count++
 	return nil
-}
-
-func (af *aggFunction) GetFinalAggFunc(ctx sessionctx.Context, idx int) (_ int, newAggFunc Aggregation) {
-	switch af.Mode {
-	case DedupMode:
-		panic("DedupMode is not supported now.")
-	case Partial1Mode:
-		args := make([]expression.Expression, 0, 2)
-		if NeedCount(af.Name) {
-			args = append(args, &expression.Column{
-				ColName: model.NewCIStr(fmt.Sprintf("col_%d", idx)),
-				Index:   idx,
-				RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flen: 21, Charset: charset.CharsetBin, Collate: charset.CollationBin},
-			})
-			idx++
-		}
-		if NeedValue(af.Name) {
-			args = append(args, &expression.Column{
-				ColName: model.NewCIStr(fmt.Sprintf("col_%d", idx)),
-				Index:   idx,
-				RetType: af.RetTp,
-			})
-			idx++
-			if af.Name == ast.AggFuncGroupConcat {
-				separator := af.Args[len(af.Args)-1]
-				args = append(args, separator.Clone())
-			}
-		}
-		desc := af.AggFuncDesc.Clone()
-		desc.Mode = FinalMode
-		desc.Args = args
-		newAggFunc = desc.GetAggFunc(ctx)
-	case Partial2Mode:
-		desc := af.AggFuncDesc.Clone()
-		desc.Mode = FinalMode
-		idx += len(desc.Args)
-		newAggFunc = desc.GetAggFunc(ctx)
-	case FinalMode, CompleteMode:
-		panic("GetFinalAggFunc should not be called when aggMode is FinalMode/CompleteMode.")
-	}
-	return idx, newAggFunc
-}
-
-func (af *aggFunction) GetArgs() []expression.Expression {
-	return af.Args
-}
-
-func (af *aggFunction) Clone(ctx sessionctx.Context) Aggregation {
-	desc := af.AggFuncDesc.Clone()
-	return desc.GetAggFunc(ctx)
 }
 
 // NeedCount indicates whether the aggregate function should record count.

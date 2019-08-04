@@ -13,6 +13,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -23,7 +25,7 @@ import (
 
 type ppdSolver struct{}
 
-func (s *ppdSolver) optimize(lp LogicalPlan) (LogicalPlan, error) {
+func (s *ppdSolver) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
 	_, p := lp.PredicatePushDown(nil)
 	return p, nil
 }
@@ -517,4 +519,8 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([
 	// Window function forbids any condition to push down.
 	p.baseLogicalPlan.PredicatePushDown(nil)
 	return predicates, p
+}
+
+func (*ppdSolver) name() string {
+	return "predicate_push_down"
 }

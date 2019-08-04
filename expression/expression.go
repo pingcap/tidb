@@ -36,12 +36,19 @@ const (
 )
 
 // EvalAstExpr evaluates ast expression directly.
-var EvalAstExpr func(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+
+// VecExpr contains all vectorized evaluation methods.
+type VecExpr interface {
+	// VecEval evaluates this expression in a vectorized manner.
+	VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+}
 
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
 	goJSON.Marshaler
+	VecExpr
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)
@@ -78,6 +85,14 @@ type Expression interface {
 
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
+
+	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
+	// An expression is constant item if it:
+	// refers no tables.
+	// refers no subqueries that refers any tables.
+	// refers no non-deterministic functions.
+	// refers no statement parameters.
+	ConstItem() bool
 
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression

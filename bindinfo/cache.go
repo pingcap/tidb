@@ -14,58 +14,40 @@
 package bindinfo
 
 import (
-	"context"
-	"fmt"
-	"sync/atomic"
+	"unsafe"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 const (
-	using   = "using"
+	// Using is the bind info's in use status.
+	Using = "using"
+	// deleted is the bind info's deleted status.
 	deleted = "deleted"
+	// Invalid is the bind info's invalid status.
+	Invalid = "invalid"
 )
 
-// bindMeta stores the basic bind info and bindSql astNode.
-type bindMeta struct {
-	*bindRecord
-	ast ast.StmtNode //ast will be used to do query sql bind check
+// BindMeta stores the basic bind info and bindSql astNode.
+type BindMeta struct {
+	*BindRecord
+	Ast ast.StmtNode //ast will be used to do query sql bind check
 }
 
-// cache is a k-v map, key is original sql, value is a slice of bindMeta.
-type cache map[string][]*bindMeta
+// cache is a k-v map, key is original sql, value is a slice of BindMeta.
+type cache map[string][]*BindMeta
 
-// Handle holds an atomic cache.
-type Handle struct {
-	atomic.Value
-}
-
-// BindCacheUpdater is used to update the global cache.
-// BindCacheUpdater will update the bind cache per 3 seconds in domain
-// gorountine loop. When the tidb server first startup, the updater will load
-// all bind info into memory; then load diff bind info per 3 second.
-type BindCacheUpdater struct {
-	ctx sessionctx.Context
-
-	parser         *parser.Parser
-	lastUpdateTime types.Time
-	globalHandle   *Handle
-}
-
-type bindRecord struct {
+// BindRecord represents a sql bind record retrieved from the storage.
+type BindRecord struct {
 	OriginalSQL string
 	BindSQL     string
 	Db          string
 	// Status represents the status of the binding. It can only be one of the following values:
-	// 1. deleted: bindRecord is deleted, can not be used anymore.
-	// 2. using: bindRecord is in the normal active mode.
+	// 1. deleted: BindRecord is deleted, can not be used anymore.
+	// 2. using: BindRecord is in the normal active mode.
 	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
@@ -73,86 +55,8 @@ type bindRecord struct {
 	Collation  string
 }
 
-// NewBindCacheUpdater creates a new BindCacheUpdater.
-func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.Parser) *BindCacheUpdater {
-	return &BindCacheUpdater{
-		ctx:          ctx,
-		parser:       parser,
-		globalHandle: handle,
-	}
-}
-
-// NewHandle creates a Handle with a cache.
-func NewHandle() *Handle {
-	handle := &Handle{}
-	return handle
-}
-
-// Get gets cache from a Handle.
-func (h *Handle) Get() cache {
-	bc := h.Load()
-	if bc != nil {
-		return bc.(map[string][]*bindMeta)
-	}
-	return make(map[string][]*bindMeta)
-}
-
-// LoadDiff is used to load new bind info to cache bc.
-func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc cache) error {
-	recordSets, err := bindCacheUpdater.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	rs := recordSets[0]
-	defer terror.Call(rs.Close)
-	chkBatch := rs.NewRecordBatch()
-	for {
-		err = rs.Next(context.TODO(), chkBatch)
-		if err != nil || chkBatch.NumRows() == 0 {
-			return errors.Trace(err)
-		}
-
-		it := chunk.NewIterator4Chunk(chkBatch.Chunk)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			record := newBindMeta(row)
-			err = bc.appendNode(record, bindCacheUpdater.parser)
-			if err != nil {
-				return err
-			}
-			if record.UpdateTime.Compare(bindCacheUpdater.lastUpdateTime) == 1 {
-				bindCacheUpdater.lastUpdateTime = record.UpdateTime
-			}
-		}
-	}
-}
-
-// Update updates the BindCacheUpdater's cache.
-// The `fullLoad` is true only when tidb first startup, otherwise it is false.
-func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
-	var sql string
-	bc := bindCacheUpdater.globalHandle.Get()
-	newBc := make(map[string][]*bindMeta, len(bc))
-	for hash, bindDataArr := range bc {
-		newBc[hash] = append(newBc[hash], bindDataArr...)
-	}
-
-	if fullLoad {
-		sql = "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info"
-	} else {
-		sql = fmt.Sprintf("select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info where update_time > \"%s\"", bindCacheUpdater.lastUpdateTime.String())
-	}
-	err = bindCacheUpdater.loadDiff(sql, newBc)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	bindCacheUpdater.globalHandle.Store(newBc)
-	return nil
-}
-
-func newBindMeta(row chunk.Row) *bindRecord {
-	return &bindRecord{
+func newBindRecord(row chunk.Row) *BindRecord {
+	return &BindRecord{
 		OriginalSQL: row.GetString(0),
 		BindSQL:     row.GetString(1),
 		Db:          row.GetString(2),
@@ -164,30 +68,18 @@ func newBindMeta(row chunk.Row) *bindRecord {
 	}
 }
 
-func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) error {
-	hash := parser.DigestHash(newBindRecord.OriginalSQL)
-	if bindArr, ok := b[hash]; ok {
-		for idx, v := range bindArr {
-			if v.OriginalSQL == newBindRecord.OriginalSQL && v.Db == newBindRecord.Db {
-				b[hash] = append(b[hash][:idx], b[hash][idx+1:]...)
-				if len(b[hash]) == 0 {
-					delete(b, hash)
-				}
-				break
-			}
-		}
+// size calculates the memory size of a bind meta.
+func (m *BindRecord) size() float64 {
+	res := len(m.OriginalSQL) + len(m.BindSQL) + len(m.Db) + len(m.Status) + 2*int(unsafe.Sizeof(m.CreateTime)) + len(m.Charset) + len(m.Collation)
+	return float64(res)
+}
+
+func (m *BindRecord) updateMetrics(scope string, inc bool) {
+	if inc {
+		metrics.BindMemoryUsage.WithLabelValues(scope, m.Status).Add(float64(m.size()))
+		metrics.BindTotalGauge.WithLabelValues(scope, m.Status).Inc()
+	} else {
+		metrics.BindMemoryUsage.WithLabelValues(scope, m.Status).Sub(float64(m.size()))
+		metrics.BindTotalGauge.WithLabelValues(scope, m.Status).Dec()
 	}
-	if newBindRecord.Status == deleted {
-		return nil
-	}
-	stmtNodes, _, err := sparser.Parse(newBindRecord.BindSQL, newBindRecord.Charset, newBindRecord.Collation)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	newNode := &bindMeta{
-		bindRecord: newBindRecord,
-		ast:        stmtNodes[0],
-	}
-	b[hash] = append(b[hash], newNode)
-	return nil
 }

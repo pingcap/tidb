@@ -140,9 +140,9 @@ func (p *packetIO) writePacket(data []byte) error {
 		data[3] = p.sequence
 
 		if n, err := p.bufWriter.Write(data[:4+mysql.MaxPayloadLen]); err != nil {
-			return mysql.ErrBadConn
+			return errors.Trace(mysql.ErrBadConn)
 		} else if n != (4 + mysql.MaxPayloadLen) {
-			return mysql.ErrBadConn
+			return errors.Trace(mysql.ErrBadConn)
 		} else {
 			p.sequence++
 			length -= mysql.MaxPayloadLen
@@ -167,5 +167,9 @@ func (p *packetIO) writePacket(data []byte) error {
 }
 
 func (p *packetIO) flush() error {
-	return p.bufWriter.Flush()
+	err := p.bufWriter.Flush()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return err
 }

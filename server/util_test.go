@@ -14,6 +14,8 @@
 package server
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -22,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -76,10 +79,25 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
 
+	t, err = types.ParseDate(nil, "0000-00-00")
+	c.Assert(err, IsNil)
+	d, err = dumpBinaryDateTime(nil, t, nil)
+	c.Assert(err, IsNil)
+	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
+
 	myDuration, err := types.ParseDuration(nil, "0000-00-00 00:00:00.0000000", 6)
 	c.Assert(err, IsNil)
 	d = dumpBinaryTime(myDuration.Duration)
 	c.Assert(d, DeepEquals, []byte{0})
+
+	d = dumpBinaryTime(0)
+	c.Assert(d, DeepEquals, []byte{0})
+
+	d = dumpBinaryTime(-1)
+	c.Assert(d, DeepEquals, []byte{12, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+
+	d = dumpBinaryTime(time.Nanosecond + 86400*1000*time.Microsecond)
+	c.Assert(d, DeepEquals, []byte{12, 0, 0, 0, 0, 0, 0, 1, 26, 128, 26, 6, 0})
 }
 
 func (s *testUtilSuite) TestDumpTextValue(c *C) {
@@ -87,10 +105,24 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 		Type:    mysql.TypeLonglong,
 		Decimal: mysql.NotFixedDec,
 	}}
-	bs, err := dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(10)}).ToRow())
+
+	null := types.NewIntDatum(0)
+	null.SetNull()
+	bs, err := dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{null}).ToRow())
+	c.Assert(err, IsNil)
+	_, isNull, _, err := parseLengthEncodedBytes(bs)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(10)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "10")
 
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
+	c.Assert(err, IsNil)
+	c.Assert(mustDecodeStr(c, bs), Equals, "11")
+
+	columns[0].Flag = columns[0].Flag | uint16(mysql.UnsignedFlag)
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
@@ -159,6 +191,34 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "0000")
+
+	year.SetInt64(1984)
+	columns[0].Type = mysql.TypeYear
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow())
+	c.Assert(err, IsNil)
+	c.Assert(mustDecodeStr(c, bs), Equals, "1984")
+
+	enum := types.NewMysqlEnumDatum(types.Enum{Name: "ename", Value: 0})
+	columns[0].Type = mysql.TypeEnum
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{enum}).ToRow())
+	c.Assert(err, IsNil)
+	c.Assert(mustDecodeStr(c, bs), Equals, "ename")
+
+	set := types.Datum{}
+	set.SetMysqlSet(types.Set{Name: "sname", Value: 0})
+	columns[0].Type = mysql.TypeSet
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{set}).ToRow())
+	c.Assert(err, IsNil)
+	c.Assert(mustDecodeStr(c, bs), Equals, "sname")
+
+	js := types.Datum{}
+	binaryJSON, err := json.ParseBinaryFromString(`{"a": 1, "b": 2}`)
+	c.Assert(err, IsNil)
+	js.SetMysqlJSON(binaryJSON)
+	columns[0].Type = mysql.TypeJSON
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{js}).ToRow())
+	c.Assert(err, IsNil)
+	c.Assert(mustDecodeStr(c, bs), Equals, `{"a": 1, "b": 2}`)
 }
 
 func mustDecodeStr(c *C, b []byte) string {
@@ -262,6 +322,124 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 	for _, t := range tests {
 		c.Assert(string(appendFormatFloat(nil, t.fVal, t.prec, t.bitSize)), Equals, t.out)
 	}
+}
+
+func (s *testUtilSuite) TestDumpLengthEncodedInt(c *C) {
+	testCases := []struct {
+		num    uint64
+		buffer []byte
+	}{
+		{
+			uint64(0),
+			[]byte{0x00},
+		},
+		{
+			uint64(513),
+			[]byte{'\xfc', '\x01', '\x02'},
+		},
+		{
+			uint64(197121),
+			[]byte{'\xfd', '\x01', '\x02', '\x03'},
+		},
+		{
+			uint64(578437695752307201),
+			[]byte{'\xfe', '\x01', '\x02', '\x03', '\x04', '\x05', '\x06', '\x07', '\x08'},
+		},
+	}
+	for _, tc := range testCases {
+		b := dumpLengthEncodedInt(nil, tc.num)
+		c.Assert(b, DeepEquals, tc.buffer)
+	}
+}
+
+func (s *testUtilSuite) TestParseLengthEncodedInt(c *C) {
+	testCases := []struct {
+		buffer []byte
+		num    uint64
+		isNull bool
+		n      int
+	}{
+		{
+			[]byte{'\xfb'},
+			uint64(0),
+			true,
+			1,
+		},
+		{
+			[]byte{'\x00'},
+			uint64(0),
+			false,
+			1,
+		},
+		{
+			[]byte{'\xfc', '\x01', '\x02'},
+			uint64(513),
+			false,
+			3,
+		},
+		{
+			[]byte{'\xfd', '\x01', '\x02', '\x03'},
+			uint64(197121),
+			false,
+			4,
+		},
+		{
+			[]byte{'\xfe', '\x01', '\x02', '\x03', '\x04', '\x05', '\x06', '\x07', '\x08'},
+			uint64(578437695752307201),
+			false,
+			9,
+		},
+	}
+
+	for _, tc := range testCases {
+		num, isNull, n := parseLengthEncodedInt(tc.buffer)
+		c.Assert(num, Equals, tc.num)
+		c.Assert(isNull, Equals, tc.isNull)
+		c.Assert(n, Equals, tc.n)
+
+		c.Assert(lengthEncodedIntSize(tc.num), Equals, tc.n)
+	}
+}
+
+func (s *testUtilSuite) TestDumpUint(c *C) {
+	testCases := []uint64{
+		0,
+		1,
+		1<<64 - 1,
+	}
+	parseUint64 := func(b []byte) uint64 {
+		return uint64(b[0]) | uint64(b[1])<<8 | uint64(b[2])<<16 |
+			uint64(b[3])<<24 | uint64(b[4])<<32 | uint64(b[5])<<40 |
+			uint64(b[6])<<48 | uint64(b[7])<<56
+	}
+	for _, tc := range testCases {
+		b := dumpUint64(nil, tc)
+		c.Assert(len(b), Equals, 8)
+		c.Assert(parseUint64(b), Equals, tc)
+	}
+}
+
+func (s *testUtilSuite) TestParseLengthEncodedBytes(c *C) {
+	buffer := []byte{'\xfb'}
+	b, isNull, n, err := parseLengthEncodedBytes(buffer)
+	c.Assert(b, IsNil)
+	c.Assert(isNull, IsTrue)
+	c.Assert(n, Equals, 1)
+	c.Assert(err, IsNil)
+
+	buffer = []byte{0}
+	b, isNull, n, err = parseLengthEncodedBytes(buffer)
+	c.Assert(b, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(n, Equals, 1)
+	c.Assert(err, IsNil)
+
+	buffer = []byte{'\x01'}
+	b, isNull, n, err = parseLengthEncodedBytes(buffer)
+	c.Assert(b, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(n, Equals, 2)
+	c.Assert(err.Error(), Equals, "EOF")
 }
 
 func (s *testUtilSuite) TestParseNullTermString(c *C) {

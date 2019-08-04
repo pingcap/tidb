@@ -242,8 +242,8 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 	return ranges, nil
 }
 
-// BuildTableRange will build range of pk for PhysicalTableScan
-func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+// buildColumnRange builds range from CNF conditions.
+func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, tableRange bool, colLen int) (ranges []*Range, err error) {
 	rb := builder{sc: sc}
 	rangePoints := fullRange
 	for _, cond := range accessConditions {
@@ -253,33 +253,42 @@ func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 		}
 	}
 	newTp := newFieldType(tp)
-	ranges, err := points2TableRanges(sc, rangePoints, newTp)
+	if tableRange {
+		ranges, err = points2TableRanges(sc, rangePoints, newTp)
+	} else {
+		ranges, err = points2Ranges(sc, rangePoints, newTp)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if colLen != types.UnspecifiedLength {
+		for _, ran := range ranges {
+			if CutDatumByPrefixLen(&ran.LowVal[0], colLen, tp) {
+				ran.LowExclude = false
+			}
+			if CutDatumByPrefixLen(&ran.HighVal[0], colLen, tp) {
+				ran.HighExclude = false
+			}
+		}
+		ranges, err = unionRanges(sc, ranges)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return ranges, nil
 }
 
-// BuildColumnRange builds the range for sampling histogram to calculate the row count.
-func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+// BuildTableRange builds range of PK column for PhysicalTableScan.
+func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+	return buildColumnRange(accessConditions, sc, tp, true, types.UnspecifiedLength)
+}
+
+// BuildColumnRange builds range from access conditions for general columns.
+func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, colLen int) ([]*Range, error) {
 	if len(conds) == 0 {
 		return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
 	}
-
-	rb := builder{sc: sc}
-	rangePoints := fullRange
-	for _, cond := range conds {
-		rangePoints = rb.intersection(rangePoints, rb.build(cond))
-		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
-		}
-	}
-	newTp := newFieldType(tp)
-	ranges, err := points2Ranges(sc, rangePoints, newTp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return ranges, nil
+	return buildColumnRange(conds, sc, tp, false, colLen)
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
@@ -420,17 +429,17 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
 		for i := 0; i < lowTail; i++ {
-			fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
+			CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i])
 		}
-		lowCut := fixRangeDatum(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
+		lowCut := CutDatumByPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
 		if lowCut {
 			ran.LowExclude = false
 		}
 		highTail := len(ran.HighVal) - 1
 		for i := 0; i < highTail; i++ {
-			fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
+			CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i])
 		}
-		highCut := fixRangeDatum(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
+		highCut := CutDatumByPrefixLen(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
 		if highCut {
 			ran.HighExclude = false
 		}
@@ -439,9 +448,9 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 	return hasCut
 }
 
-func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) bool {
-	// If this column is prefix and the prefix length is smaller than the range, cut it.
-	// In case of UTF8, prefix should be cut by characters rather than bytes
+// CutDatumByPrefixLen cuts the datum according to the prefix length.
+// If it's UTF8 encoded, we will cut it by characters rather than bytes.
+func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
 		colCharset := tp.Charset
 		colValue := v.GetBytes()
@@ -490,7 +499,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 // 1. 'expr' must be either 'EQUAL' or 'IN' function.
 // 2. 'points' should not be empty.
 func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.Expression) expression.Expression {
-	// len(points) cannot be 0 here, since we impose early termination in extractEqAndInCondition
+	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
 	sf, _ := expr.(*expression.ScalarFunction)
 	// Constant and Column args should have same RetType, simply get from first arg
 	retType := sf.GetArgs()[0].GetType()

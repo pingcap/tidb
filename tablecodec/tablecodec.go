@@ -210,14 +210,13 @@ func DecodeRowKey(key kv.Key) (int64, error) {
 }
 
 // EncodeValue encodes a go value to bytes.
-func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) {
+func EncodeValue(sc *stmtctx.StatementContext, b []byte, raw types.Datum) ([]byte, error) {
 	var v types.Datum
 	err := flatten(sc, raw, &v)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	b, err := codec.EncodeValue(sc, nil, v)
-	return b, errors.Trace(err)
+	return codec.EncodeValue(sc, b, v)
 }
 
 // EncodeRow encode row data and column ids into a slice of byte.
@@ -237,12 +236,12 @@ func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, 
 		values[2*i].SetInt64(id)
 		err := flatten(sc, c, &values[2*i+1])
 		if err != nil {
-			return nil, errors.Trace(err)
+			return valBuf, errors.Trace(err)
 		}
 	}
 	if len(values) == 0 {
 		// We could not set nil value into kv.
-		return []byte{codec.NilFlag}, nil
+		return append(valBuf, codec.NilFlag), nil
 	}
 	return codec.EncodeValue(sc, valBuf, values...)
 }
@@ -372,25 +371,23 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 		cnt int
 		b   []byte
 		err error
+		cid int64
 	)
 	row := make([][]byte, len(colIDs))
 	for len(data) > 0 && cnt < len(colIDs) {
 		// Get col id.
-		b, data, err = codec.CutOne(data)
+		data, cid, err = codec.CutColumnID(data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		_, cid, err := codec.DecodeOne(b)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+
 		// Get col value.
 		b, data, err = codec.CutOne(data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		id := cid.GetInt64()
-		offset, ok := colIDs[id]
+
+		offset, ok := colIDs[cid]
 		if ok {
 			row[offset] = b
 			cnt++
@@ -520,6 +517,57 @@ func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err erro
 	return
 }
 
+// PrimaryKeyStatus is the primary key column status.
+type PrimaryKeyStatus int
+
+const (
+	// PrimaryKeyNotExists means no need to decode primary key column value when DecodeIndexKV.
+	PrimaryKeyNotExists PrimaryKeyStatus = iota
+	// PrimaryKeyIsSigned means decode primary key column value as int64 when DecodeIndexKV.
+	PrimaryKeyIsSigned
+	// PrimaryKeyIsUnsigned means decode primary key column value as uint64 when DecodeIndexKV.
+	PrimaryKeyIsUnsigned
+)
+
+// DecodeIndexKV uses to decode index key values.
+func DecodeIndexKV(key, value []byte, colsLen int, pkStatus PrimaryKeyStatus) ([][]byte, error) {
+	values, b, err := CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		if pkStatus != PrimaryKeyNotExists {
+			values = append(values, b)
+		}
+	} else if pkStatus != PrimaryKeyNotExists {
+		handle, err := DecodeIndexValueAsHandle(value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var handleDatum types.Datum
+		if pkStatus == PrimaryKeyIsUnsigned {
+			handleDatum = types.NewUintDatum(uint64(handle))
+		} else {
+			handleDatum = types.NewIntDatum(handle)
+		}
+		handleBytes := make([]byte, 0, 8)
+		handleBytes, err = codec.EncodeValue(nil, handleBytes, handleDatum)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		values = append(values, handleBytes)
+	}
+	return values, nil
+}
+
+// DecodeIndexValueAsHandle uses to decode index value as handle id.
+func DecodeIndexValueAsHandle(data []byte) (int64, error) {
+	var h int64
+	buf := bytes.NewBuffer(data)
+	err := binary.Read(buf, binary.BigEndian, &h)
+	return h, errors.Trace(err)
+}
+
 // EncodeTableIndexPrefix encodes index prefix with tableID and idxID.
 func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
 	key := make([]byte, 0, prefixLen)
@@ -603,25 +651,6 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	startKey = EncodeIndexSeekKey(tableID, indexID, nil)
 	endKey = EncodeIndexSeekKey(tableID, indexID, []byte{255})
 	return
-}
-
-type keyRangeSorter struct {
-	ranges []kv.KeyRange
-}
-
-func (r *keyRangeSorter) Len() int {
-	return len(r.ranges)
-}
-
-func (r *keyRangeSorter) Less(i, j int) bool {
-	a := r.ranges[i]
-	b := r.ranges[j]
-	cmp := bytes.Compare(a.StartKey, b.StartKey)
-	return cmp < 0
-}
-
-func (r *keyRangeSorter) Swap(i, j int) {
-	r.ranges[i], r.ranges[j] = r.ranges[j], r.ranges[i]
 }
 
 const (

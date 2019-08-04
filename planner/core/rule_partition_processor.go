@@ -13,11 +13,14 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -38,18 +41,17 @@ import (
 // partitionProcessor is here because it's easier to prune partition after predicate push down.
 type partitionProcessor struct{}
 
-func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
+func (s *partitionProcessor) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
 	return s.rewriteDataSource(lp)
 }
 
 func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, error) {
 	// Assert there will not be sel -> sel in the ast.
-	switch lp.(type) {
+	switch p := lp.(type) {
 	case *DataSource:
-		return s.prune(lp.(*DataSource))
+		return s.prune(p)
 	case *LogicalUnionScan:
-		us := lp.(*LogicalUnionScan)
-		ds := us.Children()[0]
+		ds := p.Children()[0]
 		ds, err := s.prune(ds.(*DataSource))
 		if err != nil {
 			return nil, err
@@ -59,7 +61,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 			// Union->(UnionScan->DataSource1), (UnionScan->DataSource2)
 			children := make([]LogicalPlan, 0, len(ua.Children()))
 			for _, child := range ua.Children() {
-				us := LogicalUnionScan{}.Init(ua.ctx)
+				us := LogicalUnionScan{conditions: p.conditions}.Init(ua.ctx)
 				us.SetChildren(child)
 				children = append(children, us)
 			}
@@ -67,14 +69,14 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 			return ua, nil
 		}
 		// Only one partition, no union all.
-		us.SetChildren(ds)
-		return us, nil
+		p.SetChildren(ds)
+		return p, nil
 	default:
 		children := lp.Children()
 		for i, child := range children {
 			newChild, err := s.rewriteDataSource(child)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			children[i] = newChild
 		}
@@ -112,7 +114,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		// If the select condition would never be satisified, prune that partition.
 		pruned, err := s.canBePruned(ds.context(), col, expr, ds.allConds)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if pruned {
 			continue
@@ -186,9 +188,9 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 	// handle the null condition, while calculate range can prune something like:
 	// "select * from t where t is null"
 	accessConds := ranger.ExtractAccessConditionsForColumn(conds, partCol.UniqueID)
-	r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType)
+	r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType, types.UnspecifiedLength)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	return len(r) == 0, nil
 }
@@ -201,4 +203,8 @@ func (s *partitionProcessor) findByName(partitionNames []model.CIStr, partitionN
 		}
 	}
 	return false
+}
+
+func (*partitionProcessor) name() string {
+	return "partition_processor"
 }

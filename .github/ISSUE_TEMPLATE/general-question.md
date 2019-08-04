@@ -1,7 +1,7 @@
 ---
 name: "\U0001F914 General Question"
 about: Usage question that isn't answered in docs or discussion
-
+labels: question
 ---
 
 ## General Question

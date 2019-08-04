@@ -13,16 +13,14 @@
 
 package kv
 
-import (
-	"github.com/pingcap/errors"
-)
-
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
 	MemBuffer
 	// Returns related condition pair
 	LookupConditionPair(k Key) *conditionPair
+	// DeleteConditionPair deletes a condition pair.
+	DeleteConditionPair(k Key)
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -75,7 +73,6 @@ func (c *conditionPair) Err() error {
 // snapshot for read.
 type unionStore struct {
 	*BufferStore
-	snapshot           Snapshot                  // for read
 	lazyConditionPairs map[string]*conditionPair // for delay check
 	opts               options
 }
@@ -84,7 +81,6 @@ type unionStore struct {
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
 		BufferStore:        NewBufferStore(snapshot, DefaultTxnMembufCap),
-		snapshot:           snapshot,
 		lazyConditionPairs: make(map[string]*conditionPair),
 		opts:               make(map[Option]interface{}),
 	}
@@ -193,12 +189,10 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 			}
 			return nil, ErrNotExist
 		}
-	}
-	if IsErrNotFound(err) {
 		v, err = us.BufferStore.r.Get(k)
 	}
 	if err != nil {
-		return v, errors.Trace(err)
+		return v, err
 	}
 	if len(v) == 0 {
 		return nil, ErrNotExist
@@ -221,6 +215,10 @@ func (us *unionStore) LookupConditionPair(k Key) *conditionPair {
 		return c
 	}
 	return nil
+}
+
+func (us *unionStore) DeleteConditionPair(k Key) {
+	delete(us.lazyConditionPairs, string(k))
 }
 
 // SetOption implements the UnionStore SetOption interface.

@@ -17,53 +17,16 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Client implement kv.Client interface, mocked from "CopClient" defined in
 // "store/tikv/copprocessor.go".
 type Client struct {
+	kv.RequestTypeSupportedChecker
 	MockResponse kv.Response
 }
 
 // Send implement kv.Client interface.
 func (c *Client) Send(ctx context.Context, req *kv.Request, kv *kv.Variables) kv.Response {
 	return c.MockResponse
-}
-
-// IsRequestTypeSupported implement kv.Client interface.
-func (c *Client) IsRequestTypeSupported(reqType, subType int64) bool {
-	switch reqType {
-	case kv.ReqTypeSelect, kv.ReqTypeIndex:
-		switch subType {
-		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic, kv.ReqSubTypeTopN:
-			return true
-		default:
-			return c.supportExpr(tipb.ExprType(subType))
-		}
-	case kv.ReqTypeDAG:
-		return c.supportExpr(tipb.ExprType(subType))
-	case kv.ReqTypeAnalyze:
-		return true
-	}
-	return false
-}
-
-func (c *Client) supportExpr(exprType tipb.ExprType) bool {
-	switch exprType {
-	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
-		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
-		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_ColumnRef:
-		return true
-	// aggregate functions.
-	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg,
-		tipb.ExprType_Agg_BitXor, tipb.ExprType_Agg_BitAnd, tipb.ExprType_Agg_BitOr:
-		return true
-	case kv.ReqSubTypeDesc:
-		return true
-	case kv.ReqSubTypeSignature:
-		return true
-	default:
-		return false
-	}
 }

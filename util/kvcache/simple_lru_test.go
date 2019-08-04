@@ -56,7 +56,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	maxMem, err := memory.MemTotal()
 	c.Assert(err, IsNil)
 
-	lru := NewSimpleLRUCache(3, 0.1, maxMem)
+	lru := NewSimpleLRUCache(3, 0, maxMem)
 	c.Assert(lru.capacity, Equals, uint(3))
 
 	keys := make([]*mockCacheKey, 5)
@@ -135,7 +135,7 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 	maxMem, err := memory.MemTotal()
 	c.Assert(err, IsNil)
 
-	lru := NewSimpleLRUCache(3, 0.1, maxMem)
+	lru := NewSimpleLRUCache(3, 0, maxMem)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
@@ -178,7 +178,7 @@ func (s *testLRUCacheSuite) TestDelete(c *C) {
 	maxMem, err := memory.MemTotal()
 	c.Assert(err, IsNil)
 
-	lru := NewSimpleLRUCache(3, 0.1, maxMem)
+	lru := NewSimpleLRUCache(3, 0, maxMem)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]int64, 3)
@@ -207,7 +207,7 @@ func (s *testLRUCacheSuite) TestDeleteAll(c *C) {
 	maxMem, err := memory.MemTotal()
 	c.Assert(err, IsNil)
 
-	lru := NewSimpleLRUCache(3, 0.1, maxMem)
+	lru := NewSimpleLRUCache(3, 0, maxMem)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]int64, 3)

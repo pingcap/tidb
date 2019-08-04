@@ -197,8 +197,9 @@ func (n *ValueExpr) Accept(v ast.Visitor) (ast.Node, bool) {
 // Used in parsing prepare statement.
 type ParamMarkerExpr struct {
 	ValueExpr
-	Offset int
-	Order  int
+	Offset    int
+	Order     int
+	InExecute bool
 }
 
 // Restore implements Node interface.

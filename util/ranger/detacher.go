@@ -146,7 +146,7 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 	)
 	res := &DetachRangeResult{}
 
-	accessConds, filterConds, newConditions, emptyRange := extractEqAndInCondition(sctx, conditions, cols, lengths)
+	accessConds, filterConds, newConditions, emptyRange := ExtractEqAndInCondition(sctx, conditions, cols, lengths)
 	if emptyRange {
 		return res, nil
 	}
@@ -156,11 +156,10 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 			break
 		}
 	}
-	// We should remove all accessConds, so that they will not be added to filter conditions.
-	newConditions = removeAccessConditions(newConditions, accessConds)
 	eqOrInCount := len(accessConds)
+	res.EqCondCount = eqCount
+	res.EqOrInCount = eqOrInCount
 	if eqOrInCount == len(cols) {
-		// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
 		filterConds = append(filterConds, newConditions...)
 		ranges, err = buildCNFIndexRange(sctx.GetSessionVars().StmtCtx, cols, tpSlice, lengths, eqOrInCount, accessConds)
 		if err != nil {
@@ -169,7 +168,6 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		res.Ranges = ranges
 		res.AccessConds = accessConds
 		res.RemainedConds = filterConds
-		res.EqCondCount = eqCount
 		return res, nil
 	}
 	checker := &conditionChecker{
@@ -194,11 +192,16 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 	res.Ranges = ranges
 	res.AccessConds = accessConds
 	res.RemainedConds = filterConds
-	res.EqCondCount = eqCount
 	return res, err
 }
 
-func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
+// ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
+// accesses: The condition will be used to build range.
+// filters: filters is the part that some access conditions need to be evaluate again since it's only the prefix part of char column.
+// newConditions: We'll simplify the given conditions if there're multiple in conditions or eq conditions on the same column.
+//   e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
+// bool: indicate whether there's nil range when merging eq and in conditions.
+func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
 	cols []*expression.Column, lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, bool) {
 	var filters []expression.Expression
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
@@ -247,6 +250,8 @@ func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			filters = append(filters, cond)
 		}
 	}
+	// We should remove all accessConds, so that they will not be added to filter conditions.
+	newConditions = removeAccessConditions(newConditions, accesses)
 	return accesses, filters, newConditions, false
 }
 
@@ -319,6 +324,8 @@ type DetachRangeResult struct {
 	RemainedConds []expression.Expression
 	// EqCondCount is the number of equal conditions extracted.
 	EqCondCount int
+	// EqOrInCount is the number of equal/in conditions extracted.
+	EqOrInCount int
 	// IsDNFCond indicates if the top layer of conditions are in DNF.
 	IsDNFCond bool
 }
@@ -374,7 +381,8 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 	return filterConds
 }
 
-// ExtractAccessConditionsForColumn detaches the access conditions used for range calculation.
+// ExtractAccessConditionsForColumn extracts the access conditions used for range calculation. Since
+// we don't need to return the remained filter conditions, it is much simpler than DetachCondsForColumn.
 func ExtractAccessConditionsForColumn(conds []expression.Expression, uniqueID int64) []expression.Expression {
 	checker := conditionChecker{
 		colUniqueID: uniqueID,
@@ -384,9 +392,8 @@ func ExtractAccessConditionsForColumn(conds []expression.Expression, uniqueID in
 	return expression.Filter(accessConds, conds, checker.check)
 }
 
-// DetachCondsForTableRange detaches the conditions used for range calculation from other useless conditions for
-// calculating the table range.
-func DetachCondsForTableRange(sctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
+// DetachCondsForColumn detaches access conditions for specified column from other filter conditions.
+func DetachCondsForColumn(sctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessConditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{
 		colUniqueID: col.UniqueID,
 		length:      types.UnspecifiedLength,

@@ -14,9 +14,9 @@
 package core
 
 import (
+	"context"
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -98,7 +98,7 @@ func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]
 }
 
 // optimize implements logicalOptRule interface.
-func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1]
@@ -118,12 +118,12 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 			apply.attachOnConds(newConds)
 			innerPlan = sel.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
-			return s.optimize(p)
+			return s.optimize(ctx, p)
 		} else if m, ok := innerPlan.(*LogicalMaxOneRow); ok {
 			if m.children[0].MaxOneRow() {
 				innerPlan = m.children[0]
 				apply.SetChildren(outerPlan, innerPlan)
-				return s.optimize(p)
+				return s.optimize(ctx, p)
 			}
 		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
 			for i, expr := range proj.Exprs {
@@ -136,14 +136,14 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
-				np, err := s.optimize(p)
+				np, err := s.optimize(ctx, p)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				proj.SetChildren(np)
 				return proj, nil
 			}
-			return s.optimize(p)
+			return s.optimize(ctx, p)
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.canPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.children[0]
@@ -155,7 +155,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 
 				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())
 				for i, col := range outerPlan.Schema().Columns {
-					first := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+					first, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+					if err != nil {
+						return nil, err
+					}
 					newAggFuncs = append(newAggFuncs, first)
 
 					outerCol, _ := outerPlan.Schema().Columns[i].Clone().(*expression.Column)
@@ -165,9 +168,9 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)
 				agg.AggFuncs = newAggFuncs
 				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
-				np, err := s.optimize(p)
+				np, err := s.optimize(ctx, p)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				agg.SetChildren(np)
 				// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
@@ -202,7 +205,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 							clonedCol := eqCond.GetArgs()[1]
 							// If the join key is not in the aggregation's schema, add first row function.
 							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
-								newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
+								newFunc, err := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
+								if err != nil {
+									return nil, err
+								}
 								agg.AggFuncs = append(agg.AggFuncs, newFunc)
 								agg.schema.Append(clonedCol.(*expression.Column))
 								agg.schema.Columns[agg.schema.Len()-1].RetType = newFunc.RetTp
@@ -231,7 +237,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 							proj.SetChildren(apply)
 							p = proj
 						}
-						return s.optimize(p)
+						return s.optimize(ctx, p)
 					}
 					sel.Conditions = originalExpr
 					apply.corCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
@@ -241,12 +247,16 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		np, err := s.optimize(child)
+		np, err := s.optimize(ctx, child)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		newChildren = append(newChildren, np)
 	}
 	p.SetChildren(newChildren...)
 	return p, nil
+}
+
+func (*decorrelateSolver) name() string {
+	return "decorrelate"
 }

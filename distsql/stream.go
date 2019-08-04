@@ -15,6 +15,7 @@ package distsql
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -30,6 +31,9 @@ import (
 
 // streamResult implements the SelectResult interface.
 type streamResult struct {
+	label   string
+	sqlType string
+
 	resp       kv.Response
 	rowLen     int
 	fieldTypes []*types.FieldType
@@ -48,7 +52,7 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for !chk.IsFull() {
 		err := r.readDataIfNecessary(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if r.curr == nil {
 			return nil
@@ -56,7 +60,7 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 		err = r.flushToChunk(chk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -64,9 +68,13 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // readDataFromResponse read the data to result. Returns true means the resp is finished.
 func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
+	startTime := time.Now()
 	resultSubset, err := resp.Next(ctx)
+	// TODO: Add a label to distinguish between success or failure.
+	// https://github.com/pingcap/tidb/issues/11397
+	metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(time.Since(startTime).Seconds())
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	if resultSubset == nil {
 		return true, nil
@@ -102,7 +110,7 @@ func (r *streamResult) readDataIfNecessary(ctx context.Context) error {
 	tmp := new(tipb.Chunk)
 	finish, err := r.readDataFromResponse(ctx, r.resp, tmp)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if finish {
 		r.curr = nil
@@ -119,14 +127,13 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 		for i := 0; i < r.rowLen; i++ {
 			remainRowsData, err = decoder.DecodeOne(remainRowsData, i, r.fieldTypes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
+	r.curr.RowsData = remainRowsData
 	if len(remainRowsData) == 0 {
 		r.curr = nil // Current chunk is finished.
-	} else {
-		r.curr.RowsData = remainRowsData
 	}
 	return nil
 }
@@ -136,9 +143,9 @@ func (r *streamResult) NextRaw(ctx context.Context) ([]byte, error) {
 	r.feedback.Invalidate()
 	resultSubset, err := r.resp.Next(ctx)
 	if resultSubset == nil || err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	return resultSubset.GetData(), errors.Trace(err)
+	return resultSubset.GetData(), err
 }
 
 func (r *streamResult) Close() error {

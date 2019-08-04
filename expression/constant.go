@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/pingcap/parser/mysql"
@@ -62,7 +61,7 @@ func (c *Constant) String() string {
 	if c.DeferredExpr != nil {
 		dt, err := c.Eval(chunk.Row{})
 		if err != nil {
-			logutil.Logger(context.Background()).Error("eval constant failed", zap.Error(err))
+			logutil.BgLogger().Error("eval constant failed", zap.Error(err))
 			return ""
 		}
 		c.Value.SetValue(dt.GetValue())
@@ -87,6 +86,14 @@ func (c *Constant) Clone() Expression {
 // GetType implements Expression interface.
 func (c *Constant) GetType() *types.FieldType {
 	return c.RetType
+}
+
+// VecEval evaluates this expression in a vectorized manner.
+func (c *Constant) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, input, result)
+	}
+	return c.DeferredExpr.VecEval(ctx, input, result)
 }
 
 // Eval implements Expression interface.
@@ -309,6 +316,11 @@ func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 // IsCorrelated implements Expression interface.
 func (c *Constant) IsCorrelated() bool {
 	return false
+}
+
+// ConstItem implements Expression interface.
+func (c *Constant) ConstItem() bool {
+	return true
 }
 
 // Decorrelate implements Expression interface.

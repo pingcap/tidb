@@ -27,19 +27,19 @@ type WindowFuncDesc struct {
 }
 
 // NewWindowFuncDesc creates a window function signature descriptor.
-func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) *WindowFuncDesc {
+func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (*WindowFuncDesc, error) {
 	switch strings.ToLower(name) {
 	case ast.WindowFuncNthValue:
 		val, isNull, ok := expression.GetUint64FromConstant(args[1])
 		// nth_value does not allow `0`, but allows `null`.
 		if !ok || (val == 0 && !isNull) {
-			return nil
+			return nil, nil
 		}
 	case ast.WindowFuncNtile:
 		val, isNull, ok := expression.GetUint64FromConstant(args[0])
 		// ntile does not allow `0`, but allows `null`.
 		if !ok || (val == 0 && !isNull) {
-			return nil
+			return nil, nil
 		}
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		if len(args) < 2 {
@@ -47,10 +47,14 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 		}
 		_, isNull, ok := expression.GetUint64FromConstant(args[1])
 		if !ok || isNull {
-			return nil
+			return nil, nil
 		}
 	}
-	return &WindowFuncDesc{newBaseFuncDesc(ctx, name, args)}
+	base, err := newBaseFuncDesc(ctx, name, args)
+	if err != nil {
+		return nil, err
+	}
+	return &WindowFuncDesc{base}, nil
 }
 
 // noFrameWindowFuncs is the functions that operate on the entire partition,

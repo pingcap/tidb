@@ -30,3 +30,11 @@ func (s *testSuite1) TestPreparedNameResolver(c *C) {
 	_, err = tk.Exec("prepare stmt from '(select * FROM t) union all (select * FROM t) order by a limit ?'")
 	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'order clause'")
 }
+
+// a 'create table' DDL statement should be accepted if it has no parameters.
+func (s *testSuite1) TestPreparedDDL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("prepare stmt from 'create table t (id int, KEY id (id))'")
+}

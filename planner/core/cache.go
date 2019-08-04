@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	atomic2 "go.uber.org/atomic"
 )
 
 var (
@@ -34,7 +35,7 @@ var (
 	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
 	PreparedPlanCacheMemoryGuardRatio float64
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-max-memory".
-	PreparedPlanCacheMaxMemory uint64
+	PreparedPlanCacheMaxMemory atomic2.Uint64
 )
 
 const (

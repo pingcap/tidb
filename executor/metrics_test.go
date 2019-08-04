@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 
 	. "github.com/pingcap/check"
@@ -25,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite2) TestStmtLabel(c *C) {
+func (s *testSuite4) TestStmtLabel(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table label (c1 int primary key, c2 int, c3 int, index (c2))")
@@ -63,7 +64,7 @@ func (s *testSuite2) TestStmtLabel(c *C) {
 		is := executor.GetInfoSchema(tk.Se)
 		err = plannercore.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is)
 		c.Assert(err, IsNil)
-		_, err = planner.Optimize(tk.Se, stmtNode, is)
+		_, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, is)
 		c.Assert(err, IsNil)
 		c.Assert(executor.GetStmtLabel(stmtNode), Equals, tt.label)
 	}

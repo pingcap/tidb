@@ -37,9 +37,12 @@ type AggFuncDesc struct {
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
-func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, hasDistinct bool) *AggFuncDesc {
-	b := newBaseFuncDesc(ctx, name, args)
-	return &AggFuncDesc{baseFuncDesc: b, HasDistinct: hasDistinct}
+func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, hasDistinct bool) (*AggFuncDesc, error) {
+	b, err := newBaseFuncDesc(ctx, name, args)
+	if err != nil {
+		return nil, err
+	}
+	return &AggFuncDesc{baseFuncDesc: b, HasDistinct: hasDistinct}, nil
 }
 
 // Equal checks whether two aggregation function signatures are equal.

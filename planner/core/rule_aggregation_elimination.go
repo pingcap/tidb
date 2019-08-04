@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -36,6 +37,20 @@ type aggregationEliminateChecker struct {
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
 func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation) *LogicalProjection {
+	for _, af := range agg.AggFuncs {
+		// TODO(issue #9968): Actually, we can rewrite GROUP_CONCAT when all the
+		// arguments it accepts are promised to be NOT-NULL.
+		// When it accepts only 1 argument, we can extract this argument into a
+		// projection.
+		// When it accepts multiple arguments, we can wrap the arguments with a
+		// function CONCAT_WS and extract this function into a projection.
+		// BUT, GROUP_CONCAT should truncate the final result according to the
+		// system variable `group_concat_max_len`. To ensure the correctness of
+		// the result, we close the elimination of GROUP_CONCAT here.
+		if af.Name == ast.AggFuncGroupConcat {
+			return nil
+		}
+	}
 	schemaByGroupby := expression.NewSchema(agg.groupByCols...)
 	coveredByUniqueKey := false
 	for _, key := range agg.children[0].Schema().Keys {
@@ -122,10 +137,10 @@ func (a *aggregationEliminateChecker) wrapCastFunction(ctx sessionctx.Context, a
 	return expression.BuildCastFunction(ctx, arg, targetTp)
 }
 
-func (a *aggregationEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, err := a.optimize(child)
+		newChild, err := a.optimize(ctx, child)
 		if err != nil {
 			return nil, err
 		}
@@ -140,4 +155,8 @@ func (a *aggregationEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 		return proj, nil
 	}
 	return p, nil
+}
+
+func (*aggregationEliminator) name() string {
+	return "aggregation_eliminate"
 }

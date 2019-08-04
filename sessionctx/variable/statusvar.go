@@ -17,8 +17,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"sync"
-
-	"github.com/pingcap/errors"
 )
 
 var statisticsList []Statistics
@@ -58,7 +56,7 @@ func GetStatusVars(vars *SessionVars) (map[string]*StatusVal, error) {
 	for _, statistics := range statisticsList {
 		vals, err := statistics.Stats(vars)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 
 		for name, val := range vals {

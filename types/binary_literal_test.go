@@ -106,6 +106,9 @@ func (s *testBinaryLiteralSuite) TestParseBitStr(c *C) {
 			c.Assert([]byte(b), DeepEquals, t.Expected, Commentf("%#v", t))
 		}
 	}
+	b, err := ParseBitStr("")
+	c.Assert(b, IsNil)
+	c.Assert(err, ErrorMatches, "invalid empty .*")
 }
 
 func (s *testBinaryLiteralSuite) TestParseHexStr(c *C) {
@@ -139,6 +142,9 @@ func (s *testBinaryLiteralSuite) TestParseHexStr(c *C) {
 			c.Assert([]byte(hex), DeepEquals, t.Expected, Commentf("%#v", t))
 		}
 	}
+	hex, err := ParseHexStr("")
+	c.Assert(hex, IsNil)
+	c.Assert(err, ErrorMatches, "invalid empty .*")
 }
 
 func (s *testBinaryLiteralSuite) TestString(c *C) {
@@ -243,6 +249,12 @@ func (s *testBinaryLiteralSuite) TestNewBinaryLiteralFromUint(c *C) {
 		hex := NewBinaryLiteralFromUint(t.Input, t.ByteSize)
 		c.Assert([]byte(hex), DeepEquals, t.Expected, Commentf("%#v", t))
 	}
+
+	defer func() {
+		r := recover()
+		c.Assert(r, NotNil)
+	}()
+	NewBinaryLiteralFromUint(0x123, -2)
 }
 
 func (s *testBinaryLiteralSuite) TestCompare(c *C) {
@@ -259,4 +271,14 @@ func (s *testBinaryLiteralSuite) TestCompare(c *C) {
 	for _, t := range tbl {
 		c.Assert(t.a.Compare(t.b), Equals, t.cmp)
 	}
+}
+
+func (s *testBinaryLiteralSuite) TestToString(c *C) {
+	h, _ := NewHexLiteral("x'3A3B'")
+	str := h.ToString()
+	c.Assert(str, Equals, ":;")
+
+	b, _ := NewBitLiteral("b'00101011'")
+	str = b.ToString()
+	c.Assert(str, Equals, "+")
 }

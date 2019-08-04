@@ -760,7 +760,7 @@ func (s *testSuite2) TestJoinLeak(c *C) {
 	tk.MustExec("commit")
 	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
 	c.Assert(err, IsNil)
-	req := result.NewRecordBatch()
+	req := result.NewChunk()
 	err = result.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond)
@@ -1380,4 +1380,14 @@ func (s *testSuite2) TestInjectProjOnTopN(c *C) {
 	tk.MustQuery("select t1.a+t1.b as result from t1 left join t2 on 1 = 0 order by result limit 20;").Check(testkit.Rows(
 		"2",
 	))
+}
+
+func (s *testSuite2) TestIssue11544(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table 11544t(a int)")
+	tk.MustExec("create table 11544tt(a int, b varchar(10), index idx(a, b(3)))")
+	tk.MustExec("insert into 11544t values(1)")
+	tk.MustExec("insert into 11544tt values(1, 'aaaaaaa'), (1, 'aaaabbb'), (1, 'aaaacccc')")
+	tk.MustQuery("select /*+ TIDB_INLJ(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and (tt.b = 'aaaaaaa' or tt.b = 'aaaabbb')").Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb"))
 }

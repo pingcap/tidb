@@ -1,5 +1,5 @@
 
-# Proposal: 
+# Proposal: A new command to restore dropped table 
 
 - Author(s):    [winkyao](https://github.com/winkyao)
 - Last updated:  2018-08-10

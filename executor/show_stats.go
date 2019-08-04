@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
@@ -85,7 +86,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		if col.IsInvalid(nil, false) {
 			continue
 		}
-		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count))
+		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count, false))
 	}
 	for _, idx := range statsTbl.Indices {
 		e.histogramToRow(dbName, tblName, partitionName, idx.Info.Name.O, 1, idx.Histogram, 0)
@@ -220,4 +221,13 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 		partitionName,
 		healthy,
 	})
+}
+
+func (e *ShowExec) fetchShowAnalyzeStatus() {
+	rows := infoschema.DataForAnalyzeStatus()
+	for _, row := range rows {
+		for i, val := range row {
+			e.result.AppendDatum(i, &val)
+		}
+	}
 }

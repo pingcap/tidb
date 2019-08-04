@@ -157,6 +157,7 @@ func (s *testChunkSizeControlSuite) getKit(name string) (
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
+	c.Skip("not stable because coprocessor may result in goroutine leak")
 	_, dom, tk, client, cluster := s.getKit("Limit&TableScan")
 	defer client.Close()
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -188,6 +189,7 @@ func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
+	c.Skip("not stable because coprocessor may result in goroutine leak")
 	_, dom, tk, client, cluster := s.getKit("Limit&IndexScan")
 	defer client.Close()
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

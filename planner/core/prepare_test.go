@@ -14,6 +14,7 @@
 package core_test
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"time"
@@ -58,7 +59,7 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory = math.MaxUint64
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx1(b, a), index idx2(b))")
@@ -108,7 +109,7 @@ func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory = math.MaxUint64
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, primary key (a, b))")
@@ -142,9 +143,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory = math.MaxUint64
-
-	defer testleak.AfterTest(c)()
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -156,19 +155,21 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 
 	var cnt [2]float64
 	var planStr [2]string
+	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
+	ctx := context.TODO()
 	for i := 0; i < 2; i++ {
 		stmt, err := s.ParseOneStmt(sql1, "", "")
 		c.Check(err, IsNil)
 		is := tk.Se.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 		builder := core.NewPlanBuilder(tk.Se, is)
-		p, err := builder.Build(stmt)
+		p, err := builder.Build(ctx, stmt)
 		c.Check(err, IsNil)
 		execPlan, ok := p.(*core.Execute)
 		c.Check(ok, IsTrue)
 		executor.ResetContextOfStmt(tk.Se, stmt)
-		err = execPlan.OptimizePreparedPlan(tk.Se, is)
+		err = execPlan.OptimizePreparedPlan(ctx, tk.Se, is)
 		c.Check(err, IsNil)
 		planStr[i] = core.ToString(execPlan.Plan)
 		c.Check(planStr[i], Matches, expectedPattern, Commentf("for %s", sql1))
@@ -203,7 +204,7 @@ func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory = math.MaxUint64
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 	tk.MustExec("use test")
 	tk.MustExec(`prepare stmt1 from "select now(), current_timestamp(), utc_timestamp(), unix_timestamp(), sleep(0.1), now(), current_timestamp(), utc_timestamp(), unix_timestamp()"`)
 	// When executing one statement at the first time, we don't usTestPrepareCacheDeferredFunctione cache, so we need to execute it at least twice to test the cache.
@@ -287,7 +288,7 @@ func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory = math.MaxUint64
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (
@@ -295,7 +296,7 @@ func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 		partner_id varchar(35) not null,
 		t1_status_id int(10) unsigned
 	  );`)
-	tk.MustExec(`insert into t1 values ("1", "partner1", "10"), ("2", "partner2", "10"), ("3", "partner3", "10"), ("4", "partner4", "10");"`)
+	tk.MustExec(`insert into t1 values ("1", "partner1", "10"), ("2", "partner2", "10"), ("3", "partner3", "10"), ("4", "partner4", "10");`)
 	tk.MustExec("drop table if exists t3")
 	tk.MustExec(`create table t3 (
 		id int(11) not null default '0',
@@ -317,4 +318,30 @@ func readGaugeInt(g prometheus.Gauge) int {
 	mm := &dto.Metric{}
 	m.Write(mm)
 	return int(mm.GetGauge().GetValue())
+}
+
+// unit test for issue https://github.com/pingcap/tidb/issues/9478
+func (s *testPrepareSuite) TestPrepareWithWindowFunction(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_window_function = 0")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table window_prepare(a int, b double)")
+	tk.MustExec("insert into window_prepare values(1, 1.1), (2, 1.9)")
+	tk.MustExec("prepare stmt1 from 'select row_number() over() from window_prepare';")
+	// Test the unnamed window can be executed successfully.
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1", "2"))
+	// Test the stmt can be prepared successfully.
+	tk.MustExec("prepare stmt2 from 'select count(a) over (order by a rows between ? preceding and ? preceding) from window_prepare'")
+	tk.MustExec("set @a=0, @b=1;")
+	tk.MustQuery("execute stmt2 using @a, @b").Check(testkit.Rows("0", "0"))
 }

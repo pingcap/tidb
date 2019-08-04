@@ -27,17 +27,18 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -676,15 +677,21 @@ func runTestLoadData(c *C, server *Server) {
 }
 
 func runTestConcurrentUpdate(c *C) {
-	// TODO: Should be runTestsOnNewDB. See #4205.
-	runTests(c, nil, func(dbt *DBTest) {
+	dbName := "Concurrent"
+	runTestsOnNewDB(c, nil, dbName, func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists test2")
 		dbt.mustExec("create table test2 (a int, b int)")
 		dbt.mustExec("insert test2 values (1, 1)")
+		dbt.mustExec("set @@tidb_disable_txn_auto_retry = 0")
+
 		txn1, err := dbt.db.Begin()
+		c.Assert(err, IsNil)
+		_, err = txn1.Exec(fmt.Sprintf("USE `%s`;", dbName))
 		c.Assert(err, IsNil)
 
 		txn2, err := dbt.db.Begin()
+		c.Assert(err, IsNil)
+		_, err = txn2.Exec(fmt.Sprintf("USE `%s`;", dbName))
 		c.Assert(err, IsNil)
 
 		_, err = txn2.Exec("update test2 set a = a + 1 where b = 1")
@@ -798,7 +805,10 @@ func runTestShowProcessList(c *C) {
 func runTestAuth(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'authtest'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`CREATE ROLE 'authtest_r1'@'%';`)
 		dbt.mustExec(`GRANT ALL on test.* to 'authtest'`)
+		dbt.mustExec(`GRANT authtest_r1 to 'authtest'`)
+		dbt.mustExec(`SET DEFAULT ROLE authtest_r1 TO authtest`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	runTests(c, func(config *mysql.Config) {
@@ -815,6 +825,21 @@ func runTestAuth(c *C) {
 	c.Assert(err, IsNil)
 	_, err = db.Query("USE information_schema;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
+	db.Close()
+
+	// Test for loading active roles.
+	db, err = sql.Open("mysql", getDSN(func(config *mysql.Config) {
+		config.User = "authtest"
+		config.Passwd = "123"
+	}))
+	c.Assert(err, IsNil)
+	rows, err := db.Query("select current_role;")
+	c.Assert(err, IsNil)
+	c.Assert(rows.Next(), IsTrue)
+	var outA string
+	err = rows.Scan(&outA)
+	c.Assert(err, IsNil)
+	c.Assert(outA, Equals, "`authtest_r1`@`%`")
 	db.Close()
 
 	// Test login use IP that not exists in mysql.user.
@@ -1050,7 +1075,7 @@ func waitUntilServerOnline(statusPort uint) {
 		}
 	}
 	if retry == retryTime {
-		log.Fatalf("Failed to connect db for %d retries in every 10 ms", retryTime)
+		log.Fatal("failed to connect DB in every 10 ms", zap.Int("retryTime", retryTime))
 	}
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
@@ -1064,6 +1089,6 @@ func waitUntilServerOnline(statusPort uint) {
 		time.Sleep(time.Millisecond * 10)
 	}
 	if retry == retryTime {
-		log.Fatalf("Failed to connect http status for %d retries in every 10 ms", retryTime)
+		log.Fatal("failed to connect HTTP status in every 10 ms", zap.Int("retryTime", retryTime))
 	}
 }

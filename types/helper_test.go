@@ -26,6 +26,7 @@ type testTypeHelperSuite struct {
 }
 
 func (s *testTypeHelperSuite) TestStrToInt(c *C) {
+	c.Parallel()
 	tests := []struct {
 		input  string
 		output string
@@ -42,5 +43,23 @@ func (s *testTypeHelperSuite) TestStrToInt(c *C) {
 		output, err := strToInt(tt.input)
 		c.Assert(errors.Cause(err), Equals, tt.err)
 		c.Check(strconv.FormatInt(output, 10), Equals, tt.output)
+	}
+}
+
+func (s *testTypeHelperSuite) TestTruncate(c *C) {
+	c.Parallel()
+	tests := []struct {
+		f        float64
+		dec      int
+		expected float64
+	}{
+		{123.45, 0, 123},
+		{123.45, 1, 123.4},
+		{123.45, 2, 123.45},
+		{123.45, 3, 123.450},
+	}
+	for _, tt := range tests {
+		res := Truncate(tt.f, tt.dec)
+		c.Assert(res, Equals, tt.expected)
 	}
 }
