@@ -3143,10 +3143,13 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 	}
 
 	desc := orderByItems[0].Desc
-	if boundClause.Unit != nil {
-		// It can be guaranteed by the parser.
-		unitVal := boundClause.Unit.(*driver.ValueExpr)
-		unit := expression.Constant{Value: unitVal.Datum, RetType: unitVal.GetType()}
+	if boundClause.Unit != ast.TimeUnitInvalid {
+		// TODO: Perhaps we don't need to transcode this back to generic string
+		unitVal := boundClause.Unit.String()
+		unit := expression.Constant{
+			Value:   types.NewStringDatum(unitVal),
+			RetType: types.NewFieldType(mysql.TypeVarchar),
+		}
 
 		// When the order is asc:
 		//   `+` for following, and `-` for the preceding
@@ -3379,7 +3382,7 @@ func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *a
 
 	frameType := spec.Frame.Type
 	if frameType == ast.Rows {
-		if bound.Unit != nil {
+		if bound.Unit != ast.TimeUnitInvalid {
 			return ErrWindowRowsIntervalUse.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
 		_, isNull, isExpectedType := getUintFromNode(b.ctx, bound.Expr)
@@ -3397,10 +3400,10 @@ func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *a
 	if !isNumeric && !isTemporal {
 		return ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
-	if bound.Unit != nil && !isTemporal {
+	if bound.Unit != ast.TimeUnitInvalid && !isTemporal {
 		return ErrWindowRangeFrameNumericType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
-	if bound.Unit == nil && !isNumeric {
+	if bound.Unit == ast.TimeUnitInvalid && !isNumeric {
 		return ErrWindowRangeFrameTemporalType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
 	return nil
