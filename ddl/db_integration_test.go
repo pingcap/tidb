@@ -814,8 +814,8 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustExec("create database if not exists test")
-	tk.MustExec("use test")
+	tk.MustExec("create database if not exists test_mul_gen_col")
+	tk.MustExec("use test_mul_gen_col")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int as (a + 1), c int as (b + 1))")
 	tk.MustExec("insert into t (a) values (1)")
