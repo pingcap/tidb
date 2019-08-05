@@ -42,6 +42,14 @@ func getTime(year, month, day int, timeType byte) types.Time {
 	return ret
 }
 
+func getTimeStamp(hour, min, sec int, timeType byte) types.Time {
+	ret := types.Time{
+		Time: types.FromDate(2017, int(1), 1, hour, min, sec, 0),
+		Type: timeType,
+		Fsp:  0}
+	return ret
+}
+
 func getBinaryLiteral(value string) types.BinaryLiteral {
 	b, _ := types.ParseBitStr(value)
 	return b
@@ -166,5 +174,86 @@ func (s *testStatisticsSuite) TestCalcFraction(c *C) {
 		hg.PreCalculateScalar()
 		fraction := hg.calcFraction(0, &test.value)
 		c.Check(math.Abs(fraction-test.fraction) < eps, IsTrue)
+	}
+}
+
+func (s *testStatisticsSuite) TestEnumRangeValues(c *C) {
+	tests := []struct {
+		low         types.Datum
+		high        types.Datum
+		lowExclude  bool
+		highExclude bool
+		res         string
+	}{
+		{
+			low:         types.NewIntDatum(0),
+			high:        types.NewIntDatum(5),
+			lowExclude:  false,
+			highExclude: true,
+			res:         "(0, 1, 2, 3, 4)",
+		},
+		{
+			low:         types.NewIntDatum(math.MinInt64),
+			high:        types.NewIntDatum(math.MaxInt64),
+			lowExclude:  false,
+			highExclude: false,
+			res:         "",
+		},
+		{
+			low:         types.NewUintDatum(0),
+			high:        types.NewUintDatum(5),
+			lowExclude:  false,
+			highExclude: true,
+			res:         "(0, 1, 2, 3, 4)",
+		},
+		{
+			low:         types.NewDurationDatum(getDuration("0:00:00")),
+			high:        types.NewDurationDatum(getDuration("0:00:05")),
+			lowExclude:  false,
+			highExclude: true,
+			res:         "(00:00:00, 00:00:01, 00:00:02, 00:00:03, 00:00:04)",
+		},
+		{
+			low:         types.NewDurationDatum(getDuration("0:00:00")),
+			high:        types.NewDurationDatum(getDuration("0:00:05")),
+			lowExclude:  false,
+			highExclude: true,
+			res:         "(00:00:00, 00:00:01, 00:00:02, 00:00:03, 00:00:04)",
+		},
+		{
+			low:         types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDate)),
+			high:        types.NewTimeDatum(getTime(2017, 1, 5, mysql.TypeDate)),
+			lowExclude:  false,
+			highExclude: true,
+			res:         "(2017-01-01, 2017-01-02, 2017-01-03, 2017-01-04)",
+		},
+		{
+			low:         types.NewTimeDatum(getTimeStamp(0, 0, 0, mysql.TypeTimestamp)),
+			high:        types.NewTimeDatum(getTimeStamp(0, 0, 5, mysql.TypeTimestamp)),
+			lowExclude:  false,
+			highExclude: true,
+			res:         "(2017-01-01 00:00:00, 2017-01-01 00:00:01, 2017-01-01 00:00:02, 2017-01-01 00:00:03, 2017-01-01 00:00:04)",
+		},
+		{
+			low:         types.NewTimeDatum(getTimeStamp(0, 0, 0, mysql.TypeDatetime)),
+			high:        types.NewTimeDatum(getTimeStamp(0, 0, 5, mysql.TypeDatetime)),
+			lowExclude:  false,
+			highExclude: true,
+			res:         "(2017-01-01 00:00:00, 2017-01-01 00:00:01, 2017-01-01 00:00:02, 2017-01-01 00:00:03, 2017-01-01 00:00:04)",
+		},
+		// fix issue 11610
+		{
+			low:         types.NewIntDatum(math.MinInt64),
+			high:        types.NewIntDatum(0),
+			lowExclude:  false,
+			highExclude: false,
+			res:         "",
+		},
+	}
+	for _, t := range tests {
+		vals := enumRangeValues(t.low, t.high, t.lowExclude, t.highExclude)
+		str, err := types.DatumsToString(vals, true)
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, t.res)
 	}
 }
