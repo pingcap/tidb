@@ -1164,6 +1164,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select cast(1 as float(53));", true, "SELECT CAST(1 AS DOUBLE)"},
 		{"select cast(1 as float(54));", false, ""},
 
+		// for cast as real
+		{"select cast(1 as real);", true, "SELECT CAST(1 AS DOUBLE)"},
+
 		// for last_insert_id
 		{"SELECT last_insert_id();", true, "SELECT LAST_INSERT_ID()"},
 		{"SELECT last_insert_id(1);", true, "SELECT LAST_INSERT_ID(1)"},
@@ -1676,6 +1679,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select cast(1 as float(25));", true, "SELECT CAST(1 AS DOUBLE)"},
 		{"select cast(1 as float(53));", true, "SELECT CAST(1 AS DOUBLE)"},
 		{"select cast(1 as float(54));", false, ""},
+
+		// for cast as real
+		{"select cast(1 as real);", true, "SELECT CAST(1 AS FLOAT)"},
 	}
 	s.RunTestInRealAsFloatMode(c, table2)
 }
