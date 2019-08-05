@@ -2641,6 +2641,11 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 
 	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a bigint not null)")
+	result = tk.MustQuery("select ifnull(max(a),0) from t1")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(a decimal(20,4))")
 	tk.MustExec("create table t2(a decimal(20,4))")

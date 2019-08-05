@@ -182,6 +182,7 @@ s_name,
 p_partkey
 limit 100;
 id	count	task	operator info
+<<<<<<< HEAD
 Projection_34	100.00	root	tpch.supplier.s_acctbal, tpch.supplier.s_name, tpch.nation.n_name, tpch.part.p_partkey, tpch.part.p_mfgr, tpch.supplier.s_address, tpch.supplier.s_phone, tpch.supplier.s_comment
 └─TopN_37	100.00	root	tpch.supplier.s_acctbal:desc, tpch.nation.n_name:asc, tpch.supplier.s_name:asc, tpch.part.p_partkey:asc, offset:0, count:100
   └─HashRightJoin_39	125109.42	root	inner join, inner:HashLeftJoin_44, equal:[eq(tpch.part.p_partkey, tpch.partsupp.ps_partkey) eq(tpch.partsupp.ps_supplycost, min(ps_supplycost))]
@@ -215,6 +216,41 @@ Projection_34	100.00	root	tpch.supplier.s_acctbal, tpch.supplier.s_name, tpch.na
         │   └─TableScan_107	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
         └─TableReader_110	40000000.00	root	data:TableScan_109
           └─TableScan_109	40000000.00	cop	table:partsupp, range:[-inf,+inf], keep order:false
+=======
+Projection_37	100.00	root	tpch.supplier.s_acctbal, tpch.supplier.s_name, tpch.nation.n_name, tpch.part.p_partkey, tpch.part.p_mfgr, tpch.supplier.s_address, tpch.supplier.s_phone, tpch.supplier.s_comment
+└─TopN_40	100.00	root	tpch.supplier.s_acctbal:desc, tpch.nation.n_name:asc, tpch.supplier.s_name:asc, tpch.part.p_partkey:asc, offset:0, count:100
+  └─HashRightJoin_45	155496.00	root	inner join, inner:HashLeftJoin_51, equal:[eq(tpch.part.p_partkey, tpch.partsupp.ps_partkey) eq(tpch.partsupp.ps_supplycost, min(ps_supplycost))]
+    ├─HashLeftJoin_51	155496.00	root	inner join, inner:TableReader_74, equal:[eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)]
+    │ ├─HashRightJoin_54	8155010.44	root	inner join, inner:HashRightJoin_56, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
+    │ │ ├─HashRightJoin_56	100000.00	root	inner join, inner:HashRightJoin_62, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
+    │ │ │ ├─HashRightJoin_62	5.00	root	inner join, inner:TableReader_67, equal:[eq(tpch.region.r_regionkey, tpch.nation.n_regionkey)]
+    │ │ │ │ ├─TableReader_67	1.00	root	data:Selection_66
+    │ │ │ │ │ └─Selection_66	1.00	cop	eq(tpch.region.r_name, "ASIA")
+    │ │ │ │ │   └─TableScan_65	5.00	cop	table:region, range:[-inf,+inf], keep order:false
+    │ │ │ │ └─TableReader_64	25.00	root	data:TableScan_63
+    │ │ │ │   └─TableScan_63	25.00	cop	table:nation, range:[-inf,+inf], keep order:false
+    │ │ │ └─TableReader_69	500000.00	root	data:TableScan_68
+    │ │ │   └─TableScan_68	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
+    │ │ └─TableReader_71	40000000.00	root	data:TableScan_70
+    │ │   └─TableScan_70	40000000.00	cop	table:partsupp, range:[-inf,+inf], keep order:false
+    │ └─TableReader_74	155496.00	root	data:Selection_73
+    │   └─Selection_73	155496.00	cop	eq(tpch.part.p_size, 30), like(tpch.part.p_type, "%STEEL", 92)
+    │     └─TableScan_72	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
+    └─Selection_75	6524008.35	root	not(isnull(min(ps_supplycost)))
+      └─HashAgg_78	8155010.44	root	group by:tpch.partsupp.ps_partkey, funcs:min(tpch.partsupp.ps_supplycost), firstrow(tpch.partsupp.ps_partkey)
+        └─HashRightJoin_82	8155010.44	root	inner join, inner:HashRightJoin_84, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
+          ├─HashRightJoin_84	100000.00	root	inner join, inner:HashRightJoin_90, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
+          │ ├─HashRightJoin_90	5.00	root	inner join, inner:TableReader_95, equal:[eq(tpch.region.r_regionkey, tpch.nation.n_regionkey)]
+          │ │ ├─TableReader_95	1.00	root	data:Selection_94
+          │ │ │ └─Selection_94	1.00	cop	eq(tpch.region.r_name, "ASIA")
+          │ │ │   └─TableScan_93	5.00	cop	table:region, range:[-inf,+inf], keep order:false
+          │ │ └─TableReader_92	25.00	root	data:TableScan_91
+          │ │   └─TableScan_91	25.00	cop	table:nation, range:[-inf,+inf], keep order:false
+          │ └─TableReader_97	500000.00	root	data:TableScan_96
+          │   └─TableScan_96	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
+          └─TableReader_99	40000000.00	root	data:TableScan_98
+            └─TableScan_98	40000000.00	cop	table:partsupp, range:[-inf,+inf], keep order:false
+>>>>>>> 829ba98... expression: remove the NotNullFlag for aggregation func MAX/MIN when inferring type (#11343)
 /*
 Q3 Shipping Priority Query
 This query retrieves the 10 unshipped orders with the highest value.
