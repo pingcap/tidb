@@ -91,10 +91,10 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	_, err = tk.Exec("admin check table admin_test")
+	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
-	_, err = tk.Exec("admin check index admin_test c2")
+	err = tk.ExecToErr("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
@@ -115,7 +115,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	_, err = tk.Exec("admin check index admin_test c2")
+	err = tk.ExecToErr("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 	r = tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 5"))
@@ -137,9 +137,9 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	_, err = tk.Exec("admin check table admin_test")
+	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
-	_, err = tk.Exec("admin check index admin_test c2")
+	err = tk.ExecToErr("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
@@ -261,9 +261,9 @@ func (s *testSuite2) TestAdminCleanupIndex(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	_, err = tk.Exec("admin check table admin_test")
+	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
-	_, err = tk.Exec("admin check index admin_test c2")
+	err = tk.ExecToErr("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
 	r.Check(testkit.Rows("11"))
@@ -273,9 +273,9 @@ func (s *testSuite2) TestAdminCleanupIndex(c *C) {
 	r.Check(testkit.Rows("6"))
 	tk.MustExec("admin check index admin_test c2")
 
-	_, err = tk.Exec("admin check table admin_test")
+	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
-	_, err = tk.Exec("admin check index admin_test c3")
+	err = tk.ExecToErr("admin check index admin_test c3")
 	c.Assert(err, NotNil)
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c3)")
 	r.Check(testkit.Rows("9"))
@@ -322,9 +322,9 @@ func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	_, err = tk.Exec("admin check table admin_test")
+	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
-	_, err = tk.Exec("admin check index admin_test `primary`")
+	err = tk.ExecToErr("admin check index admin_test `primary`")
 	c.Assert(err, NotNil)
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(`primary`)")
 	r.Check(testkit.Rows("6"))
@@ -374,11 +374,11 @@ func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	_, err = tk.Exec("admin check table admin_test")
+	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
-	_, err = tk.Exec("admin check index admin_test c1")
+	err = tk.ExecToErr("admin check index admin_test c1")
 	c.Assert(err, NotNil)
-	_, err = tk.Exec("admin check index admin_test c2")
+	err = tk.ExecToErr("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 	r := tk.MustQuery("SELECT COUNT(*) FROM admin_test")
 	r.Check(testkit.Rows("3"))
@@ -430,7 +430,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	_, err = tk.Exec("admin check table admin_test")
+	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err.Error(), Equals,
 		"[executor:8003]admin_test err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:-10, b:[]uint8(nil), x:interface {}(nil)}}}")
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
@@ -447,7 +447,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	_, err = tk.Exec("admin check table admin_test")
+	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err.Error(), Equals, "handle 0, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:0, b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
 
 	// Add one row of index.
@@ -464,7 +464,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	_, err = tk.Exec("admin check table admin_test")
+	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err.Error(), Equals, "col c2, handle 2, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:13, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:12, b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Table count = index count.
@@ -477,7 +477,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	_, err = tk.Exec("admin check table admin_test")
+	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:19, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:20, b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Table count = index count.
@@ -490,7 +490,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	_, err = tk.Exec("admin check table admin_test")
+	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:19, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:20, b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Recover records.
@@ -576,7 +576,7 @@ func (s *testSuite1) TestAdminCheckTable(c *C) {
 
 	tk.MustExec("use mysql")
 	tk.MustExec(`admin check table test.t;`)
-	_, err := tk.Exec("admin check table t")
+	err := tk.ExecToErr("admin check table t")
 	c.Assert(err, NotNil)
 
 	// test add index on time type column which have default value
@@ -616,7 +616,7 @@ func (s *testSuite1) TestAdminCheckTable(c *C) {
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1 (a decimal(2,1), index(a))`)
 	tk.MustExec(`insert into t1 set a='1.9'`)
-	_, err = tk.Exec(`alter table t1 modify column a decimal(3,2);`)
+	err = tk.ExecToErr(`alter table t1 modify column a decimal(3,2);`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify decimal column precision")
 	tk.MustExec(`delete from t1;`)
@@ -659,9 +659,9 @@ func (s *testSuite2) TestAdminCheckWithSnapshot(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	_, err = tk.Exec("admin check table admin_t_s")
+	err = tk.ExecToErr("admin check table admin_t_s")
 	c.Assert(err, NotNil)
-	_, err = tk.Exec("admin check index admin_t_s a")
+	err = tk.ExecToErr("admin check index admin_t_s a")
 	c.Assert(err, NotNil)
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
@@ -678,9 +678,9 @@ func (s *testSuite2) TestAdminCheckWithSnapshot(c *C) {
 	tk.MustExec("admin check index admin_t_s a;")
 
 	tk.MustExec("set @@tidb_snapshot = ''")
-	_, err = tk.Exec("admin check table admin_t_s")
+	err = tk.ExecToErr("admin check table admin_t_s")
 	c.Assert(err, NotNil)
-	_, err = tk.Exec("admin check index admin_t_s a")
+	err = tk.ExecToErr("admin check index admin_t_s a")
 	c.Assert(err, NotNil)
 
 	r := tk.MustQuery("admin cleanup index admin_t_s a")
