@@ -2457,25 +2457,27 @@ DatabaseOptionList:
  *******************************************************************/
 
 CreateTableStmt:
-	"CREATE" "TABLE" IfNotExists TableName TableElementListOpt CreateTableOptionListOpt PartitionOpt DuplicateOpt AsOpt CreateTableSelectOpt
+	"CREATE" OptTemporary "TABLE" IfNotExists TableName TableElementListOpt CreateTableOptionListOpt PartitionOpt DuplicateOpt AsOpt CreateTableSelectOpt
 	{
-		stmt := $5.(*ast.CreateTableStmt)
-		stmt.Table = $4.(*ast.TableName)
-		stmt.IfNotExists = $3.(bool)
-		stmt.Options = $6.([]*ast.TableOption)
-		if $7 != nil {
-			stmt.Partition = $7.(*ast.PartitionOptions)
+		stmt := $6.(*ast.CreateTableStmt)
+		stmt.Table = $5.(*ast.TableName)
+		stmt.IfNotExists = $4.(bool)
+		stmt.IsTemporary = $2.(bool)
+		stmt.Options = $7.([]*ast.TableOption)
+		if $8 != nil {
+			stmt.Partition = $8.(*ast.PartitionOptions)
 		}
-		stmt.OnDuplicate = $8.(ast.OnDuplicateKeyHandlingType)
-		stmt.Select = $10.(*ast.CreateTableStmt).Select
+		stmt.OnDuplicate = $9.(ast.OnDuplicateKeyHandlingType)
+		stmt.Select = $11.(*ast.CreateTableStmt).Select
 		$$ = stmt
 	}
-|	"CREATE" "TABLE" IfNotExists TableName LikeTableWithOrWithoutParen
+|	"CREATE" OptTemporary "TABLE" IfNotExists TableName LikeTableWithOrWithoutParen
 	{
 		$$ = &ast.CreateTableStmt{
-			Table:          $4.(*ast.TableName),
-			ReferTable:	$5.(*ast.TableName),
-			IfNotExists:    $3.(bool),
+			Table:          $5.(*ast.TableName),
+			ReferTable:	$6.(*ast.TableName),
+			IfNotExists:    $4.(bool),
+			IsTemporary:    $2.(bool),
 		}
 	}
 
@@ -3063,8 +3065,13 @@ DropTableStmt:
 	}
 
 OptTemporary:
-	  /* empty */ { $$= false; }
-	| "TEMPORARY" { $$= true;  }
+	  /* empty */ { $$ = false; }
+	| "TEMPORARY" 
+	{ 
+		$$ = true
+		yylex.AppendError(yylex.Errorf("TiDB doesn't support TEMPORARY TABLE, TEMPORARY will be parsed but ignored."))
+		parser.lastErrorAsWarn()
+	}
 	;
 
 DropViewStmt:

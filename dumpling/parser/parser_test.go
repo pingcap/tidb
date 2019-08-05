@@ -1772,6 +1772,10 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a.b, b);", false, ""},
 		{"CREATE TABLE foo (a, b.c);", false, ""},
 		{"CREATE TABLE (name CHAR(50) BINARY)", false, ""},
+		// for create temporary table
+		{"CREATE TEMPORARY TABLE t (a varchar(50), b int);", true, "CREATE TEMPORARY TABLE `t` (`a` VARCHAR(50),`b` INT)"},
+		{"CREATE TEMPORARY TABLE t LIKE t1", true, "CREATE TEMPORARY TABLE `t` LIKE `t1`"},
+		{"DROP TEMPORARY TABLE t", true, "DROP TEMPORARY TABLE `t`"},
 		// test use key word as column name
 		{"CREATE TABLE foo (pump varchar(50), b int);", true, "CREATE TABLE `foo` (`pump` VARCHAR(50),`b` INT)"},
 		{"CREATE TABLE foo (drainer varchar(50), b int);", true, "CREATE TABLE `foo` (`drainer` VARCHAR(50),`b` INT)"},
