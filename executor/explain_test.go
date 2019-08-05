@@ -14,6 +14,9 @@
 package executor_test
 
 import (
+	"fmt"
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -59,4 +62,79 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 
 	err = tk1.ExecToErr("explain select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error())
+}
+
+func (s *testSuite1) TestExplainCartesianJoin(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int)")
+
+	cases := []struct {
+		sql             string
+		isCartesianJoin bool
+	}{
+		{"explain select * from t t1, t t2", true},
+		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v)", true},
+		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2))", true},
+		{"explain select * from t t1, t t2 where t1.v = t2.v", false},
+	}
+	for _, ca := range cases {
+		rows := tk.MustQuery(ca.sql).Rows()
+		ok := false
+		for _, row := range rows {
+			str := fmt.Sprintf("%v", row)
+			if strings.Contains(str, "CARTESIAN") {
+				ok = true
+			}
+		}
+
+		c.Assert(ok, Equals, ca.isCartesianJoin)
+	}
+}
+
+func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int, k int, key(k))")
+	tk.MustExec("insert into t values (1, 1), (1, 1), (1, 1), (1, 1), (1, 1)")
+
+	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v")
+	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v limit 5")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ TIDB_HJ(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ TIDB_SMJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ TIDB_INLJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkMemoryInfo(c, tk, "explain analyze select sum(k) from t group by v")
+	s.checkMemoryInfo(c, tk, "explain analyze select sum(v) from t group by k")
+	s.checkMemoryInfo(c, tk, "explain analyze select * from t")
+	s.checkMemoryInfo(c, tk, "explain analyze select k from t use index(k)")
+	s.checkMemoryInfo(c, tk, "explain analyze select * from t use index(k)")
+}
+
+func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
+	memCol := 5
+	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp"}
+	rows := tk.MustQuery(sql).Rows()
+	for _, row := range rows {
+		strs := make([]string, len(row))
+		for i, c := range row {
+			strs[i] = c.(string)
+		}
+		if strings.Contains(strs[2], "cop") {
+			continue
+		}
+
+		shouldHasMem := false
+		for _, op := range ops {
+			if strings.Contains(strs[0], op) {
+				shouldHasMem = true
+				break
+			}
+		}
+
+		if shouldHasMem {
+			c.Assert(strs[memCol], Not(Equals), "N/A")
+		} else {
+			c.Assert(strs[memCol], Equals, "N/A")
+		}
+	}
 }

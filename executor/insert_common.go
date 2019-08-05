@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -479,12 +480,10 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		sc := e.ctx.GetSessionVars().StmtCtx
-		datum, err1 := d.ConvertTo(sc, &c.FieldType)
-		if e.filterErr(err1) != nil {
-			return types.Datum{}, err1
+		recordID, err = getAutoRecordID(d, &c.FieldType, true)
+		if err != nil {
+			return types.Datum{}, err
 		}
-		recordID = datum.GetInt64()
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
@@ -494,7 +493,6 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		}
 		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 		retryInfo.AddAutoIncrementID(recordID)
-		d.SetAutoID(recordID, c.Flag)
 		return d, nil
 	}
 
@@ -520,6 +518,26 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		return types.Datum{}, err
 	}
 	return casted, nil
+}
+
+func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
+	var recordID int64
+
+	switch target.Tp {
+	case mysql.TypeFloat, mysql.TypeDouble:
+		f := d.GetFloat64()
+		if isInsert {
+			recordID = int64(math.Round(f))
+		} else {
+			recordID = int64(f)
+		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		recordID = d.GetInt64()
+	default:
+		return 0, errors.Errorf("unexpected field type [%v]", target.Tp)
+	}
+
+	return recordID, nil
 }
 
 func (e *InsertValues) handleWarning(err error) {

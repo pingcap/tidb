@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -289,6 +290,31 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
 }
 
+func (s *testRegionCacheSuite) TestSendFailInvalidateRegionsInSameStore(c *C) {
+	// key range: ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := s.cluster.AllocIDs(2)
+	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+
+	// Check the two regions.
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+	loc2, err := s.cache.LocateKey(s.bo, []byte("x"))
+	c.Assert(err, IsNil)
+	c.Assert(loc2.Region.id, Equals, region2)
+
+	// Send fail on region1
+	ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
+	s.checkCache(c, 2)
+	s.cache.OnSendFail(s.bo, ctx, false, errors.New("test error"))
+
+	// Get region2 cache will get nil then reload.
+	ctx2, err := s.cache.GetRPCContext(s.bo, loc2.Region)
+	c.Assert(ctx2, IsNil)
+	c.Assert(err, IsNil)
+}
+
 func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	// 3 nodes and no.1 is leader.
 	store3 := s.cluster.AllocID()
@@ -457,6 +483,35 @@ func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 	c.Assert(getVal, BytesEquals, testValue)
 }
 
+func (s *testRegionCacheSuite) TestReplaceAddrWithNewStore(c *C) {
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+
+	client := &RawKVClient{
+		clusterID:   0,
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+	}
+	defer client.Close()
+	testKey := []byte("test_key")
+	testValue := []byte("test_value")
+	err := client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
+
+	// make store2 using store1's addr and store1 offline
+	store1Addr := s.storeAddr(s.store1)
+	s.cluster.UpdateStoreAddr(s.store1, s.storeAddr(s.store2))
+	s.cluster.UpdateStoreAddr(s.store2, store1Addr)
+	s.cluster.RemoveStore(s.store1)
+	s.cluster.ChangeLeader(s.region1, s.peer2)
+	s.cluster.RemovePeer(s.region1, s.store1)
+
+	getVal, err := client.Get(testKey)
+
+	c.Assert(err, IsNil)
+	c.Assert(getVal, BytesEquals, testValue)
+}
+
 func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
 	// ['' - 'm' - 'z']
 	region2 := s.cluster.AllocID()
@@ -543,7 +598,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 			}
 			r := cache.getCachedRegionWithRLock(rpcCtx.Region)
 			if r == nil {
-				cache.switchNextPeer(r, rpcCtx.PeerIdx)
+				cache.switchNextPeer(r, rpcCtx.PeerIdx, nil)
 			}
 		}
 	})

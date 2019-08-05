@@ -152,3 +152,10 @@ insert into t values (1);
 explain select * from t left outer join t t1 on t.a = t1.a where t.a not between 1 and 2;
 rollback;
 drop table if exists t;
+
+create table t(a time, b date);
+insert into t values (1, "1000-01-01"), (2, "1000-01-02"), (3, "1000-01-03");
+analyze table t;
+explain select * from t where a = 1;
+explain select * from t where b = "1000-01-01";
+drop table t;

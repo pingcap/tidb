@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -61,7 +60,8 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogCopWaitMax, mysql.TypeDouble, 22, 0, nil, nil},
 	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
-	{variable.SlowLogQuerySQLStr, mysql.TypeVarchar, 4096, 0, nil, nil},
+	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 }
 
 func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
@@ -140,24 +140,34 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
+	var resByte []byte
 	lineByte, isPrefix, err := reader.ReadLine()
-	if err != nil {
-		return lineByte, err
+	if isPrefix {
+		// Need to read more data.
+		resByte = make([]byte, len(lineByte), len(lineByte)*2)
+	} else {
+		resByte = make([]byte, len(lineByte))
 	}
+	// Use copy here to avoid shallow copy problem.
+	copy(resByte, lineByte)
+	if err != nil {
+		return resByte, err
+	}
+
 	var tempLine []byte
 	for isPrefix {
 		tempLine, isPrefix, err = reader.ReadLine()
-		lineByte = append(lineByte, tempLine...)
+		resByte = append(resByte, tempLine...)
 
 		// Use the max value of max_allowed_packet to check the single line length.
-		if len(lineByte) > int(variable.MaxOfMaxAllowedPacket) {
-			return lineByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
+		if len(resByte) > int(variable.MaxOfMaxAllowedPacket) {
+			return resByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
 		}
 		if err != nil {
-			return lineByte, err
+			return resByte, err
 		}
 	}
-	return lineByte, err
+	return resByte, err
 }
 
 type slowQueryTuple struct {
@@ -187,27 +197,23 @@ type slowQueryTuple struct {
 	maxWaitTime       float64
 	maxWaitAddress    string
 	memMax            int64
+	succ              bool
 	sql               string
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
-	value = stringutil.Copy(value)
+	var err error
 	switch field {
 	case variable.SlowLogTimeStr:
-		t, err := ParseTime(value)
+		st.time, err = ParseTime(value)
 		if err != nil {
-			return err
+			break
 		}
-		if t.Location() != tz {
-			t = t.In(tz)
+		if st.time.Location() != tz {
+			st.time = st.time.In(tz)
 		}
-		st.time = t
 	case variable.SlowLogTxnStartTSStr:
-		num, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.txnStartTs = num
+		st.txnStartTs, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogUserStr:
 		fields := strings.SplitN(value, "@", 2)
 		if len(field) > 0 {
@@ -217,53 +223,21 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 			st.host = fields[1]
 		}
 	case variable.SlowLogConnIDStr:
-		num, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.connID = num
+		st.connID, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogQueryTimeStr:
-		num, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.queryTime = num
+		st.queryTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.ProcessTimeStr:
-		num, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.processTime = num
+		st.processTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.WaitTimeStr:
-		num, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.waitTime = num
+		st.waitTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.BackoffTimeStr:
-		num, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.backOffTime = num
+		st.backOffTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.RequestCountStr:
-		num, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.requestCount = num
+		st.requestCount, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.TotalKeysStr:
-		num, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.totalKeys = num
+		st.totalKeys, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.ProcessKeysStr:
-		num, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.processKeys = num
+		st.processKeys, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogDBStr:
 		st.db = value
 	case variable.SlowLogIndexIDsStr:
@@ -275,53 +249,30 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 	case variable.SlowLogStatsInfoStr:
 		st.statsInfo = value
 	case variable.SlowLogCopProcAvg:
-		num, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.avgProcessTime = num
+		st.avgProcessTime, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogCopProcP90:
-		num, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.p90ProcessTime = num
+		st.p90ProcessTime, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogCopProcMax:
-		num, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.maxProcessTime = num
+		st.maxProcessTime, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogCopProcAddr:
 		st.maxProcessAddress = value
 	case variable.SlowLogCopWaitAvg:
-		num, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.avgWaitTime = num
+		st.avgWaitTime, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogCopWaitP90:
-		num, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.p90WaitTime = num
+		st.p90WaitTime, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogCopWaitMax:
-		num, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.maxWaitTime = num
+		st.maxWaitTime, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogCopWaitAddr:
 		st.maxWaitAddress = value
 	case variable.SlowLogMemMax:
-		num, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.memMax = num
+		st.memMax, err = strconv.ParseInt(value, 10, 64)
+	case variable.SlowLogSucc:
+		st.succ, err = strconv.ParseBool(value)
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
+	}
+	if err != nil {
+		return errors.Wrap(err, "parse slow log failed `"+field+"` error")
 	}
 	return nil
 }
@@ -358,6 +309,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.maxWaitTime))
 	record = append(record, types.NewStringDatum(st.maxWaitAddress))
 	record = append(record, types.NewIntDatum(st.memMax))
+	if st.succ {
+		record = append(record, types.NewIntDatum(1))
+	} else {
+		record = append(record, types.NewIntDatum(0))
+	}
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
 }

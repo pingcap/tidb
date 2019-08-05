@@ -54,73 +54,21 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 
 	// The sum of length of all index columns.
 	sumLength := 0
-
 	for _, ic := range idxColNames {
-		col := model.FindColumnInfo(columns, ic.Column.Name.O)
+		col := model.FindColumnInfo(columns, ic.Column.Name.L)
 		if col == nil {
 			return nil, errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Column.Name)
 		}
 
-		if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
-			return nil, errors.Trace(errWrongKeyColumn.GenWithStackByArgs(ic.Column.Name))
+		if err := checkIndexColumn(col, ic); err != nil {
+			return nil, err
 		}
 
-		// JSON column cannot index.
-		if col.FieldType.Tp == mysql.TypeJSON {
-			return nil, errors.Trace(errJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
+		indexColumnLength, err := getIndexColumnLength(col, ic.Length)
+		if err != nil {
+			return nil, err
 		}
-
-		// Length must be specified for BLOB and TEXT column indexes.
-		if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
-			return nil, errors.Trace(errBlobKeyWithoutLength)
-		}
-
-		// Length can only be specified for specifiable types.
-		if ic.Length != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
-			return nil, errors.Trace(errIncorrectPrefixKey)
-		}
-
-		// Key length must be shorter or equal to the column length.
-		if ic.Length != types.UnspecifiedLength &&
-			types.IsTypeChar(col.FieldType.Tp) && col.Flen < ic.Length {
-			return nil, errors.Trace(errIncorrectPrefixKey)
-		}
-
-		// Specified length must be shorter than the max length for prefix.
-		if ic.Length > maxPrefixLength {
-			return nil, errors.Trace(errTooLongKey)
-		}
-
-		// Take care of the sum of length of all index columns.
-		if ic.Length != types.UnspecifiedLength {
-			sumLength += ic.Length
-		} else {
-			// Specified data types.
-			if col.Flen != types.UnspecifiedLength {
-				// Special case for the bit type.
-				if col.FieldType.Tp == mysql.TypeBit {
-					sumLength += (col.Flen + 7) >> 3
-				} else {
-					sumLength += col.Flen
-				}
-			} else {
-				if length, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
-					sumLength += length
-				} else {
-					return nil, errUnknownTypeLength.GenWithStackByArgs(col.FieldType.Tp)
-				}
-
-				// Special case for time fraction.
-				if types.IsTypeFractionable(col.FieldType.Tp) &&
-					col.FieldType.Decimal != types.UnspecifiedLength {
-					if length, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
-						sumLength += length
-					} else {
-						return nil, errUnknownFractionLength.GenWithStackByArgs(col.FieldType.Tp, col.FieldType.Decimal)
-					}
-				}
-			}
-		}
+		sumLength += indexColumnLength
 
 		// The sum of all lengths must be shorter than the max length for prefix.
 		if sumLength > maxPrefixLength {
@@ -135,6 +83,93 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 	}
 
 	return idxColumns, nil
+}
+
+func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
+	// The sum of length of all index columns.
+	sumLength := 0
+	for _, ic := range idxColumns {
+		col := model.FindColumnInfo(columns, ic.Name.L)
+		if col == nil {
+			return errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
+		}
+
+		indexColumnLength, err := getIndexColumnLength(col, ic.Length)
+		if err != nil {
+			return err
+		}
+		sumLength += indexColumnLength
+		// The sum of all lengths must be shorter than the max length for prefix.
+		if sumLength > maxPrefixLength {
+			return errors.Trace(errTooLongKey)
+		}
+	}
+	return nil
+}
+
+func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexColName) error {
+	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
+		return errors.Trace(errWrongKeyColumn.GenWithStackByArgs(ic.Column.Name))
+	}
+
+	// JSON column cannot index.
+	if col.FieldType.Tp == mysql.TypeJSON {
+		return errors.Trace(errJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
+	}
+
+	// Length must be specified for BLOB and TEXT column indexes.
+	if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
+		return errors.Trace(errBlobKeyWithoutLength)
+	}
+
+	// Length can only be specified for specifiable types.
+	if ic.Length != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
+		return errors.Trace(errIncorrectPrefixKey)
+	}
+
+	// Key length must be shorter or equal to the column length.
+	if ic.Length != types.UnspecifiedLength &&
+		types.IsTypeChar(col.FieldType.Tp) && col.Flen < ic.Length {
+		return errors.Trace(errIncorrectPrefixKey)
+	}
+
+	// Specified length must be shorter than the max length for prefix.
+	if ic.Length > maxPrefixLength {
+		return errors.Trace(errTooLongKey)
+	}
+	return nil
+}
+
+func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
+	// Take care of the sum of length of all index columns.
+	if colLen != types.UnspecifiedLength {
+		return colLen, nil
+	}
+	// Specified data types.
+	if col.Flen != types.UnspecifiedLength {
+		// Special case for the bit type.
+		if col.FieldType.Tp == mysql.TypeBit {
+			return (col.Flen + 7) >> 3, nil
+		}
+		return col.Flen, nil
+
+	}
+
+	length, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]
+	if !ok {
+		return length, errUnknownTypeLength.GenWithStackByArgs(col.FieldType.Tp)
+	}
+
+	// Special case for time fraction.
+	if types.IsTypeFractionable(col.FieldType.Tp) &&
+		col.FieldType.Decimal != types.UnspecifiedLength {
+		decimalLength, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]
+		if !ok {
+			return length, errUnknownFractionLength.GenWithStackByArgs(col.FieldType.Tp, col.FieldType.Decimal)
+		}
+		length += decimalLength
+	}
+	return length, nil
 }
 
 func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, idxColNames []*ast.IndexColName, state model.SchemaState) (*model.IndexInfo, error) {
@@ -908,27 +943,23 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
 	cols := t.Cols()
-	decodeColMap := make(map[int64]decoder.Column, len(indexInfo.Columns))
-	for _, v := range indexInfo.Columns {
-		col := cols[v.Offset]
-		tpExpr := decoder.Column{
-			Col: col,
-		}
-		if col.IsGenerated() && !col.GeneratedStored {
-			for _, c := range cols {
-				if _, ok := col.Dependences[c.Name.L]; ok {
-					decodeColMap[c.ID] = decoder.Column{
-						Col: c,
-					}
-				}
-			}
-			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta(), &col.FieldType)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			tpExpr.GenExpr = e
-		}
-		decodeColMap[col.ID] = tpExpr
+	indexedCols := make([]*table.Column, len(indexInfo.Columns))
+	for i, v := range indexInfo.Columns {
+		indexedCols[i] = cols[v.Offset]
+	}
+
+	var containsVirtualCol bool
+	decodeColMap, err := decoder.BuildFullDecodeColMap(indexedCols, t, func(genCol *table.Column) (expression.Expression, error) {
+		containsVirtualCol = true
+		return expression.ParseSimpleExprCastWithTableInfo(sessCtx, genCol.GeneratedExprString, t.Meta(), &genCol.FieldType)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if containsVirtualCol {
+		decoder.SubstituteGenColsInDecodeColMap(decodeColMap)
+		decoder.RemoveUnusedVirtualCols(decodeColMap, indexedCols)
 	}
 	return decodeColMap, nil
 }

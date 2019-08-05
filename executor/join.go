@@ -135,7 +135,6 @@ func (e *HashJoinExec) Close() error {
 		e.outerChkResourceCh = nil
 		e.joinChkResourceCh = nil
 	}
-	e.memTracker.Detach()
 	e.memTracker = nil
 
 	err := e.baseExecutor.Close()
@@ -638,7 +637,6 @@ type NestedLoopApplyExec struct {
 func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
 
-	e.memTracker.Detach()
 	e.memTracker = nil
 	return e.outerExec.Close()
 }

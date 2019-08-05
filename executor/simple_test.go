@@ -136,6 +136,15 @@ func (s *testSuite3) TestRole(c *C) {
 	grantRoleSQL = `GRANT 'r_1'@'localhost' TO 'r_3'@'localhost', 'r_4'@'localhost';`
 	_, err = tk.Exec(grantRoleSQL)
 	c.Check(err, NotNil)
+
+	// Test grant role for current_user();
+	sessionVars := tk.Se.GetSessionVars()
+	originUser := sessionVars.User
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "%"}
+	tk.MustExec("grant 'r_1'@'localhost' to current_user();")
+	tk.MustExec("revoke 'r_1'@'localhost' from 'root'@'%';")
+	sessionVars.User = originUser
+
 	result = tk.MustQuery(`SELECT FROM_USER FROM mysql.role_edges WHERE TO_USER="r_3" and TO_HOST="localhost"`)
 	result.Check(nil)
 
@@ -152,13 +161,19 @@ func (s *testSuite3) TestRole(c *C) {
 	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('localhost','test','%','root')")
 	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','root')")
 	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','root')")
+	tk.MustExec("flush privileges")
+	tk.MustExec("SET DEFAULT ROLE r_1, r_2 TO root")
 	_, err = tk.Exec("revoke test@localhost, r_1 from root;")
 	c.Check(err, IsNil)
 	_, err = tk.Exec("revoke `r_2`@`%` from root, u_2;")
 	c.Check(err, NotNil)
 	_, err = tk.Exec("revoke `r_2`@`%` from root;")
 	c.Check(err, IsNil)
+	_, err = tk.Exec("revoke `r_1`@`%` from root;")
+	c.Check(err, IsNil)
 	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE DEFAULT_ROLE_USER="test" and DEFAULT_ROLE_HOST="localhost"`)
+	result.Check(nil)
+	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE USER="root" and HOST="%"`)
 	result.Check(nil)
 	dropRoleSQL = `DROP ROLE 'test'@'localhost', r_1, r_2;`
 	tk.MustExec(dropRoleSQL)

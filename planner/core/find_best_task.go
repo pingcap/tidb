@@ -69,7 +69,10 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, 
 	if !prop.IsEmpty() {
 		return invalidTask, nil
 	}
-	dual := PhysicalTableDual{RowCount: p.RowCount}.Init(p.ctx, p.stats)
+	dual := PhysicalTableDual{
+		RowCount:    p.RowCount,
+		placeHolder: p.placeHolder,
+	}.Init(p.ctx, p.stats)
 	dual.SetSchema(p.schema)
 	return &rootTask{p: dual}, nil
 }
