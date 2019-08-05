@@ -3218,6 +3218,15 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 // Because of the grouped specification is different from it, we should especially check them before build window frame.
 func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderByItems []property.Item) error {
 	for _, f := range funcs {
+		if f.IgnoreNull {
+			return ErrNotSupportedYet.GenWithStackByArgs("IGNORE NULLS")
+		}
+		if f.Distinct {
+			return ErrNotSupportedYet.GenWithStackByArgs("<window function>(DISTINCT ..)")
+		}
+		if f.FromLast {
+			return ErrNotSupportedYet.GenWithStackByArgs("FROM LAST")
+		}
 		spec := f.Spec
 		if spec.Frame == nil {
 			continue
