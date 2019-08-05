@@ -14,6 +14,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -21,7 +23,7 @@ import (
 
 type buildKeySolver struct{}
 
-func (s *buildKeySolver) optimize(lp LogicalPlan) (LogicalPlan, error) {
+func (s *buildKeySolver) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
 	lp.buildKeyInfo()
 	return lp, nil
 }

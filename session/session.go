@@ -596,7 +596,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
-			schemaVersion, err = st.RebuildPlan()
+			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
 				return err
 			}
@@ -1222,7 +1222,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args .
 	}
 
 	s.PrepareTxnCtx(ctx)
-	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
+	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args...)
 	if err != nil {
 		return nil, err
 	}
