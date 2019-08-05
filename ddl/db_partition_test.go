@@ -495,6 +495,19 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 		partition p5 values less than maxvalue
 	);`
 	assertErrorCode(c, tk, sql7, tmysql.ErrSameNamePartition)
+
+	tk.MustExec("alter table table3 add partition (partition p3 values less than (2001 + 10))")
+
+	// less than value can be negative or expression.
+	tk.MustExec(`CREATE TABLE tt5 (
+		c3 bigint(20) NOT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	PARTITION BY RANGE ( c3 ) (
+		PARTITION p0 VALUES LESS THAN (-3),
+		PARTITION p1 VALUES LESS THAN (-2)
+	);`)
+	tk.MustExec(`ALTER TABLE tt5 add partition ( partition p2 values less than (-1) );`)
+	tk.MustExec(`ALTER TABLE tt5 add partition ( partition p3 values less than (5-1) );`)
 }
 
 func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
@@ -1434,6 +1447,9 @@ func (s *testIntegrationSuite4) TestPartitionErrorCode(c *C) {
 	partition by hash(store_id)
 	partitions 4;`)
 	_, err := tk.Exec("alter table employees add partition partitions 8;")
+	c.Assert(ddl.ErrUnsupportedAddPartition.Equal(err), IsTrue)
+
+	_, err = tk.Exec("alter table employees add partition (partition p5 values less than (42));")
 	c.Assert(ddl.ErrUnsupportedAddPartition.Equal(err), IsTrue)
 
 	// coalesce partition
