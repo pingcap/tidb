@@ -48,6 +48,7 @@ const (
 	AnalyzeOptNumTopN
 	AnalyzeOptCMSketchDepth
 	AnalyzeOptCMSketchWidth
+	AnalyzeOptNumSamples
 )
 
 // AnalyzeOptionString stores the string form of analyze options.
@@ -56,6 +57,7 @@ var AnalyzeOptionString = map[AnalyzeOptionType]string{
 	AnalyzeOptNumTopN:       "TOPN",
 	AnalyzeOptCMSketchWidth: "CMSKETCH WIDTH",
 	AnalyzeOptCMSketchDepth: "CMSKETCH DEPTH",
+	AnalyzeOptNumSamples:    "SAMPLES",
 }
 
 // AnalyzeOpt stores the analyze option type and value.
