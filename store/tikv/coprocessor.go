@@ -109,7 +109,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.concurrency = 1
 	}
 	if it.req.KeepOrder {
-		it.recvChan = make(chan struct{}, len(tasks))
+		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
@@ -375,9 +375,9 @@ type copIterator struct {
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
 	curr  int
-	// recvChan indicates a copTask has been received by copIterator.Next, if keepOrder.
-	// copIteratorTaskSender uses it to control sending rate.
-	recvChan chan struct{}
+	// sendRate controls the sending rate of copIteratorTaskSender, if keepOrder,
+	// to prevent all tasks being done (aka. all of the responses are buffered)
+	sendRate *rateLimit
 
 	// Otherwise, results are stored in respChan.
 	respChan chan *copResponse
@@ -408,8 +408,7 @@ type copIteratorTaskSender struct {
 	tasks    []*copTask
 	finishCh <-chan struct{}
 	respChan chan<- *copResponse
-	recvChan <-chan struct{}
-	quota    int
+	sendRate *rateLimit
 }
 
 type copResponse struct {
@@ -510,8 +509,7 @@ func (it *copIterator) open(ctx context.Context) {
 		wg:       &it.wg,
 		tasks:    it.tasks,
 		finishCh: it.finishCh,
-		recvChan: it.recvChan,
-		quota:    it.concurrency * 2,
+		sendRate: it.sendRate,
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
@@ -519,17 +517,15 @@ func (it *copIterator) open(ctx context.Context) {
 
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
-forLoop:
-	for i, t := range sender.tasks {
+	for _, t := range sender.tasks {
 		// If keepOrder, we must control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
-		// We keep the number of inflight tasks within the number of copIteratorTaskSender.quota.
-		// It sends one more task if it's notified by recvChan that a task has been received.
-		if sender.recvChan != nil && i >= sender.quota {
-			select {
-			case <-sender.recvChan:
-			case <-sender.finishCh:
-				break forLoop
+		// We keep the number of inflight tasks within the number of concurrency * 2.
+		// It sends one more task if a task has been finished in copIterator.Next.
+		if sender.sendRate != nil {
+			exit := sender.sendRate.getToken(sender.finishCh)
+			if exit {
+				break
 			}
 		}
 		exit := sender.sendToTaskCh(t)
@@ -619,7 +615,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			it.recvChan <- struct{}{}
+			it.sendRate.putToken()
 		}
 	}
 
@@ -884,6 +880,33 @@ func (it *copIterator) Close() error {
 	}
 	it.wg.Wait()
 	return nil
+}
+
+type rateLimit struct {
+	token chan struct{}
+}
+
+func newRateLimit(n int) *rateLimit {
+	return &rateLimit{
+		token: make(chan struct{}, n),
+	}
+}
+
+func (r *rateLimit) getToken(done <-chan struct{}) (exit bool) {
+	select {
+	case <-done:
+		return true
+	case r.token <- struct{}{}:
+		return false
+	}
+}
+
+func (r *rateLimit) putToken() {
+	select {
+	case <-r.token:
+	default:
+		panic("put a redundant token")
+	}
 }
 
 // copErrorResponse returns error when calling Next()
