@@ -1208,8 +1208,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	}
 
 	for _, taskTp := range wholeTaskTypes {
-		copiedChildProperty := new(property.PhysicalProperty)
-		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+		copiedChildProperty := *childProp // It's ok to not deep copy the "cols" field.
 		copiedChildProperty.TaskTp = taskTp
 
 		agg := basePhysicalAgg{
@@ -1257,8 +1256,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
 		for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType} {
-			copiedChildProperty := new(property.PhysicalProperty)
-			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+			copiedChildProperty := *childProp // It's ok to not deep copy the "cols" field.
 			copiedChildProperty.TaskTp = taskTp
 
 			agg := basePhysicalAgg{
@@ -1299,15 +1297,17 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 		errMsg := "Optimizer aggregation hints are conflicted"
 		warning := ErrInternal.GenWithStack(errMsg)
 		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		la.preferAggType = 0
+		preferHash, preferStream = false, false
 	}
 
 	hashAggs := la.getHashAggs(prop)
-	if hashAggs != nil && preferHash && !preferStream {
+	if hashAggs != nil && preferHash {
 		return hashAggs
 	}
 
 	streamAggs := la.getStreamAggs(prop)
-	if streamAggs != nil && preferStream && !preferHash {
+	if streamAggs != nil && preferStream {
 		return streamAggs
 	}
 
