@@ -629,6 +629,8 @@ func (t IndexType) String() string {
 		return "BTREE"
 	case IndexTypeHash:
 		return "HASH"
+	case IndexTypeRtree:
+		return "RTREE"
 	default:
 		return ""
 	}
@@ -639,6 +641,7 @@ const (
 	IndexTypeInvalid IndexType = iota
 	IndexTypeBtree
 	IndexTypeHash
+	IndexTypeRtree
 )
 
 // IndexInfo provides meta data describing a DB index.
@@ -653,7 +656,7 @@ type IndexInfo struct {
 	Primary bool           `json:"is_primary"` // Whether the index is primary key.
 	State   SchemaState    `json:"state"`
 	Comment string         `json:"comment"`    // Comment
-	Tp      IndexType      `json:"index_type"` // Index type: Btree or Hash
+	Tp      IndexType      `json:"index_type"` // Index type: Btree, Hash or Rtree
 }
 
 // Clone clones IndexInfo.
