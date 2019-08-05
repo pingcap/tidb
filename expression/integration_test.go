@@ -4661,6 +4661,8 @@ func (s *testIntegrationSuite) TestIssue11594(c *C) {
 	tk.MustExec("INSERT INTO t1 VALUES (1), (2);")
 	tk.MustQuery("SELECT SUM(IF(v > 1, v, -v)) FROM t1;").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT sum(IFNULL(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
+	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
+	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), v)) FROM t1;").Check(testkit.Rows("3"))
 }
 
 func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
