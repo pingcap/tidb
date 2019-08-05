@@ -195,8 +195,8 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 	case types.KindInt64:
 		// Overflow check.
 		lowVal, highVal := low.GetInt64(), high.GetInt64()
-		if lowVal < 0 && highVal > 0 {
-			if lowVal <= -maxNumStep || highVal >= maxNumStep {
+		if lowVal <= 0 && highVal >= 0 {
+			if lowVal < -maxNumStep || highVal > maxNumStep {
 				return nil
 			}
 		}
