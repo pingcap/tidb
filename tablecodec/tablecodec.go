@@ -268,6 +268,8 @@ func EncodeRowWithColSizeMap(sc *stmtctx.StatementContext, row []types.Datum, co
 		// We could not set nil value into kv.
 		return append(valBuf, codec.NilFlag), colSize, nil
 	}
+	// Below `for loop` use i+=2 to grow up, so length := len(values) - 1 to avoid panic when the len(values) is odd.
+	// But normally, the len(values) should always be even.
 	length := len(values) - 1
 	for i := 0; i < length; i += 2 {
 		valBuf, err = codec.EncodeValue(sc, valBuf, values[i])
