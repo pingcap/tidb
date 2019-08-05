@@ -1199,13 +1199,15 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
-	enforcedAggs := make([]PhysicalPlan, 0, 2)
+	_, desc := prop.AllSameOrder()
+	enforcedAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 		Enforced:    true,
+		Items:       property.ItemsFromCols(la.groupByCols, desc),
 	}
 
-	for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType} {
+	for _, taskTp := range wholeTaskTypes {
 		copiedChildProperty := new(property.PhysicalProperty)
 		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 		copiedChildProperty.TaskTp = taskTp
@@ -1221,8 +1223,6 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 }
 
 func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
-	preferStream := (la.preferAggType & preferStreamAgg) > 0
-
 	all, desc := prop.AllSameOrder()
 	if !all {
 		return nil
@@ -1238,15 +1238,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
-	// The above checks ensure that stream aggregation can satisfy the required property
-	if len(la.possibleProperties) == 0 {
-		if preferStream {
-			return la.getEnforcedStreamAggs(prop)
-		}
-		return nil
-	}
-
-	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
+	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1)+len(wholeTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 	}
@@ -1277,8 +1269,9 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			streamAggs = append(streamAggs, agg)
 		}
 	}
-	if streamAggs == nil && preferStream {
-		return la.getEnforcedStreamAggs(prop)
+	preferStream := (la.preferAggType & preferStreamAgg) > 0
+	if preferStream {
+		streamAggs = append(streamAggs, la.getEnforcedStreamAggs(prop)...)
 	}
 	return streamAggs
 }
@@ -1315,14 +1308,9 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 
 	streamAggs := la.getStreamAggs(prop)
 	if streamAggs != nil && preferStream && !preferHash {
-		// The following three lines are used to cover a bug related to possibleProperties.
-		for i := range streamAggs {
-			for j := range streamAggs[i].(*PhysicalStreamAgg).childrenReqProps {
-				streamAggs[i].(*PhysicalStreamAgg).childrenReqProps[j].Enforced = true
-			}
-		}
 		return streamAggs
 	}
+
 	if streamAggs == nil && preferStream {
 		errMsg := "Optimizer Hint TIDB_STREAMAGG is inapplicable"
 		warning := ErrInternal.GenWithStack(errMsg)
