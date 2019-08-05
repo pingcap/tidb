@@ -2109,7 +2109,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 				return errors.Trace(err)
 			}
-			duplicateColNames := make(map[string]struct{})
+			duplicateColNames := make(map[string]struct{}, len(dependColNames))
 			for k := range dependColNames {
 				duplicateColNames[k] = struct{}{}
 			}
