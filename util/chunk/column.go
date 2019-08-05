@@ -279,6 +279,24 @@ func (c *Column) SetNull(rowIdx int, isNull bool) {
 	}
 }
 
+// SetNulls sets rows in [begin, end) to null.
+func (c *Column) SetNulls(begin, end int, isNull bool) {
+	i := ((begin + 7) >> 3) << 3
+	for ; begin < i && begin < end; begin++ {
+		c.SetNull(begin, isNull)
+	}
+	var v uint8
+	if !isNull {
+		v = (1 << 8) - 1
+	}
+	for ; begin+8 <= end; begin += 8 {
+		c.nullBitmap[begin>>3] = v
+	}
+	for ; begin < end; begin++ {
+		c.SetNull(begin, isNull)
+	}
+}
+
 // nullCount returns the number of nulls in this Column.
 func (c *Column) nullCount() int {
 	var cnt, i int
