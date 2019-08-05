@@ -163,16 +163,16 @@ type Column struct {
 	ID int64
 	// UniqueID is the unique id of this column.
 	UniqueID int64
-	// IsReferenced means if this column is referenced to an Aggregation column, or a Subquery column,
-	// or an argument column of function IfNull.
-	// If so, this column's name will be the plain sql text.
-	IsReferenced bool
 
 	// Index is used for execution, to tell the column's position in the given row.
 	Index int
 
 	hashcode []byte
 
+	// IsReferenced means if this column is referenced to an Aggregation column, or a Subquery column,
+	// or an argument column of function IfNull.
+	// If so, this column's name will be the plain sql text.
+	IsReferenced bool
 	// InOperand indicates whether this column is the inner operand of column equal condition converted
 	// from `[not] in (subq)`.
 	InOperand bool

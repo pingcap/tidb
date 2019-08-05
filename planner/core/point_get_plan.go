@@ -43,11 +43,11 @@ type PointGetPlan struct {
 	IndexInfo        *model.IndexInfo
 	Handle           int64
 	HandleParam      *driver.ParamMarkerExpr
-	UnsignedHandle   bool
 	IndexValues      []types.Datum
 	IndexValueParams []*driver.ParamMarkerExpr
 	expr             expression.Expression
 	ctx              sessionctx.Context
+	UnsignedHandle   bool
 	IsTableDual      bool
 	Lock             bool
 	IsForUpdate      bool

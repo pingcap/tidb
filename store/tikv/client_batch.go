@@ -35,7 +35,6 @@ import (
 )
 
 type batchConn struct {
-	index uint32
 	// batchCommandsCh used for batch commands.
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
@@ -44,10 +43,12 @@ type batchConn struct {
 
 	// Notify rpcClient to check the idle flag
 	idleNotify *uint32
-	idle       bool
 	idleDetect *time.Timer
 
 	pendingRequests prometheus.Gauge
+
+	index uint32
+	idle  bool
 }
 
 func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {

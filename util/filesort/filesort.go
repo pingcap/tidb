@@ -1,6 +1,6 @@
 // Copyright 2017 PingCAP, Inc.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
+// Licensed under the AApache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
@@ -117,15 +117,11 @@ type FileSorter struct {
 	nWorkers int // number of workers used in async sorting
 	cWorker  int // the next worker to which the sorting job is sent
 
-	mu       sync.Mutex
-	wg       sync.WaitGroup
-	tmpDir   string
-	files    []string
-	nFiles   int
-	closed   bool
-	fetched  bool
-	external bool // mark the necessity of performing external file sort
-	cursor   int  // required when performing full in-memory sort
+	mu     sync.Mutex
+	tmpDir string
+	files  []string
+	nFiles int
+	cursor int // required when performing full in-memory sort
 
 	rowHeap    *rowHeap
 	fds        []*os.File
@@ -135,6 +131,11 @@ type FileSorter struct {
 	keySize    int
 	valSize    int
 	maxRowSize int
+
+	wg       sync.WaitGroup
+	closed   bool
+	fetched  bool
+	external bool // mark the necessity of performing external file sort
 }
 
 // Worker sorts file asynchronously.

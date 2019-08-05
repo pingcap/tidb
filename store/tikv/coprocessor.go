@@ -326,10 +326,6 @@ type copIterator struct {
 	req         *kv.Request
 	concurrency int
 	finishCh    chan struct{}
-	// closed represents when the Close is called.
-	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
-	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
-	closed uint32
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
@@ -337,11 +333,16 @@ type copIterator struct {
 
 	// Otherwise, results are stored in respChan.
 	respChan chan *copResponse
-	wg       sync.WaitGroup
 
 	vars *kv.Variables
 
 	memTracker *memory.Tracker
+
+	wg sync.WaitGroup
+	// closed represents when the Close is called.
+	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
+	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
+	closed uint32
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.

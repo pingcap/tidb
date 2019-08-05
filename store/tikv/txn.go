@@ -57,11 +57,9 @@ type tikvTxn struct {
 	startTS   uint64
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
-	valid     bool
 	lockKeys  [][]byte
 	lockedMap map[string]struct{}
 	mu        sync.Mutex // For thread-safe LockKeys function.
-	dirty     bool
 	setCnt    int64
 	vars      *kv.Variables
 	committer *twoPhaseCommitter
@@ -72,6 +70,9 @@ type tikvTxn struct {
 	// StmtCommit/StmtRollback may change the confirmed position.
 	assertions []assertionPair
 	confirmed  int
+
+	valid bool
+	dirty bool
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {

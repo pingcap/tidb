@@ -198,15 +198,15 @@ func (a *connArray) Close() {
 // that there are too many concurrent requests which overload the service of TiKV.
 type rpcClient struct {
 	sync.RWMutex
-	isClosed bool
-	done     chan struct{}
+	done chan struct{}
 
 	conns    map[string]*connArray
 	security config.Security
 
-	// Implement background cleanup.
-	// Periodically check whether there is any connection that is idle and then close and remove these idle connections.
 	idleNotify uint32
+	// Periodically check whether there is any connection that is idle and then close and remove these idle connections.
+	// Implement background cleanup.
+	isClosed bool
 }
 
 func newRPCClient(security config.Security) *rpcClient {
