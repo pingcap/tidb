@@ -270,6 +270,10 @@ func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.Stat
 				ran.HighExclude = false
 			}
 		}
+		ranges, err = unionRanges(sc, ranges)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return ranges, nil
 }
