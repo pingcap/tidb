@@ -24,7 +24,7 @@ type testBackoffSuite struct {
 	store *tikvStore
 }
 
-var _ = Suite(&testLockSuite{})
+var _ = Suite(&testBackoffSuite{})
 
 func (s *testBackoffSuite) SetUpTest(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
