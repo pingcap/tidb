@@ -449,13 +449,9 @@ func (s *testSuite) TestAdminShowDDLJobs(c *C) {
 	job.SchemaName = ""
 	err = t.AddHistoryDDLJob(job)
 	c.Assert(err, IsNil)
-	err = tk.Se.StmtCommit()
-	c.Assert(err, IsNil)
 	err = tk.Se.CommitTxn(context.Background())
 	c.Assert(err, IsNil)
 
-	//err = txn.Commit(context.Background())
-	//c.Assert(err, IsNil)
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]
 	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
