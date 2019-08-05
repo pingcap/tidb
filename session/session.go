@@ -183,6 +183,9 @@ type session struct {
 	ddlOwnerChecker owner.DDLOwnerChecker
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables map[int64]model.TableLockTpInfo
+
+	// shared coprocessor client per session
+	client kv.Client
 }
 
 // AddTableLock adds table lock to the session lock map.
@@ -540,7 +543,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 }
 
 func (s *session) GetClient() kv.Client {
-	return s.store.GetClient()
+	return s.client
 }
 
 func (s *session) String() string {
@@ -1605,6 +1608,7 @@ func createSession(store kv.Storage) (*session, error) {
 		parser:          parser.New(),
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
+		client:          store.GetClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -1629,6 +1633,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
+		client:      store.GetClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
