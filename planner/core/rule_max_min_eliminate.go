@@ -13,6 +13,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -25,7 +27,7 @@ import (
 type maxMinEliminator struct {
 }
 
-func (a *maxMinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (a *maxMinEliminator) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	a.eliminateMaxMin(p)
 	return p, nil
 }

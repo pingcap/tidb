@@ -78,7 +78,7 @@ type Statement interface {
 	IsReadOnly(vars *variable.SessionVars) bool
 
 	// RebuildPlan rebuilds the plan of the statement.
-	RebuildPlan() (schemaVersion int64, err error)
+	RebuildPlan(ctx context.Context) (schemaVersion int64, err error)
 }
 
 // RecordSet is an abstract result set interface to help get data from Plan.

@@ -483,6 +483,35 @@ func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 	c.Assert(getVal, BytesEquals, testValue)
 }
 
+func (s *testRegionCacheSuite) TestReplaceAddrWithNewStore(c *C) {
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+
+	client := &RawKVClient{
+		clusterID:   0,
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+	}
+	defer client.Close()
+	testKey := []byte("test_key")
+	testValue := []byte("test_value")
+	err := client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
+
+	// make store2 using store1's addr and store1 offline
+	store1Addr := s.storeAddr(s.store1)
+	s.cluster.UpdateStoreAddr(s.store1, s.storeAddr(s.store2))
+	s.cluster.UpdateStoreAddr(s.store2, store1Addr)
+	s.cluster.RemoveStore(s.store1)
+	s.cluster.ChangeLeader(s.region1, s.peer2)
+	s.cluster.RemovePeer(s.region1, s.store1)
+
+	getVal, err := client.Get(testKey)
+
+	c.Assert(err, IsNil)
+	c.Assert(getVal, BytesEquals, testValue)
+}
+
 func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
 	// ['' - 'm' - 'z']
 	region2 := s.cluster.AllocID()

@@ -179,7 +179,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		param.InExecute = false
 	}
 	var p plannercore.Plan
-	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
+	p, err = plannercore.BuildLogicalPlan(ctx, e.ctx, stmt, e.is)
 	if err != nil {
 		return err
 	}
@@ -265,17 +265,17 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...interface{}) (sqlexec.Statement, error) {
+func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID uint32, args ...interface{}) (sqlexec.Statement, error) {
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
-	if err := ResetContextOfStmt(ctx, execStmt); err != nil {
+	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
 		return nil, err
 	}
 	execStmt.UsingVars = make([]ast.ExprNode, len(args))
 	for i, val := range args {
 		execStmt.UsingVars[i] = ast.NewValueExpr(val)
 	}
-	is := GetInfoSchema(ctx)
-	execPlan, err := planner.Optimize(ctx, execStmt, is)
+	is := GetInfoSchema(sctx)
+	execPlan, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, err
 	}
@@ -284,11 +284,11 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 		InfoSchema: is,
 		Plan:       execPlan,
 		StmtNode:   execStmt,
-		Ctx:        ctx,
+		Ctx:        sctx,
 	}
-	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID]; ok {
+	if prepared, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		stmt.Text = prepared.Stmt.Text()
-		ctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
+		sctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
 	}
 	return stmt, nil
 }
