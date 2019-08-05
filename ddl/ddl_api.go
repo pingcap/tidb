@@ -86,6 +86,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 
 	job := &model.Job{
 		SchemaID:   schemaID,
+		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{dbInfo},
@@ -144,6 +145,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	// Do the DDL job.
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionModifySchemaCharsetAndCollate,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{toCharset, toCollate},
@@ -161,6 +163,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	}
 	job := &model.Job{
 		SchemaID:   old.ID,
+		SchemaName: old.Name.L,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
