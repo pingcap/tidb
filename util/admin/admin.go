@@ -595,27 +595,18 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 }
 
 func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
-	cols := t.Cols()
-	tblInfo := t.Meta()
-	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
-	for _, v := range decodeCol {
-		col := cols[v.Offset]
-		tpExpr := decoder.Column{
-			Info: col.ToInfo(),
-		}
-		if col.IsGenerated() && !col.GeneratedStored {
-			for _, c := range cols {
-				if _, ok := col.Dependences[c.Name.L]; ok {
-					decodeColsMap[c.ID] = decoder.Column{
-						Info: c.ToInfo(),
-					}
-				}
-			}
-			tpExpr.GenExpr = genExpr[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
-		}
-		decodeColsMap[col.ID] = tpExpr
+	var containsVirtualCol bool
+	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
+		containsVirtualCol = true
+		return genExpr[model.TableColumnID{TableID: t.Meta().ID, ColumnID: genCol.ID}], nil
+	})
+	_ = ignored
+
+	if containsVirtualCol {
+		decoder.SubstituteGenColsInDecodeColMap(decodeColsMap)
+		decoder.RemoveUnusedVirtualCols(decodeColsMap, decodeCol)
 	}
-	return decoder.NewRowDecoder(cols, decodeColsMap)
+	return decoder.NewRowDecoder(t.Cols(), decodeColsMap)
 }
 
 // genExprs use to calculate generated column value.
