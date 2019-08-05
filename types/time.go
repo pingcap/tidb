@@ -1650,6 +1650,7 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 		if unit != "SECOND" {
 			err = ErrTruncatedWrongValue.GenWithStackByArgs(format)
 		}
+		dv *= sign
 	}
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
