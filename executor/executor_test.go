@@ -424,6 +424,43 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	c.Assert(historyJobs, DeepEquals, historyJobs2)
 }
 
+func (s *testSuite) TestAdminShowDDLJobs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
+	tk.MustExec("use test_admin_show_ddl_jobs")
+	tk.MustExec("create table t (a int);")
+
+	re := tk.MustQuery("admin show ddl jobs 1")
+	row := re.Rows()[0]
+	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
+	jobID, err := strconv.Atoi(row[0].(string))
+	c.Assert(err, IsNil)
+
+	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+	job, err := t.GetHistoryDDLJob(int64(jobID))
+	c.Assert(err, IsNil)
+	c.Assert(job, NotNil)
+	// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
+	// See PR: 11561.
+	job.BinlogInfo = nil
+	job.SchemaName = ""
+	err = t.AddHistoryDDLJob(job)
+	c.Assert(err, IsNil)
+	err = tk.Se.StmtCommit()
+	c.Assert(err, IsNil)
+	err = tk.Se.CommitTxn(context.Background())
+	c.Assert(err, IsNil)
+
+	//err = txn.Commit(context.Background())
+	//c.Assert(err, IsNil)
+	re = tk.MustQuery("admin show ddl jobs 1")
+	row = re.Rows()[0]
+	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
+}
+
 func (s *testSuite) TestAdminChecksumOfPartitionedTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test;")

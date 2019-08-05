@@ -416,7 +416,9 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendInt64(0, e.jobs[i].ID)
 		schemaName := e.jobs[i].SchemaName
 		tableName := ""
+		finishTS := uint64(0)
 		if e.jobs[i].BinlogInfo != nil {
+			finishTS = e.jobs[i].BinlogInfo.FinishedTS
 			if e.jobs[i].BinlogInfo.TableInfo != nil {
 				tableName = e.jobs[i].BinlogInfo.TableInfo.Name.L
 			}
@@ -439,7 +441,7 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendInt64(6, e.jobs[i].TableID)
 		req.AppendInt64(7, e.jobs[i].RowCount)
 		req.AppendString(8, model.TSConvert2Time(e.jobs[i].StartTS).String())
-		req.AppendString(9, model.TSConvert2Time(e.jobs[i].BinlogInfo.FinishedTS).String())
+		req.AppendString(9, model.TSConvert2Time(finishTS).String())
 		req.AppendString(10, e.jobs[i].State.String())
 	}
 	e.cursor += numCurBatch
