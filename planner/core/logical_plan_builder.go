@@ -2058,6 +2058,17 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		}
 		proj.Exprs = append(proj.Exprs, expr)
 	}
+
+	// Re-iterate expressions to handle those virtual generated columns that refers to the other generated columns, for
+	// example, given:
+	//  column a, column b as (a * 2), column c as (b + 1)
+	// we'll get:
+	//  column a, column b as (a * 2), column c as ((a * 2) + 1)
+	// A generated column definition can refer to only generated columns occurring earlier in the table definition, so
+	// it's safe to iterate in index-ascending order.
+	for i, expr := range proj.Exprs {
+		proj.Exprs[i] = expression.ColumnSubstitute(expr, ds.Schema(), proj.Exprs)
+	}
 	proj.SetSchema(ds.Schema().Clone())
 	return proj, nil
 }
