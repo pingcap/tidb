@@ -75,7 +75,7 @@ func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind 
 		return nil, err
 	}
 
-	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema)
+	finalPlan, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, err
 	}

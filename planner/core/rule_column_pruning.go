@@ -14,6 +14,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -28,7 +30,7 @@ import (
 type columnPruner struct {
 }
 
-func (s *columnPruner) optimize(lp LogicalPlan) (LogicalPlan, error) {
+func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
 	err := lp.PruneColumns(lp.Schema().Columns)
 	return lp, err
 }
