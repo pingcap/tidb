@@ -1309,7 +1309,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		return err
 	}
 	txn.SetCap(s.getMembufCap())
-	txn.SetVars(s.GetSessionVars().KVVars)
+	txn.SetVars(s.sessionVars.KVVars)
 	if s.GetSessionVars().ReplicaRead.IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}

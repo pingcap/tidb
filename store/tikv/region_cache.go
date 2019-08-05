@@ -71,7 +71,6 @@ type RegionStore struct {
 	workStoreIdx int32    // point to current work peer in meta.Peers and work store in stores(same idx)
 	stores       []*Store // stores in this region
 	storeFails   []uint32 // snapshots of store's fail, need reload when `storeFails[curr] != stores[cur].fail`
-	followers    []int32  // followers' index in this region
 }
 
 // clone clones region store struct.
@@ -84,27 +83,20 @@ func (r *RegionStore) clone() *RegionStore {
 		workStoreIdx: r.workStoreIdx,
 		stores:       r.stores,
 		storeFails:   storeFails,
-		followers:    r.followers,
-	}
-}
-
-// reset region store followers
-func (r *RegionStore) initFollowers() {
-	r.followers = make([]int32, 0, len(r.stores)-1)
-	for i := int32(0); i < int32(len(r.stores)); i++ {
-		if i != r.workStoreIdx {
-			r.followers = append(r.followers, i)
-		}
 	}
 }
 
 // return next follower store's index
 func (r *RegionStore) follower(seed uint32) int32 {
-	followers := r.followers
-	if len(followers) == 0 {
+	l := uint32(len(r.stores))
+	if l <= 1 {
 		return r.workStoreIdx
 	}
-	return followers[seed%uint32(len(followers))]
+	followerIdx := int32(seed % (l - 1))
+	if followerIdx >= r.workStoreIdx {
+		followerIdx++
+	}
+	return followerIdx
 }
 
 // init initializes region after constructed.
@@ -115,9 +107,8 @@ func (r *Region) init(c *RegionCache) {
 		workStoreIdx: 0,
 		stores:       make([]*Store, 0, len(r.meta.Peers)),
 		storeFails:   make([]uint32, 0, len(r.meta.Peers)),
-		followers:    make([]int32, 0, len(r.meta.Peers)-1),
 	}
-	for i, p := range r.meta.Peers {
+	for _, p := range r.meta.Peers {
 		c.storeMu.RLock()
 		store, exists := c.storeMu.stores[p.StoreId]
 		c.storeMu.RUnlock()
@@ -125,9 +116,6 @@ func (r *Region) init(c *RegionCache) {
 			store = c.getStoreByStoreID(p.StoreId)
 		}
 		rs.stores = append(rs.stores, store)
-		if i != 0 {
-			rs.followers = append(rs.followers, int32(i))
-		}
 		rs.storeFails = append(rs.storeFails, atomic.LoadUint32(&store.fail))
 	}
 	atomic.StorePointer(&r.store, unsafe.Pointer(rs))
@@ -1016,7 +1004,6 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
 	newRegionStore := rs.clone()
 	newRegionStore.workStoreIdx = int32(nextIdx)
-	newRegionStore.initFollowers()
 	r.compareAndSwapStore(rs, newRegionStore)
 }
 
@@ -1043,7 +1030,6 @@ retry:
 	}
 	newRegionStore := oldRegionStore.clone()
 	newRegionStore.workStoreIdx = int32(leaderIdx)
-	newRegionStore.initFollowers()
 	if !r.compareAndSwapStore(oldRegionStore, newRegionStore) {
 		goto retry
 	}
