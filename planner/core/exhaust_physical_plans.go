@@ -1208,7 +1208,8 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	}
 
 	for _, taskTp := range wholeTaskTypes {
-		copiedChildProperty := *childProp // It's ok to not deep copy the "cols" field.
+		copiedChildProperty := new(property.PhysicalProperty)
+		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 		copiedChildProperty.TaskTp = taskTp
 
 		agg := basePhysicalAgg{
@@ -1256,7 +1257,8 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
 		for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType} {
-			copiedChildProperty := *childProp // It's ok to not deep copy the "cols" field.
+			copiedChildProperty := new(property.PhysicalProperty)
+			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 			copiedChildProperty.TaskTp = taskTp
 
 			agg := basePhysicalAgg{
