@@ -451,7 +451,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	testKit.MustExec("drop stats t")
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 
@@ -461,7 +461,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t")
-	h.Update(is)
+	c.Assert(h.Update(is), IsNil)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	h.SetLease(0)

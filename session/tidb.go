@@ -129,6 +129,11 @@ func SetStatsLease(lease time.Duration) {
 	statsLease = lease
 }
 
+// DisableStats4Test disables the stats for tests.
+func DisableStats4Test() {
+	statsLease = -1
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	logutil.Logger(context.Background()).Debug("compiling", zap.String("source", src))

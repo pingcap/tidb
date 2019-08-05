@@ -84,7 +84,7 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
