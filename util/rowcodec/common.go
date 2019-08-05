@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,15 +27,18 @@ const CodecVer = 128
 var errInvalidCodecVer = errors.New("invalid codec version")
 
 // row is the struct type used to access the a row.
+// There are two types of row, small and large.
+// small rows use one byte colID and two bytes offset, optimized for most cases.
+// large rows use four bytes colID and four bytes offset.
 type row struct {
-	// small:  colID []byte, offsets []uint16, optimized for most cases.
-	// large:  colID []uint32, offsets []uint32.
 	large          bool
 	numNotNullCols uint16
 	numNullCols    uint16
-	colIDs         []byte
-	offsets        []uint16
 	data           []byte
+
+	// for small rows
+	colIDs  []byte
+	offsets []uint16
 
 	// for large row
 	colIDs32  []uint32
