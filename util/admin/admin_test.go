@@ -458,7 +458,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	c.Assert(err, IsNil)
 
 	idxNames := []string{idx.Meta().Name.L}
-	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
+	_, _, err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
 	c.Assert(err, IsNil)
 
 	mockCtx := mock.NewContext()
@@ -480,7 +480,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	diffMsg := newDiffRetError("index", record1, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
+	_, _, err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
 	c.Assert(err, IsNil)
 
 	// set data to:
@@ -539,7 +539,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	diffMsg = newDiffRetError("index", record1, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
+	_, _, err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
 	c.Assert(err.Error(), Equals, "table count 3 != index(c) count 4")
 
 	// set data to:
@@ -559,7 +559,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	diffMsg = newDiffRetError("index", nil, record1)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
+	_, _, err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
 	c.Assert(err.Error(), Equals, "table count 4 != index(c) count 3")
 }
 
