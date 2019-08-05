@@ -2092,6 +2092,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	var windowMapper map[*ast.WindowFuncExpr]int
 	if hasWindowFuncField {
 		windowFuncs := extractWindowFuncs(sel.Fields.Fields)
+		// we need to check the func args first before we check the window spec
+		err := b.checkWindowFuncArgs(ctx, p, windowFuncs, windowAggMap)
+		if err != nil {
+			return nil, err
+		}
 		groupedFuncs, err := b.groupWindowFuncs(windowFuncs)
 		if err != nil {
 			return nil, err
@@ -3097,6 +3102,23 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 	}
 	frame.End, err = b.buildWindowFunctionFrameBound(ctx, spec, orderByItems, &frameClause.Extent.End)
 	return frame, err
+}
+
+func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
+	for _, windowFuncExpr := range windowFuncExprs {
+		_, _, _, args, err := b.buildProjectionForWindow(ctx, p, &windowFuncExpr.Spec, windowFuncExpr.Args, windowAggMap)
+		if err != nil {
+			return err
+		}
+		desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFuncExpr.F, args)
+		if err != nil {
+			return err
+		}
+		if desc == nil {
+			return ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFuncExpr.F))
+		}
+	}
+	return nil
 }
 
 func getAllByItems(itemsBuf []*ast.ByItem, spec *ast.WindowSpec) []*ast.ByItem {
