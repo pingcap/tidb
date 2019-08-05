@@ -323,7 +323,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			index, ok = er.windowMap[v]
 		}
 		if !ok {
-			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
+			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.F))
 			return inNode, true
 		}
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
@@ -906,6 +906,22 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.isTrueToScalarFunc(v)
 	case *ast.DefaultExpr:
 		er.evalDefaultExpr(v)
+	// TODO: Perhaps we don't need to transcode these back to generic integers/strings
+	case *ast.TrimDirectionExpr:
+		er.ctxStack = append(er.ctxStack, &expression.Constant{
+			Value:   types.NewIntDatum(int64(v.Direction)),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		})
+	case *ast.TimeUnitExpr:
+		er.ctxStack = append(er.ctxStack, &expression.Constant{
+			Value:   types.NewStringDatum(v.Unit.String()),
+			RetType: types.NewFieldType(mysql.TypeVarchar),
+		})
+	case *ast.GetFormatSelectorExpr:
+		er.ctxStack = append(er.ctxStack, &expression.Constant{
+			Value:   types.NewStringDatum(v.Selector.String()),
+			RetType: types.NewFieldType(mysql.TypeVarchar),
+		})
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false

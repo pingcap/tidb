@@ -167,6 +167,22 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		sr.rowToScalarFunc(v)
 	case *ast.ParenthesesExpr:
 	case *ast.ColumnName:
+	// TODO: Perhaps we don't need to transcode these back to generic integers/strings
+	case *ast.TrimDirectionExpr:
+		sr.push(&Constant{
+			Value:   types.NewIntDatum(int64(v.Direction)),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		})
+	case *ast.TimeUnitExpr:
+		sr.push(&Constant{
+			Value:   types.NewStringDatum(v.Unit.String()),
+			RetType: types.NewFieldType(mysql.TypeVarchar),
+		})
+	case *ast.GetFormatSelectorExpr:
+		sr.push(&Constant{
+			Value:   types.NewStringDatum(v.Selector.String()),
+			RetType: types.NewFieldType(mysql.TypeVarchar),
+		})
 	default:
 		sr.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false

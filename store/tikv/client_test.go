@@ -36,6 +36,7 @@ type testClientSuite struct {
 }
 
 var _ = Suite(&testClientSuite{})
+var _ = Suite(&testClientFailSuite{})
 
 func setMaxBatchSize(size uint) {
 	newConf := config.NewConfig()
