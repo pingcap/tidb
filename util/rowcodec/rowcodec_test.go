@@ -140,6 +140,7 @@ func (s *testSuite) checkDecode(c *C, sc *stmtctx.StatementContext, newRow []byt
 	}
 	readColIDS := []int64{2, 3, 4, 5, 6, 7}
 	defaultColVal, err := codec.EncodeValue(sc, nil, types.NewIntDatum(5))
+	c.Assert(err, IsNil)
 	defaults := [][]byte{nil, defaultColVal, defaultColVal, nil, defaultColVal, nil}
 
 	rd, err := NewDecoder(readColIDS, 7, readRowTypes, defaults, sc)
