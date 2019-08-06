@@ -471,6 +471,17 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	return res, false, err
 }
 
+// checkDecimalSize checks the scale and precision limit when casting to a decimal
+func checkDecimalSize(tp *types.FieldType, val string) error {
+	if tp.Flen > mysql.MaxDecimalWidth {
+		return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, val, mysql.MaxDecimalWidth)
+	}
+	if tp.Decimal > mysql.MaxDecimalScale {
+		return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, val, mysql.MaxDecimalScale)
+	}
+	return nil
+}
+
 type builtinCastIntAsDecimalSig struct {
 	baseBuiltinCastFunc
 }
@@ -485,6 +496,10 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
+	}
+	err = checkDecimalSize(b.tp, strconv.FormatInt(val, 10))
+	if err != nil {
+		return nil, false, err
 	}
 	if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = types.NewDecFromInt(val)
@@ -775,6 +790,10 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	err = checkDecimalSize(b.tp, strconv.FormatFloat(val, 'f', -1, 64))
+	if err != nil {
+		return nil, false, err
+	}
 	res = new(types.MyDecimal)
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
@@ -876,6 +895,10 @@ func (b *builtinCastDecimalAsDecimalSig) evalDecimal(row chunk.Row) (res *types.
 	evalDecimal, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
+	}
+	err = checkDecimalSize(b.tp, evalDecimal.String())
+	if err != nil {
+		return nil, false, err
 	}
 	res = &types.MyDecimal{}
 	if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && evalDecimal.IsNegative()) {
@@ -1168,6 +1191,10 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(row chunk.Row) (res *types.M
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
+	}
+	err = checkDecimalSize(b.tp, val)
+	if err != nil {
+		return nil, false, err
 	}
 	res = new(types.MyDecimal)
 	sc := b.ctx.GetSessionVars().StmtCtx

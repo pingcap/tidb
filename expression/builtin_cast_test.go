@@ -1375,3 +1375,71 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsJSON(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(output, Equals, input)
 }
+
+func (s *testEvaluatorSuite) TestCastToDecimalError(c *C) {
+	var sig builtinFunc
+	ctx, _ := s.ctx, s.ctx.GetSessionVars().StmtCtx
+	widthCases := []struct {
+		flen    int
+		decimal int
+		err     error
+	}{
+		{mysql.MaxDecimalWidth, mysql.MaxDecimalScale + 1, types.ErrTooBigScale},
+		{mysql.MaxDecimalWidth + 1, mysql.MaxDecimalScale, types.ErrTooBigPrecision},
+		{mysql.MaxDecimalWidth, mysql.MaxDecimalScale, nil},
+	}
+	castToDecCases := []struct {
+		before *Column
+		row    chunk.MutRow
+	}{
+		// cast int as decimal.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1234)}),
+		},
+		// cast string as decimal.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1234")}),
+		},
+		// cast real as decimal.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1234.123)}),
+		},
+		// cast decimal as decimal.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("1234"))}),
+		},
+	}
+
+	for _, width := range widthCases {
+		for i, t := range castToDecCases {
+			args := []Expression{t.before}
+			tp := types.NewFieldType(mysql.TypeNewDecimal)
+			tp.Flen, tp.Decimal = width.flen, width.decimal
+			tp.Charset = charset.CharsetUTF8
+			decFunc := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), false)
+			decFunc.tp = tp
+			switch i {
+			case 0:
+				sig = &builtinCastIntAsDecimalSig{decFunc}
+			case 1:
+				sig = &builtinCastStringAsDecimalSig{decFunc}
+			case 2:
+				sig = &builtinCastRealAsDecimalSig{decFunc}
+			case 3:
+				sig = &builtinCastDecimalAsDecimalSig{decFunc}
+			}
+			_, isNull, err := sig.evalDecimal(t.row.ToRow())
+			c.Assert(isNull, Equals, false)
+			if width.err != nil {
+				c.Assert(err, NotNil)
+				c.Assert(terror.ErrorEqual(err, width.err), IsTrue)
+			} else {
+				c.Assert(err, IsNil)
+			}
+		}
+	}
+}
