@@ -1402,11 +1402,6 @@ func (s *testEvaluatorSuite) TestCastToDecimalError(c *C) {
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1234")}),
 		},
-		// cast real as decimal.
-		{
-			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
-			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1234.123)}),
-		},
 		// cast decimal as decimal.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
@@ -1428,8 +1423,6 @@ func (s *testEvaluatorSuite) TestCastToDecimalError(c *C) {
 			case 1:
 				sig = &builtinCastStringAsDecimalSig{decFunc}
 			case 2:
-				sig = &builtinCastRealAsDecimalSig{decFunc}
-			case 3:
 				sig = &builtinCastDecimalAsDecimalSig{decFunc}
 			}
 			_, isNull, err := sig.evalDecimal(t.row.ToRow())

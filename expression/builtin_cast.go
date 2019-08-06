@@ -790,10 +790,6 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	err = checkDecimalSize(b.tp, strconv.FormatFloat(val, 'f', -1, 64))
-	if err != nil {
-		return nil, false, err
-	}
 	res = new(types.MyDecimal)
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
@@ -1192,17 +1188,23 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(row chunk.Row) (res *types.M
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	err = checkDecimalSize(b.tp, val)
-	if err != nil {
-		return nil, false, err
-	}
 	res = new(types.MyDecimal)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && res.IsNegative()) {
-		err = sc.HandleTruncate(res.FromString([]byte(val)))
+		parseErr := res.FromString([]byte(val))
+		err = sc.HandleTruncate(parseErr)
 		if err != nil {
 			return res, false, err
 		}
+		if terror.ErrorEqual(parseErr, types.ErrBadNumber) {
+			return res, false, nil
+		}
+	}
+	// If cast a string to decimal with ErrBadNumber, returns zero decimal directly
+	// so check the decimal limit after parsing decimal from string
+	err = checkDecimalSize(b.tp, val)
+	if err != nil {
+		return nil, false, err
 	}
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, sc)
 	return res, false, err
