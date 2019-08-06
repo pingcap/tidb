@@ -38,7 +38,7 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.DisableStats4Test()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
