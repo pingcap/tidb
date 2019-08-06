@@ -21,8 +21,7 @@ import (
 )
 
 func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumEffectiveRows()
-	sel := input.Sel()
+	n := input.NumRows()
 	tp := expr.GetType()
 	switch tp.EvalType() {
 	case types.ETInt:
@@ -35,17 +34,10 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 			return nil
 		}
 		i64s := result.Int64s()
-		if sel == nil {
-			for i := range i64s {
-				i64s[i] = v
-			}
-			result.SetNulls(0, n, false)
-		} else {
-			for _, i := range sel {
-				i64s[i] = v
-				result.SetNull(i, false)
-			}
+		for i := range i64s {
+			i64s[i] = v
 		}
+		result.SetNulls(0, n, false)
 	case types.ETReal:
 		result.PreAllocFloat64(n)
 		v, isNull, err := expr.EvalReal(ctx, chunk.Row{})
@@ -56,17 +48,10 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 			return nil
 		}
 		f64s := result.Float64s()
-		if sel == nil {
-			for i := range f64s {
-				f64s[i] = v
-			}
-			result.SetNulls(0, n, false)
-		} else {
-			for _, i := range sel {
-				f64s[i] = v
-				result.SetNull(i, false)
-			}
+		for i := range f64s {
+			f64s[i] = v
 		}
+		result.SetNulls(0, n, false)
 	case types.ETDecimal:
 		result.PreAllocDecimal(n)
 		v, isNull, err := expr.EvalDecimal(ctx, chunk.Row{})
@@ -77,17 +62,10 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 			return nil
 		}
 		ds := result.Decimals()
-		if sel == nil {
-			for i := range ds {
-				ds[i] = *v
-			}
-			result.SetNulls(0, n, false)
-		} else {
-			for _, i := range sel {
-				ds[i] = *v
-				result.SetNull(i, false)
-			}
+		for i := range ds {
+			ds[i] = *v
 		}
+		result.SetNulls(0, n, false)
 	case types.ETDatetime, types.ETTimestamp:
 		result.Reset()
 		v, isNull, err := expr.EvalTime(ctx, chunk.Row{})
@@ -99,20 +77,8 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 				result.AppendNull()
 			}
 		} else {
-			if sel == nil {
-				for i := 0; i < n; i++ {
-					result.AppendTime(v)
-				}
-			} else {
-				pos := 0
-				for _, i := range sel {
-					for pos < i {
-						result.AppendNull()
-						pos++
-					}
-					result.AppendTime(v)
-					pos++
-				}
+			for i := 0; i < n; i++ {
+				result.AppendTime(v)
 			}
 		}
 	case types.ETDuration:
@@ -126,20 +92,8 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 				result.AppendNull()
 			}
 		} else {
-			if sel == nil {
-				for i := 0; i < n; i++ {
-					result.AppendDuration(v)
-				}
-			} else {
-				pos := 0
-				for _, i := range sel {
-					for pos < i {
-						result.AppendNull()
-						pos++
-					}
-					result.AppendDuration(v)
-					pos++
-				}
+			for i := 0; i < n; i++ {
+				result.AppendDuration(v)
 			}
 		}
 	case types.ETJson:
@@ -153,20 +107,8 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 				result.AppendNull()
 			}
 		} else {
-			if sel == nil {
-				for i := 0; i < n; i++ {
-					result.AppendJSON(v)
-				}
-			} else {
-				pos := 0
-				for _, i := range sel {
-					for pos < i {
-						result.AppendNull()
-						pos++
-					}
-					result.AppendJSON(v)
-					pos++
-				}
+			for i := 0; i < n; i++ {
+				result.AppendJSON(v)
 			}
 		}
 	case types.ETString:
@@ -180,20 +122,8 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 				result.AppendNull()
 			}
 		} else {
-			if sel == nil {
-				for i := 0; i < n; i++ {
-					result.AppendString(v)
-				}
-			} else {
-				pos := 0
-				for _, i := range sel {
-					for pos < i {
-						result.AppendNull()
-						pos++
-					}
-					result.AppendString(v)
-					pos++
-				}
+			for i := 0; i < n; i++ {
+				result.AppendString(v)
 			}
 		}
 	default:
