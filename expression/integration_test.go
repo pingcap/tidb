@@ -2055,6 +2055,30 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	msg := strings.Split(err.Error(), " ")
 	last := msg[len(msg)-1]
 	c.Assert(last, Equals, "bigint")
+	tk.MustExec(`drop table tb5;`)
+
+	// test builtinCastIntAsDecimalSig
+	tk.MustExec(`create table tb5(a bigint(64) unsigned, b decimal(64, 10));`)
+	tk.MustExec(`insert into tb5 (a, b) values (9223372036854775808, 9223372036854775808);`)
+	tk.MustExec(`insert into tb5 (select * from tb5 where a = b);`)
+	tk.MustExec(`drop table tb5;`)
+
+	// test builtinCastIntAsRealSig
+	tk.MustExec(`create table tb5(a bigint(64) unsigned, b float(64, 10));`)
+	tk.MustExec(`insert into tb5 (a, b) values (13835058000000000000, 13835058000000000000);`)
+	tk.MustExec(`insert into tb5 (select * from tb5 where a = b);`)
+	tk.MustExec(`drop table tb5;`)
+
+	tk.MustExec(`create table tb5 (a bigint(64) unsigned, b float(64, 10));`)
+	tk.MustExec(`insert into tb5 (a, b) values (13835058000000000000, 13835058000000000000);`)
+	tk.MustExec(`insert into tb5 (select * from tb5 where a = b);`)
+	tk.MustExec(`drop table tb5;`)
+
+	// test builtinCastIntAsStringSig
+	tk.MustExec(`create table tb5(a bigint(64) unsigned,b varchar(50));`)
+	tk.MustExec(`insert into tb5(a, b) values (9223372036854775808, '9223372036854775808');`)
+	tk.MustExec(`insert into tb5(select * from tb5 where a = b);`)
+	tk.MustExec(`drop table tb5;`)
 
 	// Test corner cases of cast string as datetime
 	result = tk.MustQuery(`select cast("170102034" as datetime);`)
