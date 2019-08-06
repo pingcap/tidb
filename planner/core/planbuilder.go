@@ -1032,6 +1032,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       1024,
 	ast.AnalyzeOptCMSketchWidth: uint64(cmSketchSizeLimit),
 	ast.AnalyzeOptCMSketchDepth: uint64(cmSketchSizeLimit),
+	ast.AnalyzeOptNumSamples:    100000,
 }
 
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
@@ -1039,6 +1040,7 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       20,
 	ast.AnalyzeOptCMSketchWidth: 2048,
 	ast.AnalyzeOptCMSketchDepth: 5,
+	ast.AnalyzeOptNumSamples:    10000,
 }
 
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
