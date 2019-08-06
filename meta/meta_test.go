@@ -57,6 +57,14 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
+	ids, err := t.GenGlobalIDs(3)
+	c.Assert(err, IsNil)
+	c.Assert(ids, DeepEquals, []int64{2, 3, 4})
+
+	ids, err = t.GenGlobalIDs(4)
+	c.Assert(err, IsNil)
+	c.Assert(ids, DeepEquals, []int64{5, 6, 7, 8})
+
 	n, err = t.GetSchemaVersion()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(0))
@@ -405,4 +413,47 @@ func (s *testSuite) TestDDL(c *C) {
 
 	err = txn1.Commit(context.Background())
 	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	defer txn.Rollback()
+
+	t := meta.NewMeta(txn)
+
+	c.ResetTimer()
+	var ids []int64
+	for i := 0; i < c.N; i++ {
+		ids, _ = t.GenGlobalIDs(10)
+	}
+	c.Assert(ids, HasLen, 10)
+	c.Assert(ids[9], Equals, int64(c.N)*10)
+}
+
+func (s *testSuite) BenchmarkGenGlobalIDOneByOne(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	defer txn.Rollback()
+
+	t := meta.NewMeta(txn)
+
+	c.ResetTimer()
+	var id int64
+	for i := 0; i < c.N; i++ {
+		for j := 0; j < 10; j++ {
+			id, _ = t.GenGlobalID()
+		}
+	}
+	c.Assert(id, Equals, int64(c.N)*10)
 }
