@@ -15,7 +15,6 @@ package chunk
 
 import (
 	"math/bits"
-	"reflect"
 	"time"
 	"unsafe"
 
@@ -239,6 +238,8 @@ const (
 	sizeFloat32   = int(unsafe.Sizeof(float32(0)))
 	sizeFloat64   = int(unsafe.Sizeof(float64(0)))
 	sizeMyDecimal = int(unsafe.Sizeof(types.MyDecimal{}))
+	sizeDuration  = int(unsafe.Sizeof(int64(0)))
+	sizeTime      = int(unsafe.Sizeof(types.Time{}))
 )
 
 // preAlloc allocates space for a fixed-length-type slice and resets all slots to null.
@@ -337,45 +338,49 @@ func (c *Column) PreAllocDecimal(length int) {
 	c.preAlloc(length, sizeMyDecimal)
 }
 
-func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
-	header.Data = uintptr(unsafe.Pointer(&c.data[0]))
-	header.Len = c.length
-	header.Cap = cap(c.data) / typeSize
+// PreAllocDuration allocates space for a float64 slice and resets all slots to null.
+func (c *Column) PreAllocDuration(length int) {
+	c.preAlloc(length, sizeDuration)
 }
 
-// Int64s returns an int64 slice stored in this Column.
-func (c *Column) Int64s() []int64 {
-	var res []int64
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeInt64)
-	return res
+// PreAllocTime allocates space for a decimal slice and resets all slots to null.
+func (c *Column) PreAllocTime(length int) {
+	c.preAlloc(length, sizeTime)
 }
 
-// Uint64s returns a uint64 slice stored in this Column.
-func (c *Column) Uint64s() []uint64 {
-	var res []uint64
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeUint64)
-	return res
+// SetInt64 sets an int64 value to the position specified by `rowID`.
+func (c *Column) SetInt64(rowID int, v int64) {
+	*(*int64)(unsafe.Pointer(&c.data[rowID*sizeInt64])) = v
 }
 
-// Float32s returns a float32 slice stored in this Column.
-func (c *Column) Float32s() []float32 {
-	var res []float32
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat32)
-	return res
+// SetUint64 sets an uint64 value to the position specified by `rowID`.
+func (c *Column) SetUint64(rowID int, v uint64) {
+	*(*uint64)(unsafe.Pointer(&c.data[rowID*sizeUint64])) = v
 }
 
-// Float64s returns a float64 slice stored in this Column.
-func (c *Column) Float64s() []float64 {
-	var res []float64
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat64)
-	return res
+// SetDecimal sets a Decimal value to the position specified by `rowID`.
+func (c *Column) SetDecimal(rowID int, v *types.MyDecimal) {
+	*(*types.MyDecimal)(unsafe.Pointer(&c.data[rowID*sizeMyDecimal])) = *v
 }
 
-// Decimals returns a MyDecimal slice stored in this Column.
-func (c *Column) Decimals() []types.MyDecimal {
-	var res []types.MyDecimal
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeMyDecimal)
-	return res
+// SetFloat32 sets a float32 value to the position specified by `rowID`.
+func (c *Column) SetFloat32(rowID int, v float32) {
+	*(*float32)(unsafe.Pointer(&c.data[rowID*sizeFloat32])) = v
+}
+
+// SetFloat64 sets a float64 value to the position specified by `rowID`.
+func (c *Column) SetFloat64(rowID int, v float64) {
+	*(*float64)(unsafe.Pointer(&c.data[rowID*sizeFloat64])) = v
+}
+
+// SetDuration sets a Duration value to the position specified by `rowID`.
+func (c *Column) SetDuration(rowID int, v types.Duration) {
+	*(*int64)(unsafe.Pointer(&c.data[rowID*sizeDuration])) = int64(v.Duration)
+}
+
+// SetTime sets a time value to the position specified by `rowID`.
+func (c *Column) SetTime(rowID int, v types.Time) {
+	writeTime(c.data[rowID*sizeTime:], v)
 }
 
 // GetInt64 returns the int64 in the specific row.

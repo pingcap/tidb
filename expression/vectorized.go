@@ -22,80 +22,57 @@ import (
 
 func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	tp := expr.GetType()
-	switch tp.EvalType() {
-	case types.ETInt:
+	switch expr.GetType().EvalType() {
+	case types.ETInt: // uint64 is also set in this branch.
 		result.PreAllocInt64(n)
 		v, isNull, err := expr.EvalInt(ctx, chunk.Row{})
-		if err != nil {
+		if err != nil || isNull { // all slots are set to null by PreAlloc()
 			return err
 		}
-		if isNull { // all slots are set to null by PreAlloc()
-			return nil
-		}
-		i64s := result.Int64s()
-		for i := range i64s {
-			i64s[i] = v
+		for i := 0; i < n; i++ {
+			result.SetInt64(i, v)
 		}
 		result.SetNulls(0, n, false)
 	case types.ETReal:
 		result.PreAllocFloat64(n)
 		v, isNull, err := expr.EvalReal(ctx, chunk.Row{})
-		if err != nil {
+		if err != nil || isNull { // all slots are set to null by PreAlloc()
 			return err
 		}
-		if isNull { // all slots are set to null by PreAlloc()
-			return nil
-		}
-		f64s := result.Float64s()
-		for i := range f64s {
-			f64s[i] = v
+		for i := 0; i < n; i++ {
+			result.SetFloat64(i, v)
 		}
 		result.SetNulls(0, n, false)
 	case types.ETDecimal:
 		result.PreAllocDecimal(n)
 		v, isNull, err := expr.EvalDecimal(ctx, chunk.Row{})
-		if err != nil {
+		if err != nil || isNull { // all slots are set to null by PreAlloc()
 			return err
 		}
-		if isNull { // all slots are set to null by PreAlloc()
-			return nil
-		}
-		ds := result.Decimals()
-		for i := range ds {
-			ds[i] = *v
+		for i := 0; i < n; i++ {
+			result.SetDecimal(i, v)
 		}
 		result.SetNulls(0, n, false)
 	case types.ETDatetime, types.ETTimestamp:
-		result.Reset()
+		result.PreAllocTime(n)
 		v, isNull, err := expr.EvalTime(ctx, chunk.Row{})
-		if err != nil {
+		if err != nil || isNull { // all slots are set to null by PreAlloc()
 			return err
 		}
-		if isNull {
-			for i := 0; i < n; i++ {
-				result.AppendNull()
-			}
-		} else {
-			for i := 0; i < n; i++ {
-				result.AppendTime(v)
-			}
+		for i := 0; i < n; i++ {
+			result.SetTime(i, v)
 		}
+		result.SetNulls(0, n, false)
 	case types.ETDuration:
-		result.Reset()
+		result.PreAllocDuration(n)
 		v, isNull, err := expr.EvalDuration(ctx, chunk.Row{})
-		if err != nil {
+		if err != nil || isNull { // all slots are set to null by PreAlloc()
 			return err
 		}
-		if isNull {
-			for i := 0; i < n; i++ {
-				result.AppendNull()
-			}
-		} else {
-			for i := 0; i < n; i++ {
-				result.AppendDuration(v)
-			}
+		for i := 0; i < n; i++ {
+			result.SetDuration(i, v)
 		}
+		result.SetNulls(0, n, false)
 	case types.ETJson:
 		result.Reset()
 		v, isNull, err := expr.EvalJSON(ctx, chunk.Row{})

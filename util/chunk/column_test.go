@@ -198,10 +198,10 @@ func (s *testChunkSuite) TestI64Column(c *check.C) {
 		col.AppendInt64(int64(i))
 	}
 
-	i64s := col.Int64s()
 	for i := 0; i < 1024; i++ {
-		c.Assert(i64s[i], check.Equals, int64(i))
-		i64s[i]++
+		val := col.GetInt64(i)
+		c.Assert(val, check.Equals, int64(i))
+		col.SetInt64(i, val+1)
 	}
 
 	it := NewIterator4Chunk(chk)
@@ -220,10 +220,10 @@ func (s *testChunkSuite) TestF64Column(c *check.C) {
 		col.AppendFloat64(float64(i))
 	}
 
-	f64s := col.Float64s()
 	for i := 0; i < 1024; i++ {
-		c.Assert(f64s[i], check.Equals, float64(i))
-		f64s[i] /= 2
+		v := col.GetFloat64(i)
+		c.Assert(v, check.Equals, float64(i))
+		col.SetFloat64(i, v/2)
 	}
 
 	it := NewIterator4Chunk(chk)
@@ -242,10 +242,10 @@ func (s *testChunkSuite) TestF32Column(c *check.C) {
 		col.AppendFloat32(float32(i))
 	}
 
-	f32s := col.Float32s()
 	for i := 0; i < 1024; i++ {
-		c.Assert(f32s[i], check.Equals, float32(i))
-		f32s[i] /= 2
+		v := col.GetFloat32(i)
+		c.Assert(v, check.Equals, float32(i))
+		col.SetFloat32(i, v/2)
 	}
 
 	it := NewIterator4Chunk(chk)
@@ -268,17 +268,18 @@ func (s *testChunkSuite) TestMyDecimal(c *check.C) {
 		col.AppendMyDecimal(d)
 	}
 
-	ds := col.Decimals()
 	for i := 0; i < 1024; i++ {
 		d := new(types.MyDecimal)
 		if err := d.FromFloat64(float64(i) * 1.1); err != nil {
 			c.Fatal(err)
 		}
-		c.Assert(d.Compare(&ds[i]), check.Equals, 0)
+		v := col.GetDecimal(i)
+		c.Assert(d.Compare(v), check.Equals, 0)
 
-		if err := types.DecimalAdd(&ds[i], d, &ds[i]); err != nil {
+		if err := types.DecimalAdd(v, d, v); err != nil {
 			c.Fatal(err)
 		}
+		col.SetDecimal(i, v)
 	}
 
 	it := NewIterator4Chunk(chk)
@@ -557,15 +558,14 @@ func (s *testChunkSuite) TestReconstructVarLen(c *check.C) {
 func (s *testChunkSuite) TestPreAllocInt64(c *check.C) {
 	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 128)
 	col.PreAllocInt64(256)
-	i64s := col.Int64s()
-	c.Assert(len(i64s), check.Equals, 256)
+	c.Assert(col.length, check.Equals, 256)
 	for i := 0; i < 256; i++ {
 		c.Assert(col.IsNull(i), check.Equals, true)
 	}
 	col.AppendInt64(2333)
 	c.Assert(col.IsNull(256), check.Equals, false)
-	c.Assert(len(col.Int64s()), check.Equals, 257)
-	c.Assert(col.Int64s()[256], check.Equals, int64(2333))
+	c.Assert(col.length, check.Equals, 257)
+	c.Assert(col.GetInt64(256), check.Equals, int64(2333))
 }
 
 func (s *testChunkSuite) TestPreAllocUint64(c *check.C) {
@@ -573,56 +573,76 @@ func (s *testChunkSuite) TestPreAllocUint64(c *check.C) {
 	tll.Flag |= mysql.UnsignedFlag
 	col := NewColumn(tll, 128)
 	col.PreAllocUint64(256)
-	u64s := col.Uint64s()
-	c.Assert(len(u64s), check.Equals, 256)
+	c.Assert(col.length, check.Equals, 256)
 	for i := 0; i < 256; i++ {
 		c.Assert(col.IsNull(i), check.Equals, true)
 	}
 	col.AppendUint64(2333)
 	c.Assert(col.IsNull(256), check.Equals, false)
-	c.Assert(len(col.Uint64s()), check.Equals, 257)
-	c.Assert(col.Uint64s()[256], check.Equals, uint64(2333))
+	c.Assert(col.length, check.Equals, 257)
+	c.Assert(col.GetUint64(256), check.Equals, uint64(2333))
 }
 
 func (s *testChunkSuite) TestPreAllocFloat32(c *check.C) {
 	col := newFixedLenColumn(sizeFloat32, 128)
 	col.PreAllocFloat32(256)
-	f32s := col.Float32s()
-	c.Assert(len(f32s), check.Equals, 256)
+	c.Assert(col.length, check.Equals, 256)
 	for i := 0; i < 256; i++ {
 		c.Assert(col.IsNull(i), check.Equals, true)
 	}
 	col.AppendFloat32(2333)
 	c.Assert(col.IsNull(256), check.Equals, false)
-	c.Assert(len(col.Float32s()), check.Equals, 257)
-	c.Assert(col.Float32s()[256], check.Equals, float32(2333))
+	c.Assert(col.length, check.Equals, 257)
+	c.Assert(col.GetFloat32(256), check.Equals, float32(2333))
 }
 
 func (s *testChunkSuite) TestPreAllocFloat64(c *check.C) {
 	col := newFixedLenColumn(sizeFloat64, 128)
 	col.PreAllocFloat64(256)
-	f64s := col.Float64s()
-	c.Assert(len(f64s), check.Equals, 256)
+	c.Assert(col.length, check.Equals, 256)
 	for i := 0; i < 256; i++ {
 		c.Assert(col.IsNull(i), check.Equals, true)
 	}
 	col.AppendFloat64(2333)
 	c.Assert(col.IsNull(256), check.Equals, false)
-	c.Assert(len(col.Float64s()), check.Equals, 257)
-	c.Assert(col.Float64s()[256], check.Equals, float64(2333))
+	c.Assert(col.length, check.Equals, 257)
+	c.Assert(col.GetFloat64(256), check.Equals, float64(2333))
 }
 
 func (s *testChunkSuite) TestPreAllocDecimal(c *check.C) {
 	col := newFixedLenColumn(sizeMyDecimal, 128)
 	col.PreAllocDecimal(256)
-	ds := col.Decimals()
-	c.Assert(len(ds), check.Equals, 256)
+	c.Assert(col.length, check.Equals, 256)
 	for i := 0; i < 256; i++ {
 		c.Assert(col.IsNull(i), check.Equals, true)
 	}
 	col.AppendMyDecimal(new(types.MyDecimal))
 	c.Assert(col.IsNull(256), check.Equals, false)
-	c.Assert(len(col.Float64s()), check.Equals, 257)
+	c.Assert(col.length, check.Equals, 257)
+}
+
+func (s *testChunkSuite) TestPreAllocDuration(c *check.C) {
+	col := newFixedLenColumn(sizeDuration, 128)
+	col.PreAllocDuration(256)
+	c.Assert(col.length, check.Equals, 256)
+	for i := 0; i < 256; i++ {
+		c.Assert(col.IsNull(i), check.Equals, true)
+	}
+	col.AppendDuration(types.ZeroDuration)
+	c.Assert(col.IsNull(256), check.Equals, false)
+	c.Assert(col.GetDuration(256, types.DefaultFsp), check.Equals, types.ZeroDuration)
+}
+
+func (s *testChunkSuite) TestPreAllocTime(c *check.C) {
+	col := newFixedLenColumn(sizeTime, 128)
+	col.PreAllocTime(256)
+	c.Assert(col.length, check.Equals, 256)
+	for i := 0; i < 256; i++ {
+		c.Assert(col.IsNull(i), check.Equals, true)
+	}
+	col.AppendTime(types.ZeroDatetime)
+	c.Assert(col.IsNull(256), check.Equals, false)
+	c.Assert(col.GetTime(256).Compare(types.ZeroDatetime), check.Equals, 0)
 }
 
 func (s *testChunkSuite) TestNull(c *check.C) {
