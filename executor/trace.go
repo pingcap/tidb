@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"encoding/json"
-	"sort"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
@@ -91,7 +90,6 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return nil
 		}
 		trace := traces[0]
-		sortTraceByStartTime(trace)
 		dfsTree(trace, "", false, req)
 		e.exhausted = true
 		return nil
@@ -128,28 +126,6 @@ func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Rec
 			rows = append(rows, r)
 		}
 		req = chunk.Renew(req, sctx.GetSessionVars().MaxChunkSize)
-	}
-}
-
-type sortByStartTime []*appdash.Trace
-
-func (t sortByStartTime) Len() int { return len(t) }
-func (t sortByStartTime) Less(i, j int) bool {
-	return getStartTime(t[j]).After(getStartTime(t[i]))
-}
-func (t sortByStartTime) Swap(i, j int) { t[i], t[j] = t[j], t[i] }
-
-func getStartTime(trace *appdash.Trace) (t time.Time) {
-	if e, err := trace.TimespanEvent(); err == nil {
-		t = e.Start()
-	}
-	return
-}
-
-func sortTraceByStartTime(trace *appdash.Trace) {
-	sort.Sort(sortByStartTime(trace.Sub))
-	for _, t := range trace.Sub {
-		sortTraceByStartTime(t)
 	}
 }
 
