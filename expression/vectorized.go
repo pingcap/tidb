@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+// genVecFromConstExpr generates a vector, all the elements of this vector are
+// filled with the value of `expr`.
 func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	switch expr.GetType().EvalType() {
