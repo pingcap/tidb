@@ -524,7 +524,6 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.RollbackTxn", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
 	if s.txn.Valid() {
