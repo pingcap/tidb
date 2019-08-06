@@ -138,7 +138,7 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(e.children) > 0 && e.children[0] != nil {
 		return e.insertRowsFromSelect(ctx, e.exec)
 	}
-	return e.insertRows(ctx, e.exec)
+	return insertRows(ctx, e)
 }
 
 // Close implements the Executor Close interface.
