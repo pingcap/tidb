@@ -900,7 +900,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select quote("aaaa"), quote(""), quote("\"\""), quote("\n\n");`)
 	result.Check(testkit.Rows("'aaaa' '' '\"\"' '\n\n'"))
 	result = tk.MustQuery(`select quote(0121), quote(0000), quote("中文"), quote(NULL);`)
-	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
+	result.Check(testkit.Rows("'121' '0' '中文' NULL"))
+	tk.MustQuery(`select quote(null) is NULL;`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select quote(null) is NOT NULL;`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select length(quote(null));`).Check(testkit.Rows(`4`))
+	tk.MustQuery(`select quote(null) REGEXP binary 'null'`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select quote(null) REGEXP binary 'NULL'`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select quote(null) REGEXP 'NULL'`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select quote(null) REGEXP 'null'`).Check(testkit.Rows(`1`))
 
 	// for convert
 	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
@@ -4651,6 +4658,18 @@ func (s *testIntegrationSuite) TestFuncCaseWithLeftJoin(c *C) {
 	tk.MustExec("insert into kankan2 values(2, 'z')")
 
 	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1' order by t1.id").Check(testkit.Rows("1", "2"))
+}
+
+func (s *testIntegrationSuite) TestIssue11594(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1 (v bigint(20) UNSIGNED NOT NULL);")
+	tk.MustExec("INSERT INTO t1 VALUES (1), (2);")
+	tk.MustQuery("SELECT SUM(IF(v > 1, v, -v)) FROM t1;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT sum(IFNULL(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
+	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
+	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), v)) FROM t1;").Check(testkit.Rows("3"))
 }
 
 func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
