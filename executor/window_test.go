@@ -166,4 +166,8 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 3", "2 3", "3 6", "4 6"))
 	result = tk.MustQuery("select row_number() over w, sum(b) over w from t window w as (rows between 1 preceding and 1 following)")
 	result.Check(testkit.Rows("1 3", "2 4", "3 5", "4 3"))
+
+	tk.Se.GetSessionVars().MaxChunkSize = 1
+	result = tk.MustQuery("select a, row_number() over (partition by a) from t")
+	result.Check(testkit.Rows("1 1", "1 2", "2 1", "2 2"))
 }
