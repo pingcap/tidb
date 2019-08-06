@@ -93,11 +93,18 @@ func (r *RegionStore) follower(seed uint32) int32 {
 	if l <= 1 {
 		return r.workStoreIdx
 	}
-	followerIdx := int32(seed % (l - 1))
-	if followerIdx >= r.workStoreIdx {
-		followerIdx++
+
+	for retry := l - 1; retry > 0; retry-- {
+		followerIdx := int32(seed % (l - 1))
+		if followerIdx >= r.workStoreIdx {
+			followerIdx++
+		}
+		if r.storeFails[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].fail) {
+			return followerIdx
+		}
+		seed++
 	}
-	return followerIdx
+	return r.workStoreIdx
 }
 
 // init initializes region after constructed.
