@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,13 +58,23 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
-	ids, err := t.GenGlobalIDs(3)
-	c.Assert(err, IsNil)
-	c.Assert(ids, DeepEquals, []int64{2, 3, 4})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ids, err := t.GenGlobalIDs(3)
+		c.Assert(err, IsNil)
+		anyMatch(c, ids, []int64{2, 3, 4}, []int64{6, 7, 8})
+	}()
 
-	ids, err = t.GenGlobalIDs(4)
-	c.Assert(err, IsNil)
-	c.Assert(ids, DeepEquals, []int64{5, 6, 7, 8})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ids, err := t.GenGlobalIDs(4)
+		c.Assert(err, IsNil)
+		anyMatch(c, ids, []int64{5, 6, 7, 8}, []int64{2, 3, 4, 5})
+	}()
+	wg.Wait()
 
 	n, err = t.GetSchemaVersion()
 	c.Assert(err, IsNil)
@@ -456,4 +467,22 @@ func (s *testSuite) BenchmarkGenGlobalIDOneByOne(c *C) {
 		}
 	}
 	c.Assert(id, Equals, int64(c.N)*10)
+}
+
+func anyMatch(c *C, ids []int64, candidates ...[]int64) {
+	var match bool
+OUTER:
+	for _, cand := range candidates {
+		if len(ids) != len(cand) {
+			continue
+		}
+		for i, v := range cand {
+			if ids[i] != v {
+				continue OUTER
+			}
+		}
+		match = true
+		break
+	}
+	c.Assert(match, IsTrue)
 }
