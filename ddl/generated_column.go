@@ -87,7 +87,7 @@ func checkDependedColExist(dependCols map[string]struct{}, cols []*table.Column)
 // findPositionRelativeColumn return a pos relative to added generated column position
 func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (int, error) {
 	position := len(cols)
-	// get column position default is append behind
+	// Get the column position, default is cols's length means appending.
 	// For "alter table ... add column(...)", the position will be nil.
 	// For "alter table ... add column ... ", the position will be default one.
 	if pos == nil {
@@ -106,7 +106,7 @@ func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (
 		if col == nil {
 			return -1, ErrBadField.GenWithStackByArgs(pos.RelativeColumn, "generated column function")
 		}
-		// Insert position is after the mentioned column.
+		// Inserted position is after the mentioned column.
 		position = col.Offset + 1
 	}
 	return position, nil
