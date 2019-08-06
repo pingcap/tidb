@@ -542,8 +542,11 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	err := e.buildHashTableForList(innerResultCh)
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
+		close(doneCh)
 	}
-	close(doneCh)
+	// wait fetchInnerRows be finished.
+	for range innerResultCh {
+	}
 }
 
 // buildHashTableForList builds hash table from `list`.
