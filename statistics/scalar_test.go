@@ -241,11 +241,19 @@ func (s *testStatisticsSuite) TestEnumRangeValues(c *C) {
 			highExclude: true,
 			res:         "(2017-01-01 00:00:00, 2017-01-01 00:00:01, 2017-01-01 00:00:02, 2017-01-01 00:00:03, 2017-01-01 00:00:04)",
 		},
+		// fix issue 11610
+		{
+			low:         types.NewIntDatum(math.MinInt64),
+			high:        types.NewIntDatum(0),
+			lowExclude:  false,
+			highExclude: false,
+			res:         "",
+		},
 	}
 	for _, t := range tests {
 		vals := enumRangeValues(t.low, t.high, t.lowExclude, t.highExclude)
 		str, err := types.DatumsToString(vals, true)
 		c.Assert(err, IsNil)
-		c.Assert(t.res, Equals, str)
+		c.Assert(str, Equals, t.res)
 	}
 }
