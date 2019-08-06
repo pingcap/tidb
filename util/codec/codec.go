@@ -237,19 +237,18 @@ func encodeSignedInt(b []byte, v int64, comparable bool) []byte {
 	return b
 }
 
-var varIntSize = []int64{64, 8192, 1048576, 134217728, 17179869184, 2199023255552, 281474976710656, 36028797018963968, 4611686018427387904}
-
 func valueSizeOfSignedInt(v int64) int {
 	if v < 0 {
 		v = 0 - v - 1
 	}
-	for i, upper := range varIntSize {
-		if v < upper {
-			// Flag occupy 1 bit.
-			return i + 2
-		}
+	// Flag occupy 1 bit and at lease 1 bit.
+	size := 2
+	v = v >> 6
+	for v > 0 {
+		size++
+		v = v >> 7
 	}
-	return 11
+	return size
 }
 
 func encodeUnsignedInt(b []byte, v uint64, comparable bool) []byte {
@@ -263,15 +262,15 @@ func encodeUnsignedInt(b []byte, v uint64, comparable bool) []byte {
 	return b
 }
 
-var varUintSize = []uint64{128, 16384, 2097152, 268435456, 34359738368, 4398046511104, 562949953421312, 72057594037927936, 9223372036854775808}
-
 func valueSizeOfUnsignedInt(v uint64) int {
-	for i, upper := range varUintSize {
-		if v < upper {
-			return i + 2
-		}
+	// Flag occupy 1 bit and at lease 1 bit.
+	size := 2
+	v = v >> 7
+	for v > 0 {
+		size++
+		v = v >> 7
 	}
-	return 11
+	return size
 }
 
 func sizeInt(comparable bool) int {
