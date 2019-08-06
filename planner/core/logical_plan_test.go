@@ -577,7 +577,7 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 
 func buildLogicPlan4GroupBy(s *testPlanSuite, c *C, sql string) (Plan, error) {
 	sqlMode := s.ctx.GetSessionVars().SQLMode
-	mockedTableInfo := MockSignedTable()
+	mockedTableInfo := MockTable()
 	// mock the table info here for later use
 	// enable only full group by
 	s.ctx.GetSessionVars().SQLMode = sqlMode | mysql.ModeOnlyFullGroupBy
