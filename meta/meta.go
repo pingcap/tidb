@@ -122,13 +122,13 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 	globalIDMutex.Lock()
 	defer globalIDMutex.Unlock()
 
-	new, err := m.txn.Inc(mNextGlobalIDKey, int64(n))
+	newID, err := m.txn.Inc(mNextGlobalIDKey, int64(n))
 	if err != nil {
 		return nil, err
 	}
-	orig := new - int64(n)
+	origID := newID - int64(n)
 	ids := make([]int64, 0, n)
-	for i := orig + 1; i <= new; i++ {
+	for i := origID + 1; i <= newID; i++ {
 		ids = append(ids, i)
 	}
 	return ids, nil
