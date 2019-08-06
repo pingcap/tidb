@@ -1126,7 +1126,7 @@ func buildCleanupIndexFields() *expression.Schema {
 }
 
 func buildShowDDLJobsFields() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11)...)
 	schema.Append(buildColumn("", "JOB_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, 64))
@@ -1136,6 +1136,7 @@ func buildShowDDLJobsFields() *expression.Schema {
 	schema.Append(buildColumn("", "TABLE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "ROW_COUNT", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "START_TIME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_TIME", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
 	return schema
 }
