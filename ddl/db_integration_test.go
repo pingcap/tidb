@@ -595,7 +595,7 @@ func (s *testIntegrationSuite2) TestDependedGeneratedColumnPrior2GeneratedColumn
 		"`b` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL," +
 		"`c` int(11) GENERATED ALWAYS AS (`b` + 1) VIRTUAL" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
-	// should check unknown column first, then the prior
+	// should check unknown column first, then the prior ones.
 	sql := "alter table t add column d int as (c + f + 1) first"
 	assertErrorCode(c, tk, sql, mysql.ErrBadField)
 
