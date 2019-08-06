@@ -52,12 +52,12 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 
 // verifyColumnGenerationSingle is for ADD GENERATED COLUMN, we just need verify one column itself.
 func verifyColumnGenerationSingle(dependColNames map[string]struct{}, cols []*table.Column, position *ast.ColumnPosition) error {
-	// cause the added column hasn't existed, should derive it's offset from ColumnPosition
+	// Since the added column does not exist yet, we should derive it's offset from ColumnPosition.
 	pos, err := findPositionRelativeColumn(cols, position)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// mysql then will check relative generated column should be prior to it, so it should be in one loop
+	// check if all relative generated columns are prior to it.
 	for _, col := range cols {
 		if _, ok := dependColNames[col.Name.L]; ok {
 			if col.IsGenerated() && col.Offset >= pos {
@@ -72,7 +72,7 @@ func verifyColumnGenerationSingle(dependColNames map[string]struct{}, cols []*ta
 // checkDependedColExist ensure all depended columns exist.
 // NOTE: this will MODIFY parameter `dependCols`.
 func checkDependedColExist(dependCols map[string]struct{}, cols []*table.Column) error {
-	// mysql will first check all depended column exist
+	// Checks all depended columns exist.
 	for _, col := range cols {
 		delete(dependCols, col.Name.L)
 	}
@@ -84,7 +84,7 @@ func checkDependedColExist(dependCols map[string]struct{}, cols []*table.Column)
 	return nil
 }
 
-// findPositionRelativeColumn return a pos relative to added generated column position
+// findPositionRelativeColumn returns a pos relative to added generated column position.
 func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (int, error) {
 	position := len(cols)
 	// Get the column position, default is cols's length means appending.
