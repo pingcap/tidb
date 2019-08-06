@@ -497,10 +497,6 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	err = checkDecimalSize(b.tp, strconv.FormatInt(val, 10))
-	if err != nil {
-		return nil, false, err
-	}
 	if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = types.NewDecFromInt(val)
 	} else if b.inUnion && val < 0 {
@@ -513,6 +509,10 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 			return res, false, err
 		}
 		res = types.NewDecFromUint(uVal)
+	}
+	err = checkDecimalSize(b.tp, strconv.FormatInt(val, 10))
+	if err != nil {
+		return nil, false, err
 	}
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx)
 	return res, isNull, err
