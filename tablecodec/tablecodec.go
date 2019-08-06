@@ -224,23 +224,10 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, raw types.Datum) ([]byt
 // valBuf and values pass by caller, for reducing EncodeRow allocates temporary bufs. If you pass valBuf and values as nil,
 // EncodeRow will allocate it.
 func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
-	var err error
-	values, err = getEncodeRowValues(sc, row, colIDs, values)
-	if err != nil {
-		return valBuf, err
-	}
-	valBuf = valBuf[:0]
-	if len(values) == 0 {
-		// We could not set nil value into kv.
-		return append(valBuf, codec.NilFlag), nil
-	}
-	return codec.EncodeValue(sc, valBuf, values...)
-}
-
-func getEncodeRowValues(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, values []types.Datum) ([]types.Datum, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
+	valBuf = valBuf[:0]
 	if values == nil {
 		values = make([]types.Datum, len(row)*2)
 	}
@@ -249,42 +236,14 @@ func getEncodeRowValues(sc *stmtctx.StatementContext, row []types.Datum, colIDs 
 		values[2*i].SetInt64(id)
 		err := flatten(sc, c, &values[2*i+1])
 		if err != nil {
-			return nil, errors.Trace(err)
+			return valBuf, errors.Trace(err)
 		}
 	}
-	return values, nil
-}
-
-// EncodeRowWithColSizeMap encode row data and column ids into a slice of byte,
-// and record the column value size to colSize map.
-func EncodeRowWithColSizeMap(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, colSize map[int64]int64) ([]byte, map[int64]int64, error) {
-	var err error
-	values, err = getEncodeRowValues(sc, row, colIDs, values)
-	if err != nil {
-		return valBuf, nil, err
-	}
-	valBuf = valBuf[:0]
 	if len(values) == 0 {
 		// We could not set nil value into kv.
-		return append(valBuf, codec.NilFlag), colSize, nil
+		return append(valBuf, codec.NilFlag), nil
 	}
-	// Below `for loop` use i+=2 to grow up, so length := len(values) - 1 to avoid panic when the len(values) is odd.
-	// But normally, the len(values) should always be even.
-	length := len(values) - 1
-	for i := 0; i < length; i += 2 {
-		valBuf, err = codec.EncodeValue(sc, valBuf, values[i])
-		if err != nil {
-			return valBuf, colSize, errors.Trace(err)
-		}
-		lastLen := len(valBuf)
-		colID := values[i].GetInt64()
-		valBuf, err = codec.EncodeValue(sc, valBuf, values[i+1])
-		if err != nil {
-			return valBuf, colSize, errors.Trace(err)
-		}
-		colSize[colID] = int64(len(valBuf) - lastLen - 1)
-	}
-	return valBuf, colSize, nil
+	return codec.EncodeValue(sc, valBuf, values...)
 }
 
 func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) error {
