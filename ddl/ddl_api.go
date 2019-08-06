@@ -2094,7 +2094,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 
 	// If new column is a generated column, do validation.
 	// NOTE: we do check whether the column refers other generated
-	// columns occurring later in table. but not handle the col offset.
+	// columns occurring later in a table, but we don't handle the col offset.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {

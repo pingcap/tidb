@@ -57,7 +57,7 @@ func verifyColumnGenerationSingle(dependColNames map[string]struct{}, cols []*ta
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// check if all relative generated columns are prior to it.
+	// should check unknown column first, then the prior ones.
 	for _, col := range cols {
 		if _, ok := dependColNames[col.Name.L]; ok {
 			if col.IsGenerated() && col.Offset >= pos {
