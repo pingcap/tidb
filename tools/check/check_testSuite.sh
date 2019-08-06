@@ -8,7 +8,7 @@ for testSuite in $(find . -name "*_test.go" -print0 | xargs -0 grep -P "type tes
   # TODO: check code comment
   if ! find . -name "*_test.go" -print0 | xargs -0 grep -P "_ = (check\.)?(Suite|SerialSuites)\((&?${testSuite}{|new\(${testSuite}\))" > /dev/null
   then
-    if find . -name "*_test.go" -print0 | xargs -0 grep "func (s \*${testSuite}) Test" > /dev/null
+    if find . -name "*_test.go" -print0 | xargs -0 grep -P "func \((.* )?\*?${testSuite}\) Test" > /dev/null
     then
       echo "${testSuite} is not enabled" && exitCode=1
     fi
