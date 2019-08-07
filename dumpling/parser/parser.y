@@ -7504,6 +7504,7 @@ TraceableStmt:
 |	InsertIntoStmt
 |	ReplaceIntoStmt
 |	UnionStmt
+|	LoadDataStmt
 
 ExplainableStmt:
 	SelectStmt
