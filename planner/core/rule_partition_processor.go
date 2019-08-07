@@ -206,3 +206,7 @@ func (s *partitionProcessor) findByName(partitionNames []model.CIStr, partitionN
 	}
 	return false
 }
+
+func (*partitionProcessor) name() string {
+	return "partition_processor"
+}
