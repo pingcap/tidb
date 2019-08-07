@@ -8,6 +8,8 @@ create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
 
 set @@session.tidb_opt_agg_push_down = 1;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
+set @@session.tidb_hashagg_partial_concurrency = 1;
+set @@session.tidb_hashagg_final_concurrency = 1;
 
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 explain select * from t1;
