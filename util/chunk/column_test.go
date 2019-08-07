@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"testing"
@@ -744,6 +745,60 @@ func BenchmarkVecSet(b *testing.B) {
 				result.SetNull(j, true)
 			} else {
 				result.SetInt64(j, col1.GetInt64(j)+col2.GetInt64(j))
+			}
+		}
+	}
+}
+
+func BenchmarkTimeVecPrimitive(b *testing.B) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 1024)
+	col1 := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col1.AppendTime2(types.ZeroDatetime)
+	}
+	col2 := col1.CopyConstruct(nil)
+	result := col1.CopyConstruct(nil)
+
+	xs1 := col1.Time2s()
+	xs2 := col2.Time2s()
+	xs3 := result.Time2s()
+
+	b.ResetTimer()
+	sctx := stmtctx.StatementContext{}
+	sctx.TimeZone = time.Local
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 1024; j++ {
+			if col1.IsNullx[j] || col2.IsNullx[j] {
+				result.SetNull(j, true)
+			} else {
+				dur, _ := xs2[j].ConvertToDuration()
+				xs3[j], _ = xs1[j].Add(&sctx, dur)
+			}
+		}
+	}
+}
+
+func BenchmarkTimeVecSet(b *testing.B) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 1024)
+	col1 := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col1.AppendTime(types.ZeroDatetime)
+	}
+	col2 := col1.CopyConstruct(nil)
+	result := col1.CopyConstruct(nil)
+
+	b.ResetTimer()
+	sctx := stmtctx.StatementContext{}
+	sctx.TimeZone = time.Local
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 1024; j++ {
+			if col1.IsNullx[j] || col2.IsNullx[j] {
+				result.SetNull(j, true)
+			} else {
+				dur, _ := col2.GetTime(j).ConvertToDuration()
+				t := col1.GetTime(j)
+				r, _ := t.Add(&sctx, dur)
+				result.SetTime(j, r)
 			}
 		}
 	}

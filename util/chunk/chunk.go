@@ -534,6 +534,11 @@ func (c *Chunk) AppendTime(colIdx int, t types.Time) {
 	c.columns[colIdx].AppendTime(t)
 }
 
+func (c *Chunk) AppendTime2(colIdx int, t types.Time) {
+	c.appendSel(colIdx)
+	c.columns[colIdx].AppendTime2(t)
+}
+
 // AppendDuration appends a Duration value to the chunk.
 func (c *Chunk) AppendDuration(colIdx int, dur types.Duration) {
 	c.appendSel(colIdx)

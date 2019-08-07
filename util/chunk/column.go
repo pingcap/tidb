@@ -213,6 +213,11 @@ func (c *Column) AppendFloat64(f float64) {
 	c.finishAppendFixed()
 }
 
+func (c *Column) AppendTime2(t types.Time) {
+	*(*types.Time)(unsafe.Pointer(&c.elemBuf[0])) = t
+	c.finishAppendFixed()
+}
+
 func (c *Column) finishAppendVar() {
 	c.appendNullBitmap(true)
 	c.offsets = append(c.offsets, int64(len(c.data)))
@@ -279,6 +284,12 @@ func (c *Column) preAlloc(length, typeSize int) {
 	}
 
 	c.length = length
+}
+
+func (c *Column) Time2s() []types.Time {
+	var res []types.Time
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeTime)
+	return res
 }
 
 func (c *Column) Int64s() []int64 {
@@ -402,7 +413,7 @@ func (c *Column) SetDuration(rowID int, v types.Duration) {
 
 // SetTime sets a time value to the position specified by `rowID`.
 func (c *Column) SetTime(rowID int, v types.Time) {
-	writeTime(c.data[rowID*sizeTime:], v)
+	writeTime(c.data[rowID*16:], v)
 }
 
 // GetInt64 returns the int64 in the specific row.
