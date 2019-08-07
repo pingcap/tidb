@@ -17,14 +17,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -136,13 +139,15 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 }
 
 type memTableReader struct {
-	ctx           sessionctx.Context
-	table         *model.TableInfo
-	columns       []*model.ColumnInfo
-	kvRanges      []kv.KeyRange
-	desc          bool
-	conditions    []expression.Expression
-	addedRows     [][]types.Datum
+	ctx        sessionctx.Context
+	table      *model.TableInfo
+	columns    []*model.ColumnInfo
+	kvRanges   []kv.KeyRange
+	desc       bool
+	conditions []expression.Expression
+	addedRows  [][]types.Datum
+	// memIdxHandles is uses to store the handle ids that has been read.
+	memIdxHandles set.Int64Set
 	retFieldTypes []*types.FieldType
 	colIDs        map[int64]int
 	// cache for decode handle.
@@ -164,6 +169,35 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 		desc:          us.desc,
 		conditions:    us.conditions,
 		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		memIdxHandles: set.NewInt64Set(),
+		retFieldTypes: retTypes(us),
+		colIDs:        colIDs,
+		handleBytes:   make([]byte, 0, 16),
+	}
+}
+
+func buildMemTableReaderWithFullRange(us *UnionScanExec) *memTableReader {
+	colIDs := make(map[int64]int)
+	for i, col := range us.columns {
+		colIDs[col.ID] = i
+	}
+	pkIsUnsigned := false
+	if us.table.Meta().PKIsHandle {
+		if pkColInfo := us.table.Meta().GetPkColInfo(); pkColInfo != nil {
+			pkIsUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
+		}
+	}
+
+	fullTableRange := distsql.TableRangesToKVRanges(getPhysicalTableID(us.table), ranger.FullIntRange(pkIsUnsigned), nil)
+	return &memTableReader{
+		ctx:           us.ctx,
+		table:         us.table.Meta(),
+		columns:       us.columns,
+		kvRanges:      fullTableRange,
+		desc:          us.desc,
+		conditions:    us.conditions,
+		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		memIdxHandles: set.NewInt64Set(),
 		retFieldTypes: retTypes(us),
 		colIDs:        colIDs,
 		handleBytes:   make([]byte, 0, 16),
@@ -203,11 +237,17 @@ func (m *memTableReader) decodeRecordKeyValue(key, value []byte) ([]types.Datum,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if m.memIdxHandles != nil {
+		m.memIdxHandles.Insert(handle)
+	}
 	return decodeRowData(m.ctx, m.table, m.columns, m.colIDs, handle, m.handleBytes, value)
 }
 
 // decodeRowData uses to decode row data value.
 func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, cacheBytes, value []byte) ([]types.Datum, error) {
+	if len(value) == 0 {
+		return nil, nil
+	}
 	values, err := getRowData(ctx.GetSessionVars().StmtCtx, tb, columns, colIDs, handle, cacheBytes, value)
 	if err != nil {
 		return nil, err
@@ -304,4 +344,124 @@ func reverseDatumSlice(rows [][]types.Datum) {
 	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
 		rows[i], rows[j] = rows[j], rows[i]
 	}
+}
+
+func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
+	pkTp := types.NewFieldType(mysql.TypeLonglong)
+	if m.table.PKIsHandle {
+		for _, col := range m.table.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				pkTp = &col.FieldType
+				break
+			}
+		}
+	}
+	handles := make([]int64, 0, cap(m.addedRows))
+	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
+		handle, err := m.decodeIndexHandle(key, value, pkTp)
+		if err != nil {
+			return err
+		}
+		handles = append(handles, handle)
+		m.memIdxHandles[handle] = struct{}{}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if m.desc {
+		for i, j := 0, len(handles)-1; i < j; i, j = i+1, j-1 {
+			handles[i], handles[j] = handles[j], handles[i]
+		}
+	}
+	return handles, nil
+}
+
+func (m *memIndexReader) decodeIndexHandle(key, value []byte, pkTp *types.FieldType) (int64, error) {
+	_, b, err := tablecodec.CutIndexKeyNew(key, len(m.index.Columns))
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		d, err := tablecodec.DecodeColumnValue(b, pkTp, m.ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return d.GetInt64(), nil
+
+	} else if len(value) >= 8 {
+		return tablecodec.DecodeIndexValueAsHandle(value)
+	}
+	// Should never execute to here.
+	return 0, errors.Errorf("no handle in index key: %v, value: %v", key, value)
+}
+
+type memIndexLookUpReader struct {
+	ctx           sessionctx.Context
+	index         *model.IndexInfo
+	columns       []*model.ColumnInfo
+	table         table.Table
+	desc          bool
+	conditions    []expression.Expression
+	retFieldTypes []*types.FieldType
+
+	idxReader *memIndexReader
+}
+
+func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpExecutor) *memIndexLookUpReader {
+	kvRanges := idxLookUpReader.kvRanges
+	outputOffset := []int{len(idxLookUpReader.index.Columns)}
+	memIdxReader := &memIndexReader{
+		ctx:              us.ctx,
+		index:            idxLookUpReader.index,
+		table:            idxLookUpReader.table.Meta(),
+		kvRanges:         kvRanges,
+		desc:             idxLookUpReader.desc,
+		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		retFieldTypes:    retTypes(us),
+		outputOffset:     outputOffset,
+		handleBytes:      make([]byte, 0, 16),
+		memIdxHandles:    make(map[int64]struct{}, len(us.dirty.addedRows)),
+		belowHandleIndex: us.belowHandleIndex,
+	}
+
+	return &memIndexLookUpReader{
+		ctx:           us.ctx,
+		index:         idxLookUpReader.index,
+		columns:       idxLookUpReader.columns,
+		table:         idxLookUpReader.table,
+		desc:          idxLookUpReader.desc,
+		conditions:    us.conditions,
+		retFieldTypes: retTypes(us),
+
+		idxReader: memIdxReader,
+	}
+}
+
+func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
+	handles, err := m.idxReader.getMemRowsHandle()
+	if err != nil || len(handles) == 0 {
+		return nil, err
+	}
+
+	tblKvRanges := distsql.TableHandlesToKVRanges(getPhysicalTableID(m.table), handles)
+	colIDs := make(map[int64]int)
+	for i, col := range m.columns {
+		colIDs[col.ID] = i
+	}
+
+	memTblReader := &memTableReader{
+		ctx:           m.ctx,
+		table:         m.table.Meta(),
+		columns:       m.columns,
+		kvRanges:      tblKvRanges,
+		conditions:    m.conditions,
+		addedRows:     make([][]types.Datum, 0, len(handles)),
+		retFieldTypes: m.retFieldTypes,
+		colIDs:        colIDs,
+		handleBytes:   m.idxReader.handleBytes,
+	}
+
+	return memTblReader.getMemRows()
 }

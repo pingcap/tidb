@@ -132,8 +132,16 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		us.addedRows, err = mIdxReader.getMemRows()
 		us.memIdxHandles = mIdxReader.memIdxHandles
 	case *IndexLookUpExecutor:
-		us.memIdxHandles = set.NewInt64Set()
-		err = us.buildAndSortAddedRows(x.table)
+		tid := getPhysicalTableID(x.table)
+		if us.ctx.IsUntouchedIndex(tid, x.index.ID) {
+			// use full range table scan.
+			//err = us.buildAndSortAddedRows(x.table)
+			err = us.buildAndSortAddedRowsFromMem()
+		} else {
+			idxLookup := buildMemIndexLookUpReader(us, x)
+			us.addedRows, err = idxLookup.getMemRows()
+			us.memIdxHandles = idxLookup.idxReader.memIdxHandles
+		}
 	}
 	if err != nil {
 		return err
@@ -373,6 +381,39 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 		}
 		us.addedRows = append(us.addedRows, newData)
 	}
+	if us.desc {
+		sort.Sort(sort.Reverse(us))
+	} else {
+		sort.Sort(us)
+	}
+	if us.sortErr != nil {
+		return errors.Trace(us.sortErr)
+	}
+	return nil
+}
+
+//TableRangesToKVRanges
+func (us *UnionScanExec) buildAndSortAddedRowsFromMem() error {
+	tableReaderWithFullRange := buildMemTableReaderWithFullRange(us)
+	rows, err := tableReaderWithFullRange.getMemRows()
+	if err != nil {
+		return err
+	}
+	us.memIdxHandles = tableReaderWithFullRange.memIdxHandles
+	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
+	mutableRow := chunk.MutRowFromTypes(retTypes(us))
+	for _, row := range rows {
+		mutableRow.SetDatums(row...)
+		matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
+		if err != nil {
+			return err
+		}
+		if !matched {
+			continue
+		}
+		us.addedRows = append(us.addedRows, row)
+	}
+
 	if us.desc {
 		sort.Sort(sort.Reverse(us))
 	} else {

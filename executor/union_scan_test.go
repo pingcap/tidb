@@ -164,6 +164,7 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	// update with unchange index column.
 	tk.MustExec("update t set a=a+1")
 	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
+	tk.MustQuery("select b from t use index (idx)").Check(testkit.Rows("1", "2"))
 	tk.MustExec("update t set b=b+2 where a=2")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 3", "3 2"))
 	tk.MustQuery("select * from t use index (idx) order by b desc").Check(testkit.Rows("2 3", "3 2"))

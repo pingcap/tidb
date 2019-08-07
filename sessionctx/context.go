@@ -82,6 +82,10 @@ type Context interface {
 	StmtGetMutation(int64) *binlog.TableMutation
 	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
 	StmtAddDirtyTableOP(op int, physicalID int64, handle int64, row []types.Datum)
+	// UpdateStmtUntouchedIndex records the untouched index value when execute update statement.
+	UpdateStmtUntouchedIndex(tid, indexID int64)
+	// IsUntouchedIndex checks whether the table index was untouched when update.
+	IsUntouchedIndex(tid, indexID int64) bool
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.

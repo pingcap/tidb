@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"strings"
 	"sync/atomic"
 
@@ -48,9 +49,10 @@ type TxnState struct {
 	kv.Transaction
 	txnFuture *txnFuture
 
-	buf          kv.MemBuffer
-	mutations    map[int64]*binlog.TableMutation
-	dirtyTableOP []dirtyTableOperation
+	buf                  kv.MemBuffer
+	mutations            map[int64]*binlog.TableMutation
+	dirtyTableOP         []dirtyTableOperation
+	updateUntouchedIndex map[variable.TableIndexID]struct{}
 
 	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	// doNotCommit flag may be set when StmtCommit fail.
@@ -96,6 +98,9 @@ func (st *TxnState) GoString() string {
 		fmt.Fprintf(&s, ", txnStartTS=%d", st.Transaction.StartTS())
 		if len(st.dirtyTableOP) > 0 {
 			fmt.Fprintf(&s, ", len(dirtyTable)=%d, %#v", len(st.dirtyTableOP), st.dirtyTableOP)
+		}
+		if len(st.updateUntouchedIndex) > 0 {
+			fmt.Fprintf(&s, ", len(updateUntouchedIndex)=%d, %#v", len(st.updateUntouchedIndex), st.updateUntouchedIndex)
 		}
 		if len(st.mutations) > 0 {
 			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(st.mutations), st.mutations)
@@ -166,7 +171,7 @@ func mockAutoIDRetry() bool {
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
-	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
+	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || len(st.updateUntouchedIndex) != 0 || st.buf.Len() != 0 {
 		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Stack("something must be wrong"))
@@ -305,6 +310,7 @@ func (st *TxnState) cleanup() {
 		}
 		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
+	st.updateUntouchedIndex = nil
 }
 
 // KeysNeedToLock returns the keys need to be locked.
@@ -455,6 +461,14 @@ func (s *session) StmtCommit() error {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	if len(st.updateUntouchedIndex) > 0 {
+		if s.sessionVars.TxnCtx.UpdateUntouchedIndex == nil {
+			s.sessionVars.TxnCtx.UpdateUntouchedIndex = make(map[variable.TableIndexID]struct{})
+		}
+		for k := range st.updateUntouchedIndex {
+			s.sessionVars.TxnCtx.UpdateUntouchedIndex[k] = struct{}{}
+		}
+	}
 	st.ConfirmAssertions(true)
 	return nil
 }
@@ -477,4 +491,19 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 
 func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
 	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle, row})
+}
+
+func (s *session) UpdateStmtUntouchedIndex(tid, indexID int64) {
+	if s.txn.updateUntouchedIndex == nil {
+		s.txn.updateUntouchedIndex = make(map[variable.TableIndexID]struct{})
+	}
+	s.txn.updateUntouchedIndex[variable.TableIndexID{tid, indexID}] = struct{}{}
+}
+
+func (s *session) IsUntouchedIndex(tid, indexID int64) bool {
+	if s.sessionVars.TxnCtx.UpdateUntouchedIndex == nil {
+		return false
+	}
+	_, ok := s.sessionVars.TxnCtx.UpdateUntouchedIndex[variable.TableIndexID{tid, indexID}]
+	return ok
 }
