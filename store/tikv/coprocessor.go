@@ -83,9 +83,10 @@ type copTask struct {
 	region RegionVerID
 	ranges *copRanges
 
-	respChan  chan *copResponse
-	storeAddr string
-	cmdType   tikvrpc.CmdType
+	respChan    chan *copResponse
+	storeAddr   string
+	cmdType     tikvrpc.CmdType
+	isFlashTask bool
 }
 
 func (r *copTask) String() string {
@@ -624,7 +625,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		ScanDetail:     true,
 	})
 	startTime := time.Now()
-	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium)
+	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.isFlashTask)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

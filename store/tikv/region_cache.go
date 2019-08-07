@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -298,6 +299,55 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 		Store:   store,
 		Addr:    addr,
 	}, nil
+}
+
+// GetFlashRPCContext returns RPCContext for a region must access flash store. If it returns nil, the region
+// must be out of date and already dropped from cache or not flash store found.
+func (c *RegionCache) GetFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
+	ts := time.Now().Unix()
+
+	cachedRegion := c.getCachedRegionWithRLock(id)
+	if cachedRegion == nil {
+		return nil, nil
+	}
+	if !cachedRegion.checkRegionCacheTTL(ts) {
+		return nil, nil
+	}
+
+	regionStore := cachedRegion.getStore()
+
+	for i, store := range regionStore.stores {
+		if !store.isFlash {
+			continue
+		}
+		peer, storeIdx := cachedRegion.meta.Peers[i], i
+		addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
+		if err != nil {
+			return nil, err
+		}
+		if store == nil || len(addr) == 0 {
+			cachedRegion.invalidate()
+			return nil, nil
+		}
+		storeFailEpoch := atomic.LoadUint32(&store.fail)
+		if storeFailEpoch != regionStore.storeFails[regionStore.workStoreIdx] {
+			cachedRegion.invalidate()
+			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
+				zap.Uint64("region", id.GetID()),
+				zap.String("store", store.addr))
+			return nil, nil
+		}
+		return &RPCContext{
+			Region:  id,
+			Meta:    cachedRegion.meta,
+			Peer:    peer,
+			PeerIdx: storeIdx,
+			Store:   store,
+			Addr:    addr,
+		}, nil
+	}
+
+	return nil, nil
 }
 
 // KeyLocation is the region and range that a key is located.
@@ -1029,6 +1079,7 @@ type Store struct {
 	state        uint64     // unsafe store storeState
 	resolveMutex sync.Mutex // protect pd from concurrent init requests
 	fail         uint32     // store fail count, see RegionStore.storeFails
+	isFlash      bool       // is the store theflash
 }
 
 type resolveState uint64
@@ -1050,6 +1101,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		return
 	}
 	var store *metapb.Store
+	conf := config.GetGlobalConfig()
 	for {
 		store, err = c.pdClient.GetStore(bo.ctx, s.storeID)
 		if err != nil {
@@ -1073,6 +1125,12 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		addr = store.GetAddress()
 		s.addr = addr
+		for _, label := range store.Labels {
+			if label.Key == conf.TheFlashLabelKey && label.Value == conf.TheFlashLabelValue {
+				s.isFlash = true
+				break
+			}
+		}
 	retry:
 		state = s.getResolveState()
 		if state != unresolved {
@@ -1109,10 +1167,17 @@ func (s *Store) reResolve(c *RegionCache) {
 		return
 	}
 
+	conf := config.GetGlobalConfig()
+	isFlash := false
+	for _, label := range store.Labels {
+		if label.Key == conf.TheFlashLabelKey && label.Value == conf.TheFlashLabelValue {
+			isFlash = true
+		}
+	}
 	addr = store.GetAddress()
 	if s.addr != addr {
 		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr}
+		newStore := &Store{storeID: s.storeID, addr: addr, isFlash: isFlash}
 		newStore.state = *(*uint64)(unsafe.Pointer(&state))
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore

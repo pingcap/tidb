@@ -131,7 +131,7 @@ func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second)
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, false)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	c.Assert(ctx, NotNil)

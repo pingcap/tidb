@@ -92,6 +92,8 @@ max-batch-size=128
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
+	c.Assert(conf.TheFlashLableKey, Equals, "zone")
+	c.Assert(conf.TheFlashLableValue, Equals, "engine")
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

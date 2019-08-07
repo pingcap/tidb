@@ -15,11 +15,12 @@ package tikv
 
 import (
 	"context"
+	"sync/atomic"
+	"time"
+
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -69,12 +70,18 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout)
+	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, false)
+	return resp, err
+}
+
+// SendReqToFlash sends a request to tiflash server.
+func (s *RegionRequestSender) SendReqToFlash(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, true)
 	return resp, err
 }
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
-func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, *RPCContext, error) {
+func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, sendToFlash bool) (*tikvrpc.Response, *RPCContext, error) {
 	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
 		switch val.(string) {
 		case "timeout":
@@ -95,7 +102,13 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 	})
 
 	for {
-		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
+		var ctx *RPCContext
+		var err error
+		if sendToFlash {
+			ctx, err = s.regionCache.GetFlashRPCContext(bo, regionID)
+		} else {
+			ctx, err = s.regionCache.GetRPCContext(bo, regionID)
+		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
