@@ -638,6 +638,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		ret = p
 	case ast.AdminReloadExprPushdownBlacklist:
 		return &ReloadExprPushdownBlacklist{}, nil
+	case ast.AdminReloadOptRuleBlacklist:
+		return &ReloadOptRuleBlacklist{}, nil
 	case ast.AdminPluginEnable:
 		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
 	case ast.AdminPluginDisable:

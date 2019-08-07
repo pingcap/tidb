@@ -256,3 +256,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 	p.SetChildren(newChildren...)
 	return p, nil
 }
+
+func (*decorrelateSolver) name() string {
+	return "decorrelate"
+}
