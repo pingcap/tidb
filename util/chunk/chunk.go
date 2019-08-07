@@ -124,6 +124,7 @@ func newFixedLenColumn(elemLen, cap int) *Column {
 		elemBuf:    make([]byte, elemLen),
 		data:       make([]byte, 0, cap*elemLen),
 		nullBitmap: make([]byte, 0, cap>>3),
+		IsNullx:    make([]bool, 0, cap),
 	}
 }
 

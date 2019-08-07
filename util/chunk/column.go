@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"reflect"
 )
 
 // AppendDuration appends a duration value into this Column.
@@ -59,6 +60,7 @@ func (c *Column) AppendSet(set types.Set) {
 type Column struct {
 	length     int
 	nullBitmap []byte // bit 0 is null, 1 is not null
+	IsNullx    []bool
 	offsets    []int64
 	data       []byte
 	elemBuf    []byte
@@ -103,8 +105,9 @@ func (c *Column) Reset() {
 
 // IsNull returns if this row is null.
 func (c *Column) IsNull(rowIdx int) bool {
-	nullByte := c.nullBitmap[rowIdx/8]
-	return nullByte&(1<<(uint(rowIdx)&7)) == 0
+	//nullByte := c.nullBitmap[rowIdx/8]
+	//return nullByte&(1<<(uint(rowIdx)&7)) == 0
+	return c.IsNullx[rowIdx]
 }
 
 // CopyConstruct copies this Column to dst.
@@ -112,29 +115,36 @@ func (c *Column) IsNull(rowIdx int) bool {
 func (c *Column) CopyConstruct(dst *Column) *Column {
 	if dst != nil {
 		dst.length = c.length
-		dst.nullBitmap = append(dst.nullBitmap[:0], c.nullBitmap...)
+		//dst.nullBitmap = append(dst.nullBitmap[:0], c.nullBitmap...)
 		dst.offsets = append(dst.offsets[:0], c.offsets...)
 		dst.data = append(dst.data[:0], c.data...)
 		dst.elemBuf = append(dst.elemBuf[:0], c.elemBuf...)
 		return dst
 	}
 	newCol := &Column{length: c.length}
-	newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
+	//newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
 	newCol.offsets = append(newCol.offsets, c.offsets...)
 	newCol.data = append(newCol.data, c.data...)
 	newCol.elemBuf = append(newCol.elemBuf, c.elemBuf...)
+	newCol.IsNullx = append(newCol.IsNullx, c.IsNullx...)
 	return newCol
 }
 
 func (c *Column) appendNullBitmap(notNull bool) {
-	idx := c.length >> 3
-	if idx >= len(c.nullBitmap) {
-		c.nullBitmap = append(c.nullBitmap, 0)
-	}
 	if notNull {
-		pos := uint(c.length) & 7
-		c.nullBitmap[idx] |= byte(1 << pos)
+		c.IsNullx = append(c.IsNullx, false)
+	} else {
+		c.IsNullx = append(c.IsNullx, true)
 	}
+
+	//idx := c.length >> 3
+	//if idx >= len(c.nullBitmap) {
+	//	c.nullBitmap = append(c.nullBitmap, 0)
+	//}
+	//if notNull {
+	//	pos := uint(c.length) & 7
+	//	c.nullBitmap[idx] |= byte(1 << pos)
+	//}
 }
 
 // appendMultiSameNullBitmap appends multiple same bit value to `nullBitMap`.
@@ -269,6 +279,18 @@ func (c *Column) preAlloc(length, typeSize int) {
 	}
 
 	c.length = length
+}
+
+func (c *Column) Int64s() []int64 {
+	var res []int64
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeInt64)
+	return res
+}
+
+func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
+	header.Data = uintptr(unsafe.Pointer(&c.data[0]))
+	header.Len = c.length
+	header.Cap = cap(c.data) / typeSize
 }
 
 // SetNull sets the rowIdx to null.

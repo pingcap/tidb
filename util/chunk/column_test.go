@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"testing"
 )
 
 func equalColumn(c1, c2 *Column) bool {
@@ -698,6 +699,52 @@ func (s *testChunkSuite) TestSetNulls(c *check.C) {
 		c.Assert(col.nullCount(), check.Equals, len(nullMap))
 		for k := range nullMap {
 			c.Assert(col.IsNull(k), check.Equals, true)
+		}
+	}
+}
+
+func BenchmarkVecPrimitive(b *testing.B) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
+	col1 := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col1.AppendInt64(int64(i))
+	}
+	col2 := col1.CopyConstruct(nil)
+	result := col1.CopyConstruct(nil)
+
+	xs1 := col1.Int64s()
+	xs2 := col2.Int64s()
+	xs3 := result.Int64s()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 1024; j++ {
+			if col1.IsNullx[j] || col2.IsNullx[j] {
+				result.SetNull(j, true)
+			} else {
+				xs3[j] = xs2[j] + xs1[j]
+			}
+		}
+	}
+}
+
+func BenchmarkVecSet(b *testing.B) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
+	col1 := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col1.AppendInt64(int64(i))
+	}
+	col2 := col1.CopyConstruct(nil)
+	result := col1.CopyConstruct(nil)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 1024; j++ {
+			if col1.IsNullx[j] || col2.IsNullx[j] {
+				result.SetNull(j, true)
+			} else {
+				result.SetInt64(j, col1.GetInt64(j)+col2.GetInt64(j))
+			}
 		}
 	}
 }
