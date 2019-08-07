@@ -859,7 +859,9 @@ func upgradeToVer34(s Session) {
 }
 
 func upgradeToVer35(s Session) {
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.GLOBAL_VARIABLES SET VARIABLE_NAME='tidb_backoff_weight' WHERE VARIABLE_NAME='tidb_back_off_weight'")
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s SET VARIABLE_NAME = '%s' WHERE VARIABLE_NAME = 'tidb_back_off_weight'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBBackOffWeight)
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
