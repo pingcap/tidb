@@ -348,6 +348,7 @@ const (
 	version32 = 32
 	version33 = 33
 	version34 = 34
+	version35 = 35
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -541,6 +542,10 @@ func upgrade(s Session) {
 
 	if ver < version34 {
 		upgradeToVer34(s)
+	}
+
+	if ver < version35 {
+		upgradeToVer35(s)
 	}
 
 	updateBootstrapVer(s)
@@ -851,6 +856,10 @@ func upgradeToVer33(s Session) {
 
 func upgradeToVer34(s Session) {
 	doReentrantDDL(s, CreateOptRuleBlacklist)
+}
+
+func upgradeToVer35(s Session) {
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.GLOBAL_VARIABLES SET VARIABLE_NAME='tidb_backoff_weight' WHERE VARIABLE_NAME='tidb_back_off_weight'")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
