@@ -56,6 +56,7 @@ type tableHintInfo struct {
 	indexNestedLoopJoinTables []hintTableInfo
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
+	preferAggType             uint
 }
 
 type hintTableInfo struct {
