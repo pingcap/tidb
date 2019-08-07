@@ -1101,7 +1101,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		return
 	}
 	var store *metapb.Store
-	conf := config.GetGlobalConfig()
+	confTiFlash := config.GetGlobalConfig().TiFlash
 	for {
 		store, err = c.pdClient.GetStore(bo.ctx, s.storeID)
 		if err != nil {
@@ -1126,7 +1126,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		addr = store.GetAddress()
 		s.addr = addr
 		for _, label := range store.Labels {
-			if label.Key == conf.TheFlashLabelKey && label.Value == conf.TheFlashLabelValue {
+			if label.Key == confTiFlash.LabelKey && label.Value == confTiFlash.LabelValue {
 				s.isFlash = true
 				break
 			}
@@ -1167,10 +1167,10 @@ func (s *Store) reResolve(c *RegionCache) {
 		return
 	}
 
-	conf := config.GetGlobalConfig()
+	confTiFlash := config.GetGlobalConfig().TiFlash
 	isFlash := false
 	for _, label := range store.Labels {
-		if label.Key == conf.TheFlashLabelKey && label.Value == conf.TheFlashLabelValue {
+		if label.Key == confTiFlash.LabelKey && label.Value == confTiFlash.LabelValue {
 			isFlash = true
 		}
 	}

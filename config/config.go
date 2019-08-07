@@ -84,6 +84,7 @@ type Config struct {
 	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	TiFlash             TiFlash           `toml:"tiflash" json:"tiflash"`
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
@@ -97,9 +98,6 @@ type Config struct {
 	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
 	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
-	// TheFlashLabelKey and TheFlashLabelValue are used to check whether a store is TiFlash.
-	TheFlashLabelKey   string `toml:"the-flash-label-key" json:"the-flash-label-key"`
-	TheFlashLabelValue string `toml:"the-flash-label-value" json:"the-flash-label-value"`
 }
 
 // Log is the log section of config.
@@ -320,6 +318,13 @@ type PessimisticTxn struct {
 	TTL string `toml:"ttl" json:"ttl"`
 }
 
+// TiFlash is the config for TiFlash.
+type TiFlash struct {
+	// LabelKey and LabelValue are used to check whether a store is TiFlash.
+	LabelKey   string `toml:"label-key" json:"label-key"`
+	LabelValue string `toml:"label-value" json:"label-value"`
+}
+
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -339,8 +344,6 @@ var defaultConf = Config{
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
 	SplitRegionMaxNum:            1000,
-	TheFlashLabelKey:             "zone",
-	TheFlashLabelValue:           "engine",
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 2048000,
@@ -406,6 +409,10 @@ var defaultConf = Config{
 		OverloadThreshold: 200,
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
+	},
+	TiFlash: TiFlash{
+		LabelKey:   "zone",
+		LabelValue: "engine",
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
