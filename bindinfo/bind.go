@@ -17,64 +17,51 @@ import "github.com/pingcap/parser/ast"
 
 // HintsSet contains all hints of a query.
 type HintsSet struct {
-	tableHints map[int64][]*ast.TableOptimizerHint
-	indexHints map[int64][]*ast.IndexHint
+	tableHints [][]*ast.TableOptimizerHint // Slice offset is the traversal order of `SelectStmt` in the ast.
+	indexHints [][]*ast.IndexHint          // Slice offset is the traversal order of `TableName` in the ast.
 }
 
-type hintCollector struct {
+type hintProcessor struct {
+	*HintsSet
+	bind         bool
 	tableCounter int64
 	indexCounter int64
-	HintsSet
+}
+
+func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
+	switch v := in.(type) {
+	case *ast.SelectStmt:
+		if hp.bind {
+			v.TableHints = hp.tableHints[hp.tableCounter]
+			hp.tableCounter++
+		} else {
+			hp.tableHints = append(hp.tableHints, v.TableHints)
+		}
+	case *ast.TableName:
+		if hp.bind {
+			v.IndexHints = hp.indexHints[hp.indexCounter]
+			hp.indexCounter++
+		} else {
+			hp.indexHints = append(hp.indexHints, v.IndexHints)
+		}
+	}
+	return in, false
+}
+
+func (hp *hintProcessor) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }
 
 // CollectHint collects hints for a statement.
 func CollectHint(in ast.StmtNode) *HintsSet {
-	hc := hintCollector{HintsSet: HintsSet{tableHints: make(map[int64][]*ast.TableOptimizerHint), indexHints: make(map[int64][]*ast.IndexHint)}}
-	in.Accept(&hc)
-	return &hc.HintsSet
+	hp := hintProcessor{HintsSet: &HintsSet{tableHints: make([][]*ast.TableOptimizerHint, 0, 4), indexHints: make([][]*ast.IndexHint, 0, 4)}}
+	in.Accept(&hp)
+	return hp.HintsSet
 }
 
-func (hc *hintCollector) Enter(in ast.Node) (ast.Node, bool) {
-	switch v := in.(type) {
-	case *ast.SelectStmt:
-		hc.tableHints[hc.tableCounter] = v.TableHints
-		hc.tableCounter++
-	case *ast.TableName:
-		hc.indexHints[hc.indexCounter] = v.IndexHints
-		hc.indexCounter++
-	}
-	return in, false
-}
-
-func (hc *hintCollector) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
-}
-
-type hintBinder struct {
-	tableCounter int64
-	indexCounter int64
-	*HintsSet
-}
-
-func (hc *hintBinder) Enter(in ast.Node) (ast.Node, bool) {
-	switch v := in.(type) {
-	case *ast.SelectStmt:
-		v.TableHints = hc.tableHints[hc.tableCounter]
-		hc.tableCounter++
-	case *ast.TableName:
-		v.IndexHints = hc.indexHints[hc.indexCounter]
-		hc.indexCounter++
-	}
-	return in, false
-}
-
-func (hc *hintBinder) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
-}
-
-// BindHint will add hints for originStmt according to the hints in `bindMeta`.
+// BindHint will add hints for stmt according to the hints in `hintsSet`.
 func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
-	hb := hintBinder{HintsSet: hintsSet}
-	stmt.Accept(&hb)
+	hp := hintProcessor{HintsSet: hintsSet, bind: true}
+	stmt.Accept(&hp)
 	return stmt
 }
