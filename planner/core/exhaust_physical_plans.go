@@ -117,7 +117,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 }
 
 func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
-	joins := make([]PhysicalPlan, 0, len(p.leftProperties))
+	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	for _, lhsChildProperty := range p.leftProperties {
 		offsets := getMaxSortPrefix(lhsChildProperty, p.LeftJoinKeys)
@@ -158,10 +158,10 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 			joins = append(joins, mergeJoin)
 		}
 	}
-	// If TiDB_SMJ hint is existed && no join keys in children property,
-	// it should to enforce merge join.
-	if len(joins) == 0 && (p.preferJoinType&preferMergeJoin) > 0 {
-		return p.getEnforcedMergeJoin(prop)
+	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
+	// because we can't trust lhsChildProperty completely.
+	if (p.preferJoinType & preferMergeJoin) > 0 {
+		joins = append(joins, p.getEnforcedMergeJoin(prop)...)
 	}
 
 	return joins
@@ -1198,11 +1198,36 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
+func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+	_, desc := prop.AllSameOrder()
+	enforcedAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
+	childProp := &property.PhysicalProperty{
+		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
+		Enforced:    true,
+		Items:       property.ItemsFromCols(la.groupByCols, desc),
+	}
+
+	for _, taskTp := range wholeTaskTypes {
+		copiedChildProperty := new(property.PhysicalProperty)
+		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+		copiedChildProperty.TaskTp = taskTp
+
+		agg := basePhysicalAgg{
+			GroupByItems: la.GroupByItems,
+			AggFuncs:     la.AggFuncs,
+		}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
+		agg.SetSchema(la.schema.Clone())
+		enforcedAggs = append(enforcedAggs, agg)
+	}
+	return enforcedAggs
+}
+
 func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	all, desc := prop.AllSameOrder()
-	if len(la.possibleProperties) == 0 || !all {
+	if !all {
 		return nil
 	}
+
 	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.Mode == aggregation.FinalMode {
 			return nil
@@ -1213,7 +1238,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
-	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
+	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1)+len(wholeTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 	}
@@ -1244,6 +1269,11 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			streamAggs = append(streamAggs, agg)
 		}
 	}
+	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
+	// because we can't trust possibleChildProperty completely.
+	if (la.preferAggType & preferStreamAgg) > 0 {
+		streamAggs = append(streamAggs, la.getEnforcedStreamAggs(prop)...)
+	}
 	return streamAggs
 }
 
@@ -1264,9 +1294,35 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	aggs := make([]PhysicalPlan, 0, len(la.possibleProperties)+1)
-	aggs = append(aggs, la.getHashAggs(prop)...)
-	aggs = append(aggs, la.getStreamAggs(prop)...)
+	preferHash := (la.preferAggType & preferHashAgg) > 0
+	preferStream := (la.preferAggType & preferStreamAgg) > 0
+	if preferHash && preferStream {
+		errMsg := "Optimizer aggregation hints are conflicted"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		la.preferAggType = 0
+		preferHash, preferStream = false, false
+	}
+
+	hashAggs := la.getHashAggs(prop)
+	if hashAggs != nil && preferHash {
+		return hashAggs
+	}
+
+	streamAggs := la.getStreamAggs(prop)
+	if streamAggs != nil && preferStream {
+		return streamAggs
+	}
+
+	if streamAggs == nil && preferStream {
+		errMsg := "Optimizer Hint TIDB_STREAMAGG is inapplicable"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
+
+	aggs := make([]PhysicalPlan, 0, len(hashAggs)+len(streamAggs))
+	aggs = append(aggs, hashAggs...)
+	aggs = append(aggs, streamAggs...)
 	return aggs
 }
 
