@@ -19,6 +19,7 @@ import (
 	"io"
 	"unicode/utf8"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -225,6 +226,13 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 			ss.SetAssertion(key, kv.None)
 		}
 		return 0, err
+	}
+
+	if opt.Ctx != nil {
+		if span := opentracing.SpanFromContext(opt.Ctx); span != nil && span.Tracer() != nil {
+			span1 := span.Tracer().StartSpan("index.Create", opentracing.ChildOf(span.Context()))
+			defer span1.Finish()
+		}
 	}
 
 	var value []byte

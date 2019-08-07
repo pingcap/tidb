@@ -14,6 +14,8 @@
 package table
 
 import (
+	"context"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -32,6 +34,7 @@ type CreateIdxOpt struct {
 	SkipHandleCheck   bool // If true, skip the handle constraint check.
 	SkipCheck         bool // If true, skip all the unique indices constraint check.
 	kv.AssertionProto      // If not nil, check assertion.
+	Ctx               context.Context
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -53,6 +56,12 @@ var SkipCheck CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 func WithAssertion(x kv.AssertionProto) CreateIdxOptFunc {
 	return func(opt *CreateIdxOpt) {
 		opt.AssertionProto = x
+	}
+}
+
+func WithCtx(ctx context.Context) CreateIdxOptFunc {
+	return func(opt *CreateIdxOpt) {
+		opt.Ctx = ctx
 	}
 }
 

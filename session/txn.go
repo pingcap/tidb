@@ -228,7 +228,7 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 }
 
 // BatchGet overrides the Transaction interface.
-func (st *TxnState) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	bufferValues := make([][]byte, len(keys))
 	shrinkKeys := make([]kv.Key, 0, len(keys))
 	for i, key := range keys {
@@ -244,7 +244,7 @@ func (st *TxnState) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 			bufferValues[i] = val
 		}
 	}
-	storageValues, err := st.Transaction.BatchGet(shrinkKeys)
+	storageValues, err := st.Transaction.BatchGet(ctx, shrinkKeys)
 	if err != nil {
 		return nil, err
 	}

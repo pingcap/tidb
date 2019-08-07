@@ -284,7 +284,7 @@ func (e *LoadDataInfo) CheckAndInsertOneBatch() error {
 		return err
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(e.curBatchCnt)
-	err = e.batchCheckAndInsert(e.rows[0:e.curBatchCnt], e.addRecordLD)
+	err = e.batchCheckAndInsert(context.TODO(), e.rows[0:e.curBatchCnt], e.addRecordLD)
 	if err != nil {
 		return err
 	}
@@ -332,11 +332,11 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 	return row
 }
 
-func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
+func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) (int64, error) {
 	if row == nil {
 		return 0, nil
 	}
-	h, err := e.addRecord(row)
+	h, err := e.addRecord(ctx, row)
 	if err != nil {
 		e.handleWarning(err)
 	}
