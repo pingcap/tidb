@@ -3322,6 +3322,22 @@ func (s *testIntegrationSuite) TestAggregationBuiltinBitAnd(c *C) {
 	result.Check(testkit.Rows("7 7", "5 5", "3 3", "2 2", "<nil> 18446744073709551615"))
 }
 
+func (s *testIntegrationSuite) TestOrderbyWithDefaultFunc(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default null, b int default null)")
+	tk.MustExec("insert into t values(1, 2), (3, 4)")
+	tk.MustQuery("select a from t order by default(a)").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select a from t order by default(b)").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select a, b from t order by default(a)").Check(testkit.Rows("1,2", "3,4"))
+	tk.MustQuery("select a from t order by length(b)").Check(testkit.Rows("1", "3"))
+	_, err := tk.Exec("select a, b from t order by default(c)")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrUnknownColumn.GenWithStackByArgs("c", "order clause")), IsTrue)
+}
+
 func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
