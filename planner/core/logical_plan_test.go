@@ -2634,3 +2634,29 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 		}
 	}
 }
+
+func (s *testPlanSuite) TestUpdateEQCond(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select t1.a from t t1, t t2 where t1.a = t2.a+1",
+			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t1.a,plus(test.t2.a, 1))->Projection",
+		},
+	}
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is)
+		builder := NewPlanBuilder(MockContext(), s.is)
+		p, err := builder.Build(ctx, stmt)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
