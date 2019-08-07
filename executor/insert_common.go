@@ -308,8 +308,9 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 	return nil
 }
 
-func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx context.Context, rows [][]types.Datum) error) error {
+func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	// process `insert|replace into ... select ... from ...`
+	e := base.insertCommon()
 	selectExec := e.children[0]
 	fields := retTypes(selectExec)
 	chk := newFirstChunk(selectExec)
@@ -342,7 +343,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 			}
 			rows = append(rows, row)
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
-				if err = exec(ctx, rows); err != nil {
+				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
 				rows = rows[:0]
@@ -352,7 +353,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 			}
 		}
 	}
-	return exec(ctx, rows)
+	return base.exec(ctx, rows)
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {

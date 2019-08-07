@@ -184,7 +184,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 func (e *ReplaceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if len(e.children) > 0 && e.children[0] != nil {
-		return e.insertRowsFromSelect(ctx, e.exec)
+		return insertRowsFromSelect(ctx, e)
 	}
 	return insertRows(ctx, e)
 }
