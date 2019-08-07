@@ -107,7 +107,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Optimize the system initialization process to only allow the DDL owner to perform the initialization. This reduces the startup time for initialization or upgrading. 
 * Optimize the execution logic of `kill query` to improve performance and ensure resource is release properly 
 * Add a startup option `config-check` to check the validity of the configuration file
-* Add the `tidb_backoff_weight` system variable to control the backoff time of internal error retries
+* Add the `tidb_back_off_weight` system variable to control the backoff time of internal error retries
 * Add the `wait_timeout`and `interactive_timeout` system variables to control the maximum idle connections allowed
 * Add the connection pool for TiKV to shorten the connection establishing time
 
@@ -227,7 +227,7 @@ All notable changes to this project will be documented in this file. See also [R
 Fix the issue that TiDB continuously creates a new connection to TiKV when a fault occurs in TiKV [#10301](https://github.com/pingcap/tidb/pull/10301)
 Make `tidb_disable_txn_auto_retry` affect all retryable errors instead of only write conflict errors [#10339](https://github.com/pingcap/tidb/pull/10339)
 Allow DDL statements without parameters to be executed using `prepare`/`execute` [#10144](https://github.com/pingcap/tidb/pull/10144)
-Add the `tidb_backoff_weight` variable to control the backoff time [#10266](https://github.com/pingcap/tidb/pull/10266)
+Add the `tidb_back_off_weight` variable to control the backoff time [#10266](https://github.com/pingcap/tidb/pull/10266)
 Prohibit TiDB retrying non-automatically committed transactions in default conditions by setting the default value of `tidb_disable_txn_auto_retry` to `on` [#10266](https://github.com/pingcap/tidb/pull/10266)
 Fix the database privilege judgment of `role` in `RBAC` [#10261](https://github.com/pingcap/tidb/pull/10261)
 Support the pessimistic transaction model (experimental) [#10297](https://github.com/pingcap/tidb/pull/10297)
