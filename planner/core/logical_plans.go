@@ -97,6 +97,8 @@ const (
 	preferRightAsIndexInner
 	preferHashJoin
 	preferMergeJoin
+	preferHashAgg
+	preferStreamAgg
 )
 
 // LogicalJoin is the logical join plan.
@@ -246,6 +248,9 @@ type LogicalAggregation struct {
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
 
+	// preferAggType stores preferred aggregation algorithm type.
+	preferAggType uint
+
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
 }
@@ -353,6 +358,9 @@ type DataSource struct {
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
 	handleCol *expression.Column
+	// tableCols contains the original columns of table before being pruned, and it
+	// is used for estimating table scan cost.
+	tableCols []*expression.Column
 }
 
 // accessPath indicates the way we access a table: by using single index, or by using multiple indexes,
