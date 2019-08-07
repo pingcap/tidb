@@ -4212,6 +4212,22 @@ func (s *testIntegrationSuite) TestIssue10675(c *C) {
 	tk.MustQuery(`select * from t where a < 184467440737095516167.1;`).Check(
 		testkit.Rows("1"))
 	tk.MustQuery(`select * from t where a > 184467440737095516167.1;`).Check(testkit.Rows())
+
+	// issue 11647
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(b bit(1));`)
+	tk.MustExec(`insert into t values(b'1');`)
+	tk.MustQuery(`select count(*) from t where b = 1;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select count(*) from t where b = '1';`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select count(*) from t where b = b'1';`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(b bit(63));`)
+	// Not 64, because the behavior of mysql is amazing. I have no idea to fix it.
+	tk.MustExec(`insert into t values(b'111111111111111111111111111111111111111111111111111111111111111');`)
+	tk.MustQuery(`select count(*) from t where b = 9223372036854775807;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select count(*) from t where b = '9223372036854775807';`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select count(*) from t where b = b'111111111111111111111111111111111111111111111111111111111111111';`).Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestDatetimeMicrosecond(c *C) {

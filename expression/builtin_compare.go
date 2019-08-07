@@ -1097,6 +1097,9 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 
+	if targetFieldType.Tp == mysql.TypeBit {
+		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
+	}
 	var intDatum types.Datum
 	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
 	if err != nil {
