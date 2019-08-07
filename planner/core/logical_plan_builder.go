@@ -2267,6 +2267,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		partitionNames:      tn.PartitionNames,
+		tableCols:           make([]*expression.Column, 0, len(columns)),
 	}.Init(b.ctx)
 
 	var handleCol *expression.Column
@@ -2287,9 +2288,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 			handleCol = newCol
 		}
 		schema.Append(newCol)
+		ds.tableCols = append(ds.tableCols, newCol)
 	}
-	ds.SetSchema(schema)
-
 	// We append an extra handle column to the schema when "ds" is not a memory
 	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
 	// column is not the primary key of "ds".
@@ -2298,10 +2298,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
+		ds.tableCols = append(ds.tableCols, handleCol)
 	}
 	if handleCol != nil {
 		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
 	}
+	ds.SetSchema(schema)
 
 	var result LogicalPlan = ds
 
