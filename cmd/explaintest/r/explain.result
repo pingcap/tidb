@@ -24,6 +24,8 @@ Field	Type	Null	Key	Default	Extra
 id	int(11)	YES		NULL	
 drop table if exists t;
 create table t(id int primary key, a int, b int);
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
 explain select group_concat(a) from t group by id;
 id	count	task	operator info
 StreamAgg_8	8000.00	root	group by:col_1, funcs:group_concat(col_0, ",")

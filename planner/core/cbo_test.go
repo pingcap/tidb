@@ -292,6 +292,10 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
 	}
 	testKit.MustExec("analyze table t1")
+	ctx := testKit.Se.(sessionctx.Context)
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.HashAggFinalConcurrency = 1
+	sessionVars.HashAggPartialConcurrency = 1
 	tests := []struct {
 		sql  string
 		best string
@@ -314,11 +318,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where e = 1 group by b",
-			best: "IndexLookUp(Index(t.e)[[1,1]], Table(t)->HashAgg)->HashAgg",
+			best: "IndexLookUp(Index(t.e)[[1,1]], Table(t))->HashAgg",
 		},
 		{
 			sql:  "select count(*) from t where e > 1 group by b",
-			best: "IndexLookUp(Index(t.b)[[NULL,+inf]], Table(t)->Sel([gt(test.t.e, 1)]))->Projection->StreamAgg",
+			best: "TableReader(Table(t)->Sel([gt(test.t.e, 1)])->HashAgg)->HashAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 20",
@@ -326,15 +330,15 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 30",
-			best: "IndexLookUp(Index(t.b)[[-inf,30]], Table(t)->HashAgg)->HashAgg",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 30)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 40",
-			best: "IndexLookUp(Index(t.b)[[-inf,40]], Table(t)->HashAgg)->HashAgg",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 40)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 50",
-			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t)->HashAgg)->HashAgg",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 100000000000",
@@ -342,11 +346,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select * from t where t.b <= 40",
-			best: "IndexLookUp(Index(t.b)[[-inf,40]], Table(t))",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 40)]))",
 		},
 		{
 			sql:  "select * from t where t.b <= 50",
-			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t))",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
 		},
 		{
 			sql:  "select * from t where t.b <= 10000000000",
@@ -355,7 +359,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		// test panic
 		{
 			sql:  "select * from t where 1 and t.b <= 50",
-			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t))",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
 		},
 		{
 			sql:  "select * from t where t.b <= 100 order by t.a limit 1",
@@ -385,7 +389,6 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 	}
 	for _, tt := range tests {
-		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := session.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
@@ -423,7 +426,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t where c1 in (select c1 from t1)",
-			best: "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))])->HashAgg)->HashAgg}(test.t.c1,test.t1.c1)->Projection",
+			best: "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))]))->HashAgg}(test.t.c1,test.t1.c1)->Projection",
 		},
 		{
 			sql:  "select * from t, t1 where t.c1 = t1.c1",
@@ -510,12 +513,12 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		},
 		{
 			sql:  "select * from t where t.a = 1 and t.b <= 2",
-			best: "IndexLookUp(Index(t.b)[[-inf,2]], Table(t)->Sel([eq(test.t.a, 1)]))",
+			best: "TableReader(Table(t)->Sel([eq(test.t.a, 1) le(test.t.b, 2)]))",
 		},
 		// Test not analyzed table.
 		{
 			sql:  "select * from t1 where t1.a <= 2",
-			best: "IndexLookUp(Index(t1.a)[[-inf,2]], Table(t1))",
+			best: "TableReader(Table(t1)->Sel([le(test.t1.a, 2)]))",
 		},
 		{
 			sql:  "select * from t1 where t1.a = 1 and t1.b <= 2",
@@ -596,10 +599,9 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	))
 	statistics.RatioOfPseudoEstimate.Store(0.7)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"IndexLookUp_11 8.84 root ",
-		"├─IndexScan_8 26.59 cop[tikv] table:t, index:a, range:[-inf,5], keep order:false, stats:pseudo",
-		"└─Selection_10 8.84 cop[tikv] le(test.t.b, 5)",
-		"  └─TableScan_9 26.59 cop[tikv] table:t, keep order:false, stats:pseudo",
+		"TableReader_7 8.84 root data:Selection_6",
+		"└─Selection_6 8.84 cop[tikv] le(test.t.a, 5), le(test.t.b, 5)",
+		"  └─TableScan_5 80.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
 
@@ -698,6 +700,10 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustExec("create table t(a int, b int, c int, index idx(c))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
 	tk.MustExec("analyze table t")
+	ctx := tk.Se.(sessionctx.Context)
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.HashAggFinalConcurrency = 1
+	sessionVars.HashAggPartialConcurrency = 1
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
 			"Projection_11 10.00 root 9_aux_0",

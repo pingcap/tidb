@@ -2394,7 +2394,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
 	}
-	ds.SetSchema(schema)
 	ds.setPreferredStoreType(b.TableHints())
 
 	// We append an extra handle column to the schema when "ds" is not a memory
@@ -2410,6 +2409,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if handleCol != nil {
 		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
 	}
+	ds.SetSchema(schema)
 
 	var result LogicalPlan = ds
 

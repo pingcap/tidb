@@ -768,7 +768,7 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 	if err != nil {
 		writeError(w, err)
 	}
-	logutil.BgLogger().Info("handle flash replica report", zap.Int64("table ID", status.ID), zap.Uint64("region count",
+	logutil.Logger(context.Background()).Info("handle flash replica report", zap.Int64("table ID", status.ID), zap.Uint64("region count",
 		status.RegionCount),
 		zap.Uint64("flash region count", status.FlashRegionCount),
 		zap.Error(err))
