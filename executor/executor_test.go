@@ -3900,7 +3900,32 @@ type testSuite4 struct {
 	store     kv.Storage
 	domain    *domain.Domain
 	*parser.Parser
-	ctx *mock.Context
+	ctx      *mock.Context
+	ldStream *loadDataStream
+}
+
+type loadDataStream struct {
+	data []byte
+}
+
+func (ldStream *loadDataStream) SetData(data []byte) {
+	ldStream.data = data
+}
+
+func (ldStream *loadDataStream) LoadPreCheck() error {
+	return nil
+}
+
+func (ldStream *loadDataStream) ReadFromStream() ([]byte, error) {
+	return ldStream.data, nil
+}
+
+func (ldStream *loadDataStream) ReqData(filePath string) error {
+	return nil
+}
+
+func (ldStream *loadDataStream) TxnOp(ctx context.Context, loadDataInfo *executor.LoadDataInfo, err error) error {
+	return nil
 }
 
 func (s *testSuite4) SetUpSuite(c *C) {
@@ -3924,6 +3949,7 @@ func (s *testSuite4) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
 	s.domain = d
+	s.ldStream = &loadDataStream{data: nil}
 }
 
 func (s *testSuite4) TearDownSuite(c *C) {

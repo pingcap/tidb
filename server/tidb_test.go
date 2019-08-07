@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 )
 
@@ -72,7 +73,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 
 	// Run this test here because parallel would affect the result of it.
 	runTestStmtCount(c)
-	defaultLoadDataBatchCnt = 3
+	sessionctx.DefaultLoadDataBatchCnt = 3
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {

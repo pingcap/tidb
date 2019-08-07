@@ -17,24 +17,34 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
 var (
 	null = []byte("NULL")
 )
+
+// DataStream is data driver running load data process with input data stream
+// could be from clientConn(local mode), or read file on server(no local mode)
+type DataStream interface {
+	LoadPreCheck() error
+	ReadFromStream() ([]byte, error)
+	ReqData(filePath string) error
+	TxnOp(ctx context.Context, loadDataInfo *LoadDataInfo, err error) error
+}
 
 // LoadDataExec represents a load data executor.
 type LoadDataExec struct {
@@ -45,21 +55,9 @@ type LoadDataExec struct {
 	loadDataInfo *LoadDataInfo
 }
 
-var insertValuesLabel fmt.Stringer = stringutil.StringerStr("InsertValues")
-
-// NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
-func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, insertValuesLabel), Table: tbl}
-	return &LoadDataInfo{
-		row:          row,
-		InsertValues: insertVal,
-		Table:        tbl,
-		Ctx:          ctx,
-	}
-}
-
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	var err error
 	req.GrowAndReset(e.maxChunkSize)
 	// TODO: support load data without local field.
 	if !e.IsLocal {
@@ -74,22 +72,21 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.New("Load Data: don't support load data terminated is nil")
 	}
 
-	sctx := e.loadDataInfo.ctx
-	val := sctx.Value(LoadDataVarKey)
-	if val != nil {
-		sctx.SetValue(LoadDataVarKey, nil)
-		return errors.New("Load Data: previous load data option isn't closed normal")
-	}
 	if e.loadDataInfo.Path == "" {
 		return errors.New("Load Data: infile path is empty")
 	}
-	sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
-
-	return nil
+	if e.loadDataInfo == nil {
+		return errors.New("load data info is empty")
+	}
+	// TODO LoadDataVarKey will be removed after refactoring all related test cases
+	e.loadDataInfo.ctx.SetValue(LoadDataVarKey, e.loadDataInfo)
+	err = e.DoCmd(ctx)
+	return err
 }
 
 // Close implements the Executor Close interface.
 func (e *LoadDataExec) Close() error {
+	e.ctx.SetValue(LoadDataInput, nil)
 	return nil
 }
 
@@ -98,7 +95,82 @@ func (e *LoadDataExec) Open(ctx context.Context) error {
 	if e.loadDataInfo.insertColumns != nil {
 		e.loadDataInfo.initEvalBuffer()
 	}
+	dataStream := e.ctx.Value(LoadDataInput)
+	if dataStream == nil {
+		dataStream = ctx.Value(LoadDataInput)
+		if dataStream == nil {
+			return errors.New("ctx has no LoadDataInput data stream")
+		}
+		e.ctx.SetValue(LoadDataInput, dataStream)
+	}
 	return nil
+}
+
+// DoCmd do the load data work, input DataStream could
+// be clientConn or read file on server(non local mode)
+func (e *LoadDataExec) DoCmd(ctx context.Context) error {
+	var err error
+	loadDataInfo := e.loadDataInfo
+	// LoadDataInput default is server.clientConn,
+	// if non local mode is supported in the future,
+	// LoadDataInput value in Ctx should be reset in buildLoadData
+	input, ok := e.ctx.Value(LoadDataInput).(DataStream)
+	if !ok {
+		return errors.New("load data input is nil")
+	}
+	err = input.LoadPreCheck()
+	if err != nil {
+		return err
+	}
+	err = input.ReqData(loadDataInfo.Path)
+	if err != nil {
+		return err
+	}
+
+	var shouldBreak bool
+	var prevData, curData []byte
+	err = loadDataInfo.Ctx.NewTxn(ctx)
+	if err != nil {
+		return err
+	}
+	for {
+		curData, err = input.ReadFromStream()
+		if err != nil {
+			if terror.ErrorNotEqual(err, io.EOF) {
+				logutil.Logger(ctx).Error("input failed", zap.Error(err))
+				break
+			}
+		}
+		if len(curData) == 0 {
+			shouldBreak = true
+			if len(prevData) == 0 {
+				break
+			}
+		}
+		prevData, err = loadDataInfo.insertDataWithCommit(ctx, prevData, curData)
+		if err != nil {
+			break
+		}
+		if shouldBreak {
+			break
+		}
+	}
+	loadDataInfo.SetMessage()
+
+	if err != nil {
+		loadDataInfo.Ctx.StmtRollback()
+	} else {
+		err = loadDataInfo.CheckAndInsertOneBatch(ctx)
+		if err == nil {
+			err = loadDataInfo.Ctx.StmtCommit()
+		}
+	}
+
+	err1 := input.TxnOp(ctx, loadDataInfo, err)
+	if err1 != nil {
+		logutil.Logger(ctx).Error("load data DoCmd Txn failed", zap.Error(err), zap.Error(err1))
+	}
+	return err
 }
 
 // LoadDataInfo saves the information of loading data operation.
@@ -166,6 +238,34 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 		curData = curData[len(curData)-startingLen+1:]
 	}
 	return nil, curData
+}
+
+func (e *LoadDataInfo) insertDataWithCommit(ctx context.Context, prevData, curData []byte) ([]byte, error) {
+	var err error
+	var reachLimit bool
+	for {
+		prevData, reachLimit, err = e.InsertData(ctx, prevData, curData)
+		if err != nil {
+			return nil, err
+		}
+		if !reachLimit {
+			break
+		}
+		err := e.CheckAndInsertOneBatch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err = e.Ctx.StmtCommit(); err != nil {
+			return nil, err
+		}
+		// Make sure that there are no retries when committing.
+		if err = e.Ctx.RefreshTxnCtx(ctx); err != nil {
+			return nil, err
+		}
+		curData = prevData
+		prevData = nil
+	}
+	return prevData, nil
 }
 
 // getLine returns a line, curData, the next data start index and a bool value.
@@ -570,3 +670,6 @@ func (k loadDataVarKeyType) String() string {
 
 // LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
+
+// LoadDataInput is a variable key storing input data stream for executor
+const LoadDataInput loadDataVarKeyType = 1

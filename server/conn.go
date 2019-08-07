@@ -259,6 +259,41 @@ func (cc *clientConn) writeInitialHandshake() error {
 	return cc.flush()
 }
 
+func (cc *clientConn) ReadFromStream() ([]byte, error) {
+	return cc.readPacket()
+}
+
+func (cc *clientConn) ReqData(filePath string) error {
+	return cc.writeReq(filePath)
+}
+
+func (cc *clientConn) LoadPreCheck() error {
+	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
+	if cc.capability&mysql.ClientLocalFiles == 0 {
+		return errNotAllowedCommand
+	}
+	return nil
+}
+
+func (cc *clientConn) TxnOp(ctx context.Context, loadDataInfo *executor.LoadDataInfo, err error) error {
+	var txn kv.Transaction
+	var err1 error
+	txn, err1 = loadDataInfo.Ctx.Txn(true)
+	if err1 == nil {
+		if txn != nil && txn.Valid() {
+			if err != nil {
+				if err1 := txn.Rollback(); err1 != nil {
+					logutil.Logger(ctx).Error("load data rollback failed", zap.Error(err1))
+				}
+				return err
+			}
+			return cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx))
+		}
+	}
+	// Should never reach here.
+	panic(err1)
+}
+
 func (cc *clientConn) readPacket() ([]byte, error) {
 	return cc.pkt.readPacket()
 }
@@ -1042,111 +1077,6 @@ func (cc *clientConn) writeReq(filePath string) error {
 	return cc.flush()
 }
 
-var defaultLoadDataBatchCnt uint64 = 20000
-
-func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
-	var err error
-	var reachLimit bool
-	for {
-		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
-		if err != nil {
-			return nil, err
-		}
-		if !reachLimit {
-			break
-		}
-		err := loadDataInfo.CheckAndInsertOneBatch(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
-			return nil, err
-		}
-		// Make sure that there are no retries when committing.
-		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
-			return nil, err
-		}
-		curData = prevData
-		prevData = nil
-	}
-	return prevData, nil
-}
-
-// handleLoadData does the additional work after processing the 'load data' query.
-// It sends client a file path, then reads the file content from client, inserts data into database.
-func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor.LoadDataInfo) error {
-	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
-	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return errNotAllowedCommand
-	}
-	if loadDataInfo == nil {
-		return errors.New("load data info is empty")
-	}
-
-	err := cc.writeReq(loadDataInfo.Path)
-	if err != nil {
-		return err
-	}
-
-	var shouldBreak bool
-	var prevData, curData []byte
-	// TODO: Make the loadDataRowCnt settable.
-	loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
-	err = loadDataInfo.Ctx.NewTxn(ctx)
-	if err != nil {
-		return err
-	}
-	for {
-		curData, err = cc.readPacket()
-		if err != nil {
-			if terror.ErrorNotEqual(err, io.EOF) {
-				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
-				break
-			}
-		}
-		if len(curData) == 0 {
-			shouldBreak = true
-			if len(prevData) == 0 {
-				break
-			}
-		}
-		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
-		if err != nil {
-			break
-		}
-		if shouldBreak {
-			break
-		}
-	}
-	loadDataInfo.SetMessage()
-
-	if err != nil {
-		loadDataInfo.Ctx.StmtRollback()
-	} else {
-		err = loadDataInfo.CheckAndInsertOneBatch(ctx)
-		if err == nil {
-			err = loadDataInfo.Ctx.StmtCommit()
-		}
-	}
-
-	var txn kv.Transaction
-	var err1 error
-	txn, err1 = loadDataInfo.Ctx.Txn(true)
-	if err1 == nil {
-		if txn != nil && txn.Valid() {
-			if err != nil {
-				if err1 := txn.Rollback(); err1 != nil {
-					logutil.Logger(ctx).Error("load data rollback failed", zap.Error(err1))
-				}
-				return err
-			}
-			return cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx))
-		}
-	}
-	// Should never reach here.
-	panic(err1)
-}
-
 // handleLoadStats does the additional work after processing the 'load stats' query.
 // It sends client a file path, then reads the file content from client, loads it into the storage.
 func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *executor.LoadStatsInfo) error {
@@ -1183,6 +1113,7 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
+	ctx = context.WithValue(ctx, executor.LoadDataInput, cc)
 	rs, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
@@ -1200,14 +1131,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			err = cc.writeMultiResultset(ctx, rs, false)
 		}
 	} else {
-		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
-		if loadDataInfo != nil {
-			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-			if err = cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
-				return err
-			}
-		}
-
 		loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
 		if loadStats != nil {
 			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)

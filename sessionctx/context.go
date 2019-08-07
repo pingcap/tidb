@@ -127,6 +127,9 @@ const (
 // ConnID is the key in context.
 const ConnID kv.ContextKey = "conn ID"
 
+// DefaultLoadDataBatchCnt is batch size for load data, TODO will be changed to variable
+var DefaultLoadDataBatchCnt uint64 = 20000
+
 // SetCommitCtx sets the variables for context before commit a transaction.
 func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
 	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
