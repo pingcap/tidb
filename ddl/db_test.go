@@ -207,6 +207,17 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	return testGetTableByName(c, ctx, s.schemaName, name)
 }
 
+func (s *testDBSuite) testGetDB(c *C, dbName string) *model.DBInfo {
+	ctx := s.s.(sessionctx.Context)
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
+	c.Assert(ok, IsTrue)
+	return db
+}
+
 func backgroundExec(s kv.Storage, sql string, done chan error) {
 	se, err := session.CreateSession4Test(s)
 	if err != nil {
@@ -628,8 +639,11 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
 	testCase := &testCases[0]
+	s.mustExec(c, "create database if not exists test_drop_db")
+	dbInfo := s.testGetDB(c, "test_drop_db")
+
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState && job.SchemaID == dbInfo.ID {
 			jobIDs := []int64{job.ID}
 			jobID = job.ID
 			hookCtx := mock.NewContext()
@@ -668,6 +682,8 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 			s.mustExec(c, "use test_drop_db")
 			s.mustExec(c, "create table if not exists t(c1 int, c2 int)")
 		}
+
+		dbInfo = s.testGetDB(c, "test_drop_db")
 
 		if testCase.action == model.ActionDropTable {
 			sql = "drop table t;"

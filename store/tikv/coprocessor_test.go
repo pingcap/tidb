@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
@@ -292,6 +293,32 @@ func (s *testCoprocessorSuite) TestCopRangeSplit(c *C) {
 		splitCase{"p", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
 		splitCase{"t", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t")},
 	)
+}
+
+func (s *testCoprocessorSuite) TestRateLimit(c *C) {
+	done := make(chan struct{}, 1)
+	rl := newRateLimit(1)
+	c.Assert(rl.putToken, PanicMatches, "put a redundant token")
+	exit := rl.getToken(done)
+	c.Assert(exit, Equals, false)
+	rl.putToken()
+	c.Assert(rl.putToken, PanicMatches, "put a redundant token")
+
+	exit = rl.getToken(done)
+	c.Assert(exit, Equals, false)
+	done <- struct{}{}
+	exit = rl.getToken(done) // blocked but exit
+	c.Assert(exit, Equals, true)
+
+	sig := make(chan int, 1)
+	go func() {
+		exit = rl.getToken(done) // blocked
+		c.Assert(exit, Equals, false)
+		close(sig)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	rl.putToken()
+	<-sig
 }
 
 type splitCase struct {
