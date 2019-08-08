@@ -47,6 +47,25 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 	return nil
 }
 
+// verifyColumnGenerationSingle is for ADD GENERATED COLUMN, we just need verify one column itself.
+func verifyColumnGenerationSingle(dependColNames map[string]struct{}, cols []*table.Column, position *ast.ColumnPosition) error {
+	// Since the added column does not exist yet, we should derive it's offset from ColumnPosition.
+	pos, err := findPositionRelativeColumn(cols, position)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// should check unknown column first, then the prior ones.
+	for _, col := range cols {
+		if _, ok := dependColNames[col.Name.L]; ok {
+			if col.IsGenerated() && col.Offset >= pos {
+				// Generated column can refer only to generated columns defined prior to it.
+				return errGeneratedColumnNonPrior.GenWithStackByArgs()
+			}
+		}
+	}
+	return nil
+}
+
 // columnNamesCover checks whether dependColNames is covered by normalColNames or not.
 // it's only for alter table add column because before alter, we can make sure that all
 // columns in table are verified already.
@@ -57,6 +76,34 @@ func columnNamesCover(normalColNames map[string]struct{}, dependColNames map[str
 		}
 	}
 	return nil
+}
+
+// findPositionRelativeColumn returns a pos relative to added generated column position.
+func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (int, error) {
+	position := len(cols)
+	// Get the column position, default is cols's length means appending.
+	// For "alter table ... add column(...)", the position will be nil.
+	// For "alter table ... add column ... ", the position will be default one.
+	if pos == nil {
+		return position, nil
+	}
+	if pos.Tp == ast.ColumnPositionFirst {
+		position = 0
+	} else if pos.Tp == ast.ColumnPositionAfter {
+		var col *table.Column
+		for _, c := range cols {
+			if c.Name.L == pos.RelativeColumn.Name.L {
+				col = c
+				break
+			}
+		}
+		if col == nil {
+			return -1, errBadField.GenWithStackByArgs(pos.RelativeColumn.Name, "generated column function")
+		}
+		// Inserted position is after the mentioned column.
+		position = col.Offset + 1
+	}
+	return position, nil
 }
 
 // findDependedColumnNames returns a set of string, which indicates
