@@ -18,11 +18,8 @@ import (
 
 	"github.com/opentracing/basictracer-go"
 	opentracing "github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/net/context"
 )
 
@@ -45,63 +42,6 @@ type TraceExec struct {
 // Next executes real query and collects span later.
 func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.exhausted {
-		return nil
-	}
-
-	// record how much time was spent for optimizeing plan
-	optimizeSp := e.rootTrace.Tracer().StartSpan("plan_optimize", opentracing.FollowsFrom(e.rootTrace.Context()))
-	stmtPlan, err := plannercore.Optimize(e.builder.ctx, e.stmtNode, e.builder.is)
-	if err != nil {
-		return err
-	}
-	optimizeSp.Finish()
-
-	pp, ok := stmtPlan.(plannercore.PhysicalPlan)
-	if !ok {
-		return errors.New("cannot cast logical plan to physical plan")
-	}
-
-	// append select executor to trace executor
-	stmtExec := e.builder.build(pp)
-
-	e.rootTrace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
-		e.CollectedSpans = append(e.CollectedSpans, sp)
-	})
-	err = stmtExec.Open(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	stmtExecChk := stmtExec.newFirstChunk()
-
-	// store span into context
-	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
-
-	for {
-		if err := Next(ctx, stmtExec, stmtExecChk); err != nil {
-			return errors.Trace(err)
-		}
-		if stmtExecChk.NumRows() == 0 {
-			break
-		}
-	}
-
-	e.rootTrace.LogKV("event", "tracing completed")
-	e.rootTrace.Finish()
-	var rootSpan basictracer.RawSpan
-
-	treeSpans := make(map[uint64][]basictracer.RawSpan)
-	for _, sp := range e.CollectedSpans {
-		treeSpans[sp.ParentSpanID] = append(treeSpans[sp.ParentSpanID], sp)
-		// if a span's parentSpanID is 0, then it is root span
-		// this is by design
-		if sp.ParentSpanID == 0 {
-			rootSpan = sp
-		}
-	}
-
-	dfsTree(rootSpan, treeSpans, "", false, chk)
-	e.exhausted = true
 	return nil
 }
 

@@ -339,23 +339,30 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error)
 	return floatStrToIntStr(sc, floatPrefix, str)
 }
 
-// roundIntStr is to round int string base on the number following dot.
+// roundIntStr is to round a **valid int string** base on the number following dot.
 func roundIntStr(numNextDot byte, intStr string) string {
 	if numNextDot < '5' {
 		return intStr
 	}
 	retStr := []byte(intStr)
-	for i := len(intStr) - 1; i >= 0; i-- {
-		if retStr[i] != '9' {
-			retStr[i]++
+	idx := len(intStr) - 1
+	for ; idx >= 1; idx-- {
+		if retStr[idx] != '9' {
+			retStr[idx]++
 			break
 		}
-		if i == 0 {
-			retStr[i] = '1'
+		retStr[idx] = '0'
+	}
+	if idx == 0 {
+		if intStr[0] == '9' {
+			retStr[0] = '1'
 			retStr = append(retStr, '0')
-			break
+		} else if isDigit(intStr[0]) {
+			retStr[0]++
+		} else {
+			retStr[1] = '1'
+			retStr = append(retStr, '0')
 		}
-		retStr[i] = '0'
 	}
 	return string(retStr)
 }
@@ -399,6 +406,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		}
 		return intStr, nil
 	}
+	// intCnt and digits contain the prefix `+/-` if validFloat[0] is `+/-`
 	var intCnt int
 	digits := make([]byte, 0, len(validFloat))
 	if dotIdx == -1 {
@@ -421,8 +429,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	intCnt += exp
 	if intCnt <= 0 {
 		intStr = "0"
-		if intCnt == 0 && len(digits) > 0 {
-			dotIdx = -1
+		if intCnt == 0 && len(digits) > 0 && isDigit(digits[0]) {
 			intStr = roundIntStr(digits[0], intStr)
 		}
 		return intStr, nil
@@ -497,10 +504,10 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		if !unsigned {
 			lBound := SignedLowerBound[mysql.TypeLonglong]
 			uBound := SignedUpperBound[mysql.TypeLonglong]
-			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeDouble)
+			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
 		}
 		bound := UnsignedUpperBound[mysql.TypeLonglong]
-		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
+		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeLonglong)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
 		return StrToInt(sc, hack.String(j.GetString()))
@@ -523,8 +530,7 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 	case json.TypeCodeInt64:
 		return float64(j.GetInt64()), nil
 	case json.TypeCodeUint64:
-		u, err := ConvertIntToUint(sc, j.GetInt64(), UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
-		return float64(u), errors.Trace(err)
+		return float64(j.GetUint64()), nil
 	case json.TypeCodeFloat64:
 		return j.GetFloat64(), nil
 	case json.TypeCodeString:
@@ -550,6 +556,10 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
 func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, err error) {
+	if sc.InDeleteStmt && s == "" {
+		return "0", nil
+	}
+
 	var (
 		sawDot   bool
 		sawDigit bool

@@ -287,3 +287,10 @@ type Iterator interface {
 	Next() error
 	Close()
 }
+
+// SplitableStore is the kv store which supports split regions.
+type SplitableStore interface {
+	SplitRegion(splitKey Key, scatter bool) (regionID uint64, err error)
+	WaitScatterRegionFinish(regionID uint64, backOff int) error
+	CheckRegionInScattering(regionID uint64) (bool, error)
+}

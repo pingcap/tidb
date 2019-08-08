@@ -29,7 +29,7 @@ var (
 			Subsystem: "server",
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22), // 500us ~ 2097s
 		}, []string{LblSQLType})
 
 	QueryTotalCounter = prometheus.NewCounterVec(
@@ -118,7 +118,7 @@ var (
 			Subsystem: "server",
 			Name:      "get_token_duration_seconds",
 			Help:      "Duration (us) for getting token, it should be small until concurrency limit is reached.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1us ~ 2s
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 26), // 1us ~ 67s
 		})
 
 	TotalQueryProcHistogram = prometheus.NewHistogram(
@@ -135,7 +135,7 @@ var (
 			Subsystem: "server",
 			Name:      "slow_query_cop_duration_seconds",
 			Help:      "Bucketed histogram of all cop processing time (s) of of slow queries.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22),
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 4096s
 		})
 	TotalCopWaitHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -143,7 +143,7 @@ var (
 			Subsystem: "server",
 			Name:      "slow_query_wait_duration_seconds",
 			Help:      "Bucketed histogram of all cop waiting time (s) of of slow queries.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22),
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 4096s
 		})
 )
 

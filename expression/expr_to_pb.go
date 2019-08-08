@@ -15,6 +15,7 @@ package expression
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -321,8 +322,16 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 
 		// date functions.
 		ast.DateFormat:
-
-		return true
+		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
+		return true && !disallowPushdown
 	}
 	return false
+}
+
+// DefaultExprPushdownBlacklist indicates the expressions which can not be pushed down to TiKV.
+var DefaultExprPushdownBlacklist *atomic.Value
+
+func init() {
+	DefaultExprPushdownBlacklist = new(atomic.Value)
+	DefaultExprPushdownBlacklist.Store(make(map[string]struct{}))
 }

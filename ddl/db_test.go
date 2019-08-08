@@ -25,6 +25,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -2386,6 +2387,12 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	(partition p0 values less than (0));`)
 
 	s.testErrorCode(c, `create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
+
+	s.tk.MustExec(`create table t (a int) /*!50100 partition by list (a) (
+partition p0 values in (1) ENGINE = InnoDB,
+partition p1 values in (29) ENGINE = InnoDB,
+partition p2 values in (2) ENGINE = InnoDB,
+partition p3 values in (3) ENGINE = InnoDB) */`)
 }
 
 func (s *testDBSuite) TestCreateTableWithHashPartition(c *C) {
@@ -2850,6 +2857,10 @@ func (s *testDBSuite) TestComment(c *C) {
 }
 
 func (s *testDBSuite) TestRebaseAutoID(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -4657,6 +4668,10 @@ func (s *testDBSuite) TestCanceledJobTakeTime(c *C) {
 }
 
 func (s *testDBSuite) TestAlterShardRowIDBits(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
 	s.tk = testkit.NewTestKit(c, s.store)
 	tk := s.tk
 

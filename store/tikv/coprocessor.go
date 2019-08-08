@@ -617,7 +617,7 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: errors.Errorf("%v", r)}
 			// if panic has happened, set checkOOM to false to avoid another panic.
-			worker.sendToRespCh(resp, task.respChan, false)
+			worker.sendToRespCh(resp, respCh, false)
 		}
 	}()
 

@@ -476,7 +476,22 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 			},
 		}
 	}
-	pairs := rawKV.RawScan(req.GetStartKey(), h.endKey, int(req.GetLimit()))
+
+	var pairs []Pair
+	if req.Reverse {
+		pairs = rawKV.RawReverseScan(
+			req.GetStartKey(),
+			h.startKey,
+			int(req.GetLimit()),
+		)
+	} else {
+		pairs = rawKV.RawScan(
+			req.GetStartKey(),
+			h.endKey,
+			int(req.GetLimit()),
+		)
+	}
+
 	return &kvrpcpb.RawScanResponse{
 		Kvs: convertToPbPairs(pairs),
 	}
@@ -489,8 +504,8 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 		return &kvrpcpb.SplitRegionResponse{}
 	}
 	newRegionID, newPeerIDs := h.cluster.AllocID(), h.cluster.AllocIDs(len(region.Peers))
-	h.cluster.SplitRaw(region.GetId(), newRegionID, key, newPeerIDs, newPeerIDs[0])
-	return &kvrpcpb.SplitRegionResponse{}
+	newRegion := h.cluster.SplitRaw(region.GetId(), newRegionID, key, newPeerIDs, newPeerIDs[0])
+	return &kvrpcpb.SplitRegionResponse{Left: newRegion.Meta}
 }
 
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of

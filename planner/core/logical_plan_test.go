@@ -925,7 +925,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",
-			plan: "Show([eq(cast(key), 0)])",
+			plan: "Show->Sel([eq(cast(key), 0)])",
 		},
 		{
 			sql:  "do sleep(5)",
@@ -1238,6 +1238,24 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				8:  {"test.t01.a"},
 				10: {"test.t3.a"},
 				12: {"test.t4.a"},
+			},
+		},
+		{
+			sql: "select 1 from (select count(b) as cnt from t) t1;",
+			ans: map[int][]string{
+				1: {"test.t.a"},
+			},
+		},
+		{
+			sql: "select count(1) from (select count(b) as cnt from t) t1;",
+			ans: map[int][]string{
+				1: {"test.t.a"},
+			},
+		},
+		{
+			sql: "select count(1) from (select count(b) as cnt from t group by c) t1;",
+			ans: map[int][]string{
+				1: {"test.t.c"},
 			},
 		},
 	}
@@ -2151,5 +2169,47 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		}
 		paths := ds.skylinePruning(byItemsToProperty(byItems))
 		c.Assert(pathsName(paths), Equals, tt.result)
+	}
+}
+
+func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql      string
+		fastPlan bool
+	}{
+		{
+			"select * from t where a=1",
+			true,
+		},
+		{
+
+			"update t set f=0 where a=43215",
+			true,
+		},
+		{
+			"delete from t where a =43215",
+			true,
+		},
+		{
+			"select * from t where a>1",
+			false,
+		},
+	}
+	for _, tt := range tests {
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil)
+		Preprocess(s.ctx, stmt, s.is, false)
+		s.ctx.GetSessionVars().StmtCtx.Tables = nil
+		p := tryFastPlan(s.ctx, stmt)
+		if tt.fastPlan {
+			c.Assert(p, NotNil)
+			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 1)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.Tables[0].Table, Equals, "t")
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.Tables[0].DB, Equals, "test")
+		} else {
+			c.Assert(p, IsNil)
+			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 0)
+		}
 	}
 }

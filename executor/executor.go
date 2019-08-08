@@ -100,13 +100,13 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 
 // Close closes all executors and release all resources.
 func (e *baseExecutor) Close() error {
+	var firstErr error
 	for _, child := range e.children {
-		err := child.Close()
-		if err != nil {
-			return errors.Trace(err)
+		if err := child.Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // Schema returns the current baseExecutor's schema. If it is nil, then create and return a new one.

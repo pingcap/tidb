@@ -20,8 +20,8 @@ import (
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/spaolacci/murmur3"
 )
@@ -67,7 +67,7 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 }
 
 func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (uint32, error) {
-	bytes, err := codec.EncodeValue(sc, nil, val)
+	bytes, err := tablecodec.EncodeValue(sc, val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

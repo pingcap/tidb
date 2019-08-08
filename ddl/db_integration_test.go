@@ -197,6 +197,25 @@ func (s *testIntegrationSuite) TestEndIncluded(c *C) {
 	tk.MustExec("admin check table t")
 }
 
+func (s *testIntegrationSuite) TestIndexLength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table idx_len(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0))")
+	tk.MustExec("create index idx on idx_len(a)")
+	tk.MustExec("alter table idx_len add index idxa(a)")
+	tk.MustExec("create index idx1 on idx_len(b)")
+	tk.MustExec("alter table idx_len add index idxb(b)")
+	tk.MustExec("create index idx2 on idx_len(c)")
+	tk.MustExec("alter table idx_len add index idxc(c)")
+	tk.MustExec("create index idx3 on idx_len(d)")
+	tk.MustExec("alter table idx_len add index idxd(d)")
+	tk.MustExec("create index idx4 on idx_len(f)")
+	tk.MustExec("alter table idx_len add index idxf(f)")
+	tk.MustExec("create index idx5 on idx_len(g)")
+	tk.MustExec("alter table idx_len add index idxg(g)")
+	tk.MustExec("create table idx_len1(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0), index(a), index(b), index(c), index(d), index(f), index(g))")
+}
+
 func (s *testIntegrationSuite) TestNullGeneratedColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -319,17 +338,17 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(a varchar(10)) charset utf8")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset := func() {
+	checkCharset := func(chs, coll string) {
 		tbl := testGetTableByName(c, tk.Se, "test", "t")
 		c.Assert(tbl, NotNil)
-		c.Assert(tbl.Meta().Charset, Equals, charset.CharsetUTF8MB4)
-		c.Assert(tbl.Meta().Collate, Equals, charset.CollationUTF8MB4)
+		c.Assert(tbl.Meta().Charset, Equals, chs)
+		c.Assert(tbl.Meta().Collate, Equals, coll)
 		for _, col := range tbl.Meta().Columns {
-			c.Assert(col.Charset, Equals, charset.CharsetUTF8MB4)
-			c.Assert(col.Collate, Equals, charset.CollationUTF8MB4)
+			c.Assert(col.Charset, Equals, chs)
+			c.Assert(col.Collate, Equals, coll)
 		}
 	}
-	checkCharset()
+	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	// Test when column charset can not convert to the target charset.
 	tk.MustExec("drop table t;")
@@ -338,11 +357,16 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from ascii to utf8mb4")
 
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a varchar(10) character set utf8) charset utf8")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci;")
+	checkCharset(charset.CharsetUTF8, "utf8_general_ci")
+
 	// Test when table charset is equal to target charset but column charset is not equal.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(a varchar(10) character set utf8) charset utf8mb4")
-	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset()
+	tk.MustExec("alter table t convert to charset utf8mb4 collate utf8mb4_general_ci;")
+	checkCharset(charset.CharsetUTF8MB4, "utf8mb4_general_ci")
 
 	// Mock table info with charset is "". Old TiDB maybe create table with charset is "".
 	db, ok := domain.GetDomain(tk.Se).InfoSchema().SchemaByName(model.NewCIStr("test"))
@@ -375,7 +399,7 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 	c.Assert(tbl.Meta().Collate, Equals, "")
 	// Test when table charset is "", this for compatibility.
 	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset()
+	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	// Test when column charset is "".
 	tbl = testGetTableByName(c, tk.Se, "test", "t")
@@ -390,7 +414,7 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 	c.Assert(tbl.Meta().Columns[0].Charset, Equals, "")
 	c.Assert(tbl.Meta().Columns[0].Collate, Equals, "")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
-	checkCharset()
+	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (a blob) character set utf8;")
@@ -401,6 +425,97 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
+}
+
+func (s *testIntegrationSuite) TestModifyingColumnOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	errMsg := "[ddl:203]" // unsupported modify column with references
+	assertErrCode := func(sql string, errCodeStr string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error()[:len(errCodeStr)], Equals, errCodeStr)
+	}
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (b char(1) default null) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_general_ci")
+	tk.MustExec("alter table t1 modify column b char(1) character set utf8mb4 collate utf8mb4_general_ci")
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (b char(1) collate utf8mb4_general_ci)")
+	tk.MustExec("alter table t1 modify b char(1) character set utf8mb4 collate utf8mb4_general_ci")
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (b int, c int)")
+	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
+}
+
+func (s *testIntegrationSuite) TestIndexOnMultipleGeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int as (a + 1), c int as (b + 1))")
+	tk.MustExec("insert into t (a) values (1)")
+	tk.MustExec("create index idx on t (c)")
+	tk.MustQuery("select * from t where c > 1").Check(testkit.Rows("1 2 3"))
+	res := tk.MustQuery("select * from t use index(idx) where c > 1")
+	tk.MustQuery("select * from t ignore index(idx) where c > 1").Check(res.Rows())
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int as (a + 1), c int as (b + 1), d int as (c + 1))")
+	tk.MustExec("insert into t (a) values (1)")
+	tk.MustExec("create index idx on t (d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 3 4"))
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint, b decimal as (a+1), c varchar(20) as (b*2), d float as (a*23+b-1+length(c)))")
+	tk.MustExec("insert into t (a) values (1)")
+	tk.MustExec("create index idx on t (d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 4 25"))
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10), b float as (length(a)+123), c varchar(20) as (right(a, 2)), d float as (b+b-7+1-3+3*ASCII(c)))")
+	tk.MustExec("insert into t (a) values ('adorable')")
+	tk.MustExec("create index idx on t (d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("adorable 131 le 577")) // 131+131-7+1-3+3*108
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint, b decimal as (a), c int(10) as (a+b), d float as (a+b+c), e decimal as (a+b+c+d))")
+	tk.MustExec("insert into t (a) values (1)")
+	tk.MustExec("create index idx on t (d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 1 2 4 8"))
+	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint, b bigint as (a+1) virtual, c bigint as (b+1) virtual)")
+	tk.MustExec("alter table t add index idx_b(b)")
+	tk.MustExec("alter table t add index idx_c(c)")
+	tk.MustExec("insert into t(a) values(1)")
+	tk.MustExec("alter table t add column(d bigint as (c+1) virtual)")
+	tk.MustExec("alter table t add index idx_d(d)")
+	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 3 4"))
+
+	res = tk.MustQuery("select * from t use index(idx_d) where d > 2")
+	tk.MustQuery("select * from t ignore index(idx_d) where d > 2").Check(res.Rows())
+	tk.MustExec("admin check table t")
 }
 
 func (s *testIntegrationSuite) TestCaseInsensitiveCharsetAndCollate(c *C) {
@@ -743,10 +858,35 @@ func (s *testIntegrationSuite) TestChangingDBCharset(c *C) {
 		_, err := tk.Exec(fc.stmt)
 		c.Assert(err.Error(), Equals, fc.errMsg, Commentf("%v", fc.stmt))
 	}
+	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8' COLLATE = 'utf8_unicode_ci'")
+	verifyDBCharsetAndCollate("alterdb2", "utf8", "utf8_unicode_ci")
 
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_bin")
 
-	_, err := tk.Exec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify collate from utf8mb4_bin to utf8mb4_general_ci")
+	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
+	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
+}
+
+func (s *testIntegrationSuite) TestDropAutoIncrementIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	assertErrMsg := func(sql string) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		errMsg := "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key"
+		c.Assert(err.Error(), Equals, errMsg)
+	}
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int auto_increment, unique key (a))")
+	dropIndexSQL := "alter table t1 drop index a"
+	assertErrMsg(dropIndexSQL)
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
+	dropIndexSQL = "alter table t1 drop index a"
+	assertErrMsg(dropIndexSQL)
 }
