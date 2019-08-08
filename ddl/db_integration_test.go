@@ -620,6 +620,7 @@ func (s *testIntegrationSuite7) TestDependedGeneratedColumnPrior2GeneratedColumn
 
 	// check position nil case
 	tk.MustExec("alter table t add column(e int as (c+1))")
+	tk.MustExec("drop table if exists t")
 }
 
 func (s *testIntegrationSuite9) TestChangingCharsetToUtf8(c *C) {
