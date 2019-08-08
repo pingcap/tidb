@@ -66,7 +66,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/megacheck tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint tidy
+check: fmt errcheck lint tidy testSuite
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-static check-slow
@@ -105,6 +105,10 @@ lint:tools/bin/revive
 vet:
 	@echo "vet"
 	$(GO) vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
+
+testSuite:
+	@echo "testSuite"
+	./tools/check/check_testSuite.sh
 
 clean:
 	$(GO) clean -i ./...
