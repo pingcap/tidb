@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	"context"
 	"time"
 
 	. "github.com/pingcap/check"
