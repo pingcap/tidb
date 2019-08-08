@@ -3106,7 +3106,7 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
 	for _, windowFuncExpr := range windowFuncExprs {
-		_, _, _, args, err := b.buildProjectionForWindow(ctx, p, &windowFuncExpr.Spec, windowFuncExpr.Args, windowAggMap)
+		_, _, _, args, err := b.buildProjectionForWindow(ctx, p, &ast.WindowSpec{}, windowFuncExpr.Args, windowAggMap)
 		if err != nil {
 			return err
 		}
