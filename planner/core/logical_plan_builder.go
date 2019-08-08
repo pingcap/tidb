@@ -2943,6 +2943,35 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 	return proj, propertyItems[:lenPartition], propertyItems[lenPartition:], newArgList, nil
 }
 
+func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p LogicalPlan, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) ([]expression.Expression, error) {
+	b.optFlag |= flagEliminateProjection
+
+	newArgList := make([]expression.Expression, 0, len(args))
+	// use below index for created a new col definition
+	// it's okay here because we only want to return the args used in window function
+	newColIndex := 0
+	for _, arg := range args {
+		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
+		if err != nil {
+			return nil, err
+		}
+		p = np
+		switch newArg.(type) {
+		case *expression.Column, *expression.Constant:
+			newArgList = append(newArgList, newArg)
+			continue
+		}
+		col := &expression.Column{
+			ColName:  model.NewCIStr(fmt.Sprintf("%d_proj_window_%d", p.ID(), newColIndex)),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  newArg.GetType(),
+		}
+		newColIndex += 1
+		newArgList = append(newArgList, col)
+	}
+	return newArgList, nil
+}
+
 func (b *PlanBuilder) buildByItemsForWindow(
 	ctx context.Context,
 	p LogicalPlan,
@@ -3106,7 +3135,7 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
 	for _, windowFuncExpr := range windowFuncExprs {
-		_, _, _, args, err := b.buildProjectionForWindow(ctx, p, &ast.WindowSpec{}, windowFuncExpr.Args, windowAggMap)
+		args, err := b.buildArgs4WindowFunc(ctx, p, windowFuncExpr.Args, windowAggMap)
 		if err != nil {
 			return err
 		}
