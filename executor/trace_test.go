@@ -25,7 +25,7 @@ func (s *testSuite1) TestTraceExec(c *C) {
 	tk.MustExec(testSQL)
 	tk.MustExec("trace insert into trace (c1, c2, c3) values (1, 2, 3)")
 	rows := tk.MustQuery("trace select * from trace where id = 0;").Rows()
-	c.Assert(rows, HasLen, 1)
+	c.Assert(rows, HasLen, 2)
 
 	// +---------------------------+-----------------+------------+
 	// | operation                 | startTS         | duration   |

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -35,6 +36,13 @@ type InsertExec struct {
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
+	logutil.Eventf(ctx, "insert %d rows into table `%s`", len(rows), stringutil.MemoizeStr(func() string {
+		var tblName string
+		if meta := e.Table.Meta(); meta != nil {
+			tblName = meta.Name.L
+		}
+		return tblName
+	}))
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
@@ -57,12 +65,12 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 {
-		err := e.batchUpdateDupRows(rows)
+		err := e.batchUpdateDupRows(ctx, rows)
 		if err != nil {
 			return err
 		}
 	} else if ignoreErr {
-		err := e.batchCheckAndInsert(rows, e.addRecord)
+		err := e.batchCheckAndInsert(ctx, rows, e.addRecord)
 		if err != nil {
 			return err
 		}
@@ -77,14 +85,14 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 }
 
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
-func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
-	err := e.batchGetInsertKeys(e.ctx, e.Table, newRows)
+func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.Datum) error {
+	err := e.batchGetInsertKeys(ctx, e.ctx, e.Table, newRows)
 	if err != nil {
 		return err
 	}
 
 	// Batch get the to-be-updated rows in storage.
-	err = e.initDupOldRowValue(e.ctx, e.Table, newRows)
+	err = e.initDupOldRowValue(ctx, e.ctx, e.Table, newRows)
 	if err != nil {
 		return err
 	}
