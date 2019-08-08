@@ -48,6 +48,10 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 		}
 	}
 	t := uint64(time.Since(pi.Time) / time.Second)
+	bytesConsumed := int64(0)
+	if pi.StmtCtx.MemTracker != nil {
+		bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
+	}
 	return []interface{}{
 		pi.ID,
 		pi.User,
@@ -57,7 +61,7 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 		t,
 		fmt.Sprintf("%d", pi.State),
 		info,
-		pi.StmtCtx.MemTracker.BytesConsumed(),
+		bytesConsumed,
 	}
 }
 
