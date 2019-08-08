@@ -72,7 +72,6 @@ func verifyColumnGenerationSingle(dependColNames map[string]struct{}, cols []*ta
 // checkDependedColExist ensure all depended columns exist.
 // NOTE: this will MODIFY parameter `dependCols`.
 func checkDependedColExist(dependCols map[string]struct{}, cols []*table.Column) error {
-	// Checks all depended columns exist.
 	for _, col := range cols {
 		delete(dependCols, col.Name.L)
 	}
