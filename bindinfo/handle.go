@@ -187,7 +187,6 @@ func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 	}
 	record.UpdateTime = record.CreateTime
 	record.Status = Using
-	record.BindSQL = record.BindSQL
 
 	// insert the BindRecord to the storage.
 	_, err = exec.Execute(context.TODO(), h.insertBindInfoSQL(record))
