@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -129,11 +128,6 @@ func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
 
 // Next implements the Executor Next interface.
 func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("update.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
 	req.Reset()
 	if !e.fetched {
 		err := e.fetchChunkRows(ctx)
