@@ -399,6 +399,7 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
 	oracleStore := s.store.GetOracle()
