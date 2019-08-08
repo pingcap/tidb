@@ -234,11 +234,12 @@ func (c *Column) AppendEnum(enum types.Enum) {
 }
 
 const (
-	sizeInt64     = int(unsafe.Sizeof(int64(0)))
-	sizeUint64    = int(unsafe.Sizeof(uint64(0)))
-	sizeFloat32   = int(unsafe.Sizeof(float32(0)))
-	sizeFloat64   = int(unsafe.Sizeof(float64(0)))
-	sizeMyDecimal = int(unsafe.Sizeof(types.MyDecimal{}))
+	sizeInt64      = int(unsafe.Sizeof(int64(0)))
+	sizeUint64     = int(unsafe.Sizeof(uint64(0)))
+	sizeFloat32    = int(unsafe.Sizeof(float32(0)))
+	sizeFloat64    = int(unsafe.Sizeof(float64(0)))
+	sizeMyDecimal  = int(unsafe.Sizeof(types.MyDecimal{}))
+	sizeGoDuration = int(unsafe.Sizeof(time.Duration(0)))
 )
 
 // preAlloc allocates space for a fixed-length-type slice and resets all slots to null.
@@ -337,6 +338,11 @@ func (c *Column) PreAllocDecimal(length int) {
 	c.preAlloc(length, sizeMyDecimal)
 }
 
+// PreAllocDuration allocates space for a duration slice and resets all slots to null.
+func (c *Column) PreAllocDuration(length int) {
+	c.preAlloc(length, sizeGoDuration)
+}
+
 func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
 	header.Data = uintptr(unsafe.Pointer(&c.data[0]))
 	header.Len = c.length
@@ -368,6 +374,14 @@ func (c *Column) Float32s() []float32 {
 func (c *Column) Float64s() []float64 {
 	var res []float64
 	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat64)
+	return res
+}
+
+// GoDurations returns a Golang time.Duration slice stored in this Column.
+// Different from the Row.GetDuration method, the argument Fsp is ignored, so the user should handle it outside.
+func (c *Column) GoDurations() []time.Duration {
+	var res []time.Duration
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeGoDuration)
 	return res
 }
 
