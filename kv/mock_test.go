@@ -32,7 +32,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Check(err, IsNil)
 	snapshot, err := storage.GetSnapshot(version)
 	c.Check(err, IsNil)
-	_, err = snapshot.BatchGet([]Key{Key("abc"), Key("def")})
+	_, err = snapshot.BatchGet(context.TODO(), []Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
 	snapshot.SetPriority(0)
 
@@ -47,7 +47,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	transaction.StartTS()
 	transaction.DelOption(Option(23))
 	if transaction.IsReadOnly() {
-		_, err = transaction.Get(Key("lock"))
+		_, err = transaction.Get(context.TODO(), Key("lock"))
 		c.Check(err, IsNil)
 		err = transaction.Set(Key("lock"), []byte{})
 		c.Check(err, IsNil)
