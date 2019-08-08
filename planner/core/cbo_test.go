@@ -79,7 +79,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	tk.MustExec("insert into t2 values (2, 22), (3, 33), (5, 55), (233, 2), (333, 3), (3434, 5)")
 	tk.MustExec("analyze table t1, t2")
 	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
-	c.Assert(len(rs.Rows()), Equals, 11)
+	c.Assert(len(rs.Rows()), Equals, 10)
 	for _, row := range rs.Rows() {
 		c.Assert(len(row), Equals, 6)
 		execInfo := row[4].(string)
@@ -1035,13 +1035,13 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	// Outer plan of index join (to test that correct column ID is used).
 	tk.MustQuery("EXPLAIN SELECT *, t1.a IN (SELECT t2.b FROM t t2) FROM t t1 WHERE t1.b <= 6 ORDER BY t1.a limit 1").Check(testkit.Rows(
 		"Limit_17 1.00 root offset:0, count:1",
-		"└─IndexJoin_62 1.00 root left outer semi join, inner:IndexReader_61, outer key:test.t1.a, inner key:test.t2.b",
+		"└─IndexMergeJoin_66 1.00 root left outer semi join, inner:IndexReader_64, outer key:test.t1.a, inner key:test.t2.b",
 		"  ├─TopN_27 1.00 root test.t1.a:asc, offset:0, count:1",
 		"  │ └─IndexReader_35 1.00 root index:TopN_34",
 		"  │   └─TopN_34 1.00 cop test.t1.a:asc, offset:0, count:1",
 		"  │     └─IndexScan_33 6.00 cop table:t1, index:b, range:[-inf,6], keep order:false",
-		"  └─IndexReader_61 1.04 root index:IndexScan_60",
-		"    └─IndexScan_60 1.04 cop table:t2, index:b, range: decided by [eq(test.t2.b, test.t1.a)], keep order:false",
+		"  └─IndexReader_64 1.04 root index:IndexScan_63",
+		"    └─IndexScan_63 1.04 cop table:t2, index:b, range: decided by [eq(test.t2.b, test.t1.a)], keep order:true",
 	))
 	// Desc TableScan.
 	tk.MustExec("truncate table t")

@@ -259,15 +259,15 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a",
-			best: "IndexMergeJoin{IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->TableReader(Table(t))}(test.t1.a,test.t3.a)",
+			best: "LeftHashJoin{IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->TableReader(Table(t))}(test.t1.a,test.t3.a)",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.b = t3.a",
-			best: "IndexMergeJoin{IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->TableReader(Table(t))}(test.t1.b,test.t3.a)",
+			best: "LeftHashJoin{IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->TableReader(Table(t))}(test.t1.b,test.t3.a)",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.a order by t1.a",
-			best: "IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)->Sort",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
@@ -515,7 +515,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		// Test Nested sub query.
 		{
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			best: "LeftHashJoin{TableReader(Table(t))->Projection->IndexMergeJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.s.d,test.k.d)(test.s.c,test.k.c)->Projection->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
+			best: "LeftHashJoin{TableReader(Table(t))->Projection->MergeSemiJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.s.c,test.k.c)(test.s.d,test.k.d)->Projection->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
 		},
 		// Test Semi Join + Order by.
 		{
@@ -525,11 +525,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		// Test Apply.
 		{
 			sql:  "select t.c in (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
-			best: "Apply{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.s.a,test.t1.a)->StreamAgg}->Projection",
+			best: "Apply{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(test.t1.a, test.t.a)]))}(test.s.a,test.t1.a)->StreamAgg}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
-			best: "LeftHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.s.a,test.t1.a)->StreamAgg}(test.t.a,test.s.a)->Projection->Projection",
+			best: "LeftHashJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.s.a,test.t1.a)->HashAgg}(test.t.a,test.s.a)->Projection->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
@@ -969,7 +969,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test index join + stream agg
 		{
 			sql:  "select /*+ tidb_inlj(a,b) */ sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.g > 60 group by a.g order by a.g limit 1",
-			best: "IndexJoin{IndexReader(Index(t.g)[(60,+inf]])->IndexReader(Index(t.g)[[NULL,+inf]]->Sel([gt(test.b.g, 60)]))}(test.a.g,test.b.g)->Projection->StreamAgg->Limit->Projection",
+			best: "IndexMergeJoin{IndexReader(Index(t.g)[(60,+inf]])->IndexReader(Index(t.g)[[NULL,+inf]]->Sel([gt(test.b.g, 60)]))}(test.a.g,test.b.g)->Projection->StreamAgg->Limit->Projection",
 		},
 		{
 			sql:  "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.a>5 group by a.g order by a.g limit 1",
@@ -1276,7 +1276,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		// If inner is not a data source, we can still do transformation.
 		{
 			sql:  "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
-			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->Limit->StreamAgg",
+			best: "IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->Limit->StreamAgg",
 		},
 	}
 
@@ -1369,13 +1369,13 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		// Test Index Join + UnionScan + DoubleRead.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
-			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->UnionScan([])}(test.t1.a,test.t2.c)",
+			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(test.t2.c,test.t1.a)",
 			is:   s.is,
 		},
 		// Test Index Join + UnionScan + IndexScan.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
-			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(test.t1.a,test.t2.c)->Projection",
+			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(test.t2.c,test.t1.a)->Projection",
 			is:   s.is,
 		},
 		// Index Join + Union Scan + Union All is not supported now.
@@ -1474,7 +1474,7 @@ func (s *testPlanSuite) TestSemiJoinToInner(c *C) {
 	c.Assert(err, IsNil)
 	p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 	c.Assert(err, IsNil)
-	c.Assert(core.ToString(p), Equals, "Apply{TableReader(Table(t))->IndexMergeJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t3.d,test.t2.g)}->StreamAgg")
+	c.Assert(core.ToString(p), Equals, "Apply{TableReader(Table(t))->IndexMergeJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t3.d,test.t2.g)}->HashAgg")
 }
 
 func (s *testPlanSuite) TestUnmatchedTableInHint(c *C) {
@@ -1551,7 +1551,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 	}{
 		{
 			sql:     "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
-			best:    "IndexMergeJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t1.a)}(test.t2.a,test.t3.a)->Projection",
+			best:    "RightHashJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t1.a)}(test.t3.a,test.t2.a)->Projection",
 			warning: "",
 		},
 		{
@@ -1606,7 +1606,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		// without Aggregation hints
 		{
 			sql:     "select count(*) from t t1, t t2 where t1.a = t2.b",
-			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
+			best:    "IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.b,test.t1.a)->StreamAgg",
 			warning: "",
 		},
 		{
@@ -1617,7 +1617,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		// with Aggregation hints
 		{
 			sql:     "select /*+ TIDB_HASHAGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
-			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->HashAgg",
+			best:    "IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.b,test.t1.a)->HashAgg",
 			warning: "",
 		},
 		{
@@ -1628,7 +1628,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		// test conflict warning
 		{
 			sql:     "select /*+ TIDB_HASHAGG() TIDB_STREAMAGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
-			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
+			best:    "IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.b,test.t1.a)->StreamAgg",
 			warning: "[planner:1815]Optimizer aggregation hints are conflicted",
 		},
 	}
@@ -1673,7 +1673,7 @@ func (s *testPlanSuite) TestHintScope(c *C) {
 		// join hints
 		{
 			sql:  "select /*+ TIDB_SMJ(t1) */ t1.a, t1.b from t t1, (select /*+ TIDB_INLJ(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			best: "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			best: "MergeInnerJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
 		},
 		{
 			sql:  "select /*+ TIDB_SMJ(t1) */ t1.a, t1.b from t t1, (select /*+ TIDB_HJ(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
@@ -1681,7 +1681,7 @@ func (s *testPlanSuite) TestHintScope(c *C) {
 		},
 		{
 			sql:  "select /*+ TIDB_INLJ(t1) */ t1.a, t1.b from t t1, (select /*+ TIDB_HJ(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			best: "IndexJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
+			best: "IndexMergeJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
 		},
 		{
 			sql:  "select /*+ TIDB_INLJ(t1) */ t1.a, t1.b from t t1, (select /*+ TIDB_SMJ(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",

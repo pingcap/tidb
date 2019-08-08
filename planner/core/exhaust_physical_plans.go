@@ -432,13 +432,14 @@ func findIndexScanAndTableScan(p PhysicalPlan) (is *PhysicalIndexScan, ts *Physi
 func (p *LogicalJoin) constructIndexMergeJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
-	innerPlan PhysicalPlan,
+	innerTask task,
 	ranges []*ranger.Range,
 	keyOff2IdxOff []int,
 	lens []int,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	indexJoins := p.constructIndexJoin(prop, outerIdx, innerPlan, ranges, keyOff2IdxOff, lens, compareFilters)
+	innerPlan := innerTask.plan()
+	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, lens, compareFilters)
 	indexMergeJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	is, ts := findIndexScanAndTableScan(innerPlan)
 	for _, plan := range indexJoins {
@@ -539,7 +540,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			// The index merge join's inner plan is different from index join, so we should consturct another inner plan
 			// for it.
 			innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us)
-			indexMergeJoins := p.constructIndexMergeJoin(prop, outerIdx, &innerTask2.tablePlan, nil, keyOff2IdxOff, nil, nil)
+			indexMergeJoins := p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)
 			return append(indexJoins, indexMergeJoins...)
 		}
 	}
@@ -570,8 +571,8 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
 		// The index merge join's inner plan is different from index join, so we should consturct another inner plan
 		// for it.
-		innerTask2 := p.constructInnerIndexScan(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
-		indexMergeJoins := p.constructIndexMergeJoin(prop, outerIdx, &innerTask2.indexPlan, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
+		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
+		indexMergeJoins := p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
 		return append(indexJoins, indexMergeJoins...)
 	}
 	return nil

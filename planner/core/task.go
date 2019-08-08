@@ -160,32 +160,81 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
+	innerTask := p.innerTask
 	outerTask := finishCopTask(p.ctx, tasks[p.OuterIndex].copy())
 	if p.OuterIndex == 0 {
-		p.SetChildren(outerTask.plan(), p.innerPlan)
+		p.SetChildren(outerTask.plan(), innerTask.plan())
 	} else {
-		p.SetChildren(p.innerPlan, outerTask.plan())
+		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
 	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
-		cst: outerTask.cost() + p.getCost(outerTask.count()),
+		cst: p.GetCost(outerTask, innerTask),
 	}
 }
 
-func (p *PhysicalIndexMergeJoin) getCost(lCnt float64) float64 {
-	if lCnt < 1 {
-		lCnt = 1
+// GetCost computes the cost of index merge join operator and its children.
+func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
+	var cpuCost float64
+	outerCnt, innerCnt := outerTask.count(), innerTask.count()
+	// Add the cost of evaluating outer filter, since inner filter of index join
+	// is always empty, we can simply tell whether outer filter is empty using the
+	// summed length of left/right conditions.
+	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
+		cpuCost += cpuFactor * outerCnt
+		outerCnt *= selectionFactor
 	}
-	cst := lCnt * netWorkFactor
-	batchSize := p.ctx.GetSessionVars().IndexJoinBatchSize
+	// Cost of extracting lookup keys.
+	innerCPUCost := cpuFactor * outerCnt
+	// Cost of sorting and removing duplicate lookup keys:
+	// (outerCnt / batchSize) * (sortFactor + batchSize) * cpuFactor
+	// If `p.NeedOuterSort` is false, the sortFactor is batchSize * Log2(batchSize).
+	// Otherwise, it's 0.
+	batchSize := math.Min(float64(p.ctx.GetSessionVars().IndexJoinBatchSize), outerCnt)
 	sortFactor := 1.0
 	if p.NeedOuterSort {
-		sortFactor = math.Log2(math.Min(float64(batchSize), lCnt))
+		sortFactor += math.Log2(float64(batchSize))
 	}
-	cst += lCnt * sortFactor * 2
-	cst += lCnt / float64(batchSize) * netWorkStartFactor
-	return cst
+	if batchSize > 2 {
+		innerCPUCost += outerCnt * sortFactor * cpuFactor
+	}
+	// Add cost of building inner executors. CPU cost of building copTasks:
+	// (outerCnt / batchSize) * (batchSize * distinctFactor) * cpuFactor
+	// Since we don't know the number of copTasks built, ignore these network cost now.
+	innerCPUCost += outerCnt * distinctFactor * cpuFactor
+	// CPU cost of building hash table for inner results:
+	// (outerCnt / batchSize) * (batchSize * distinctFactor) * innerCnt * cpuFactor
+	innerCPUCost += outerCnt * distinctFactor * innerCnt * cpuFactor
+	innerConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency)
+	cpuCost += innerCPUCost / innerConcurrency
+	// Cost of merge join in inner worker.
+	numPairs := outerCnt * innerCnt
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin ||
+		p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		if len(p.OtherConditions) > 0 {
+			numPairs *= 0.5
+		} else {
+			numPairs = 0
+		}
+	}
+	outerCardinality := numPairs / outerCnt
+	probeCost := numPairs * cpuFactor
+	// Inner workers do merge join parallelly. But they can only keep one outer batch
+	// results. So as the number of outer batch is exceed inner concurrency, it degenerates
+	// linear execution.
+	if numPairs/outerCnt >= innerConcurrency {
+		probeCost -= batchSize * outerCardinality * (innerConcurrency - 1) * cpuFactor
+	} else {
+		probeCost = batchSize * outerCardinality * (numPairs / outerCnt)
+	}
+
+	// Index merge join save the join results in inner worker.
+	// So the memory cost consider the results size for each batch.
+	memoryCost := innerConcurrency * (batchSize * outerCardinality) * memoryFactor
+
+	innerPlanCost := outerCnt * innerTask.cost()
+	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
 }
 
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
@@ -199,13 +248,6 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
-		cst: outerTask.cost() + p.getCost(outerTask.count()),
-	}
-}
-
-func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
-	if lCnt < 1 {
-		lCnt = 1
 		cst: p.GetCost(outerTask, innerTask),
 	}
 }
