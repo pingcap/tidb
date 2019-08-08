@@ -638,7 +638,7 @@ func (t *tableCommon) RowWithCols(ctx sessionctx.Context, h int64, cols []*table
 	if err != nil {
 		return nil, err
 	}
-	value, err := txn.Get(key)
+	value, err := txn.Get(context.TODO(), key)
 	if err != nil {
 		return nil, err
 	}
@@ -1109,7 +1109,7 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 	txn.SetOption(kv.PresumeKeyNotExistsError, e)
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
-	_, err = txn.Get(recordKey)
+	_, err = txn.Get(ctx, recordKey)
 	if err == nil {
 		return e
 	} else if !kv.ErrNotExist.Equal(err) {

@@ -326,7 +326,7 @@ func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64) ([]types.Datum
 	if err != nil {
 		return nil, err
 	}
-	value, err := txn.GetMemBuffer().Get(key)
+	value, err := txn.GetMemBuffer().Get(context.TODO(), key)
 	if err != nil {
 		return nil, err
 	}

@@ -140,12 +140,12 @@ func (txn *tikvTxn) Reset() {
 }
 
 // Get implements transaction interface.
-func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
+func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	tikvTxnCmdCountWithGet.Inc()
 	start := time.Now()
 	defer func() { tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds()) }()
 
-	ret, err := txn.us.Get(k)
+	ret, err := txn.us.Get(ctx, k)
 	if kv.IsErrNotFound(err) {
 		return nil, err
 	}
@@ -174,7 +174,7 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 	bufferValues := make([][]byte, len(keys))
 	shrinkKeys := make([]kv.Key, 0, len(keys))
 	for i, key := range keys {
-		val, err := txn.GetMemBuffer().Get(key)
+		val, err := txn.GetMemBuffer().Get(ctx, key)
 		if kv.IsErrNotFound(err) {
 			shrinkKeys = append(shrinkKeys, key)
 			continue
