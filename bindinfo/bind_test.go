@@ -134,6 +134,11 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(bindData.Collation, Equals, "utf8mb4_bin")
 	c.Check(bindData.CreateTime, NotNil)
 	c.Check(bindData.UpdateTime, NotNil)
+
+	// Test fields with quotes or slashes.
+	sql = `CREATE GLOBAL BINDING FOR  select * from t where a BETWEEN "a" and "b" USING select * from t use index(idx) where a BETWEEN "a\nb\rc\td\0e" and "x"`
+	tk.MustExec(sql)
+	tk.MustExec(`DROP global binding for select * from t use index(idx) where a BETWEEN "a\nb\rc\td\0e" and "x"`)
 }
 
 func (s *testSuite) TestGlobalBinding(c *C) {
