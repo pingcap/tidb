@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -57,6 +58,7 @@ type tableHintInfo struct {
 	indexNestedLoopJoinTables []hintTableInfo
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
+	preferAggType             uint
 }
 
 type hintTableInfo struct {
@@ -335,7 +337,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) 
 	proj.SetChildren(p)
 	proj.self = proj
 	proj.SetSchema(schema)
-	proj.calculateNoDelay = true
+	proj.CalculateNoDelay = true
 	return proj, nil
 }
 
@@ -780,11 +782,16 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		Ranges:           ranger.FullRange(),
 		GenExprs:         genExprsMap,
 	}.Init(b.ctx)
-	is.stats = property.NewSimpleStats(0)
+	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
+	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table}.Init(b.ctx)
 	ts.SetSchema(tblSchema)
-	cop := &copTask{indexPlan: is, tablePlan: ts}
+	cop := &copTask{
+		indexPlan:  is,
+		tablePlan:  ts,
+		tableStats: is.stats,
+	}
 	ts.HandleIdx = pkOffset
 	is.initSchema(id, idx, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
@@ -1030,6 +1037,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       1024,
 	ast.AnalyzeOptCMSketchWidth: uint64(cmSketchSizeLimit),
 	ast.AnalyzeOptCMSketchDepth: uint64(cmSketchSizeLimit),
+	ast.AnalyzeOptNumSamples:    100000,
 }
 
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
@@ -1037,6 +1045,7 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       20,
 	ast.AnalyzeOptCMSketchWidth: 2048,
 	ast.AnalyzeOptCMSketchDepth: 5,
+	ast.AnalyzeOptNumSamples:    10000,
 }
 
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
@@ -1125,7 +1134,7 @@ func buildCleanupIndexFields() *expression.Schema {
 }
 
 func buildShowDDLJobsFields() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11)...)
 	schema.Append(buildColumn("", "JOB_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, 64))
@@ -1135,6 +1144,7 @@ func buildShowDDLJobsFields() *expression.Schema {
 	schema.Append(buildColumn("", "TABLE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "ROW_COUNT", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "START_TIME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_TIME", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
 	return schema
 }
