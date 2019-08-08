@@ -1616,18 +1616,18 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		},
 		// with Aggregation hints
 		{
-			sql:     "select /*+ TIDB_HASHAGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
+			sql:     "select /*+ HASH_AGG */ count(*) from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->HashAgg",
 			warning: "",
 		},
 		{
-			sql:     "select /*+ TIDB_STREAMAGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
+			sql:     "select /*+ STREAM_AGG */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->Sort->StreamAgg",
 			warning: "",
 		},
 		// test conflict warning
 		{
-			sql:     "select /*+ TIDB_HASHAGG() TIDB_STREAMAGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
+			sql:     "select /*+ HASH_AGG STREAM_AGG */ count(*) from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
 			warning: "[planner:1815]Optimizer aggregation hints are conflicted",
 		},
@@ -1709,19 +1709,19 @@ func (s *testPlanSuite) TestHintScope(c *C) {
 		},
 		// aggregation hints
 		{
-			sql:  "select /*+ TIDB_STREAMAGG() */ s, count(s) from (select /*+ TIDB_HASHAGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+			sql:  "select /*+ STREAM_AGG */ s, count(s) from (select /*+ HASH_AGG */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
 			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->Projection->HashAgg->Sort->StreamAgg->Projection",
 		},
 		{
-			sql:  "select /*+ TIDB_HASHAGG() */ s, count(s) from (select /*+ TIDB_STREAMAGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+			sql:  "select /*+ HASH_AGG */ s, count(s) from (select /*+ STREAM_AGG */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
 			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->Sort->Projection->StreamAgg->HashAgg->Projection",
 		},
 		{
-			sql:  "select /*+ TIDB_HASHAGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+			sql:  "select /*+ HASH_AGG */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
 			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->Projection->HashAgg->HashAgg->Projection",
 		},
 		{
-			sql:  "select /*+ TIDB_STREAMAGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+			sql:  "select /*+ STREAM_AGG */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
 			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->Projection->HashAgg->Sort->StreamAgg->Projection",
 		},
 	}

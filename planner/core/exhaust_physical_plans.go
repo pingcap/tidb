@@ -1329,7 +1329,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 	}
 
 	if streamAggs == nil && preferStream {
-		errMsg := "Optimizer Hint TIDB_STREAMAGG is inapplicable"
+		errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
 		warning := ErrInternal.GenWithStack(errMsg)
 		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 	}
