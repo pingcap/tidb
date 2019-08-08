@@ -58,7 +58,7 @@ const (
 	HintINLJ = "inl_join"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
-	// HintHJoin is hint enforce hash join.
+	// HintHJ is hint enforce hash join.
 	HintHJ = "hash_join"
 	// HintHashAgg is hint enforce hash aggregation.
 	HintHashAgg = "hash_agg"
