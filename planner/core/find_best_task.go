@@ -31,18 +31,16 @@ import (
 )
 
 const (
-	netWorkFactor      = 1.5
-	netWorkStartFactor = 20.0
-	scanFactor         = 2.0
-	descScanFactor     = 2 * scanFactor
-	memoryFactor       = 5.0
-	// 0.5 is the looking up agg context factor.
-	hashAggFactor      = 1.2 + 0.5
-	selectionFactor    = 0.8
-	distinctFactor     = 0.8
-	cpuFactor          = 0.9
-	distinctAggFactor  = 1.6
-	createAggCtxFactor = 6
+	netWorkFactor     = 1.0
+	cpuFactor         = 3 * netWorkFactor
+	copCPUFactor      = 3 * netWorkFactor
+	scanFactor        = 1.5 * netWorkFactor
+	descScanFactor    = 2 * scanFactor
+	memoryFactor      = 0.001
+	concurrencyFactor = 0.001
+
+	selectionFactor = 0.8
+	distinctFactor  = 0.8
 )
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
@@ -490,7 +488,11 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
 	rowCount := path.countAfterAccess
-	cop := &copTask{indexPlan: is}
+	cop := &copTask{
+		indexPlan:  is,
+		tableStats: ds.tableStats,
+		tableCols:  ds.tableCols,
+	}
 	if !candidate.isSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
@@ -510,18 +512,14 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		selectivity := ds.stats.RowCount / path.countAfterAccess
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
-	is.stats = property.NewSimpleStats(rowCount)
-	is.stats.StatsVersion = ds.statisticTable.Version
-	if ds.statisticTable.Pseudo {
-		is.stats.StatsVersion = statistics.PseudoVersion
-	}
-
-	cop.cst = rowCount * scanFactor
+	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	rowSize := is.indexScanRowSize(idx, ds)
+	cop.cst = rowCount * rowSize * scanFactor
 	task = cop
 	if candidate.isMatchProp {
 		if prop.Items[0].Desc {
 			is.Desc = true
-			cop.cst = rowCount * descScanFactor
+			cop.cst = rowCount * rowSize * descScanFactor
 		}
 		if cop.tablePlan != nil {
 			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
@@ -540,6 +538,21 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	return task, nil
+}
+
+func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource) float64 {
+	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
+	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
+	if len(idx.Columns) == len(is.schema.Columns) {
+		scanCols = append(scanCols, is.schema.Columns...)
+		handleCols, ok := ds.schema.TblID2Handle[ds.tableInfo.ID]
+		if ok {
+			scanCols = append(scanCols, handleCols[0])
+		}
+	} else {
+		scanCols = is.schema.Columns
+	}
+	return ds.tableStats.HistColl.GetAvgRowSize(scanCols, true)
 }
 
 // TODO: refactor this part, we should not call Clone in fact.
@@ -578,20 +591,20 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
-		copTask.cst += copTask.count() * cpuFactor
+		copTask.cst += copTask.count() * copCPUFactor
 		var selectivity float64
 		if path.countAfterAccess > 0 {
 			selectivity = path.countAfterIndex / path.countAfterAccess
 		}
 		count := is.stats.RowCount * selectivity
-		stats := &property.StatsInfo{RowCount: count}
+		stats := p.tableStats.ScaleByExpectCnt(count)
 		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
 	}
 	if tableConds != nil {
 		copTask.finishIndexPlan()
-		copTask.cst += copTask.count() * cpuFactor
+		copTask.cst += copTask.count() * copCPUFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats)
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
@@ -805,6 +818,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
+		tableStats:        ds.tableStats,
 	}
 	task = copTask
 	// Adjust number of rows we actually need to scan if prop.ExpectedCnt is smaller than the count we calculated.
@@ -825,17 +839,18 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
 		}
 	}
-	ts.stats = property.NewSimpleStats(rowCount)
-	ts.stats.StatsVersion = ds.statisticTable.Version
-	if ds.statisticTable.Pseudo {
-		ts.stats.StatsVersion = statistics.PseudoVersion
-	}
-
-	copTask.cst = rowCount * scanFactor
+	// We need NDV of columns since it may be used in cost estimation of join. Precisely speaking,
+	// we should track NDV of each histogram bucket, and sum up the NDV of buckets we actually need
+	// to scan, but this would only help improve accuracy of NDV for one column, for other columns,
+	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
+	// for all columns now, as we do in `deriveStatsByFilter`.
+	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	rowSize := ds.tableStats.HistColl.GetAvgRowSize(ds.tableCols, false)
+	copTask.cst = rowCount * rowSize * scanFactor
 	if candidate.isMatchProp {
 		if prop.Items[0].Desc {
 			ts.Desc = true
-			copTask.cst = rowCount * descScanFactor
+			copTask.cst = rowCount * rowSize * descScanFactor
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
@@ -852,7 +867,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		copTask.cst += copTask.count() * cpuFactor
+		copTask.cst += copTask.count() * copCPUFactor
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats)
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel

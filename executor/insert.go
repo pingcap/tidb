@@ -138,9 +138,9 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if len(e.children) > 0 && e.children[0] != nil {
-		return e.insertRowsFromSelect(ctx, e.exec)
+		return insertRowsFromSelect(ctx, e)
 	}
-	return e.insertRows(ctx, e.exec)
+	return insertRows(ctx, e)
 }
 
 // Close implements the Executor Close interface.
