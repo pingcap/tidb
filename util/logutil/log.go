@@ -317,9 +317,9 @@ func SetLevel(level string) error {
 	return nil
 }
 
-type ctxKeyType int
+type ctxLogKeyType struct{}
 
-const ctxLogKey ctxKeyType = iota
+var ctxLogKey = ctxLogKeyType{}
 
 // Logger gets a contextual logger from current context.
 // contextual logger will output common fields from context.
