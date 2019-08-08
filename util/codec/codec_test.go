@@ -90,10 +90,25 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 
 		b, err = EncodeValue(sc, nil, t.Input...)
 		c.Assert(err, IsNil)
+		size, err := estimateValuesSize(sc, t.Input)
+		c.Assert(err, IsNil)
+		c.Assert(len(b), Equals, size)
 		args, err = Decode(b, 1)
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 	}
+}
+
+func estimateValuesSize(sc *stmtctx.StatementContext, vals []types.Datum) (int, error) {
+	size := 0
+	for _, val := range vals {
+		length, err := EstimateValueSize(sc, val)
+		if err != nil {
+			return 0, err
+		}
+		size += length
+	}
+	return size, nil
 }
 
 func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
@@ -729,6 +744,13 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 
 		ret := bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, t.Ret, Commentf("%v %x %x", t, b1, b2))
+
+		b1, err = EncodeValue(sc, b1[:0], d1)
+		c.Assert(err, IsNil)
+		size, err := EstimateValueSize(sc, d1)
+		c.Assert(err, IsNil)
+		c.Assert(len(b1), Equals, size)
+
 	}
 
 	floats := []float64{-123.45, -123.40, -23.45, -1.43, -0.93, -0.4333, -0.068,
@@ -743,6 +765,10 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		b, err := EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		c.Assert(err, IsNil)
 		decs = append(decs, b)
+		size, err := EstimateValueSize(sc, d)
+		c.Assert(err, IsNil)
+		// size - 1 because the flag occupy 1 bit.
+		c.Assert(len(b), Equals, size-1)
 	}
 	for i := 0; i < len(decs)-1; i++ {
 		cmp := bytes.Compare(decs[i], decs[i+1])
@@ -1022,4 +1048,44 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	c.Assert(err1, IsNil)
 	c.Assert(err2, IsNil)
 	c.Assert(b1, BytesEquals, b2)
+}
+
+func (s *testCodecSuite) TestValueSizeOfSignedInt(c *C) {
+	testCase := []int64{64, 8192, 1048576, 134217728, 17179869184, 2199023255552, 281474976710656, 36028797018963968, 4611686018427387904}
+	var b []byte
+	for _, v := range testCase {
+		b := encodeSignedInt(b[:0], v-10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(v-10))
+
+		b = encodeSignedInt(b[:0], v, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(v))
+
+		b = encodeSignedInt(b[:0], v+10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(v+10))
+
+		// Test for negative value.
+		b = encodeSignedInt(b[:0], 0-v, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v))
+
+		b = encodeSignedInt(b[:0], 0-v+10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v+10))
+
+		b = encodeSignedInt(b[:0], 0-v-10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v-10))
+	}
+}
+
+func (s *testCodecSuite) TestValueSizeOfUnsignedInt(c *C) {
+	testCase := []uint64{128, 16384, 2097152, 268435456, 34359738368, 4398046511104, 562949953421312, 72057594037927936, 9223372036854775808}
+	var b []byte
+	for _, v := range testCase {
+		b := encodeUnsignedInt(b[:0], v-10, false)
+		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v-10))
+
+		b = encodeUnsignedInt(b[:0], v, false)
+		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v))
+
+		b = encodeUnsignedInt(b[:0], v+10, false)
+		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v+10))
+	}
 }

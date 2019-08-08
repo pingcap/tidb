@@ -105,13 +105,13 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 
 // Close closes all executors and release all resources.
 func (e *baseExecutor) Close() error {
-	for _, child := range e.children {
-		err := child.Close()
-		if err != nil {
-			return err
+	var firstErr error
+	for _, src := range e.children {
+		if err := src.Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // Schema returns the current baseExecutor's schema. If it is nil, then create and return a new one.
@@ -134,7 +134,7 @@ func retTypes(e Executor) []*types.FieldType {
 	return base.retFieldTypes
 }
 
-// Next fills mutiple rows into a chunk.
+// Next fills multiple rows into a chunk.
 func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
@@ -195,6 +195,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	return e.Next(ctx, req)
 }
@@ -414,15 +415,35 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendInt64(0, e.jobs[i].ID)
-		req.AppendString(1, getSchemaName(e.is, e.jobs[i].SchemaID))
-		req.AppendString(2, getTableName(e.is, e.jobs[i].TableID))
+		schemaName := e.jobs[i].SchemaName
+		tableName := ""
+		finishTS := uint64(0)
+		if e.jobs[i].BinlogInfo != nil {
+			finishTS = e.jobs[i].BinlogInfo.FinishedTS
+			if e.jobs[i].BinlogInfo.TableInfo != nil {
+				tableName = e.jobs[i].BinlogInfo.TableInfo.Name.L
+			}
+			if len(schemaName) == 0 && e.jobs[i].BinlogInfo.DBInfo != nil {
+				schemaName = e.jobs[i].BinlogInfo.DBInfo.Name.L
+			}
+		}
+		// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
+		if len(schemaName) == 0 {
+			schemaName = getSchemaName(e.is, e.jobs[i].SchemaID)
+		}
+		if len(tableName) == 0 {
+			tableName = getTableName(e.is, e.jobs[i].TableID)
+		}
+		req.AppendString(1, schemaName)
+		req.AppendString(2, tableName)
 		req.AppendString(3, e.jobs[i].Type.String())
 		req.AppendString(4, e.jobs[i].SchemaState.String())
 		req.AppendInt64(5, e.jobs[i].SchemaID)
 		req.AppendInt64(6, e.jobs[i].TableID)
 		req.AppendInt64(7, e.jobs[i].RowCount)
 		req.AppendString(8, model.TSConvert2Time(e.jobs[i].StartTS).String())
-		req.AppendString(9, e.jobs[i].State.String())
+		req.AppendString(9, model.TSConvert2Time(finishTS).String())
+		req.AppendString(10, e.jobs[i].State.String())
 	}
 	e.cursor += numCurBatch
 	return nil
@@ -478,6 +499,17 @@ func (e *CheckTableExec) Open(ctx context.Context) error {
 	}
 	e.done = false
 	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *CheckTableExec) Close() error {
+	var firstErr error
+	for _, src := range e.srcs {
+		if err := src.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *IndexLookUpExecutor) error {
@@ -876,6 +908,7 @@ func init() {
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
 			defer span1.Finish()
+			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
 
 		e := &executorBuilder{is: is, ctx: sctx}

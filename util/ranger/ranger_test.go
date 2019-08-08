@@ -747,6 +747,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		accessConds string
 		filterConds string
 		resultStr   string
+		length      int
 	}{
 		{
 			colPos:      0,
@@ -754,6 +755,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[eq(test.t.a, 1)]",
 			filterConds: "[gt(test.t.b, 1)]",
 			resultStr:   "[[1,1]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      1,
@@ -761,6 +763,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[gt(test.t.b, 1)]",
 			filterConds: "[]",
 			resultStr:   "[(1,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -768,6 +771,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[eq(1, test.t.a)]",
 			filterConds: "[]",
 			resultStr:   "[[1,1]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -775,6 +779,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[ne(test.t.a, 1)]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,1) (1,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -782,6 +787,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[ne(1, test.t.a)]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,1) (1,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -789,6 +795,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[gt(test.t.a, 1)]",
 			filterConds: "[]",
 			resultStr:   "[(1,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -796,6 +803,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[lt(1, test.t.a)]",
 			filterConds: "[]",
 			resultStr:   "[(1,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -803,6 +811,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[ge(test.t.a, 1)]",
 			filterConds: "[]",
 			resultStr:   "[[1,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -810,6 +819,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[le(1, test.t.a)]",
 			filterConds: "[]",
 			resultStr:   "[[1,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -817,6 +827,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[lt(test.t.a, 1)]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,1)]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -824,6 +835,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[gt(1, test.t.a)]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,1)]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -831,6 +843,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[le(test.t.a, 1)]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,1]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -838,6 +851,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[ge(1, test.t.a)]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,1]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -845,6 +859,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[test.t.a]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,0) (0,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -852,6 +867,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[in(test.t.a, 1, 3, <nil>, 2)]",
 			filterConds: "[]",
 			resultStr:   "[[1,1] [2,2] [3,3]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -859,6 +875,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[in(test.t.a, 8, 8, 81, 45)]",
 			filterConds: "[]",
 			resultStr:   `[[8,8] [45,45] [81,81]]`,
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -866,6 +883,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[ge(test.t.a, 1) le(test.t.a, 2)]",
 			filterConds: "[]",
 			resultStr:   "[[1,2]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -873,6 +891,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[or(lt(test.t.a, 1), gt(test.t.a, 2))]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,1) (2,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		//{
 		// `a > null` will be converted to `castAsString(a) > null` which can not be extracted as access condition.
@@ -885,6 +904,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[ge(test.t.a, 2) le(test.t.a, 1)]",
 			filterConds: "[]",
 			resultStr:   "[]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -892,6 +912,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[or(lt(test.t.a, 2), gt(test.t.a, 1))]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -899,6 +920,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[isnull(test.t.a)]",
 			filterConds: "[]",
 			resultStr:   "[[NULL,NULL]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -906,6 +928,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[not(isnull(test.t.a))]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -913,6 +936,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[istrue(test.t.a)]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,0) (0,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -920,6 +944,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[not(istrue(test.t.a))]",
 			filterConds: "[]",
 			resultStr:   "[[NULL,NULL] [0,0]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -927,6 +952,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[isfalse(test.t.a)]",
 			filterConds: "[]",
 			resultStr:   "[[0,0]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -934,6 +960,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[not(isfalse(test.t.a))]",
 			filterConds: "[]",
 			resultStr:   "[[NULL,0) (0,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      1,
@@ -941,6 +968,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[in(test.t.b, 1, 2.1)]",
 			filterConds: "[]",
 			resultStr:   "[[1,1] [2.1,2.1]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      0,
@@ -948,6 +976,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[gt(test.t.a, 9223372036854775807)]",
 			filterConds: "[]",
 			resultStr:   "[(9223372036854775807,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      2,
@@ -955,6 +984,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[gt(test.t.c, 111.11111111)]",
 			filterConds: "[]",
 			resultStr:   "[[111.111115,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      3,
@@ -962,6 +992,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[gt(test.t.d, aaaaaaaaaaaaaa)]",
 			filterConds: "[]",
 			resultStr:   "[(\"aaaaaaaaaaaaaa\",+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      4,
@@ -969,6 +1000,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[gt(test.t.e, 18446744073709500000)]",
 			filterConds: "[]",
 			resultStr:   "[(18446744073709500000,+inf]]",
+			length:      types.UnspecifiedLength,
 		},
 		{
 			colPos:      4,
@@ -976,6 +1008,15 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[gt(test.t.e, -2147483648)]",
 			filterConds: "[]",
 			resultStr:   "[[0,+inf]]",
+			length:      types.UnspecifiedLength,
+		},
+		{
+			colPos:      3,
+			exprStr:     "d = 'aab' or d = 'aac'",
+			accessConds: "[or(eq(test.t.d, aab), eq(test.t.d, aac))]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\",\"a\"]]",
+			length:      1,
 		},
 	}
 
@@ -1002,7 +1043,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		c.Assert(col, NotNil)
 		conds = ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType, types.UnspecifiedLength)
+		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType, tt.length)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s, col: %v", tt.exprStr, col))
@@ -1052,15 +1093,15 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
 		"Projection_11 2.00 root 9_aux_0",
-		"└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.e, 7_col_0)",
+		"└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:HashAgg_18, other cond:eq(test.t.e, 7_col_0)",
 		"  ├─TableReader_15 2.00 root data:TableScan_14",
 		"  │ └─TableScan_14 2.00 cop table:t, range:[-inf,+inf], keep order:false",
-		"  └─StreamAgg_20 1.00 root funcs:count(1)",
-		"    └─IndexJoin_36 2.00 root inner join, inner:TableReader_35, outer key:test.s.a, inner key:test.t1.a",
-		"      ├─IndexReader_31 2.00 root index:IndexScan_30",
-		"      │ └─IndexScan_30 2.00 cop table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
-		"      └─TableReader_35 1.00 root data:TableScan_34",
-		"        └─TableScan_34 1.00 cop table:t1, range: decided by [test.s.a], keep order:false",
+		"  └─HashAgg_18 1.00 root funcs:count(1)",
+		"    └─HashLeftJoin_24 2.00 root inner join, inner:TableReader_29, equal:[eq(test.s.a, test.t1.a)]",
+		"      ├─IndexReader_27 2.00 root index:IndexScan_26",
+		"      │ └─IndexScan_26 2.00 cop table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
+		"      └─TableReader_29 2.00 root data:TableScan_28",
+		"        └─TableScan_28 2.00 cop table:t1, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery("select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
 		"1",

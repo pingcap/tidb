@@ -49,6 +49,7 @@ var (
 	tikvRegionCacheCounterWithScanRegionsError            = metrics.TiKVRegionCacheCounter.WithLabelValues("scan_regions", "err")
 	tikvRegionCacheCounterWithGetStoreOK                  = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "ok")
 	tikvRegionCacheCounterWithGetStoreError               = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "err")
+	tikvRegionCacheCounterWithInvalidateStoreRegionsOK    = metrics.TiKVRegionCacheCounter.WithLabelValues("invalidate_store_regions", "ok")
 )
 
 const (
@@ -967,6 +968,7 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 		epoch := rs.storeFails[rs.workStoreIdx]
 		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
 	}
 
@@ -1099,6 +1101,11 @@ func (s *Store) reResolve(c *RegionCache) {
 		return
 	}
 	if store == nil {
+		// store has be removed in PD, we should invalidate all regions using those store.
+		logutil.BgLogger().Info("invalidate regions in removed store",
+			zap.Uint64("store", s.storeID), zap.String("add", s.addr))
+		atomic.AddUint32(&s.fail, 1)
+		tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		return
 	}
 

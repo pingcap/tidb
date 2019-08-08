@@ -416,6 +416,14 @@ func (s *testIntegrationSuite5) TestMySQLErrorCode(c *C) {
 	assertErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int auto_increment);"
 	assertErrorCode(c, tk, sql, tmysql.ErrWrongAutoKey)
+	sql = "create table t2 (a datetime(2) default current_timestamp(3))"
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp)"
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidOnUpdate)
+	sql = "create table t2 (a datetime default current_timestamp on update current_timestamp(2))"
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidOnUpdate)
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp(3))"
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidOnUpdate)
 
 	sql = "create table t2 (id int primary key , age int);"
 	tk.MustExec(sql)
@@ -576,6 +584,30 @@ func (s *testIntegrationSuite2) TestNullGeneratedColumn(c *C) {
 	tk.MustExec("insert into t values()")
 	tk.MustExec("alter table t add index idx_c(c)")
 	tk.MustExec("drop table t")
+}
+
+func (s *testIntegrationSuite2) TestDependedGeneratedColumnPrior2GeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`a` int(11) DEFAULT NULL," +
+		"`b` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL," +
+		"`c` int(11) GENERATED ALWAYS AS (`b` + 1) VIRTUAL" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	// should check unknown column first, then the prior ones.
+	sql := "alter table t add column d int as (c + f + 1) first"
+	assertErrorCode(c, tk, sql, mysql.ErrBadField)
+
+	// depended generated column should be prior to generated column self
+	sql = "alter table t add column d int as (c+1) first"
+	assertErrorCode(c, tk, sql, mysql.ErrGeneratedColumnNonPrior)
+
+	// correct case
+	tk.MustExec("alter table t add column d int as (c+1) after c")
+
+	// check position nil case
+	tk.MustExec("alter table t add column(e int as (c+1))")
 }
 
 func (s *testIntegrationSuite3) TestChangingCharsetToUtf8(c *C) {

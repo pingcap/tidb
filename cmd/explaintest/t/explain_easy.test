@@ -8,6 +8,8 @@ create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
 
 set @@session.tidb_opt_agg_push_down = 1;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
+set @@session.tidb_hashagg_partial_concurrency = 1;
+set @@session.tidb_hashagg_final_concurrency = 1;
 
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 explain select * from t1;
@@ -158,4 +160,10 @@ insert into t values (1, "1000-01-01"), (2, "1000-01-02"), (3, "1000-01-03");
 analyze table t;
 explain select * from t where a = 1;
 explain select * from t where b = "1000-01-01";
+drop table t;
+
+create table t(a int);
+insert into t values (1),(2),(2),(2),(9),(9),(9),(10);
+analyze table t with 1 buckets;
+explain select * from t where a >= 3 and a <= 8;
 drop table t;
