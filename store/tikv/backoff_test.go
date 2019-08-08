@@ -24,7 +24,7 @@ type testBackoffSuite struct {
 	store *tikvStore
 }
 
-var _ = Suite(&testLockSuite{})
+var _ = Suite(&testBackoffSuite{})
 
 func (s *testBackoffSuite) SetUpTest(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
@@ -37,6 +37,6 @@ func (s *testBackoffSuite) TearDownTest(c *C) {
 func (s *testBackoffSuite) TestBackoffWithMax(c *C) {
 	b := NewBackoffer(context.TODO(), 2000)
 	err := b.BackoffWithMaxSleep(boTxnLockFast, 30, errors.New("test"))
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 	c.Assert(b.totalSleep, Equals, 30)
 }

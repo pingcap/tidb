@@ -61,7 +61,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint tidy check-static vet
+check: fmt errcheck lint tidy testSuite check-static vet
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
@@ -105,6 +105,10 @@ vet:
 tidy:
 	@echo "go mod tidy"
 	./tools/check/check-tidy.sh
+
+testSuite:
+	@echo "testSuite"
+	./tools/check/check_testSuite.sh
 
 clean:
 	$(GO) clean -i ./...
