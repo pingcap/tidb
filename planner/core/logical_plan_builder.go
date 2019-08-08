@@ -1200,8 +1200,8 @@ func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, s
 	return n, false
 }
 
-func (a *havingWindowAndOrderbyExprResolver) resolveFromSchema(colName *ast.ColumnName, schema *expression.Schema) (int, error) {
-	col, err := schema.FindColumn(colName)
+func (a *havingWindowAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema *expression.Schema) (int, error) {
+	col, err := schema.FindColumn(v.Name)
 	if err != nil {
 		return -1, err
 	}
@@ -1253,16 +1253,6 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		}
 	case *ast.WindowSpec:
 		a.inWindowSpec = false
-	case *ast.ColumnName:
-		index, err := a.resolveFromSchema(v, a.p.Schema())
-		if err != nil {
-			a.err = err
-			return node, false
-		}
-		if index == -1 {
-			a.err = ErrUnknownColumn.GenWithStackByArgs(v.OrigColName(), clauseMsg[a.curClause])
-			return node, false
-		}
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
 		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) {
@@ -1289,7 +1279,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			}
 			if index == -1 {
 				if a.orderBy {
-					index, a.err = a.resolveFromSchema(v.Name, a.p.Schema())
+					index, a.err = a.resolveFromSchema(v, a.p.Schema())
 				} else {
 					index, a.err = resolveFromSelectFields(v, a.selectFields, true)
 				}
@@ -1298,7 +1288,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			// We should ignore the err when resolving from schema. Because we could resolve successfully
 			// when considering select fields.
 			var err error
-			index, err = a.resolveFromSchema(v.Name, a.p.Schema())
+			index, err = a.resolveFromSchema(v, a.p.Schema())
 			_ = err
 			if index == -1 && a.curClause != windowClause {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
