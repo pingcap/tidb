@@ -59,6 +59,8 @@ func WithAssertion(x kv.AssertionProto) CreateIdxOptFunc {
 	}
 }
 
+// WithCtx returns a CreateIdxFunc.
+// This option is used to pass context.Context.
 func WithCtx(ctx context.Context) CreateIdxOptFunc {
 	return func(opt *CreateIdxOpt) {
 		opt.Ctx = ctx
