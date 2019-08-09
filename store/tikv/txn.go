@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/dgryski/go-farm"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
@@ -139,12 +140,12 @@ func (txn *tikvTxn) Reset() {
 }
 
 // Get implements transaction interface.
-func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
+func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	tikvTxnCmdCountWithGet.Inc()
 	start := time.Now()
 	defer func() { tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds()) }()
 
-	ret, err := txn.us.Get(k)
+	ret, err := txn.us.Get(ctx, k)
 	if kv.IsErrNotFound(err) {
 		return nil, err
 	}
@@ -161,13 +162,19 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 }
 
 func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	if txn.IsReadOnly() {
 		return txn.snapshot.BatchGet(ctx, keys)
 	}
 	bufferValues := make([][]byte, len(keys))
 	shrinkKeys := make([]kv.Key, 0, len(keys))
 	for i, key := range keys {
-		val, err := txn.GetMemBuffer().Get(key)
+		val, err := txn.GetMemBuffer().Get(ctx, key)
 		if kv.IsErrNotFound(err) {
 			shrinkKeys = append(shrinkKeys, key)
 			continue
@@ -254,6 +261,12 @@ func (txn *tikvTxn) IsPessimistic() bool {
 }
 
 func (txn *tikvTxn) Commit(ctx context.Context) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tikvTxn.Commit", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
