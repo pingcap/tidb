@@ -46,7 +46,6 @@ func NewMemDbBuffer(cap int) MemBuffer {
 	return &memDbBuffer{
 		db:              memdb.New(comparer.DefaultComparer, cap),
 		entrySizeLimit:  TxnEntrySizeLimit,
-		bufferLenLimit:  atomic.LoadUint64(&TxnEntryCountLimit),
 		bufferSizeLimit: atomic.LoadUint64(&TxnTotalSizeLimit),
 	}
 }
@@ -98,9 +97,6 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 	err := m.db.Put(k, v)
 	if m.Size() > int(m.bufferSizeLimit) {
 		return ErrTxnTooLarge.GenWithStack("transaction too large, size:%d", m.Size())
-	}
-	if m.Len() > int(m.bufferLenLimit) {
-		return ErrTxnTooLarge.GenWithStack("transaction too large, len:%d", m.Len())
 	}
 	return errors.Trace(err)
 }
