@@ -40,7 +40,6 @@ func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 	if !ok {
 		dt = &DirtyTable{
 			tid:         tid,
-			addedRows:   make(map[int64]struct{}),
 			deletedRows: make(map[int64]struct{}),
 		}
 		udb.tables[tid] = dt
@@ -51,28 +50,13 @@ func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 // DirtyTable stores uncommitted write operation for a transaction.
 type DirtyTable struct {
 	tid int64
-	// addedRows ...
 	// the key is handle.
-	addedRows   map[int64]struct{}
 	deletedRows map[int64]struct{}
-	truncated   bool
-}
-
-// AddRow adds a row to the DirtyDB.
-func (dt *DirtyTable) AddRow(handle int64, row []types.Datum) {
-	dt.addedRows[handle] = struct{}{}
 }
 
 // DeleteRow deletes a row from the DirtyDB.
 func (dt *DirtyTable) DeleteRow(handle int64) {
-	delete(dt.addedRows, handle)
 	dt.deletedRows[handle] = struct{}{}
-}
-
-// TruncateTable truncates a table.
-func (dt *DirtyTable) TruncateTable() {
-	dt.addedRows = make(map[int64]struct{})
-	dt.truncated = true
 }
 
 // GetDirtyDB returns the DirtyDB bind to the context.
@@ -214,9 +198,6 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 }
 
 func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, error) {
-	if us.dirty.truncated {
-		return nil, nil
-	}
 	if us.cursor4SnapshotRows < len(us.snapshotRows) {
 		return us.snapshotRows[us.cursor4SnapshotRows], nil
 	}
@@ -306,7 +287,7 @@ func (us *UnionScanExec) buildAndSortAddedRowsFromMemTableReader() error {
 		return err
 	}
 	us.memIdxHandles = tableReaderWithFullRange.memIdxHandles
-	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
+	us.addedRows = make([][]types.Datum, 0, len(rows))
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for _, row := range rows {
 		mutableRow.SetDatums(row...)
