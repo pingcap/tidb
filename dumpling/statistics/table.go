@@ -295,6 +295,26 @@ func GetOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 	return len(ran.LowVal)
 }
 
+// ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
+func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
+	cols := make(map[int64]*Column)
+	for _, col := range columns {
+		colHist, ok := coll.Columns[col.ID]
+		if ok {
+			cols[col.UniqueID] = colHist
+		}
+	}
+	newColl := &HistColl{
+		PhysicalID:     coll.PhysicalID,
+		HavePhysicalID: coll.HavePhysicalID,
+		Pseudo:         coll.Pseudo,
+		Count:          coll.Count,
+		ModifyCount:    coll.ModifyCount,
+		Columns:        cols,
+	}
+	return newColl
+}
+
 // GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxID and IdxID2ColIDs is built from the given parameter.
 func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
@@ -654,7 +674,7 @@ func (coll *HistColl) GetAvgRowSize(cols []*expression.Column, isEncodedKey bool
 			colHist, ok := coll.Columns[col.UniqueID]
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
-			if !ok || (colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
+			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
 				size += pseudoColSize
 				continue
 			}
