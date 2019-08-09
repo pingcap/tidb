@@ -1264,9 +1264,27 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	aggs := make([]PhysicalPlan, 0, len(la.possibleProperties)+1)
-	aggs = append(aggs, la.getHashAggs(prop)...)
-	aggs = append(aggs, la.getStreamAggs(prop)...)
+	preferHash := (la.preferAggType & preferHashAgg) > 0
+	preferStream := (la.preferAggType & preferStreamAgg) > 0
+	if preferHash && preferStream {
+		errMsg := "Optimizer aggregation hints are conflicted"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		la.preferAggType = 0
+	}
+
+	hashAggs := la.getHashAggs(prop)
+	streamAggs := la.getStreamAggs(prop)
+
+	if streamAggs == nil && preferStream {
+		errMsg := "Optimizer Hint TIDB_STREAMAGG is inapplicable"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
+
+	aggs := make([]PhysicalPlan, 0, len(hashAggs)+len(streamAggs))
+	aggs = append(aggs, hashAggs...)
+	aggs = append(aggs, streamAggs...)
 	return aggs
 }
 
