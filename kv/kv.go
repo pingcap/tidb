@@ -156,7 +156,7 @@ type Transaction interface {
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
-	BatchGet(keys []Key) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
 }
 
@@ -250,7 +250,7 @@ type Response interface {
 type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
-	BatchGet(keys []Key) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	// SetPriority snapshot set the priority
 	SetPriority(priority int)
 }
