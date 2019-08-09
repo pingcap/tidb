@@ -16,6 +16,7 @@
 package kv
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -121,7 +122,7 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 func mustGet(c *C, buffer MemBuffer) {
 	for i := startIndex; i < testCount; i++ {
 		s := encodeInt(i * indexStep)
-		val, err := buffer.Get(s)
+		val, err := buffer.Get(context.TODO(), s)
 		c.Assert(err, IsNil)
 		c.Assert(string(val), Equals, string(s))
 	}
@@ -284,7 +285,7 @@ func benchmarkSetGet(b *testing.B, buffer MemBuffer, data [][]byte) {
 			buffer.Set(k, k)
 		}
 		for _, k := range data {
-			buffer.Get(k)
+			buffer.Get(context.TODO(), k)
 		}
 	}
 }

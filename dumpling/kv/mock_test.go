@@ -47,7 +47,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	transaction.StartTS()
 	transaction.DelOption(Option(23))
 	if transaction.IsReadOnly() {
-		_, err = transaction.Get(Key("lock"))
+		_, err = transaction.Get(context.TODO(), Key("lock"))
 		c.Check(err, IsNil)
 		err = transaction.Set(Key("lock"), []byte{})
 		c.Check(err, IsNil)
