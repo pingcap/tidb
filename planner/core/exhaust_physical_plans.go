@@ -117,7 +117,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 }
 
 func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
-	joins := make([]PhysicalPlan, 0, len(p.leftProperties))
+	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	for _, lhsChildProperty := range p.leftProperties {
 		offsets := getMaxSortPrefix(lhsChildProperty, p.LeftJoinKeys)
@@ -158,10 +158,10 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 			joins = append(joins, mergeJoin)
 		}
 	}
-	// If TiDB_SMJ hint is existed && no join keys in children property,
-	// it should to enforce merge join.
-	if len(joins) == 0 && (p.preferJoinType&preferMergeJoin) > 0 {
-		return p.getEnforcedMergeJoin(prop)
+	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
+	// because we can't trust lhsChildProperty completely.
+	if (p.preferJoinType & preferMergeJoin) > 0 {
+		joins = append(joins, p.getEnforcedMergeJoin(prop)...)
 	}
 
 	return joins
