@@ -24,13 +24,17 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
-// Hex defines a type for proto.Message.
+// Hex defines a fmt.Stringer for proto.Message.
 // We can't define the String() method on proto.Message, but we can wrap it.
-type Hex struct {
+func Hex(msg proto.Message) fmt.Stringer {
+	return hexStringer{msg}
+}
+
+type hexStringer struct {
 	proto.Message
 }
 
-func (h Hex) String() string {
+func (h hexStringer) String() string {
 	val := reflect.ValueOf(h.Message)
 	var w bytes.Buffer
 	prettyPrint(&w, val)
