@@ -36,7 +36,7 @@ type Encoder struct {
 }
 
 func (encoder *Encoder) reset() {
-	encoder.large = false
+	encoder.isLarge = false
 	encoder.numNotNullCols = 0
 	encoder.numNullCols = 0
 	encoder.data = encoder.data[:0]
@@ -46,7 +46,7 @@ func (encoder *Encoder) reset() {
 
 func (encoder *Encoder) addColumn(colID int64, d types.Datum) {
 	if colID > 255 {
-		encoder.large = true
+		encoder.isLarge = true
 	}
 	if d.IsNull() {
 		encoder.numNullCols++
@@ -63,7 +63,7 @@ func (encoder *Encoder) Encode(colIDs []int64, values []types.Datum, buf []byte)
 	for i, colID := range colIDs {
 		encoder.addColumn(colID, values[i])
 	}
-	return encoder.build(buf[:0])
+	return encoder.build(buf)
 }
 
 func (encoder *Encoder) build(buf []byte) ([]byte, error) {
@@ -72,7 +72,7 @@ func (encoder *Encoder) build(buf []byte) ([]byte, error) {
 	numCols := len(encoder.tempColIDs)
 	nullIdx := numCols - int(r.numNullCols)
 	notNullIdx := 0
-	if r.large {
+	if r.isLarge {
 		encoder.initColIDs32()
 		encoder.initOffsets32()
 	} else {
@@ -81,14 +81,14 @@ func (encoder *Encoder) build(buf []byte) ([]byte, error) {
 	}
 	for i, colID := range encoder.tempColIDs {
 		if encoder.values[i].IsNull() {
-			if r.large {
+			if r.isLarge {
 				r.colIDs32[nullIdx] = uint32(colID)
 			} else {
 				r.colIDs[nullIdx] = byte(colID)
 			}
 			nullIdx++
 		} else {
-			if r.large {
+			if r.isLarge {
 				r.colIDs32[notNullIdx] = uint32(colID)
 			} else {
 				r.colIDs[notNullIdx] = byte(colID)
@@ -97,7 +97,7 @@ func (encoder *Encoder) build(buf []byte) ([]byte, error) {
 			notNullIdx++
 		}
 	}
-	if r.large {
+	if r.isLarge {
 		largeNotNullSorter := (*largeNotNullSorter)(encoder)
 		sort.Sort(largeNotNullSorter)
 		if r.numNullCols > 0 {
@@ -118,7 +118,7 @@ func (encoder *Encoder) build(buf []byte) ([]byte, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if len(r.data) > math.MaxUint16 && !r.large {
+		if len(r.data) > math.MaxUint16 && !r.isLarge {
 			// We need to convert the row to large row.
 			encoder.initColIDs32()
 			for j := 0; j < numCols; j++ {
@@ -128,9 +128,9 @@ func (encoder *Encoder) build(buf []byte) ([]byte, error) {
 			for j := 0; j <= i; j++ {
 				r.offsets32[j] = uint32(r.offsets[j])
 			}
-			r.large = true
+			r.isLarge = true
 		}
-		if r.large {
+		if r.isLarge {
 			r.offsets32[i] = uint32(len(r.data))
 		} else {
 			r.offsets[i] = uint16(len(r.data))
@@ -138,13 +138,13 @@ func (encoder *Encoder) build(buf []byte) ([]byte, error) {
 	}
 	buf = append(buf, CodecVer)
 	flag := byte(0)
-	if r.large {
+	if r.isLarge {
 		flag = 1
 	}
 	buf = append(buf, flag)
 	buf = append(buf, byte(r.numNotNullCols), byte(r.numNotNullCols>>8))
 	buf = append(buf, byte(r.numNullCols), byte(r.numNullCols>>8))
-	if r.large {
+	if r.isLarge {
 		buf = append(buf, u32SliceToBytes(r.colIDs32)...)
 		buf = append(buf, u32SliceToBytes(r.offsets32)...)
 	} else {

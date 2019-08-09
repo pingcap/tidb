@@ -26,12 +26,13 @@ const CodecVer = 128
 
 var errInvalidCodecVer = errors.New("invalid codec version")
 
-// row is the struct type used to access the a row.
+// row is the struct type used to access a row.
 // There are two types of row, small and large.
-// small rows use one byte colID and two bytes offset, optimized for most cases.
-// large rows use four bytes colID and four bytes offset.
+// A small row takes one byte colID and two bytes offset, optimized for most cases.
+// If the max colID is larger than 255 or total value size is larger than 65535, the row type would be large.
+// A large row takes four bytes colID and four bytes offset.
 type row struct {
-	large          bool
+	isLarge        bool
 	numNotNullCols uint16
 	numNullCols    uint16
 	data           []byte
@@ -47,7 +48,7 @@ type row struct {
 
 func (r *row) getData(i int) []byte {
 	var start, end uint32
-	if r.large {
+	if r.isLarge {
 		if i > 0 {
 			start = r.offsets32[i-1]
 		}
@@ -65,11 +66,11 @@ func (r *row) setRowData(rowData []byte) error {
 	if rowData[0] != CodecVer {
 		return errInvalidCodecVer
 	}
-	r.large = rowData[1]&1 > 0
+	r.isLarge = rowData[1]&1 > 0
 	r.numNotNullCols = binary.LittleEndian.Uint16(rowData[2:])
 	r.numNullCols = binary.LittleEndian.Uint16(rowData[4:])
 	cursor := 6
-	if r.large {
+	if r.isLarge {
 		colIDsLen := int(r.numNotNullCols+r.numNullCols) * 4
 		r.colIDs32 = bytesToU32Slice(rowData[cursor : cursor+colIDsLen])
 		cursor += colIDsLen

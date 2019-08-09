@@ -89,7 +89,7 @@ func (decoder *Decoder) Decode(rowData []byte, handle int64, chk *chunk.Chunk) e
 			h := int(uint(i+j) >> 1) // avoid overflow when computing h
 			// i ≤ h < j
 			var v int64
-			if decoder.large {
+			if decoder.isLarge {
 				v = int64(decoder.colIDs32[h])
 			} else {
 				v = int64(decoder.colIDs[h])
@@ -117,7 +117,7 @@ func (decoder *Decoder) Decode(rowData []byte, handle int64, chk *chunk.Chunk) e
 			h := int(uint(i+j) >> 1) // avoid overflow when computing h
 			// i ≤ h < j
 			var v int64
-			if decoder.large {
+			if decoder.isLarge {
 				v = int64(decoder.colIDs32[h])
 			} else {
 				v = int64(decoder.colIDs[h])
