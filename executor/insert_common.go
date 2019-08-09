@@ -67,6 +67,19 @@ type defaultVal struct {
 	valid bool
 }
 
+type insertCommon interface {
+	insertCommon() *InsertValues
+	exec(ctx context.Context, rows [][]types.Datum) error
+}
+
+func (e *InsertValues) insertCommon() *InsertValues {
+	return e
+}
+
+func (e *InsertValues) exec(ctx context.Context, rows [][]types.Datum) error {
+	panic("derived should overload exec function")
+}
+
 // initInsertColumns sets the explicitly specified columns of an insert statement. There are three cases:
 // There are three types of insert statements:
 // 1 insert ... values(...)  --> name type column
@@ -176,7 +189,8 @@ func (e *InsertValues) processSetList() error {
 }
 
 // insertRows processes `insert|replace into values ()` or `insert|replace into set x=y`
-func (e *InsertValues) insertRows(ctx context.Context, exec func(ctx context.Context, rows [][]types.Datum) error) (err error) {
+func insertRows(ctx context.Context, base insertCommon) (err error) {
+	e := base.insertCommon()
 	// For `insert|replace into set x=y`, process the set list here.
 	if err = e.processSetList(); err != nil {
 		return err
@@ -194,7 +208,7 @@ func (e *InsertValues) insertRows(ctx context.Context, exec func(ctx context.Con
 		}
 		rows = append(rows, row)
 		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
-			if err = exec(ctx, rows); err != nil {
+			if err = base.exec(ctx, rows); err != nil {
 				return err
 			}
 			rows = rows[:0]
@@ -203,7 +217,7 @@ func (e *InsertValues) insertRows(ctx context.Context, exec func(ctx context.Con
 			}
 		}
 	}
-	return exec(ctx, rows)
+	return base.exec(ctx, rows)
 }
 
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
@@ -294,8 +308,9 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 	return nil
 }
 
-func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx context.Context, rows [][]types.Datum) error) error {
+func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	// process `insert|replace into ... select ... from ...`
+	e := base.insertCommon()
 	selectExec := e.children[0]
 	fields := retTypes(selectExec)
 	chk := newFirstChunk(selectExec)
@@ -328,7 +343,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 			}
 			rows = append(rows, row)
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
-				if err = exec(ctx, rows); err != nil {
+				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
 				rows = rows[:0]
@@ -338,7 +353,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 			}
 		}
 	}
-	return exec(ctx, rows)
+	return base.exec(ctx, rows)
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
