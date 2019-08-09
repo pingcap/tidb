@@ -233,8 +233,10 @@ type Backoffer struct {
 	vars       *kv.Variables
 }
 
+type txnStartCtxKeyType struct{}
+
 // txnStartKey is a key for transaction start_ts info in context.Context.
-const txnStartKey = "_txn_start_key"
+var txnStartKey = txnStartCtxKeyType{}
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
