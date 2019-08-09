@@ -13,6 +13,10 @@
 
 package kv
 
+import (
+	"context"
+)
+
 var (
 	// DefaultTxnMembufCap is the default transaction membuf capability.
 	DefaultTxnMembufCap = 4 * 1024
@@ -56,10 +60,10 @@ func (s *BufferStore) SetCap(cap int) {
 }
 
 // Get implements the Retriever interface.
-func (s *BufferStore) Get(k Key) ([]byte, error) {
-	val, err := s.MemBuffer.Get(k)
+func (s *BufferStore) Get(ctx context.Context, k Key) ([]byte, error) {
+	val, err := s.MemBuffer.Get(ctx, k)
 	if IsErrNotFound(err) {
-		val, err = s.r.Get(k)
+		val, err = s.r.Get(ctx, k)
 	}
 	if err != nil {
 		return nil, err

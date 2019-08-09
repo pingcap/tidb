@@ -147,7 +147,7 @@ func checkSeek(c *C, txn kv.Transaction) {
 func mustNotGet(c *C, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
 		s := encodeInt(i * indexStep)
-		_, err := txn.Get(s)
+		_, err := txn.Get(context.TODO(), s)
 		c.Assert(err, NotNil)
 	}
 }
@@ -155,7 +155,7 @@ func mustNotGet(c *C, txn kv.Transaction) {
 func mustGet(c *C, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
 		s := encodeInt(i * indexStep)
-		val, err := txn.Get(s)
+		val, err := txn.Get(context.TODO(), s)
 		c.Assert(err, IsNil)
 		c.Assert(string(val), Equals, string(s))
 	}
@@ -407,7 +407,7 @@ func (s *testKVSuite) TestRollback(c *C) {
 	defer txn.Commit(context.Background())
 
 	for i := startIndex; i < testCount; i++ {
-		_, err := txn.Get([]byte(strconv.Itoa(i)))
+		_, err := txn.Get(context.TODO(), []byte(strconv.Itoa(i)))
 		c.Assert(err, NotNil)
 	}
 }
@@ -550,7 +550,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	snap, err := store.GetSnapshot(kv.MaxVersion)
 	c.Assert(err, IsNil)
 
-	_, err = snap.Get([]byte("a"))
+	_, err = snap.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
 
 	txn, err = store.Begin()
@@ -646,7 +646,7 @@ func (s *testKVSuite) TestIsolationMultiInc(c *C) {
 
 	err := kv.RunInNewTxn(s.s, false, func(txn kv.Transaction) error {
 		for _, key := range keys {
-			id, err1 := kv.GetInt64(txn, key)
+			id, err1 := kv.GetInt64(context.TODO(), txn, key)
 			if err1 != nil {
 				return err1
 			}
