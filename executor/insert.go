@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -37,6 +38,13 @@ type InsertExec struct {
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
+	logutil.Eventf(ctx, "insert %d rows into table `%s`", len(rows), stringutil.MemoizeStr(func() string {
+		var tblName string
+		if meta := e.Table.Meta(); meta != nil {
+			tblName = meta.Name.L
+		}
+		return tblName
+	}))
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()

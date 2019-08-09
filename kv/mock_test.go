@@ -32,7 +32,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Check(err, IsNil)
 	snapshot, err := storage.GetSnapshot(version)
 	c.Check(err, IsNil)
-	_, err = snapshot.BatchGet(context.TODO(), []Key{Key("abc"), Key("def")})
+	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
 	snapshot.SetPriority(0)
 

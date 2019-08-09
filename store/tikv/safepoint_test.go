@@ -114,7 +114,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	s.waitUntilErrorPlugIn(txn4.startTS)
 
 	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn4.StartTS()})
-	_, batchgeterr := snapshot.BatchGet(context.TODO(), keys)
+	_, batchgeterr := snapshot.BatchGet(context.Background(), keys)
 	c.Assert(batchgeterr, NotNil)
 	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrGCTooEarly)
 	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point"))

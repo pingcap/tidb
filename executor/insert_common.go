@@ -326,7 +326,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	batchSize := sessVars.DMLBatchSize
 
 	for {
-		err := selectExec.Next(ctx, chk)
+		err := Next(ctx, selectExec, chk)
 		if err != nil {
 			return err
 		}
