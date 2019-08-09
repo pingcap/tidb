@@ -95,6 +95,7 @@ var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testFlushSuite{})
+var _ = SerialSuites(&testShowStatsSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
