@@ -536,12 +536,12 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 	for i := range ds.stats.Cardinality {
 		ds.stats.Cardinality[i] = 1
 	}
-	rowSize := ds.tableStats.HistColl.GetAvgRowSize(ds.tableCols, false)
+	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
 		cst:               scanFactor * rowSize * ts.stats.RowCount,
-		tableStats:        ds.tableStats,
+		tblColHists:       ds.TblColHists,
 	}
 	selStats := ts.stats.Scale(selectionFactor)
 	ts.addPushedDownSelection(copTask, selStats)
@@ -594,9 +594,9 @@ func (p *LogicalJoin) constructInnerIndexScanTask(ds *DataSource, idx *model.Ind
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	cop := &copTask{
-		indexPlan:  is,
-		tableStats: ds.tableStats,
-		tableCols:  ds.tableCols,
+		indexPlan:   is,
+		tblColHists: ds.TblColHists,
+		tblCols:     ds.TblCols,
 	}
 	if !isCoveringIndex(ds.schema.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
@@ -1087,10 +1087,10 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 	return joins
 }
 
-// tryToGetChildProp will check if this sort property can be pushed or not.
+// TryToGetChildProp will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
-func (p *LogicalProjection) tryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
+func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
 	newProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: prop.ExpectedCnt}
 	newCols := make([]property.Item, 0, len(prop.Items))
 	for _, col := range prop.Items {
@@ -1107,14 +1107,14 @@ func (p *LogicalProjection) tryToGetChildProp(prop *property.PhysicalProperty) (
 }
 
 func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	newProp, ok := p.tryToGetChildProp(prop)
+	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
 		return nil
 	}
 	proj := PhysicalProjection{
 		Exprs:                p.Exprs,
-		CalculateNoDelay:     p.calculateNoDelay,
-		AvoidColumnEvaluator: p.avoidColumnEvaluator,
+		CalculateNoDelay:     p.CalculateNoDelay,
+		AvoidColumnEvaluator: p.AvoidColumnEvaluator,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
