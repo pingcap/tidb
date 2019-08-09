@@ -14,6 +14,8 @@
 package tikv
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
@@ -296,6 +298,32 @@ func coprocessorKeyRange(start, end string) *coprocessor.KeyRange {
 		Start: []byte(start),
 		End:   []byte(end),
 	}
+}
+
+func (s *testCoprocessorSuite) TestRateLimit(c *C) {
+	done := make(chan struct{}, 1)
+	rl := newRateLimit(1)
+	c.Assert(rl.putToken, PanicMatches, "put a redundant token")
+	exit := rl.getToken(done)
+	c.Assert(exit, Equals, false)
+	rl.putToken()
+	c.Assert(rl.putToken, PanicMatches, "put a redundant token")
+
+	exit = rl.getToken(done)
+	c.Assert(exit, Equals, false)
+	done <- struct{}{}
+	exit = rl.getToken(done) // blocked but exit
+	c.Assert(exit, Equals, true)
+
+	sig := make(chan int, 1)
+	go func() {
+		exit = rl.getToken(done) // blocked
+		c.Assert(exit, Equals, false)
+		close(sig)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	rl.putToken()
+	<-sig
 }
 
 type splitCase struct {
