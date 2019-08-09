@@ -756,7 +756,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		join.attachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {
-			join.setPreferredJoinType(er.b.TableHints())
+			er.err = join.setPreferredJoinType(er.b.TableHints())
+			if er.err != nil {
+				return v, true
+			}
 		}
 		er.p = join
 	} else {
