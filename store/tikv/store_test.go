@@ -250,13 +250,13 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	c.Assert(err, IsNil)
 	client.priority = pb.CommandPri_Low
 	txn.SetOption(kv.Priority, kv.PriorityLow)
-	_, err = txn.Get([]byte("key"))
+	_, err = txn.Get(context.TODO(), []byte("key"))
 	c.Assert(err, IsNil)
 
 	// A counter example.
 	client.priority = pb.CommandPri_Low
 	txn.SetOption(kv.Priority, kv.PriorityNormal)
-	_, err = txn.Get([]byte("key"))
+	_, err = txn.Get(context.TODO(), []byte("key"))
 	// err is translated to "try again later" by backoffer, so doesn't check error value here.
 	c.Assert(err, NotNil)
 
