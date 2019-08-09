@@ -536,12 +536,12 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 	for i := range ds.stats.Cardinality {
 		ds.stats.Cardinality[i] = 1
 	}
-	rowSize := ds.tableStats.HistColl.GetAvgRowSize(ds.tableCols, false)
+	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
 		cst:               scanFactor * rowSize * ts.stats.RowCount,
-		tableStats:        ds.tableStats,
+		tblColHists:       ds.TblColHists,
 	}
 	selStats := ts.stats.Scale(selectionFactor)
 	ts.addPushedDownSelection(copTask, selStats)
@@ -594,9 +594,9 @@ func (p *LogicalJoin) constructInnerIndexScanTask(ds *DataSource, idx *model.Ind
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	cop := &copTask{
-		indexPlan:  is,
-		tableStats: ds.tableStats,
-		tableCols:  ds.tableCols,
+		indexPlan:   is,
+		tblColHists: ds.TblColHists,
+		tblCols:     ds.TblCols,
 	}
 	if !isCoveringIndex(ds.schema.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
