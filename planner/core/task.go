@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/parser/ast"
 	"math"
 
 	"github.com/pingcap/parser/charset"
@@ -680,6 +681,47 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 		}
 		partialSchema.Append(gbyCol)
 		groupByItems = append(groupByItems, gbyCol)
+	}
+
+	// Optimize
+	partialCursor = 0
+	partialAggNum := 0
+	partialAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
+	partialOptimizeSchema := expression.NewSchema()
+	for i, aggFun := range p.AggFuncs {
+		if aggFun.Name == ast.AggFuncFirstRow {
+			canOptimize := false
+			for j, gbyExpr := range p.GroupByItems {
+				if gbyExpr.Equal(p.ctx, aggFun.Args[0]) {
+					canOptimize = true
+					finalAggFuncs[i].Args[0] = groupByItems[j]
+					break
+				}
+			}
+			if canOptimize {
+				partialCursor++
+				continue
+			}
+		}
+		if aggregation.NeedCount(aggFun.Name) {
+			partialOptimizeSchema.Append(partialSchema.Columns[partialCursor])
+			partialCursor++
+		}
+		if aggregation.NeedValue(aggFun.Name) {
+			partialOptimizeSchema.Append(partialSchema.Columns[partialCursor])
+			partialCursor++
+		}
+		partialAggFuncs[partialAggNum] = aggFun
+		partialAggNum++
+	}
+	for i := range p.GroupByItems {
+		partialOptimizeSchema.Append(partialSchema.Columns[partialCursor+i])
+	}
+	partialAggFuncs = partialAggFuncs[:partialAggNum]
+	p.AggFuncs = partialAggFuncs
+	p.schema = partialOptimizeSchema
+	for i, col := range p.schema.Columns {
+		col.ColName = model.NewCIStr(fmt.Sprintf("col_%d", i))
 	}
 
 	// Create physical "final" aggregation.
