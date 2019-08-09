@@ -40,6 +40,7 @@ type testMVCCLevelDB struct {
 }
 
 var (
+	_ = Suite(&testMockTiKVSuite{})
 	_ = Suite(&testMVCCLevelDB{})
 	_ = Suite(testMarshal{})
 )
