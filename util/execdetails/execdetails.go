@@ -26,8 +26,10 @@ import (
 	"go.uber.org/zap"
 )
 
+type commitDetailCtxKeyType struct{}
+
 // CommitDetailCtxKey presents CommitDetail info key in context.
-const CommitDetailCtxKey = "commitDetail"
+var CommitDetailCtxKey = commitDetailCtxKeyType{}
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
