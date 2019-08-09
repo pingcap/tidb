@@ -1271,10 +1271,18 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 		warning := ErrInternal.GenWithStack(errMsg)
 		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		la.preferAggType = 0
+		preferHash, preferStream = false, false
 	}
 
 	hashAggs := la.getHashAggs(prop)
+	if hashAggs != nil && preferHash {
+		return hashAggs
+	}
+
 	streamAggs := la.getStreamAggs(prop)
+	if streamAggs != nil && preferStream {
+		return streamAggs
+	}
 
 	if streamAggs == nil && preferStream {
 		errMsg := "Optimizer Hint TIDB_STREAMAGG is inapplicable"
