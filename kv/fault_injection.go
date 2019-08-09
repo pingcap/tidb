@@ -98,13 +98,13 @@ func (t *InjectedTransaction) Get(k Key) ([]byte, error) {
 }
 
 // BatchGet returns an error if cfg.getError is set.
-func (t *InjectedTransaction) BatchGet(keys []Key) (map[string][]byte, error) {
+func (t *InjectedTransaction) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
 		return nil, t.cfg.getError
 	}
-	return t.Transaction.BatchGet(keys)
+	return t.Transaction.BatchGet(ctx, keys)
 }
 
 // Commit returns an error if cfg.commitError is set.
@@ -134,11 +134,11 @@ func (t *InjectedSnapshot) Get(k Key) ([]byte, error) {
 }
 
 // BatchGet returns an error if cfg.getError is set.
-func (t *InjectedSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
+func (t *InjectedSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
 		return nil, t.cfg.getError
 	}
-	return t.Snapshot.BatchGet(keys)
+	return t.Snapshot.BatchGet(ctx, keys)
 }

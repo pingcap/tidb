@@ -278,13 +278,13 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 }
 
 // CheckAndInsertOneBatch is used to commit one transaction batch full filled data
-func (e *LoadDataInfo) CheckAndInsertOneBatch() error {
+func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context) error {
 	var err error
 	if e.curBatchCnt == 0 {
 		return err
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(e.curBatchCnt)
-	err = e.batchCheckAndInsert(e.rows[0:e.curBatchCnt], e.addRecordLD)
+	err = e.batchCheckAndInsert(ctx, e.rows[0:e.curBatchCnt], e.addRecordLD)
 	if err != nil {
 		return err
 	}

@@ -360,6 +360,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 			// no region data, return error if failure.
 			return nil, err
 		}
+		logutil.Eventf(bo.ctx, "load region %d from pd, due to cache-miss", lr.GetID())
 		r = lr
 		c.mu.Lock()
 		c.insertRegionToCache(r)
@@ -372,6 +373,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 			logutil.Logger(bo.ctx).Error("load region failure",
 				zap.ByteString("key", key), zap.Error(err))
 		} else {
+			logutil.Eventf(bo.ctx, "load region %d from pd, due to need-reload", lr.GetID())
 			r = lr
 			c.mu.Lock()
 			c.insertRegionToCache(r)
