@@ -327,9 +327,9 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 	return nil
 }
 
-func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
-	if hintInfo == nil {
-		return nil
+func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
+	if hintInfo == nil || len(hintInfo.indexNestedLoopJoinTables)+len(hintInfo.sortMergeJoinTables)+len(hintInfo.hashJoinTables) == 0 {
+		return
 	}
 
 	lhsAlias := extractTableAlias(p.children[0])
@@ -355,9 +355,10 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
 	// If there're multiple join types and one of them is not index join hint,
 	// then there is a conflict of join types.
 	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexInner^preferLeftAsIndexInner) > 0 {
-		return errors.New("Join hints are conflict, you can only specify one type of join")
+		errMsg := "Join hints are conflict, you can only specify one type of join"
+		warning := ErrInternal.GenWithStack(errMsg)
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 	}
-	return nil
 }
 
 func resetNotNullFlag(schema *expression.Schema, start, end int) {
@@ -424,10 +425,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
 
 	// Set preferred join algorithm if some join hints is specified by user.
-	err = joinPlan.setPreferredJoinType(b.TableHints())
-	if err != nil {
-		return nil, err
-	}
+	joinPlan.setPreferredJoinType(b.TableHints())
 
 	// "NATURAL JOIN" doesn't have "ON" or "USING" conditions.
 	//
@@ -1945,7 +1943,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 {
+	if len(b.tableHintInfo) != 0 || len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
