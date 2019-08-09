@@ -88,13 +88,13 @@ type InjectedTransaction struct {
 }
 
 // Get returns an error if cfg.getError is set.
-func (t *InjectedTransaction) Get(k Key) ([]byte, error) {
+func (t *InjectedTransaction) Get(ctx context.Context, k Key) ([]byte, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
 		return nil, t.cfg.getError
 	}
-	return t.Transaction.Get(k)
+	return t.Transaction.Get(ctx, k)
 }
 
 // BatchGet returns an error if cfg.getError is set.
@@ -124,13 +124,13 @@ type InjectedSnapshot struct {
 }
 
 // Get returns an error if cfg.getError is set.
-func (t *InjectedSnapshot) Get(k Key) ([]byte, error) {
+func (t *InjectedSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
 		return nil, t.cfg.getError
 	}
-	return t.Snapshot.Get(k)
+	return t.Snapshot.Get(ctx, k)
 }
 
 // BatchGet returns an error if cfg.getError is set.

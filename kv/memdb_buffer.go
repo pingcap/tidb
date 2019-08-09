@@ -16,6 +16,7 @@
 package kv
 
 import (
+	"context"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -77,7 +78,7 @@ func (m *memDbBuffer) IterReverse(k Key) (Iterator, error) {
 }
 
 // Get returns the value associated with key.
-func (m *memDbBuffer) Get(k Key) ([]byte, error) {
+func (m *memDbBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	v, err := m.db.Get(k)
 	if terror.ErrorEqual(err, leveldb.ErrNotFound) {
 		return nil, ErrNotExist

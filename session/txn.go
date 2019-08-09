@@ -210,10 +210,10 @@ func (st *TxnState) reset() {
 }
 
 // Get overrides the Transaction interface.
-func (st *TxnState) Get(k kv.Key) ([]byte, error) {
-	val, err := st.buf.Get(k)
+func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	val, err := st.buf.Get(ctx, k)
 	if kv.IsErrNotFound(err) {
-		val, err = st.Transaction.Get(k)
+		val, err = st.Transaction.Get(ctx, k)
 		if kv.IsErrNotFound(err) {
 			return nil, err
 		}
@@ -232,7 +232,7 @@ func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 	bufferValues := make([][]byte, len(keys))
 	shrinkKeys := make([]kv.Key, 0, len(keys))
 	for i, key := range keys {
-		val, err := st.buf.Get(key)
+		val, err := st.buf.Get(ctx, key)
 		if kv.IsErrNotFound(err) {
 			shrinkKeys = append(shrinkKeys, key)
 			continue
