@@ -217,8 +217,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 }
 
 // Get gets the value for key k from snapshot.
-func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
-	ctx := context.WithValue(context.Background(), txnStartKey, s.version.Ver)
+func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	ctx = context.WithValue(ctx, txnStartKey, s.version.Ver)
 	val, err := s.get(NewBackoffer(ctx, getMaxBackoff), k)
 	if err != nil {
 		return nil, errors.Trace(err)
