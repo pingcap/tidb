@@ -43,4 +43,8 @@ func (s *testSuite1) TestTraceExec(c *C) {
 
 	rows = tk.MustQuery("trace format='row' delete from trace where id = 0").Rows()
 	c.Assert(len(rows) > 1, IsTrue)
+
+	tk.MustExec("trace format='log' insert into trace (c1, c2, c3) values (1, 2, 3)")
+	rows = tk.MustQuery("trace format='log' select * from trace where id = 0;").Rows()
+	c.Assert(len(rows), GreaterEqual, 1)
 }
