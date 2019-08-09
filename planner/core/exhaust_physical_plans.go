@@ -1198,9 +1198,34 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
+func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+	_, desc := prop.AllSameOrder()
+	enforcedAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
+	childProp := &property.PhysicalProperty{
+		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
+		Enforced:    true,
+		Items:       property.ItemsFromCols(la.groupByCols, desc),
+	}
+
+	for _, taskTp := range wholeTaskTypes {
+		copiedChildProperty := new(property.PhysicalProperty)
+		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+		copiedChildProperty.TaskTp = taskTp
+
+		agg := basePhysicalAgg{
+			GroupByItems: la.GroupByItems,
+			AggFuncs:     la.AggFuncs,
+		}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
+		agg.SetSchema(la.schema.Clone())
+		enforcedAggs = append(enforcedAggs, agg)
+	}
+	return enforcedAggs
+}
+
 func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+	preferStream := (la.preferAggType & preferStreamAgg) > 0
 	all, desc := prop.AllSameOrder()
-	if len(la.possibleProperties) == 0 || !all {
+	if (len(la.possibleProperties) == 0 && !preferStream) || !all {
 		return nil
 	}
 	for _, aggFunc := range la.AggFuncs {
@@ -1213,7 +1238,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
-	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
+	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1)+len(wholeTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 	}
@@ -1243,6 +1268,11 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			agg.SetSchema(la.schema.Clone())
 			streamAggs = append(streamAggs, agg)
 		}
+	}
+	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
+	// because we can't trust possibleChildProperty completely.
+	if preferStream {
+		streamAggs = append(streamAggs, la.getEnforcedStreamAggs(prop)...)
 	}
 	return streamAggs
 }
