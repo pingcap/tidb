@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -53,12 +55,12 @@ type batchChecker struct {
 }
 
 // batchGetOldValues gets the values of storage in batch.
-func (b *batchChecker) batchGetOldValues(ctx sessionctx.Context, batchKeys []kv.Key) error {
-	txn, err := ctx.Txn(true)
+func (b *batchChecker) batchGetOldValues(ctx context.Context, sctx sessionctx.Context, batchKeys []kv.Key) error {
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	values, err := txn.BatchGet(batchKeys)
+	values, err := txn.BatchGet(ctx, batchKeys)
 	if err != nil {
 		return err
 	}
@@ -187,9 +189,9 @@ func (b *batchChecker) getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Ta
 }
 
 // batchGetInsertKeys uses batch-get to fetch all key-value pairs to be checked for ignore or duplicate key update.
-func (b *batchChecker) batchGetInsertKeys(ctx sessionctx.Context, t table.Table, newRows [][]types.Datum) (err error) {
+func (b *batchChecker) batchGetInsertKeys(ctx context.Context, sctx sessionctx.Context, t table.Table, newRows [][]types.Datum) (err error) {
 	// Get keys need to be checked.
-	b.toBeCheckedRows, err = b.getKeysNeedCheck(ctx, t, newRows)
+	b.toBeCheckedRows, err = b.getKeysNeedCheck(sctx, t, newRows)
 	if err != nil {
 		return err
 	}
@@ -211,11 +213,11 @@ func (b *batchChecker) batchGetInsertKeys(ctx sessionctx.Context, t table.Table,
 			batchKeys = append(batchKeys, k.newKV.key)
 		}
 	}
-	txn, err := ctx.Txn(true)
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	b.dupKVs, err = txn.BatchGet(batchKeys)
+	b.dupKVs, err = txn.BatchGet(ctx, batchKeys)
 	return err
 }
 
@@ -231,7 +233,7 @@ func (b *batchChecker) initDupOldRowFromHandleKey() {
 	}
 }
 
-func (b *batchChecker) initDupOldRowFromUniqueKey(ctx sessionctx.Context, newRows [][]types.Datum) error {
+func (b *batchChecker) initDupOldRowFromUniqueKey(ctx context.Context, sctx sessionctx.Context, newRows [][]types.Datum) error {
 	batchKeys := make([]kv.Key, 0, len(newRows))
 	for _, r := range b.toBeCheckedRows {
 		for _, uk := range r.uniqueKeys {
@@ -244,14 +246,14 @@ func (b *batchChecker) initDupOldRowFromUniqueKey(ctx sessionctx.Context, newRow
 			}
 		}
 	}
-	return b.batchGetOldValues(ctx, batchKeys)
+	return b.batchGetOldValues(ctx, sctx, batchKeys)
 }
 
 // initDupOldRowValue initializes dupOldRowValues which contain the to-be-updated rows from storage.
-func (b *batchChecker) initDupOldRowValue(ctx sessionctx.Context, t table.Table, newRows [][]types.Datum) error {
+func (b *batchChecker) initDupOldRowValue(ctx context.Context, sctx sessionctx.Context, t table.Table, newRows [][]types.Datum) error {
 	b.dupOldRowValues = make(map[string][]byte, len(newRows))
 	b.initDupOldRowFromHandleKey()
-	return b.initDupOldRowFromUniqueKey(ctx, newRows)
+	return b.initDupOldRowFromUniqueKey(ctx, sctx, newRows)
 }
 
 // fillBackKeys fills the updated key-value pair to the dupKeyValues for further check.

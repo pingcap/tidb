@@ -66,7 +66,7 @@ func (t *mockTxn) Get(k Key) ([]byte, error) {
 	return nil, nil
 }
 
-func (t *mockTxn) BatchGet(keys []Key) (map[string][]byte, error) {
+func (t *mockTxn) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
 	return nil, nil
 }
 
@@ -207,7 +207,7 @@ func (s *mockSnapshot) SetPriority(priority int) {
 
 }
 
-func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
+func (s *mockSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
 	m := make(map[string][]byte)
 	for _, k := range keys {
 		v, err := s.store.Get(k)
