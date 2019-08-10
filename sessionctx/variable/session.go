@@ -118,6 +118,7 @@ type TransactionContext struct {
 	StatementCount int
 }
 
+// TableIndexID is used to represent the unique index ID between multi-tables.
 type TableIndexID struct {
 	TableID int64
 	IndexID int64

@@ -482,6 +482,7 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return st.mutations[tableID]
 }
 
+// StmtDeleteTableRow implements the sessionctx.Context interface.
 func (s *session) StmtDeleteTableRow(tid int64, handle int64) {
 	if s.txn.deletedTableRows == nil {
 		s.txn.deletedTableRows = make(map[int64][]int64)

@@ -211,12 +211,15 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return nil
 }
 
+// StmtDeleteTableRow implements the sessionctx.Context interface.
 func (c *Context) StmtDeleteTableRow(tid int64, handle int64) {
 }
 
+// UpdateStmtUntouchedIndex implements the sessionctx.Context interface.
 func (c *Context) UpdateStmtUntouchedIndex(tid, indexID int64) {
 }
 
+// IsUntouchedIndex implements the sessionctx.Context interface.
 func (c *Context) IsUntouchedIndex(tid, indexID int64) bool {
 	return false
 }
