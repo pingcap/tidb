@@ -27,56 +27,18 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
-// DirtyDB stores uncommitted write operations for a transaction.
-// It is stored and retrieved by context.Value and context.SetValue method.
-type DirtyDB struct {
-	// tables is a map whose key is tableID.
-	tables map[int64]*DirtyTable
-}
-
-// GetDirtyTable gets the DirtyTable by id from the DirtyDB.
-func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
-	dt, ok := udb.tables[tid]
-	if !ok {
-		dt = &DirtyTable{
-			tid:         tid,
-			deletedRows: make(map[int64]struct{}),
-		}
-		udb.tables[tid] = dt
+func getTableDeletedRows(s sessionctx.Context, tid int64) map[int64]struct{} {
+	if s.GetSessionVars().TxnCtx.DeletedTableRows == nil {
+		return make(map[int64]struct{})
 	}
-	return dt
-}
-
-// DirtyTable stores uncommitted write operation for a transaction.
-type DirtyTable struct {
-	tid int64
-	// the key is handle.
-	deletedRows map[int64]struct{}
-}
-
-// DeleteRow deletes a row from the DirtyDB.
-func (dt *DirtyTable) DeleteRow(handle int64) {
-	dt.deletedRows[handle] = struct{}{}
-}
-
-// GetDirtyDB returns the DirtyDB bind to the context.
-func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
-	var udb *DirtyDB
-	x := ctx.GetSessionVars().TxnCtx.DirtyDB
-	if x == nil {
-		udb = &DirtyDB{tables: make(map[int64]*DirtyTable)}
-		ctx.GetSessionVars().TxnCtx.DirtyDB = udb
-	} else {
-		udb = x.(*DirtyDB)
-	}
-	return udb
+	return s.GetSessionVars().TxnCtx.DeletedTableRows[tid]
 }
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
 type UnionScanExec struct {
 	baseExecutor
 
-	dirty *DirtyTable
+	deletedRows map[int64]struct{}
 	// usedIndex is the column offsets of the index which Src executor has used.
 	usedIndex  []int
 	desc       bool
@@ -212,7 +174,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			snapshotHandle := row.GetInt64(us.belowHandleIndex)
-			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
+			if _, ok := us.deletedRows[snapshotHandle]; ok {
 				continue
 			}
 			if _, ok := us.memIdxHandles[snapshotHandle]; ok {
