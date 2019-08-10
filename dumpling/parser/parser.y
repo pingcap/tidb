@@ -1234,11 +1234,12 @@ AlterTableSpec:
 			PartDefinitions: defs,
 		}
 	}
-|	"ADD" "PARTITION" "PARTITIONS" NUM
+|	"ADD" "PARTITION" IfNotExists "PARTITIONS" NUM
 	{
 		$$ = &ast.AlterTableSpec{
+			IfNotExists: 	$3.(bool),
 			Tp: ast.AlterTableAddPartitions,
-			Num: getUint64FromNUM($4),
+			Num: getUint64FromNUM($5),
 		}
 	}
 |	"COALESCE" "PARTITION" NUM
