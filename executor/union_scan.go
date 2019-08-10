@@ -28,7 +28,7 @@ import (
 )
 
 func getTableDeletedRows(s sessionctx.Context, tid int64) map[int64]struct{} {
-	if s.GetSessionVars().TxnCtx.DeletedTableRows == nil {
+	if s.GetSessionVars().TxnCtx.DeletedTableRows == nil || s.GetSessionVars().TxnCtx.DeletedTableRows[tid] == nil {
 		return make(map[int64]struct{})
 	}
 	return s.GetSessionVars().TxnCtx.DeletedTableRows[tid]
