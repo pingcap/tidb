@@ -154,16 +154,15 @@ type memTableReader struct {
 	handleBytes []byte
 }
 
-func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *memTableReader {
-	kvRanges := tblReader.kvRanges
+func buildMemTableReaderWithRange(us *UnionScanExec, kvRanges []kv.KeyRange) *memTableReader {
 	colIDs := make(map[int64]int)
-	for i, col := range tblReader.columns {
+	for i, col := range us.columns {
 		colIDs[col.ID] = i
 	}
 
 	return &memTableReader{
 		ctx:                 us.ctx,
-		table:               tblReader.table.Meta(),
+		table:               us.table.Meta(),
 		columns:             us.columns,
 		kvRanges:            kvRanges,
 		desc:                us.desc,
@@ -177,31 +176,14 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 }
 
 func buildMemTableReaderWithFullRange(us *UnionScanExec) *memTableReader {
-	colIDs := make(map[int64]int)
-	for i, col := range us.columns {
-		colIDs[col.ID] = i
-	}
 	pkIsUnsigned := false
 	if us.table.Meta().PKIsHandle {
 		if pkColInfo := us.table.Meta().GetPkColInfo(); pkColInfo != nil {
 			pkIsUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
 		}
 	}
-
 	fullTableRange := distsql.TableRangesToKVRanges(getPhysicalTableID(us.table), ranger.FullIntRange(pkIsUnsigned), nil)
-	return &memTableReader{
-		ctx:                 us.ctx,
-		table:               us.table.Meta(),
-		columns:             us.columns,
-		kvRanges:            fullTableRange,
-		desc:                us.desc,
-		conditions:          us.conditions,
-		addedRows:           make([][]types.Datum, 0, 2),
-		memProcessedHandles: set.NewInt64Set(),
-		retFieldTypes:       retTypes(us),
-		colIDs:              colIDs,
-		handleBytes:         make([]byte, 0, 16),
-	}
+	return buildMemTableReaderWithRange(us, fullTableRange)
 }
 
 // TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.
@@ -245,9 +227,6 @@ func (m *memTableReader) decodeRecordKeyValue(key, value []byte) ([]types.Datum,
 
 // decodeRowData uses to decode row data value.
 func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, cacheBytes, value []byte) ([]types.Datum, error) {
-	if len(value) == 0 {
-		return nil, nil
-	}
 	values, err := getRowData(ctx.GetSessionVars().StmtCtx, tb, columns, colIDs, handle, cacheBytes, value)
 	if err != nil {
 		return nil, err

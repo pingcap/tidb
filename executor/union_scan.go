@@ -72,7 +72,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	reader := us.children[0]
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
+		us.addedRows, err = buildMemTableReaderWithRange(us, x.kvRanges).getMemRows()
 	case *IndexReaderExecutor:
 		tid := getPhysicalTableID(x.table)
 		if us.ctx.IsUntouchedIndex(tid, x.index.ID) {
