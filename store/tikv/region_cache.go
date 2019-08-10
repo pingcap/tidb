@@ -311,7 +311,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID, replicaRead k
 	}
 
 	storeFailEpoch := atomic.LoadUint32(&store.fail)
-	if storeFailEpoch != regionStore.storeFails[regionStore.workStoreIdx] {
+	if storeFailEpoch != regionStore.storeFails[storeIdx] {
 		cachedRegion.invalidate()
 		logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 			zap.Uint64("region", id.GetID()),
@@ -997,17 +997,18 @@ func (c *RegionCache) switchToPeer(r *Region, targetStoreID uint64) (found bool)
 
 func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 	rs := r.getStore()
-	if int(rs.workStoreIdx) != currentPeerIdx {
-		return
-	}
 
 	if err != nil { // TODO: refine err, only do this for some errors.
-		s := rs.stores[rs.workStoreIdx]
-		epoch := rs.storeFails[rs.workStoreIdx]
+		s := rs.stores[currentPeerIdx]
+		epoch := rs.storeFails[currentPeerIdx]
 		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
+	}
+
+	if int(rs.workStoreIdx) != currentPeerIdx {
+		return
 	}
 
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
