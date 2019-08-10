@@ -49,8 +49,8 @@ type UnionScanExec struct {
 	belowHandleIndex int
 
 	addedRows [][]types.Datum
-	// memIdxHandles is uses to store the handle ids that has been read by memIndexReader.
-	memIdxHandles       set.Int64Set
+	// memProcessedHandles is uses to store the handle ids that has been read by memIndexReader.
+	memProcessedHandles set.Int64Set
 	cursor4AddRows      int
 	sortErr             error
 	snapshotRows        [][]types.Datum
@@ -81,7 +81,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		} else {
 			mIdxReader := buildMemIndexReader(us, x)
 			us.addedRows, err = mIdxReader.getMemRows()
-			us.memIdxHandles = mIdxReader.memIdxHandles
+			us.memProcessedHandles = mIdxReader.memProcessedHandles
 		}
 	case *IndexLookUpExecutor:
 		tid := getPhysicalTableID(x.table)
@@ -91,7 +91,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		} else {
 			idxLookup := buildMemIndexLookUpReader(us, x)
 			us.addedRows, err = idxLookup.getMemRows()
-			us.memIdxHandles = idxLookup.idxReader.memIdxHandles
+			us.memProcessedHandles = idxLookup.idxReader.memProcessedHandles
 		}
 	}
 	if err != nil {
@@ -177,7 +177,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			if _, ok := us.deletedRows[snapshotHandle]; ok {
 				continue
 			}
-			if _, ok := us.memIdxHandles[snapshotHandle]; ok {
+			if _, ok := us.memProcessedHandles[snapshotHandle]; ok {
 				continue
 			}
 			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
@@ -248,7 +248,7 @@ func (us *UnionScanExec) buildAndSortAddedRowsFromMemTableReader() error {
 	if err != nil {
 		return err
 	}
-	us.memIdxHandles = tableReaderWithFullRange.memIdxHandles
+	us.memProcessedHandles = tableReaderWithFullRange.memProcessedHandles
 	us.addedRows = make([][]types.Datum, 0, len(rows))
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for _, row := range rows {
