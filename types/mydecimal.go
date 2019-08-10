@@ -1088,7 +1088,7 @@ with the correct -1/0/+1 result
 		then the encoded value is not memory comparable.
 
   NOTE
-    the buffer is assumed to be of the size decimalBinSize(precision, frac)
+    the buffer is assumed to be of the size DecimalBinSize(precision, frac)
 
   RETURN VALUE
   	bin     - binary value
@@ -1334,7 +1334,7 @@ func (d *MyDecimal) FromBin(bin []byte, precision, frac int) (binSize int, err e
 	if bin[binIdx]&0x80 > 0 {
 		mask = 0
 	}
-	binSize = decimalBinSize(precision, frac)
+	binSize = DecimalBinSize(precision, frac)
 	dCopy := make([]byte, 40)
 	dCopy = dCopy[:binSize]
 	copy(dCopy, bin)
@@ -1409,8 +1409,8 @@ func (d *MyDecimal) FromBin(bin []byte, precision, frac int) (binSize int, err e
 	return binSize, err
 }
 
-// decimalBinSize returns the size of array to hold a binary representation of a decimal.
-func decimalBinSize(precision, frac int) int {
+// DecimalBinSize returns the size of array to hold a binary representation of a decimal.
+func DecimalBinSize(precision, frac int) int {
 	digitsInt := precision - frac
 	wordsInt := digitsInt / digitsPerWord
 	wordsFrac := frac / digitsPerWord
@@ -2242,7 +2242,7 @@ func DecimalPeak(b []byte) (int, error) {
 	}
 	precision := int(b[0])
 	frac := int(b[1])
-	return decimalBinSize(precision, frac) + 2, nil
+	return DecimalBinSize(precision, frac) + 2, nil
 }
 
 // NewDecFromInt creates a MyDecimal from int.

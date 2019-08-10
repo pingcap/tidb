@@ -16,6 +16,7 @@ package chunk
 import (
 	"fmt"
 	"math/rand"
+	"testing"
 	"time"
 
 	"github.com/pingcap/check"
@@ -253,6 +254,30 @@ func (s *testChunkSuite) TestF32Column(c *check.C) {
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		c.Assert(row.GetFloat32(0), check.Equals, float32(i)/2)
 		c.Assert(col.GetFloat32(int(i)), check.Equals, float32(i)/2)
+		i++
+	}
+}
+
+func (s *testChunkSuite) TestDurationSliceColumn(c *check.C) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
+	col := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col.AppendDuration(types.Duration{Duration: time.Duration(i)})
+	}
+
+	ds := col.GoDurations()
+	for i := 0; i < 1024; i++ {
+		c.Assert(ds[i], check.Equals, time.Duration(i))
+		d := types.Duration{Duration: ds[i]}
+		d, _ = d.Add(d)
+		ds[i] = d.Duration
+	}
+
+	it := NewIterator4Chunk(chk)
+	var i int64
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		c.Assert(row.GetDuration(0, 0).Duration, check.Equals, time.Duration(i)*2)
+		c.Assert(col.GetDuration(int(i), 0).Duration, check.Equals, time.Duration(i)*2)
 		i++
 	}
 }
@@ -678,6 +703,60 @@ func (s *testChunkSuite) TestSetNulls(c *check.C) {
 		c.Assert(col.nullCount(), check.Equals, len(nullMap))
 		for k := range nullMap {
 			c.Assert(col.IsNull(k), check.Equals, true)
+		}
+	}
+}
+
+func BenchmarkDurationRow(b *testing.B) {
+	chk1 := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
+	col1 := chk1.Column(0)
+	for i := 0; i < 1024; i++ {
+		col1.AppendDuration(types.Duration{Duration: time.Second * time.Duration(i)})
+	}
+	chk2 := chk1.CopyConstruct()
+	result := chk1.CopyConstruct()
+
+	b.ResetTimer()
+	for k := 0; k < b.N; k++ {
+		result.Reset()
+		it1 := NewIterator4Chunk(chk1)
+		it2 := NewIterator4Chunk(chk2)
+		for r1, r2 := it1.Begin(), it2.Begin(); r1 != it1.End() && r2 != it2.End(); r1, r2 = it1.Next(), it2.Next() {
+			d1 := r1.GetDuration(0, 0)
+			d2 := r2.GetDuration(0, 0)
+			r, err := d1.Add(d2)
+			if err != nil {
+				b.Fatal(err)
+			}
+			result.AppendDuration(0, r)
+		}
+	}
+}
+
+func BenchmarkDurationVec(b *testing.B) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
+	col1 := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col1.AppendDuration(types.Duration{Duration: time.Second * time.Duration(i)})
+	}
+	col2 := col1.CopyConstruct(nil)
+	result := col1.CopyConstruct(nil)
+
+	ds1 := col1.GoDurations()
+	ds2 := col2.GoDurations()
+	rs := result.GoDurations()
+
+	b.ResetTimer()
+	for k := 0; k < b.N; k++ {
+		result.PreAllocDuration(1024)
+		for i := 0; i < 1024; i++ {
+			d1 := types.Duration{Duration: ds1[i]}
+			d2 := types.Duration{Duration: ds2[i]}
+			r, err := d1.Add(d2)
+			if err != nil {
+				b.Fatal(err)
+			}
+			rs[i] = r.Duration
 		}
 	}
 }

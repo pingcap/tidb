@@ -14,6 +14,8 @@
 package kv
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/testleak"
@@ -35,12 +37,12 @@ func (s *testUnionStoreSuite) TestGetSet(c *C) {
 	defer testleak.AfterTest(c)()
 	err := s.store.Set([]byte("1"), []byte("1"))
 	c.Assert(err, IsNil)
-	v, err := s.us.Get([]byte("1"))
+	v, err := s.us.Get(context.TODO(), []byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("1"))
 	err = s.us.Set([]byte("1"), []byte("2"))
 	c.Assert(err, IsNil)
-	v, err = s.us.Get([]byte("1"))
+	v, err = s.us.Get(context.TODO(), []byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("2"))
 	c.Assert(s.us.Size(), Equals, 2)
@@ -53,12 +55,12 @@ func (s *testUnionStoreSuite) TestDelete(c *C) {
 	c.Assert(err, IsNil)
 	err = s.us.Delete([]byte("1"))
 	c.Assert(err, IsNil)
-	_, err = s.us.Get([]byte("1"))
+	_, err = s.us.Get(context.TODO(), []byte("1"))
 	c.Assert(IsErrNotFound(err), IsTrue)
 
 	err = s.us.Set([]byte("1"), []byte("2"))
 	c.Assert(err, IsNil)
-	v, err := s.us.Get([]byte("1"))
+	v, err := s.us.Get(context.TODO(), []byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("2"))
 }
@@ -130,13 +132,13 @@ func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	err = s.store.Set([]byte("2"), []byte("2"))
 	c.Assert(err, IsNil)
 
-	v, err := s.us.Get([]byte("1"))
+	v, err := s.us.Get(context.TODO(), []byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("1"))
 
 	s.us.SetOption(PresumeKeyNotExists, nil)
 	s.us.SetOption(PresumeKeyNotExistsError, ErrNotExist)
-	_, err = s.us.Get([]byte("2"))
+	_, err = s.us.Get(context.TODO(), []byte("2"))
 	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue, Commentf("err %v", err))
 
 	condionPair1 := s.us.LookupConditionPair([]byte("1"))
