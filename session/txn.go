@@ -494,13 +494,13 @@ func (s *session) UpdateStmtUntouchedIndex(tid, indexID int64) {
 	if s.txn.updateUntouchedIndex == nil {
 		s.txn.updateUntouchedIndex = make(map[variable.TableIndexID]struct{})
 	}
-	s.txn.updateUntouchedIndex[variable.TableIndexID{tid, indexID}] = struct{}{}
+	s.txn.updateUntouchedIndex[variable.TableIndexID{TableID: tid, IndexID: indexID}] = struct{}{}
 }
 
 func (s *session) IsUntouchedIndex(tid, indexID int64) bool {
 	if s.sessionVars.TxnCtx.UpdateUntouchedIndex == nil {
 		return false
 	}
-	_, ok := s.sessionVars.TxnCtx.UpdateUntouchedIndex[variable.TableIndexID{tid, indexID}]
+	_, ok := s.sessionVars.TxnCtx.UpdateUntouchedIndex[variable.TableIndexID{TableID: tid, IndexID: indexID}]
 	return ok
 }
