@@ -486,7 +486,11 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 	for {
 		eol, f := reader.GetField()
 		f = f.escape()
+<<<<<<< HEAD
 		if string(f.str) == "NULL" && !f.enclosed {
+=======
+		if bytes.Equal(f.str, null) && !f.enclosed {
+>>>>>>> 3076e63... *: use bytes.Equal to check byte slice equivalent (#11706)
 			f.str = []byte{'N'}
 			f.maybeNull = true
 		}
