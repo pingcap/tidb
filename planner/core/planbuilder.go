@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -57,6 +58,7 @@ type tableHintInfo struct {
 	indexNestedLoopJoinTables []hintTableInfo
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
+	preferAggType             uint
 }
 
 type hintTableInfo struct {
@@ -336,7 +338,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) 
 	proj.SetChildren(p)
 	proj.self = proj
 	proj.SetSchema(schema)
-	proj.calculateNoDelay = true
+	proj.CalculateNoDelay = true
 	return proj, nil
 }
 
@@ -781,11 +783,16 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		Ranges:           ranger.FullRange(),
 		GenExprs:         genExprsMap,
 	}.Init(b.ctx)
-	is.stats = property.NewSimpleStats(0)
+	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
+	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table}.Init(b.ctx)
 	ts.SetSchema(tblSchema)
-	cop := &copTask{indexPlan: is, tablePlan: ts}
+	cop := &copTask{
+		indexPlan:   is,
+		tablePlan:   ts,
+		tblColHists: is.stats.HistColl,
+	}
 	ts.HandleIdx = pkOffset
 	is.initSchema(id, idx, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
@@ -1031,6 +1038,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       1024,
 	ast.AnalyzeOptCMSketchWidth: uint64(cmSketchSizeLimit),
 	ast.AnalyzeOptCMSketchDepth: uint64(cmSketchSizeLimit),
+	ast.AnalyzeOptNumSamples:    100000,
 }
 
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
@@ -1038,6 +1046,7 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       20,
 	ast.AnalyzeOptCMSketchWidth: 2048,
 	ast.AnalyzeOptCMSketchDepth: 5,
+	ast.AnalyzeOptNumSamples:    10000,
 }
 
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
@@ -2175,26 +2184,43 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 	return p, nil
 }
 
+const (
+	// TraceFormatRow indicates row tracing format.
+	TraceFormatRow = "row"
+	// TraceFormatJSON indicates json tracing format.
+	TraceFormatJSON = "json"
+	// TraceFormatLog indicates log tracing format.
+	TraceFormatLog = "log"
+)
+
 // buildTrace builds a trace plan. Inside this method, it first optimize the
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
 	switch trace.Format {
-	case "row":
+	case TraceFormatRow:
 		retFields := []string{"operation", "duration", "spanID"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
 		schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
 		schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
 		p.SetSchema(schema)
-	case "json":
+	case TraceFormatJSON:
 		retFields := []string{"json"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
 		p.SetSchema(schema)
+	case TraceFormatLog:
+		retFields := []string{"time", "event", "tags", "spanName", "spanID"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		schema.Append(buildColumn("", "time", mysql.TypeTimestamp, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "event", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "tags", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "spanName", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
 	default:
-		return nil, errors.New("trace format should be one of 'row' or 'json'")
+		return nil, errors.New("trace format should be one of 'row', 'log' or 'json'")
 	}
 	return p, nil
 }

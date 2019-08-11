@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pd "github.com/pingcap/pd/client"
@@ -318,6 +319,12 @@ func (s *tikvStore) CurrentVersion() (kv.Version, error) {
 }
 
 func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
+	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tikvStore.getTimestampWithRetry", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
+	}
+
 	for {
 		startTS, err := s.oracle.GetTimestamp(bo.ctx)
 		// mockGetTSErrorInRetry should wait MockCommitErrorOnce first, then will run into retry() logic.

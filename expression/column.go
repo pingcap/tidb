@@ -188,7 +188,7 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 
 // VecEval evaluates this expression in a vectorized manner.
 func (col *Column) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	input.Column(col.Index).CopyConstruct(result)
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
 	return nil
 }
 
