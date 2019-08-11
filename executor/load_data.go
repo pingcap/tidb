@@ -506,7 +506,7 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 	for {
 		eol, f := reader.GetField()
 		f = f.escape()
-		if bytes.Compare(f.str, null) == 0 && !f.enclosed {
+		if bytes.Equal(f.str, null) && !f.enclosed {
 			f.str = []byte{'N'}
 			f.maybeNull = true
 		}
