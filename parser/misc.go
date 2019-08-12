@@ -252,6 +252,7 @@ var tokenMap = map[string]int{
 	"ELSE":                     elseKwd,
 	"ENABLE":                   enable,
 	"ENCLOSED":                 enclosed,
+	"ENCRYPTION":               encryption,
 	"END":                      end,
 	"ENFORCED":                 enforced,
 	"ENGINE":                   engine,
