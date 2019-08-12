@@ -219,15 +219,16 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 		}
 	}
 	outerCardinality := numPairs / outerCnt
-	probeCost := numPairs * cpuFactor
+	var probeCost float64
 	// Inner workers do merge join parallelly. But they can only keep one outer batch
 	// results. So as the number of outer batch is exceed inner concurrency, it degenerates
 	// linear execution.
-	if numPairs/outerCnt >= innerConcurrency {
-		probeCost -= batchSize * outerCardinality * (innerConcurrency - 1) * cpuFactor
+	if outerCnt/batchSize >= innerConcurrency {
+		probeCost = (numPairs - batchSize*outerCardinality*(innerConcurrency-1)) * cpuFactor
 	} else {
-		probeCost = batchSize * outerCardinality * (numPairs / outerCnt)
+		probeCost = batchSize * outerCardinality * cpuFactor
 	}
+	cpuCost += probeCost
 
 	// Index merge join save the join results in inner worker.
 	// So the memory cost consider the results size for each batch.
