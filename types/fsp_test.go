@@ -59,7 +59,7 @@ func (s *FspTest) TestCheckFsp(c *C) {
 	c.Assert(err, IsNil)
 
 	obtained, err = CheckFsp(5)
-	c.Assert(obtained, Equals, 5)
+	c.Assert(obtained, Equals, int8(5))
 	c.Assert(err, IsNil)
 }
 
