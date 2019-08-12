@@ -58,7 +58,7 @@ func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTy
 func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d types.Datum, err error) {
 	value := types.Time{
 		Type: tp,
-		Fsp:  fsp,
+		Fsp:  int8(fsp),
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
@@ -78,10 +78,10 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 				}
 			}
 		} else if upperX == types.ZeroDatetimeStr {
-			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
+			value, err = types.ParseTimeFromNum(sc, 0, tp, int8(fsp))
 			terror.Log(err)
 		} else {
-			value, err = types.ParseTime(sc, x, tp, fsp)
+			value, err = types.ParseTime(sc, x, tp, int8(fsp))
 			if err != nil {
 				return d, err
 			}
@@ -89,12 +89,12 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 	case *driver.ValueExpr:
 		switch x.Kind() {
 		case types.KindString:
-			value, err = types.ParseTime(sc, x.GetString(), tp, fsp)
+			value, err = types.ParseTime(sc, x.GetString(), tp, int8(fsp))
 			if err != nil {
 				return d, err
 			}
 		case types.KindInt64:
-			value, err = types.ParseTimeFromNum(sc, x.GetInt64(), tp, fsp)
+			value, err = types.ParseTimeFromNum(sc, x.GetInt64(), tp, int8(fsp))
 			if err != nil {
 				return d, err
 			}
@@ -121,7 +121,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 			return d, err
 		}
 
-		value, err = types.ParseTimeFromNum(sc, xval.GetInt64(), tp, fsp)
+		value, err = types.ParseTimeFromNum(sc, xval.GetInt64(), tp, int8(fsp))
 		if err != nil {
 			return d, err
 		}
