@@ -145,11 +145,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
 	if e.lock {
-		txn, err := e.ctx.Txn(true)
-		if err != nil {
-			return err
-		}
-		return txn.LockKeys(ctx, e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS(), kv.Key(key))
+		return doLockKeys(ctx, e.ctx, key)
 	}
 	return nil
 }
