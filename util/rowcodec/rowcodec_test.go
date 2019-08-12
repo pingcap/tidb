@@ -53,13 +53,13 @@ func (s *testSuite) TestRowCodec(c *C) {
 	s.checkDecode(c, rb.sc, newRow)
 
 	// Test large column ID
-	colIDs = []int64{1, 2, 3, 4, 5, 512}
+	rb.tempColIDs = []int64{1, 2, 3, 4, 5, 512}
 	newRow, err = rb.Encode(datums, nil)
 	c.Check(err, IsNil)
 	s.checkDecode(c, rb.sc, newRow)
 
 	// Test large column value
-	colIDs = []int64{1, 2, 3, 4, 5, 10}
+	rb.tempColIDs = []int64{1, 2, 3, 4, 5, 10}
 	datums[5] = types.NewBytesDatum(make([]byte, 65536))
 	newRow, err = rb.Encode(datums, nil)
 	c.Check(err, IsNil)
