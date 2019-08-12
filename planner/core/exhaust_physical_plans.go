@@ -444,13 +444,13 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 	is, ts := findIndexScanAndTableScan(innerPlan)
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
-		// needOuterSort means whether the outer join keys are the prefix of the prop items.
-		needOuterSort := len(prop.Items) > 0 && len(join.OuterJoinKeys) <= len(prop.Items)
+		// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
+		isOuterKeysPrefix := len(join.OuterJoinKeys) <= len(prop.Items)
 		compareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
 		outerCompareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
 		for i := range join.OuterJoinKeys {
-			if needOuterSort && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[i]) {
-				needOuterSort = false
+			if isOuterKeysPrefix && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[i]) {
+				isOuterKeysPrefix = false
 			}
 			compareFuncs = append(compareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
 			outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.OuterJoinKeys[i]))
@@ -462,13 +462,13 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 				canKeepOuterOrder = false
 			}
 		}
-		// If the prop items are NOT the prefix of the outer join keys,
-		// or the outer join keys are NOT the prefix of the prop items,
-		// then we can't execute merge join.
-		if canKeepOuterOrder || needOuterSort {
+		// Since index merge join requires prop items the prefix of outer join keys
+		// or outer join keys the prefix of the prop items. So we need `canKeepOuterOrder` or
+		// `isOuterKeysPrefix` to be true.
+		if canKeepOuterOrder || isOuterKeysPrefix {
 			indexMergeJoin := PhysicalIndexMergeJoin{
 				PhysicalIndexJoin: *join,
-				NeedOuterSort:     needOuterSort,
+				NeedOuterSort:     !isOuterKeysPrefix,
 				CompareFuncs:      compareFuncs,
 				OuterCompareFuncs: outerCompareFuncs,
 			}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), join.childrenReqProps...)
@@ -532,16 +532,20 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			keyOff2IdxOff[i] = 0
 		}
 		if pkMatched {
-			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us)
-			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
-			// comparing to other index.
-			indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)
-
+			joins := make([]PhysicalPlan, 0, 2)
+			// If some columns need keep order, the index join is always worse than index merge join.
+			// So it's unnecessary to construct index join.
+			if len(prop.Items) == 0 {
+				innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us)
+				// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
+				// comparing to other index.
+				joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
+			}
 			// The index merge join's inner plan is different from index join, so we should consturct another inner plan
 			// for it.
 			innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us)
-			indexMergeJoins := p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)
-			return append(indexJoins, indexMergeJoins...)
+			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
+			return joins
 		}
 	}
 	helper := &indexJoinBuildHelper{join: p}
@@ -567,13 +571,18 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 		idxCols, lens := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
 		rangeInfo := helper.buildRangeDecidedByInformation(idxCols, outerJoinKeys)
-		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
-		indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
+		joins := make([]PhysicalPlan, 0, 2)
+		// If some columns need keep order, the index join is always worse than index merge join.
+		// So it's unnecessary to construct index join.
+		if len(prop.Items) == 0 {
+			innerTask := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
+			joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)...)
+		}
 		// The index merge join's inner plan is different from index join, so we should consturct another inner plan
 		// for it.
 		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
-		indexMergeJoins := p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
-		return append(indexJoins, indexMergeJoins...)
+		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)...)
+		return joins
 	}
 	return nil
 }

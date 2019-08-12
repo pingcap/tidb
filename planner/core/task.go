@@ -188,16 +188,16 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	// Cost of extracting lookup keys.
 	innerCPUCost := cpuFactor * outerCnt
 	// Cost of sorting and removing duplicate lookup keys:
-	// (outerCnt / batchSize) * (sortFactor + batchSize) * cpuFactor
+	// (outerCnt / batchSize) * (sortFactor + 1.0) * batchSize * cpuFactor
 	// If `p.NeedOuterSort` is false, the sortFactor is batchSize * Log2(batchSize).
 	// Otherwise, it's 0.
 	batchSize := math.Min(float64(p.ctx.GetSessionVars().IndexJoinBatchSize), outerCnt)
-	sortFactor := 1.0
+	sortFactor := 0.0
 	if p.NeedOuterSort {
-		sortFactor += math.Log2(float64(batchSize))
+		sortFactor = math.Log2(float64(batchSize))
 	}
 	if batchSize > 2 {
-		innerCPUCost += outerCnt * sortFactor * cpuFactor
+		innerCPUCost += outerCnt * (sortFactor + 1.0) * cpuFactor
 	}
 	// Add cost of building inner executors. CPU cost of building copTasks:
 	// (outerCnt / batchSize) * (batchSize * distinctFactor) * cpuFactor
