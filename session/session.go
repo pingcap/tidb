@@ -444,6 +444,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		txnSize = s.txn.Size()
 		isPessimistic = s.txn.IsPessimistic()
 	}
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.doCommitWitRetry", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 	err := s.doCommit(ctx)
 	if err != nil {
 		commitRetryLimit := s.sessionVars.RetryLimit
@@ -499,6 +504,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.CommitTxn", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
 	var commitDetail *execdetails.CommitDetails
@@ -1027,6 +1033,8 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.Execute", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 	if recordSets, err = s.execute(ctx, sql); err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
@@ -1639,7 +1647,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 34
+	currentBootstrapVersion = 35
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

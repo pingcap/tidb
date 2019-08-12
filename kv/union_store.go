@@ -13,6 +13,8 @@
 
 package kv
 
+import "context"
+
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
@@ -114,12 +116,12 @@ type lazyMemBuffer struct {
 	cap int
 }
 
-func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
+func (lmb *lazyMemBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	if lmb.mb == nil {
 		return nil, ErrNotExist
 	}
 
-	return lmb.mb.Get(k)
+	return lmb.mb.Get(ctx, k)
 }
 
 func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
@@ -177,8 +179,8 @@ func (lmb *lazyMemBuffer) SetCap(cap int) {
 }
 
 // Get implements the Retriever interface.
-func (us *unionStore) Get(k Key) ([]byte, error) {
-	v, err := us.MemBuffer.Get(k)
+func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
+	v, err := us.MemBuffer.Get(ctx, k)
 	if IsErrNotFound(err) {
 		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
 			e, ok := us.opts.Get(PresumeKeyNotExistsError)
@@ -189,7 +191,7 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 			}
 			return nil, ErrNotExist
 		}
-		v, err = us.BufferStore.r.Get(k)
+		v, err = us.BufferStore.r.Get(ctx, k)
 	}
 	if err != nil {
 		return v, err

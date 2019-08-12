@@ -86,6 +86,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 
 	job := &model.Job{
 		SchemaID:   schemaID,
+		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{dbInfo},
@@ -144,6 +145,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	// Do the DDL job.
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionModifySchemaCharsetAndCollate,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{toCharset, toCollate},
@@ -161,6 +163,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	}
 	job := &model.Job{
 		SchemaID:   old.ID,
+		SchemaName: old.Name.L,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -540,7 +543,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
 				if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-					if !expression.IsCurrentTimestampExpr(v.Expr) {
+					if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
 						return nil, nil, ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 					}
 				} else {
@@ -1183,6 +1186,7 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tblInfo.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tblInfo},
@@ -1355,6 +1359,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbInfo.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tbInfo},
@@ -1422,6 +1427,7 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, sche
 	job := &model.Job{
 		SchemaID:   schemaID,
 		TableID:    tbInfo.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, recoverTableCheckFlagNone},
@@ -1477,6 +1483,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbInfo.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tbInfo, s.OrReplace, oldViewTblID},
@@ -1985,6 +1992,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionRebaseAutoID,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newBase},
@@ -2015,6 +2023,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 		Type:       model.ActionShardRowID,
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{uVal},
 	}
@@ -2084,9 +2093,8 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	// If new column is a generated column, do validation.
-	// NOTE: Because now we can only append columns to table,
-	// we don't need check whether the column refers other
-	// generated columns occurring later in table.
+	// NOTE: we do check whether the column refers other generated
+	// columns occurring later in a table, but we don't handle the col offset.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
@@ -2101,8 +2109,17 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 				return errors.Trace(err)
 			}
+			duplicateColNames := make(map[string]struct{}, len(dependColNames))
+			for k := range dependColNames {
+				duplicateColNames[k] = struct{}{}
+			}
+			cols := t.Cols()
 
-			if err = checkDependedColExist(dependColNames, t.Cols()); err != nil {
+			if err = checkDependedColExist(dependColNames, cols); err != nil {
+				return errors.Trace(err)
+			}
+
+			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -2128,6 +2145,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col, spec.Position, 0},
@@ -2192,6 +2210,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionAddTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partInfo},
@@ -2268,6 +2287,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionTruncateTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{pid},
@@ -2314,6 +2334,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partName},
@@ -2362,6 +2383,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{colName},
@@ -2532,7 +2554,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-				if !expression.IsCurrentTimestampExpr(opt.Expr) {
+				if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldType) {
 					return ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 				}
 			} else {
@@ -2694,6 +2716,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp},
@@ -2846,6 +2869,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionSetDefaultValue,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col},
@@ -2872,6 +2896,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyTableComment,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.Comment},
@@ -2923,6 +2948,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyTableCharsetAndCollate,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{toCharset, toCollate},
@@ -3015,6 +3041,7 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionRenameIndex,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.FromKey, spec.ToKey},
@@ -3035,6 +3062,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -3067,6 +3095,7 @@ func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropView,
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -3089,6 +3118,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionTruncateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newTableID},
@@ -3154,6 +3184,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 	job := &model.Job{
 		SchemaID:   newSchema.ID,
 		TableID:    oldTbl.Meta().ID,
+		SchemaName: newSchema.Name.L,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchema.ID, newIdent.Name},
@@ -3233,6 +3264,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
@@ -3294,6 +3326,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionAddForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
@@ -3320,6 +3353,7 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkName},
@@ -3361,6 +3395,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropIndex,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{indexName},
