@@ -35,21 +35,27 @@ type Encoder struct {
 	sc         *stmtctx.StatementContext
 }
 
+// NewEncoder creates a new Encoder with column IDs.
+func NewEncoder(colIDs []int64, sc *stmtctx.StatementContext) *Encoder {
+	return &Encoder{
+		tempColIDs: colIDs,
+		sc:         sc,
+	}
+}
+
 func (encoder *Encoder) reset() {
 	encoder.isLarge = false
 	encoder.numNotNullCols = 0
 	encoder.numNullCols = 0
 	encoder.data = encoder.data[:0]
-	encoder.tempColIDs = encoder.tempColIDs[:0]
 	encoder.values = encoder.values[:0]
 }
 
 // Encode encodes a row from a datums slice.
-func (encoder *Encoder) Encode(colIDs []int64, values []types.Datum, buf []byte) ([]byte, error) {
+func (encoder *Encoder) Encode(values []types.Datum, buf []byte) ([]byte, error) {
 	encoder.reset()
-	encoder.tempColIDs = append(encoder.tempColIDs, colIDs...)
 	encoder.values = append(encoder.values, values...)
-	for i, colID := range colIDs {
+	for i, colID := range encoder.tempColIDs {
 		if colID > 255 {
 			encoder.isLarge = true
 		}

@@ -37,8 +37,7 @@ type testSuite struct{}
 
 func (s *testSuite) TestRowCodec(c *C) {
 	colIDs := []int64{1, 2, 3, 4, 5, 10}
-	var rb Encoder
-	rb.sc = new(stmtctx.StatementContext)
+	rb := NewEncoder(colIDs, new(stmtctx.StatementContext))
 	dt, err := types.ParseDatetime(rb.sc, "2018-01-19 03:14:07.999999")
 	c.Assert(err, IsNil)
 	datums := types.MakeDatums(
@@ -49,20 +48,20 @@ func (s *testSuite) TestRowCodec(c *C) {
 		types.NewDecFromInt(1),
 		"abc",
 	)
-	newRow, err := rb.Encode(colIDs, datums, nil)
+	newRow, err := rb.Encode(datums, nil)
 	c.Check(err, IsNil)
 	s.checkDecode(c, rb.sc, newRow)
 
 	// Test large column ID
 	colIDs = []int64{1, 2, 3, 4, 5, 512}
-	newRow, err = rb.Encode(colIDs, datums, nil)
+	newRow, err = rb.Encode(datums, nil)
 	c.Check(err, IsNil)
 	s.checkDecode(c, rb.sc, newRow)
 
 	// Test large column value
 	colIDs = []int64{1, 2, 3, 4, 5, 10}
 	datums[5] = types.NewBytesDatum(make([]byte, 65536))
-	newRow, err = rb.Encode(colIDs, datums, nil)
+	newRow, err = rb.Encode(datums, nil)
 	c.Check(err, IsNil)
 	s.checkDecode(c, rb.sc, newRow)
 }
@@ -86,9 +85,9 @@ func (s *testSuite) TestIntCodec(c *C) {
 
 func (s *testSuite) TestMoreTypes(c *C) {
 	colIDs := []int64{1, 2, 3, 4, 5, 6, 7, 8}
-	var rb Encoder
-	rb.sc = new(stmtctx.StatementContext)
-	rb.sc.TimeZone = time.Local
+	sc := new(stmtctx.StatementContext)
+	sc.TimeZone = time.Local
+	rb := NewEncoder(colIDs, sc)
 	ts, err := types.ParseTimestampFromNum(rb.sc, 20181111090909)
 	c.Assert(err, IsNil)
 	datums := types.MakeDatums(
@@ -101,7 +100,7 @@ func (s *testSuite) TestMoreTypes(c *C) {
 		json.CreateBinary("abc"),
 		types.BitLiteral([]byte{101}),
 	)
-	newRow, err := rb.Encode(colIDs, datums, nil)
+	newRow, err := rb.Encode(datums, nil)
 	c.Check(err, IsNil)
 	fieldTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeFloat),
@@ -160,13 +159,12 @@ func (s *testSuite) checkDecode(c *C, sc *stmtctx.StatementContext, newRow []byt
 func BenchmarkEncode(b *testing.B) {
 	b.ReportAllocs()
 	oldRow := types.MakeDatums(1, "abc", 1.1)
-	var xb Encoder
+	xb := NewEncoder([]int64{1, 2, 3}, new(stmtctx.StatementContext))
 	var buf []byte
-	colIDs := []int64{1, 2, 3}
 	var err error
 	for i := 0; i < b.N; i++ {
 		buf = buf[:0]
-		buf, err = xb.Encode(colIDs, oldRow, buf)
+		buf, err = xb.Encode(oldRow, buf)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -182,9 +180,8 @@ func BenchmarkDecode(b *testing.B) {
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeDouble),
 	}
-	var xb Encoder
-	xb.sc = new(stmtctx.StatementContext)
-	xRowData, err := xb.Encode(colIDs, oldRow, nil)
+	xb := NewEncoder(colIDs, new(stmtctx.StatementContext))
+	xRowData, err := xb.Encode(oldRow, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
