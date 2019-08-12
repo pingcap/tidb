@@ -73,8 +73,6 @@ const (
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
 	TxnEntrySizeLimit = 6 * 1024 * 1024
-	// TxnEntryCountLimit  is limit of number of entries in the MemBuffer.
-	TxnEntryCountLimit uint64 = config.DefTxnEntryCountLimit
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
@@ -83,7 +81,7 @@ var (
 type Retriever interface {
 	// Get gets the value for key k from kv store.
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
-	Get(k Key) ([]byte, error)
+	Get(ctx context.Context, k Key) ([]byte, error)
 	// Iter creates an Iterator positioned on the first entry that k <= entry's key.
 	// If such entry is not found, it returns an invalid Iterator with no error.
 	// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
@@ -156,7 +154,7 @@ type Transaction interface {
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
-	BatchGet(keys []Key) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
 }
 
@@ -250,7 +248,7 @@ type Response interface {
 type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
-	BatchGet(keys []Key) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	// SetPriority snapshot set the priority
 	SetPriority(priority int)
 }

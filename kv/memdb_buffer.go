@@ -16,6 +16,7 @@
 package kv
 
 import (
+	"context"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -45,7 +46,6 @@ func NewMemDbBuffer(cap int) MemBuffer {
 	return &memDbBuffer{
 		db:              memdb.New(comparer.DefaultComparer, cap),
 		entrySizeLimit:  TxnEntrySizeLimit,
-		bufferLenLimit:  atomic.LoadUint64(&TxnEntryCountLimit),
 		bufferSizeLimit: atomic.LoadUint64(&TxnTotalSizeLimit),
 	}
 }
@@ -77,7 +77,7 @@ func (m *memDbBuffer) IterReverse(k Key) (Iterator, error) {
 }
 
 // Get returns the value associated with key.
-func (m *memDbBuffer) Get(k Key) ([]byte, error) {
+func (m *memDbBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	v, err := m.db.Get(k)
 	if terror.ErrorEqual(err, leveldb.ErrNotFound) {
 		return nil, ErrNotExist
@@ -97,9 +97,6 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 	err := m.db.Put(k, v)
 	if m.Size() > int(m.bufferSizeLimit) {
 		return ErrTxnTooLarge.GenWithStack("transaction too large, size:%d", m.Size())
-	}
-	if m.Len() > int(m.bufferLenLimit) {
-		return ErrTxnTooLarge.GenWithStack("transaction too large, len:%d", m.Len())
 	}
 	return errors.Trace(err)
 }

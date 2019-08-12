@@ -104,6 +104,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 		tableStats.Cardinality[i] = ds.getColumnNDV(col.ID)
 	}
 	ds.tableStats = tableStats
+	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
 	selectivity, nodes, err := tableStats.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
 		logutil.BgLogger().Debug("an error happened, use the default selectivity", zap.Error(err))

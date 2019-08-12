@@ -857,7 +857,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			}
 		}
 		b.optFlag |= flagEliminateProjection
-		proj := LogicalProjection{Exprs: exprs, avoidColumnEvaluator: true}.Init(b.ctx)
+		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx)
 		proj.SetSchema(u.schema.Clone())
 		proj.SetChildren(child)
 		u.children[childID] = proj
@@ -2099,6 +2099,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	var windowMapper map[*ast.WindowFuncExpr]int
 	if hasWindowFuncField {
 		windowFuncs := extractWindowFuncs(sel.Fields.Fields)
+		// we need to check the func args first before we check the window spec
+		err := b.checkWindowFuncArgs(ctx, p, windowFuncs, windowAggMap)
+		if err != nil {
+			return nil, err
+		}
 		groupedFuncs, err := b.groupWindowFuncs(windowFuncs)
 		if err != nil {
 			return nil, err
@@ -2267,7 +2272,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		partitionNames:      tn.PartitionNames,
-		tableCols:           make([]*expression.Column, 0, len(columns)),
+		TblCols:             make([]*expression.Column, 0, len(columns)),
 	}.Init(b.ctx)
 
 	var handleCol *expression.Column
@@ -2288,7 +2293,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 			handleCol = newCol
 		}
 		schema.Append(newCol)
-		ds.tableCols = append(ds.tableCols, newCol)
+		ds.TblCols = append(ds.TblCols, newCol)
 	}
 	// We append an extra handle column to the schema when "ds" is not a memory
 	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
@@ -2298,7 +2303,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
-		ds.tableCols = append(ds.tableCols, handleCol)
+		ds.TblCols = append(ds.TblCols, handleCol)
 	}
 	if handleCol != nil {
 		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
@@ -3056,6 +3061,35 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 	return proj, propertyItems[:lenPartition], propertyItems[lenPartition:], newArgList, nil
 }
 
+func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p LogicalPlan, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) ([]expression.Expression, error) {
+	b.optFlag |= flagEliminateProjection
+
+	newArgList := make([]expression.Expression, 0, len(args))
+	// use below index for created a new col definition
+	// it's okay here because we only want to return the args used in window function
+	newColIndex := 0
+	for _, arg := range args {
+		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
+		if err != nil {
+			return nil, err
+		}
+		p = np
+		switch newArg.(type) {
+		case *expression.Column, *expression.Constant:
+			newArgList = append(newArgList, newArg)
+			continue
+		}
+		col := &expression.Column{
+			ColName:  model.NewCIStr(fmt.Sprintf("%d_proj_window_%d", p.ID(), newColIndex)),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  newArg.GetType(),
+		}
+		newColIndex += 1
+		newArgList = append(newArgList, col)
+	}
+	return newArgList, nil
+}
+
 func (b *PlanBuilder) buildByItemsForWindow(
 	ctx context.Context,
 	p LogicalPlan,
@@ -3218,6 +3252,23 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 	}
 	frame.End, err = b.buildWindowFunctionFrameBound(ctx, spec, orderByItems, &frameClause.Extent.End)
 	return frame, err
+}
+
+func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
+	for _, windowFuncExpr := range windowFuncExprs {
+		args, err := b.buildArgs4WindowFunc(ctx, p, windowFuncExpr.Args, windowAggMap)
+		if err != nil {
+			return err
+		}
+		desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFuncExpr.F, args)
+		if err != nil {
+			return err
+		}
+		if desc == nil {
+			return ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFuncExpr.F))
+		}
+	}
+	return nil
 }
 
 func getAllByItems(itemsBuf []*ast.ByItem, spec *ast.WindowSpec) []*ast.ByItem {

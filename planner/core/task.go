@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -51,12 +51,12 @@ type copTask struct {
 	// In double read case, it may output one more column for handle(row id).
 	// We need to prune it, so we add a project do this.
 	doubleReadNeedProj bool
-	// tableStats stores the original stats of DataSource, it is used to get
+	// tblColHists stores the original stats of DataSource, it is used to get
 	// average row width when computing network cost.
-	tableStats *property.StatsInfo
-	// tableCols store the original columns of DataSource before being pruned, it
+	tblColHists *statistics.HistColl
+	// tblCols stores the original columns of DataSource before being pruned, it
 	// is used to compute average row width when computing scan cost.
-	tableCols []*expression.Column
+	tblCols []*expression.Column
 }
 
 func (t *copTask) invalid() bool {
@@ -119,13 +119,13 @@ func (t *copTask) finishIndexPlan() {
 	cnt := t.count()
 	t.indexPlanFinished = true
 	// Network cost of transferring rows of index scan to TiDB.
-	t.cst += cnt * netWorkFactor * t.tableStats.HistColl.GetAvgRowSize(t.indexPlan.Schema().Columns, true)
+	t.cst += cnt * netWorkFactor * t.tblColHists.GetAvgRowSize(t.indexPlan.Schema().Columns, true)
 	if t.tablePlan == nil {
 		return
 	}
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
-	rowSize := t.tableStats.HistColl.GetAvgRowSize(t.tableCols, false)
+	rowSize := t.tblColHists.GetAvgRowSize(t.tblCols, false)
 	t.cst += cnt * rowSize * scanFactor
 }
 
@@ -430,11 +430,11 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
-	copIterWorkers := float64(t.plan().context().GetSessionVars().DistSQLScanConcurrency)
+	copIterWorkers := float64(t.plan().SCtx().GetSessionVars().DistSQLScanConcurrency)
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
-		t.cst += t.count() * netWorkFactor * t.tableStats.HistColl.GetAvgRowSize(t.tablePlan.Schema().Columns, false)
+		t.cst += t.count() * netWorkFactor * t.tblColHists.GetAvgRowSize(t.tablePlan.Schema().Columns, false)
 	}
 	t.cst /= copIterWorkers
 	newTask := &rootTask{
@@ -450,12 +450,12 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		indexRows := t.indexPlan.statsInfo().RowCount
 		newTask.cst += indexRows * cpuFactor
 		// Add cost of worker goroutines in index lookup.
-		numTblWorkers := float64(t.indexPlan.context().GetSessionVars().IndexLookupConcurrency)
+		numTblWorkers := float64(t.indexPlan.SCtx().GetSessionVars().IndexLookupConcurrency)
 		newTask.cst += (numTblWorkers + 1) * concurrencyFactor
 		// When building table reader executor for each batch, we would sort the handles. CPU
 		// cost of sort is:
 		// cpuFactor * batchSize * Log2(batchSize) * (indexRows / batchSize)
-		indexLookupSize := float64(t.indexPlan.context().GetSessionVars().IndexLookupSize)
+		indexLookupSize := float64(t.indexPlan.SCtx().GetSessionVars().IndexLookupSize)
 		batchSize := math.Min(indexLookupSize, indexRows)
 		if batchSize > 2 {
 			sortCPUCost := (indexRows * math.Log2(batchSize) * cpuFactor) / numTblWorkers
