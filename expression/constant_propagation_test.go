@@ -228,7 +228,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"└─TableDual_11 8000.00 root rows:0",
 	))
 	tk.MustQuery("explain select * from t1 left join t2 on t2.a = 1 and t2.a = 2;").Check(testkit.Rows(
-		"HashLeftJoin_6 0.00 root CARTESIAN left outer join, inner:TableReader_11",
+		"HashLeftJoin_6 10000.00 root CARTESIAN left outer join, inner:TableReader_11",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
 		"│ └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_11 0.00 root data:Selection_10",
