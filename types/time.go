@@ -2172,7 +2172,7 @@ func mysqlTimeFix(t *MysqlTime, ctx map[string]int) error {
 
 // strToDate converts date string according to format, returns true on success,
 // the value will be stored in argument t or ctx.
-func strToDate(t *MysqlTime, sc *stmtctx.StatementContext, date string, format string, rawDate string, ctx map[string]int) bool {
+func strToDate(t *MysqlTime, sc *stmtctx.StatementContext, date, format string, rawDate string, ctx map[string]int) bool {
 	date = skipWhiteSpace(date)
 	format = skipWhiteSpace(format)
 
