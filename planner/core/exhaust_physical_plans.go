@@ -388,7 +388,7 @@ func (p *LogicalJoin) constructIndexJoin(
 	return []PhysicalPlan{join}
 }
 
-func findIndexScanAndTableScan(p PhysicalPlan) (is *PhysicalIndexScan, ts *PhysicalTableScan) {
+func makeInnerPlanKeepOrder(p PhysicalPlan) {
 	var tblChildren []PhysicalPlan
 	var idxChildren []PhysicalPlan
 	switch x := p.(type) {
@@ -403,30 +403,17 @@ func findIndexScanAndTableScan(p PhysicalPlan) (is *PhysicalIndexScan, ts *Physi
 		tblChildren = x.Children()
 	}
 	for _, child := range tblChildren {
-		tmpIS, tmpTS := findIndexScanAndTableScan(child)
-		if tmpIS != nil {
-			is = tmpIS
-		}
-		if tmpTS != nil {
-			ts = tmpTS
-		}
+		makeInnerPlanKeepOrder(child)
 	}
 	for _, child := range idxChildren {
-		tmpIS, tmpTS := findIndexScanAndTableScan(child)
-		if tmpIS != nil {
-			is = tmpIS
-		}
-		if tmpTS != nil {
-			ts = tmpTS
-		}
+		makeInnerPlanKeepOrder(child)
 	}
 	if tmpIS, ok := p.(*PhysicalIndexScan); ok {
-		return tmpIS, ts
+		tmpIS.KeepOrder = true
 	}
 	if tmpTS, ok := p.(*PhysicalTableScan); ok {
-		return is, tmpTS
+		tmpTS.KeepOrder = true
 	}
-	return is, ts
 }
 
 func (p *LogicalJoin) constructIndexMergeJoin(
@@ -441,7 +428,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 	innerPlan := innerTask.plan()
 	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, lens, compareFilters)
 	indexMergeJoins := make([]PhysicalPlan, 0, len(indexJoins))
-	is, ts := findIndexScanAndTableScan(innerPlan)
+	makeInnerPlanKeepOrder(innerPlan)
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
 		// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
@@ -472,12 +459,6 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 				CompareFuncs:      compareFuncs,
 				OuterCompareFuncs: outerCompareFuncs,
 			}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), join.childrenReqProps...)
-			if is != nil {
-				is.KeepOrder = true
-			}
-			if ts != nil {
-				ts.KeepOrder = true
-			}
 			indexMergeJoins = append(indexMergeJoins, indexMergeJoin)
 		}
 	}
