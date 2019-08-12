@@ -735,7 +735,6 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	}
 
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.ForUpdate = true
 	for id := range e.Schema().TblID2Handle {
 		// This operation is only for schema validator check.
 		txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
@@ -770,13 +769,18 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
+	return doLockKeys(ctx, e.ctx, e.keys...)
+}
+
+func doLockKeys(ctx context.Context, se sessionctx.Context, keys ...kv.Key) error {
+	se.GetSessionVars().TxnCtx.ForUpdate = true
 	// Lock keys only once when finished fetching all results.
-	txn, err := e.ctx.Txn(true)
+	txn, err := se.Txn(true)
 	if err != nil {
 		return err
 	}
-	forUpdateTS := e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, forUpdateTS, e.keys...)
+	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
+	return txn.LockKeys(ctx, forUpdateTS, keys...)
 }
 
 // LimitExec represents limit executor
