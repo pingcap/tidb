@@ -15,6 +15,7 @@ package structure
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"strconv"
 
@@ -55,7 +56,7 @@ func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 // HGet gets the value of a hash field.
 func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	dataKey := t.encodeHashDataKey(key, field)
-	value, err := t.reader.Get(dataKey)
+	value, err := t.reader.Get(context.TODO(), dataKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
@@ -317,7 +318,7 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (b
 }
 
 func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
-	v, err := t.reader.Get(metaKey)
+	v, err := t.reader.Get(context.TODO(), metaKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
@@ -339,7 +340,7 @@ func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 }
 
 func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {
-	v, err := t.reader.Get(dataKey)
+	v, err := t.reader.Get(context.TODO(), dataKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 		v = nil
