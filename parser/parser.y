@@ -1225,31 +1225,49 @@ AlterTableSpec:
 			Constraint: constraint,
 		}
 	}
-|	"ADD" "PARTITION" IfNotExists PartitionDefinitionListOpt
+|	"ADD" "PARTITION" IfNotExists NoWriteToBinLogAliasOpt PartitionDefinitionListOpt
 	{
 		var defs []*ast.PartitionDefinition
-		if $4 != nil {
-			defs = $4.([]*ast.PartitionDefinition)
+		if $5 != nil {
+			defs = $5.([]*ast.PartitionDefinition)
+		}
+		noWriteToBinlog := $4.(bool)
+		if noWriteToBinlog {
+			yylex.AppendError(yylex.Errorf("The NO_WRITE_TO_BINLOG option is parsed but ignored for now."))
+			parser.lastErrorAsWarn()
 		}
 		$$ = &ast.AlterTableSpec{
-			IfNotExists: 	$3.(bool),
+			IfNotExists: $3.(bool),
+			NoWriteToBinlog: noWriteToBinlog,
 			Tp: ast.AlterTableAddPartitions,
 			PartDefinitions: defs,
 		}
 	}
-|	"ADD" "PARTITION" IfNotExists "PARTITIONS" NUM
+|	"ADD" "PARTITION" IfNotExists NoWriteToBinLogAliasOpt "PARTITIONS" NUM
 	{
+		noWriteToBinlog := $4.(bool)
+		if noWriteToBinlog {
+			yylex.AppendError(yylex.Errorf("The NO_WRITE_TO_BINLOG option is parsed but ignored for now."))
+			parser.lastErrorAsWarn()
+		}
 		$$ = &ast.AlterTableSpec{
-			IfNotExists: 	$3.(bool),
+			IfNotExists: $3.(bool),
+			NoWriteToBinlog: noWriteToBinlog,
 			Tp: ast.AlterTableAddPartitions,
-			Num: getUint64FromNUM($5),
+			Num: getUint64FromNUM($6),
 		}
 	}
-|	"COALESCE" "PARTITION" NUM
+|	"COALESCE" "PARTITION" NoWriteToBinLogAliasOpt NUM
 	{
+		noWriteToBinlog := $3.(bool)
+		if noWriteToBinlog {
+			yylex.AppendError(yylex.Errorf("The NO_WRITE_TO_BINLOG option is parsed but ignored for now."))
+			parser.lastErrorAsWarn()
+		}
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableCoalescePartitions,
-			Num: getUint64FromNUM($3),
+			NoWriteToBinlog: noWriteToBinlog,
+			Num: getUint64FromNUM($4),
 		}
 	}
 |	"DROP" ColumnKeywordOpt IfExists ColumnName RestrictOrCascadeOpt
