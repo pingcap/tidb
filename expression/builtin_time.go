@@ -6418,14 +6418,13 @@ func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
 	tm := arg.Time
-	var day int
-	year, month := tm.Year(), tm.Month()
-	if month == 0 {
+	year, month, day := tm.Year(), tm.Month(), tm.Day()
+	if month == 0 || day == 0 {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
 	}
-	day = types.GetLastDay(year, month)
+	lastDay := types.GetLastDay(year, month)
 	ret := types.Time{
-		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
+		Time: types.FromDate(year, month, lastDay, 0, 0, 0, 0),
 		Type: mysql.TypeDate,
 		Fsp:  types.DefaultFsp,
 	}

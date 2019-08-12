@@ -278,13 +278,13 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 }
 
 // CheckAndInsertOneBatch is used to commit one transaction batch full filled data
-func (e *LoadDataInfo) CheckAndInsertOneBatch() error {
+func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context) error {
 	var err error
 	if e.curBatchCnt == 0 {
 		return err
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(e.curBatchCnt)
-	err = e.batchCheckAndInsert(e.rows[0:e.curBatchCnt], e.addRecordLD)
+	err = e.batchCheckAndInsert(ctx, e.rows[0:e.curBatchCnt], e.addRecordLD)
 	if err != nil {
 		return err
 	}
@@ -332,11 +332,11 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 	return row
 }
 
-func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
+func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) (int64, error) {
 	if row == nil {
 		return 0, nil
 	}
-	h, err := e.addRecord(row)
+	h, err := e.addRecord(ctx, row)
 	if err != nil {
 		e.handleWarning(err)
 	}
@@ -353,15 +353,15 @@ type fieldWriter struct {
 	pos           int
 	enclosedChar  byte
 	fieldTermChar byte
-	term          *string
+	term          string
 	isEnclosed    bool
 	isLineStart   bool
 	isFieldStart  bool
-	ReadBuf       *[]byte
+	ReadBuf       []byte
 	OutputBuf     []byte
 }
 
-func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf *[]byte, term *string) {
+func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf []byte, term string) {
 	w.isEnclosed = false
 	w.isLineStart = true
 	w.isFieldStart = true
@@ -376,8 +376,8 @@ func (w *fieldWriter) putback() {
 }
 
 func (w *fieldWriter) getChar() (bool, byte) {
-	if w.pos < len(*w.ReadBuf) {
-		ret := (*w.ReadBuf)[w.pos]
+	if w.pos < len(w.ReadBuf) {
+		ret := w.ReadBuf[w.pos]
 		w.pos++
 		return true, ret
 	}
@@ -386,9 +386,9 @@ func (w *fieldWriter) getChar() (bool, byte) {
 
 func (w *fieldWriter) isTerminator() bool {
 	chkpt, isterm := w.pos, true
-	for i := 1; i < len(*w.term); i++ {
+	for i := 1; i < len(w.term); i++ {
 		flag, ch := w.getChar()
-		if !flag || ch != (*w.term)[i] {
+		if !flag || ch != w.term[i] {
 			isterm = false
 			break
 		}
@@ -502,11 +502,11 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 		return fields, nil
 	}
 
-	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Terminated[0], &line, &e.FieldsInfo.Terminated)
+	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Terminated[0], line, e.FieldsInfo.Terminated)
 	for {
 		eol, f := reader.GetField()
 		f = f.escape()
-		if bytes.Compare(f.str, null) == 0 && !f.enclosed {
+		if bytes.Equal(f.str, null) && !f.enclosed {
 			f.str = []byte{'N'}
 			f.maybeNull = true
 		}
