@@ -1019,6 +1019,8 @@ const (
 	SlowLogCopWaitAddr = "Cop_wait_addr"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
+	// SlowLogSucc is used to indicate whether this sql execute successfully.
+	SlowLogSucc = "Succ"
 )
 
 // SlowLogFormat uses for formatting slow log.
@@ -1038,9 +1040,10 @@ const (
 // # Cop_process: Avg_time: 1s P90_time: 2s Max_time: 3s Max_addr: 10.6.131.78
 // # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
 // # Memory_max: 4096
+// # Succ: true
 // select * from t_slim;
 func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string,
-	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, sql string) string {
+	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, succ bool, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
 	buf.WriteString(SlowLogRowPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
@@ -1100,6 +1103,7 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 	if memMax > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
 	}
+	buf.WriteString(SlowLogRowPrefixStr + SlowLogSucc + SlowLogSpaceMarkStr + strconv.FormatBool(succ) + "\n")
 	if len(sql) == 0 {
 		sql = ";"
 	}

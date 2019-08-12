@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -171,32 +172,36 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
+func (b *baseBuiltinFunc) vecEval(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("baseBuiltinFunc.vecEval() should never be called, please contact the TiDB team for help")
+}
+
 func (b *baseBuiltinFunc) evalInt(row chunk.Row) (int64, bool, error) {
-	panic("baseBuiltinFunc.evalInt() should never be called.")
+	return 0, false, errors.Errorf("baseBuiltinFunc.evalInt() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalReal(row chunk.Row) (float64, bool, error) {
-	panic("baseBuiltinFunc.evalReal() should never be called.")
+	return 0, false, errors.Errorf("baseBuiltinFunc.evalReal() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalString(row chunk.Row) (string, bool, error) {
-	panic("baseBuiltinFunc.evalString() should never be called.")
+	return "", false, errors.Errorf("baseBuiltinFunc.evalString() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
-	panic("baseBuiltinFunc.evalDecimal() should never be called.")
+	return nil, false, errors.Errorf("baseBuiltinFunc.evalDecimal() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalTime(row chunk.Row) (types.Time, bool, error) {
-	panic("baseBuiltinFunc.evalTime() should never be called.")
+	return types.Time{}, false, errors.Errorf("baseBuiltinFunc.evalTime() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalDuration(row chunk.Row) (types.Duration, bool, error) {
-	panic("baseBuiltinFunc.evalDuration() should never be called.")
+	return types.Duration{}, false, errors.Errorf("baseBuiltinFunc.evalDuration() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
-	panic("baseBuiltinFunc.evalJSON() should never be called.")
+	return json.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
@@ -276,8 +281,16 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 	}
 }
 
+// vecBuiltinFunc contains all vectorized methods for a builtin function.
+type vecBuiltinFunc interface {
+	// vecEval evaluates this builtin function in a vectorized manner.
+	vecEval(input *chunk.Chunk, result *chunk.Column) error
+}
+
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
+	vecBuiltinFunc
+
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(row chunk.Row) (val int64, isNull bool, err error)
 	// evalReal evaluates real representation of builtinFunc by given row.
@@ -466,6 +479,7 @@ var funcs = map[string]functionClass{
 	ast.Mid:             &substringFunctionClass{baseFunctionClass{ast.Mid, 3, 3}},
 	ast.MakeSet:         &makeSetFunctionClass{baseFunctionClass{ast.MakeSet, 2, -1}},
 	ast.Oct:             &octFunctionClass{baseFunctionClass{ast.Oct, 1, 1}},
+	ast.OctetLength:     &lengthFunctionClass{baseFunctionClass{ast.OctetLength, 1, 1}},
 	ast.Ord:             &ordFunctionClass{baseFunctionClass{ast.Ord, 1, 1}},
 	ast.Position:        &locateFunctionClass{baseFunctionClass{ast.Position, 2, 2}},
 	ast.Quote:           &quoteFunctionClass{baseFunctionClass{ast.Quote, 1, 1}},

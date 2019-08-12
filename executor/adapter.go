@@ -90,6 +90,15 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 				Name:      origColName,
 			},
 		}
+		// This is for compatibility.
+		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
+		}
+		// Usually the length of O equals the length of L.
+		// Add this len judgement to avoid panic.
+		if len(rf.ColumnAsName.L) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.L = rf.ColumnAsName.L[:mysql.MaxAliasIdentifierLen]
+		}
 		rfs = append(rfs, rf)
 	}
 	return rfs
@@ -181,13 +190,13 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
-func (a *ExecStmt) RebuildPlan() (int64, error) {
+func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
 	}
-	p, err := planner.Optimize(a.Ctx, a.StmtNode, is)
+	p, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
 	if err != nil {
 		return 0, err
 	}
@@ -389,6 +398,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
 	// Check if "tidb_snapshot" is set for the write executors.
@@ -608,7 +618,8 @@ func (a *ExecStmt) logAudit() {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-			audit.OnGeneralEvent(context.Background(), sessVars, plugin.Log, cmd)
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.StartTime)
+			audit.OnGeneralEvent(ctx, sessVars, plugin.Log, cmd)
 		}
 		return nil
 	})
@@ -649,10 +660,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, succ, sql))
 	} else {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, succ, sql))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())

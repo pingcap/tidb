@@ -14,12 +14,10 @@
 package distsql
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -44,10 +42,8 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 }
 
 // SetMemTracker sets a memTracker for this request.
-func (builder *RequestBuilder) SetMemTracker(sctx sessionctx.Context, label fmt.Stringer) *RequestBuilder {
-	t := memory.NewTracker(label, sctx.GetSessionVars().MemQuotaDistSQL)
-	t.AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
-	builder.Request.MemTracker = t
+func (builder *RequestBuilder) SetMemTracker(tracker *memory.Tracker) *RequestBuilder {
+	builder.Request.MemTracker = tracker
 	return builder
 }
 

@@ -119,6 +119,8 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	isPartition     bool
 	physicalTableID int64
+
+	GenExprs map[model.TableColumnID]expression.Expression
 }
 
 // PhysicalMemTable reads memory table.
@@ -160,6 +162,9 @@ type PhysicalTableScan struct {
 	physicalTableID int64
 
 	rangeDecidedBy []*expression.Column
+
+	// HandleIdx is the index of handle, which is only used for admin check table.
+	HandleIdx int
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
@@ -203,6 +208,10 @@ type PhysicalHashJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+
+	LeftJoinKeys  []*expression.Column
+	RightJoinKeys []*expression.Column
+
 	// InnerChildIdx indicates which child is to build the hash table.
 	// For inner join, the smaller one will be chosen.
 	// For outer join or semi join, it's exactly the inner one.
@@ -224,7 +233,7 @@ type PhysicalIndexJoin struct {
 	OtherConditions expression.CNFExprs
 	OuterIndex      int
 	outerSchema     *expression.Schema
-	innerPlan       PhysicalPlan
+	innerTask       task
 
 	DefaultValues []types.Datum
 
@@ -232,6 +241,8 @@ type PhysicalIndexJoin struct {
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
+	// IdxColLens stores the length of each index column.
+	IdxColLens []int
 	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
 	// e.g. select * from t where t.a = t1.a and t.b > t1.b and t.b < t1.b+10
 	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b=10
@@ -309,13 +320,13 @@ type basePhysicalAgg struct {
 	GroupByItems []expression.Expression
 }
 
-func (p *basePhysicalAgg) hasDistinctFunc() bool {
+func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 	for _, fun := range p.AggFuncs {
 		if fun.HasDistinct {
-			return true
+			num++
 		}
 	}
-	return false
+	return
 }
 
 // PhysicalHashAgg is hash operator of aggregate.

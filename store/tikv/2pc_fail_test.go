@@ -109,10 +109,10 @@ func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {
 	c.Assert(err, NotNil)
 
 	txn2 := s.begin(c)
-	value, err := txn2.Get([]byte("a"))
+	value, err := txn2.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(len(value), Greater, 0)
-	_, err = txn2.Get([]byte("b"))
+	_, err = txn2.Get(context.TODO(), []byte("b"))
 	c.Assert(err, IsNil)
 	c.Assert(len(value), Greater, 0)
 }

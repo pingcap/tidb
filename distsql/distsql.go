@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -33,6 +34,12 @@ const (
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
 func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (SelectResult, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("distsql.Select", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	// For testing purpose.
 	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
 		hook.(func(*kv.Request))(kvReq)
@@ -47,23 +54,25 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		return nil, err
 	}
 
+	label := metrics.LblGeneral
+	if sctx.GetSessionVars().InRestrictedSQL {
+		label = metrics.LblInternal
+	}
+
 	// kvReq.MemTracker is used to trace and control memory usage in DistSQL layer;
 	// for streamResult, since it is a pipeline which has no buffer, it's not necessary to trace it;
 	// for selectResult, we just use the kvReq.MemTracker prepared for co-processor
 	// instead of creating a new one for simplification.
 	if kvReq.Streaming {
 		return &streamResult{
+			label:      "dag-stream",
+			sqlType:    label,
 			resp:       resp,
 			rowLen:     len(fieldTypes),
 			fieldTypes: fieldTypes,
 			ctx:        sctx,
 			feedback:   fb,
 		}, nil
-	}
-
-	label := metrics.LblGeneral
-	if sctx.GetSessionVars().InRestrictedSQL {
-		label = metrics.LblInternal
 	}
 	return &selectResult{
 		label:      "dag",

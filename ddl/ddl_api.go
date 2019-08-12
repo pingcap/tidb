@@ -86,6 +86,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 
 	job := &model.Job{
 		SchemaID:   schemaID,
+		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{dbInfo},
@@ -144,6 +145,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	// Do the DDL job.
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionModifySchemaCharsetAndCollate,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{toCharset, toCollate},
@@ -161,6 +163,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	}
 	job := &model.Job{
 		SchemaID:   old.ID,
+		SchemaName: old.Name.L,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -312,15 +315,34 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCharset string) error {
+func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []string, tblCharset string, dbCharset string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
 		if typesNeedCharset(tp.Tp) {
-			var err error
-			tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
-			if err != nil {
-				return errors.Trace(err)
+			if len(specifiedCollates) == 0 {
+				// Both the charset and collate are not specified.
+				var err error
+				tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				// The charset is not specified but the collate is.
+				// We should derive charset from it's collate specified rather than getting from table and db.
+				// It is handled like mysql's logic, use derived charset to judge conflict with next collate.
+				for _, spc := range specifiedCollates {
+					derivedCollation, err := charset.GetCollationByName(spc)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					if len(tp.Charset) == 0 {
+						tp.Charset = derivedCollation.CharsetName
+					} else if tp.Charset != derivedCollation.CharsetName {
+						return ErrCollationCharsetMismatch.GenWithStackByArgs(derivedCollation.Name, tp.Charset)
+					}
+					tp.Collate = derivedCollation.Name
+				}
 			}
 		} else {
 			tp.Charset = charset.CharsetBin
@@ -331,10 +353,25 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 			return errUnsupportedCharset.GenWithStackByArgs(tp.Charset, tp.Collate)
 		}
 		if len(tp.Collate) == 0 {
-			var err error
-			tp.Collate, err = charset.GetDefaultCollation(tp.Charset)
-			if err != nil {
-				return errors.Trace(err)
+			if len(specifiedCollates) == 0 {
+				// The charset is specified, but the collate is not.
+				var err error
+				tp.Collate, err = charset.GetDefaultCollation(tp.Charset)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				// Both the charset and collate are specified.
+				for _, spc := range specifiedCollates {
+					derivedCollation, err := charset.GetCollationByName(spc)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					if tp.Charset != derivedCollation.CharsetName {
+						return ErrCollationCharsetMismatch.GenWithStackByArgs(derivedCollation.Name, tp.Charset)
+					}
+					tp.Collate = derivedCollation.Name
+				}
 			}
 		}
 	}
@@ -358,7 +395,10 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, tblCharset, dbCharset); err != nil {
+	// specifiedCollates refers to collates in colDef.Options, should handle them together.
+	specifiedCollates := extractCollateFromOption(colDef)
+
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollates, tblCharset, dbCharset); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -503,7 +543,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
 				if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-					if !expression.IsCurrentTimestampExpr(v.Expr) {
+					if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
 						return nil, nil, ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 					}
 				} else {
@@ -1146,6 +1186,7 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tblInfo.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tblInfo},
@@ -1318,6 +1359,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbInfo.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tbInfo},
@@ -1385,6 +1427,7 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, sche
 	job := &model.Job{
 		SchemaID:   schemaID,
 		TableID:    tbInfo.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, recoverTableCheckFlagNone},
@@ -1440,6 +1483,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbInfo.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tbInfo, s.OrReplace, oldViewTblID},
@@ -1727,15 +1771,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	return nil
 }
 
-func hasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
-	for _, col := range tbInfo.Columns {
-		if mysql.HasAutoIncrementFlag(col.Flag) {
-			return true, col.Name.L
-		}
-	}
-	return false, ""
-}
-
 // isIgnorableSpec checks if the spec type is ignorable.
 // Some specs are parsed by ignored. This is for compatibility.
 func isIgnorableSpec(tp ast.AlterTableType) bool {
@@ -1957,6 +1992,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionRebaseAutoID,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newBase},
@@ -1987,6 +2023,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 		Type:       model.ActionShardRowID,
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{uVal},
 	}
@@ -2056,9 +2093,8 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	// If new column is a generated column, do validation.
-	// NOTE: Because now we can only append columns to table,
-	// we don't need check whether the column refers other
-	// generated columns occurring later in table.
+	// NOTE: we do check whether the column refers other generated
+	// columns occurring later in a table, but we don't handle the col offset.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
@@ -2073,8 +2109,17 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 				return errors.Trace(err)
 			}
+			duplicateColNames := make(map[string]struct{}, len(dependColNames))
+			for k := range dependColNames {
+				duplicateColNames[k] = struct{}{}
+			}
+			cols := t.Cols()
 
-			if err = checkDependedColExist(dependColNames, t.Cols()); err != nil {
+			if err = checkDependedColExist(dependColNames, cols); err != nil {
+				return errors.Trace(err)
+			}
+
+			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -2100,6 +2145,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col, spec.Position, 0},
@@ -2128,7 +2174,8 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	meta := t.Meta()
-	if meta.GetPartitionInfo() == nil {
+	pi := meta.GetPartitionInfo()
+	if pi == nil {
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
@@ -2151,7 +2198,11 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	err = checkAddPartitionValue(meta, partInfo)
+	// partInfo contains only the new added partition, we have to combine it with the
+	// old partitions to check all partitions is strictly increasing.
+	tmp := *partInfo
+	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
+	err = checkCreatePartitionValue(ctx, meta, &tmp, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2159,6 +2210,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionAddTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partInfo},
@@ -2235,6 +2287,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionTruncateTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{pid},
@@ -2281,6 +2334,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partName},
@@ -2329,6 +2383,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{colName},
@@ -2499,7 +2554,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-				if !expression.IsCurrentTimestampExpr(opt.Expr) {
+				if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldType) {
 					return ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 				}
 			} else {
@@ -2605,7 +2660,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		newCol.FieldType.Charset = col.FieldType.Charset
 		newCol.FieldType.Collate = col.FieldType.Collate
 	}
-	err = setCharsetCollationFlenDecimal(&newCol.FieldType, t.Meta().Charset, schema.Charset)
+	// specifiedCollates refers to collates in colDef.Option. When setting charset and collate here we
+	// should take the collate in colDef.Option into consideration rather than handling it separately
+	specifiedCollates := extractCollateFromOption(specNewColumn)
+
+	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollates, t.Meta().Charset, schema.Charset)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2642,7 +2701,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	if err = checkColumnFieldLength(newCol); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
+	}
+
+	if err = checkColumnWithIndexConstraint(t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
+		return nil, err
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
@@ -2653,11 +2716,49 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp},
 	}
 	return job, nil
+}
+
+// checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.
+// Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
+// will cause index idx to break the max-prefix-length constraint.
+func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+	var columns []*model.ColumnInfo
+	for _, indexInfo := range tbInfo.Indices {
+		containColumn := false
+		for _, col := range indexInfo.Columns {
+			if col.Name.L == originalCol.Name.L {
+				containColumn = true
+				break
+			}
+		}
+		if containColumn == false {
+			continue
+		}
+		if columns == nil {
+			columns = make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
+			columns = append(columns, tbInfo.Columns...)
+			// replace old column with new column.
+			for i, col := range columns {
+				if col.Name.L != originalCol.Name.L {
+					continue
+				}
+				columns[i] = newCol.Clone()
+				columns[i].Name = originalCol.Name
+				break
+			}
+		}
+		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ChangeColumn renames an existing column and modifies the column's definition,
@@ -2768,6 +2869,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionSetDefaultValue,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col},
@@ -2794,6 +2896,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyTableComment,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.Comment},
@@ -2845,6 +2948,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyTableCharsetAndCollate,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{toCharset, toCollate},
@@ -2937,6 +3041,7 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionRenameIndex,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.FromKey, spec.ToKey},
@@ -2957,6 +3062,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -2989,6 +3095,7 @@ func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropView,
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -3011,6 +3118,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionTruncateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newTableID},
@@ -3076,6 +3184,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 	job := &model.Job{
 		SchemaID:   newSchema.ID,
 		TableID:    oldTbl.Meta().ID,
+		SchemaName: newSchema.Name.L,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchema.ID, newIdent.Name},
@@ -3155,6 +3264,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
@@ -3216,6 +3326,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionAddForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
@@ -3242,6 +3353,7 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkName},
@@ -3263,7 +3375,8 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo == nil {
+	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	if indexInfo == nil {
 		err = ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		if ifExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3272,9 +3385,17 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return err
 	}
 
+	cols := t.Cols()
+	for _, idxCol := range indexInfo.Columns {
+		if mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) {
+			return autoid.ErrWrongAutoKey
+		}
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
 		Type:       model.ActionDropIndex,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{indexName},
@@ -3341,32 +3462,17 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		Columns: meta.Partition.Columns,
 		Enable:  meta.Partition.Enable,
 	}
+
 	genIDs, err := d.genGlobalIDs(len(spec.PartDefinitions))
 	if err != nil {
 		return nil, err
 	}
-	buf := new(bytes.Buffer)
 	for ith, def := range spec.PartDefinitions {
 		if err := def.Clause.Validate(part.Type, len(part.Columns)); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
-		for _, expr := range clause.Exprs {
-			tp := expr.GetType().Tp
-			if len(part.Columns) == 0 {
-				// Partition by range.
-				if !(tp == mysql.TypeLong || tp == mysql.TypeLonglong) {
-					expr.Format(buf)
-					if strings.EqualFold(buf.String(), "MAXVALUE") {
-						continue
-					}
-					buf.Reset()
-					return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(buf.String(), "partition function")
-				}
-			}
-			// Partition by range columns if len(part.Columns) != 0.
-		}
 		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
@@ -3541,4 +3647,20 @@ type lockTablesArg struct {
 	IndexOfUnlock int
 	SessionInfo   model.SessionInfo
 	IsCleanup     bool
+}
+
+// extractCollateFromOption take collates(may multiple) in option into consideration
+// when handle charset and collate of a column, rather than handling it separately.
+func extractCollateFromOption(def *ast.ColumnDef) []string {
+	specifiedCollates := make([]string, 0, 0)
+	for i := 0; i < len(def.Options); i++ {
+		op := def.Options[i]
+		if op.Tp == ast.ColumnOptionCollate {
+			specifiedCollates = append(specifiedCollates, op.StrValue)
+			def.Options = append(def.Options[:i], def.Options[i+1:]...)
+			// maintain the correct index
+			i--
+		}
+	}
+	return specifiedCollates
 }

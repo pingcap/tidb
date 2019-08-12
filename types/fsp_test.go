@@ -115,4 +115,8 @@ func (s *FspTest) TestAlignFrac(c *C) {
 	c.Assert(obtained, Equals, "100000")
 	obtained = alignFrac("10000000000", 6)
 	c.Assert(obtained, Equals, "10000000000")
+	obtained = alignFrac("-100", 6)
+	c.Assert(obtained, Equals, "-100000")
+	obtained = alignFrac("-10000000000", 6)
+	c.Assert(obtained, Equals, "-10000000000")
 }

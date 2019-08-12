@@ -357,10 +357,9 @@ func (t *tester) execute(query query) error {
 			gotBuf := t.buf.Bytes()[offset:]
 
 			buf := make([]byte, t.buf.Len()-offset)
-			if _, err = t.resultFD.ReadAt(buf, int64(offset)); err != nil {
+			if _, err = t.resultFD.ReadAt(buf, int64(offset)); !(err == nil || err == io.EOF) {
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", st.Text(), query.Line, gotBuf, err))
 			}
-
 			if !bytes.Equal(gotBuf, buf) {
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", query.Query, query.Line, buf, gotBuf))
 			}

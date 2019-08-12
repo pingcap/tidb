@@ -36,9 +36,7 @@ import (
 const (
 	MaxLogFileSize    = 4096 // MB
 	MinPessimisticTTL = time.Second * 15
-	MaxPessimisticTTL = time.Second * 60
-	// DefTxnEntryCountLimit is the default value of TxnEntryCountLimit.
-	DefTxnEntryCountLimit = 300 * 1000
+	MaxPessimisticTTL = time.Second * 120
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
@@ -96,6 +94,7 @@ type Config struct {
 	// TODO: remove this after table lock features stable.
 	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
 	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
+	SplitRegionMaxNum   uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
 }
 
 // Log is the log section of config.
@@ -197,7 +196,6 @@ type Performance struct {
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnEntryCountLimit  uint64  `toml:"txn-entry-count-limit" json:"txn-entry-count-limit"`
 	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 }
 
@@ -334,6 +332,7 @@ var defaultConf = Config{
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
+	SplitRegionMaxNum:            1000,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 2048000,
@@ -367,7 +366,6 @@ var defaultConf = Config{
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
 		BindInfoLease:       "3s",
-		TxnEntryCountLimit:  DefTxnEntryCountLimit,
 		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
 	},
 	ProxyProtocol: ProxyProtocol{
@@ -408,7 +406,7 @@ var defaultConf = Config{
 		Enable:        false,
 		Default:       false,
 		MaxRetryCount: 256,
-		TTL:           "30s",
+		TTL:           "40s",
 	},
 }
 

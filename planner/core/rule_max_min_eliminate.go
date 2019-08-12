@@ -13,6 +13,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -25,7 +27,7 @@ import (
 type maxMinEliminator struct {
 }
 
-func (a *maxMinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (a *maxMinEliminator) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	a.eliminateMaxMin(p)
 	return p, nil
 }
@@ -44,7 +46,7 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 		}
 
 		child := p.Children()[0]
-		ctx := p.context()
+		ctx := p.SCtx()
 
 		// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should NULL if the below is empty.
 		if len(expression.ExtractColumns(f.Args[0])) > 0 {
@@ -81,4 +83,8 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 	for _, child := range p.Children() {
 		a.eliminateMaxMin(child)
 	}
+}
+
+func (*maxMinEliminator) name() string {
+	return "max_min_eliminate"
 }

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -104,13 +105,13 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 
 // Close closes all executors and release all resources.
 func (e *baseExecutor) Close() error {
-	for _, child := range e.children {
-		err := child.Close()
-		if err != nil {
-			return err
+	var firstErr error
+	for _, src := range e.children {
+		if err := src.Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // Schema returns the current baseExecutor's schema. If it is nil, then create and return a new one.
@@ -133,7 +134,7 @@ func retTypes(e Executor) []*types.FieldType {
 	return base.retFieldTypes
 }
 
-// Next fills mutiple rows into a chunk.
+// Next fills multiple rows into a chunk.
 func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
@@ -194,6 +195,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	return e.Next(ctx, req)
 }
@@ -413,15 +415,35 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendInt64(0, e.jobs[i].ID)
-		req.AppendString(1, getSchemaName(e.is, e.jobs[i].SchemaID))
-		req.AppendString(2, getTableName(e.is, e.jobs[i].TableID))
+		schemaName := e.jobs[i].SchemaName
+		tableName := ""
+		finishTS := uint64(0)
+		if e.jobs[i].BinlogInfo != nil {
+			finishTS = e.jobs[i].BinlogInfo.FinishedTS
+			if e.jobs[i].BinlogInfo.TableInfo != nil {
+				tableName = e.jobs[i].BinlogInfo.TableInfo.Name.L
+			}
+			if len(schemaName) == 0 && e.jobs[i].BinlogInfo.DBInfo != nil {
+				schemaName = e.jobs[i].BinlogInfo.DBInfo.Name.L
+			}
+		}
+		// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
+		if len(schemaName) == 0 {
+			schemaName = getSchemaName(e.is, e.jobs[i].SchemaID)
+		}
+		if len(tableName) == 0 {
+			tableName = getTableName(e.is, e.jobs[i].TableID)
+		}
+		req.AppendString(1, schemaName)
+		req.AppendString(2, tableName)
 		req.AppendString(3, e.jobs[i].Type.String())
 		req.AppendString(4, e.jobs[i].SchemaState.String())
 		req.AppendInt64(5, e.jobs[i].SchemaID)
 		req.AppendInt64(6, e.jobs[i].TableID)
 		req.AppendInt64(7, e.jobs[i].RowCount)
 		req.AppendString(8, model.TSConvert2Time(e.jobs[i].StartTS).String())
-		req.AppendString(9, e.jobs[i].State.String())
+		req.AppendString(9, model.TSConvert2Time(finishTS).String())
+		req.AppendString(10, e.jobs[i].State.String())
 	}
 	e.cursor += numCurBatch
 	return nil
@@ -455,11 +477,14 @@ func getTableName(is infoschema.InfoSchema, id int64) string {
 type CheckTableExec struct {
 	baseExecutor
 
-	tables []*ast.TableName
-	done   bool
-	is     infoschema.InfoSchema
-
-	genExprs map[model.TableColumnID]expression.Expression
+	dbName  string
+	tblInfo *model.TableInfo
+	indices []table.Index
+	srcs    []*IndexLookUpExecutor
+	done    bool
+	is      infoschema.InfoSchema
+	exitCh  chan struct{}
+	retCh   chan error
 }
 
 // Open implements the Executor Open interface.
@@ -467,63 +492,132 @@ func (e *CheckTableExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	for _, src := range e.srcs {
+		if err := src.Open(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	e.done = false
 	return nil
 }
 
+// Close implements the Executor Close interface.
+func (e *CheckTableExec) Close() error {
+	var firstErr error
+	for _, src := range e.srcs {
+		if err := src.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *IndexLookUpExecutor) error {
+	cols := src.schema.Columns
+	retFieldTypes := make([]*types.FieldType, len(cols))
+	for i := range cols {
+		retFieldTypes[i] = cols[i].RetType
+	}
+	chk := chunk.New(retFieldTypes, e.initCap, e.maxChunkSize)
+
+	var err error
+	for {
+		err = src.Next(ctx, chk)
+		if err != nil {
+			break
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		select {
+		case <-e.exitCh:
+			return nil
+		default:
+		}
+	}
+	e.retCh <- errors.Trace(err)
+	return errors.Trace(err)
+}
+
+func (e *CheckTableExec) handlePanic(r interface{}) {
+	if r != nil {
+		e.retCh <- errors.Errorf("%v", r)
+	}
+}
+
 // Next implements the Executor Next interface.
 func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.done {
+	if e.done || len(e.srcs) == 0 {
 		return nil
 	}
 	defer func() { e.done = true }()
-	for _, t := range e.tables {
-		dbName := t.DBInfo.Name
-		tb, err := e.is.TableByName(dbName, t.Name)
-		if err != nil {
-			return err
-		}
-		if tb.Meta().GetPartitionInfo() != nil {
-			err = e.doCheckPartitionedTable(tb.(table.PartitionedTable))
-		} else {
-			err = e.doCheckTable(tb)
-		}
-		if err != nil {
-			logutil.Logger(ctx).Warn("check table failed", zap.String("tableName", t.Name.O), zap.Error(err))
-			if admin.ErrDataInConsistent.Equal(err) {
-				return ErrAdminCheckTable.GenWithStack("%v err:%v", t.Name, err)
-			}
 
-			return errors.Errorf("%v err:%v", t.Name, err)
+	idxNames := make([]string, 0, len(e.indices))
+	for _, idx := range e.indices {
+		idxNames = append(idxNames, idx.Meta().Name.O)
+	}
+	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tblInfo.Name.O, idxNames)
+	if err != nil {
+		tbl := e.srcs[idxOffset].table
+		if greater == admin.IdxCntGreater {
+			err = e.checkIndexHandle(ctx, idxOffset, e.srcs[idxOffset])
+		} else if greater == admin.TblCntGreater {
+			err = e.checkTableRecord(tbl, idxOffset)
+		}
+		if err != nil && admin.ErrDataInConsistent.Equal(err) {
+			return ErrAdminCheckTable.GenWithStack("%v err:%v", tbl.Meta().Name, err)
+		}
+		return errors.Trace(err)
+	}
+
+	// The number of table rows is equal to the number of index rows.
+	// TODO: Make the value of concurrency adjustable. And we can consider the number of records.
+	concurrency := 3
+	wg := sync.WaitGroup{}
+	for i := range e.srcs {
+		wg.Add(1)
+		go func(num int) {
+			defer wg.Done()
+			util.WithRecovery(func() {
+				err1 := e.checkIndexHandle(ctx, num, e.srcs[num])
+				if err1 != nil {
+					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
+				}
+			}, e.handlePanic)
+		}(i)
+
+		if (i+1)%concurrency == 0 {
+			wg.Wait()
+		}
+	}
+
+	for i := 0; i < len(e.srcs); i++ {
+		err = <-e.retCh
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
-func (e *CheckTableExec) doCheckPartitionedTable(tbl table.PartitionedTable) error {
-	info := tbl.Meta().GetPartitionInfo()
-	for _, def := range info.Definitions {
-		pid := def.ID
-		partition := tbl.GetPartition(pid)
-		if err := e.doCheckTable(partition); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (e *CheckTableExec) doCheckTable(tbl table.Table) error {
+func (e *CheckTableExec) checkTableRecord(tbl table.Table, idxOffset int) error {
+	idx := e.indices[idxOffset]
+	genExprs := e.srcs[idxOffset].genExprs
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	for _, idx := range tbl.Indices() {
-		if idx.Meta().State != model.StatePublic {
-			continue
-		}
-		err := admin.CompareIndexData(e.ctx, txn, tbl, idx, e.genExprs)
-		if err != nil {
-			return err
+	if tbl.Meta().GetPartitionInfo() == nil {
+		return admin.CheckRecordAndIndex(e.ctx, txn, tbl, idx, genExprs)
+	}
+
+	info := tbl.Meta().GetPartitionInfo()
+	for _, def := range info.Definitions {
+		pid := def.ID
+		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, genExprs); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -567,7 +661,7 @@ func (e *CheckIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
-	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
+	_, _, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
 	if err != nil {
 		return err
 	}
@@ -810,13 +904,18 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plannercore.EvalSubquery = func(p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
+	plannercore.EvalSubquery = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
+		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
+			defer span1.Finish()
+			ctx = opentracing.ContextWithSpan(ctx, span1)
+		}
+
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
 			return rows, err
 		}
-		ctx := context.TODO()
 		err = exec.Open(ctx)
 		defer terror.Call(exec.Close)
 		if err != nil {
@@ -1249,7 +1348,9 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
-	close(e.finished)
+	if e.finished != nil {
+		close(e.finished)
+	}
 	e.childrenResults = nil
 	if e.resultPool != nil {
 		for range e.resultPool {
@@ -1346,8 +1447,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
+		sc.CastStrToIntStrict = true
 	case *ast.ExplainStmt:
 		sc.InExplainStmt = true
+		sc.CastStrToIntStrict = true
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
