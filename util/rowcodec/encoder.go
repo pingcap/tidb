@@ -44,24 +44,20 @@ func (encoder *Encoder) reset() {
 	encoder.values = encoder.values[:0]
 }
 
-func (encoder *Encoder) addColumn(colID int64, d types.Datum) {
-	if colID > 255 {
-		encoder.isLarge = true
-	}
-	if d.IsNull() {
-		encoder.numNullCols++
-	} else {
-		encoder.numNotNullCols++
-	}
-	encoder.tempColIDs = append(encoder.tempColIDs, colID)
-	encoder.values = append(encoder.values, d)
-}
-
 // Encode encodes a row from a datums slice.
 func (encoder *Encoder) Encode(colIDs []int64, values []types.Datum, buf []byte) ([]byte, error) {
 	encoder.reset()
+	encoder.tempColIDs = append(encoder.tempColIDs, colIDs...)
+	encoder.values = append(encoder.values, values...)
 	for i, colID := range colIDs {
-		encoder.addColumn(colID, values[i])
+		if colID > 255 {
+			encoder.isLarge = true
+		}
+		if values[i].IsNull() {
+			encoder.numNullCols++
+		} else {
+			encoder.numNotNullCols++
+		}
 	}
 	return encoder.build(buf)
 }
