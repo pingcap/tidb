@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -156,7 +157,17 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 		if sc.DupKeyAsWarning {
 			newHandle, err = t.AddRecord(sctx, newData, table.IsUpdate, table.SkipHandleCheck, table.WithCtx(ctx))
 		} else {
+			txn, err := sctx.Txn(true)
+			if err != nil {
+				return false, false, 0, err
+			}
+			// If there are primary keys or unique indices, we have to check TiKV to ensure their uniqueness.
+			// The PresumeKeyNotExists option could delay the check to improve performance.
+			if !sctx.GetSessionVars().ConstraintCheckInPlace {
+				txn.SetOption(kv.PresumeKeyNotExists, nil)
+			}
 			newHandle, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
+			txn.DelOption(kv.PresumeKeyNotExists)
 		}
 
 		if err != nil {
