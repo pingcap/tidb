@@ -119,6 +119,15 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	autoid.SetStep(s.autoIDStep)
 }
 
+func assertErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {
+	_, err := tk.Exec(sql)
+	c.Assert(err, NotNil)
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
+	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
+}
+
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
 	_, err := s.tk.Exec(sql)
 	c.Assert(err, NotNil)
