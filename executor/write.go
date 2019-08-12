@@ -157,9 +157,9 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 		if sc.DupKeyAsWarning {
 			newHandle, err = t.AddRecord(sctx, newData, table.IsUpdate, table.SkipHandleCheck, table.WithCtx(ctx))
 		} else {
-			txn, err := sctx.Txn(true)
-			if err != nil {
-				return false, false, 0, err
+			txn, err1 := sctx.Txn(true)
+			if err1 != nil {
+				return false, false, 0, err1
 			}
 			// If there are primary keys or unique indices, we have to check TiKV to ensure their uniqueness.
 			// The PresumeKeyNotExists option could delay the check to improve performance.
