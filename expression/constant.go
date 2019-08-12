@@ -277,7 +277,6 @@ func (c *Constant) EvalJSON(ctx sessionctx.Context, _ chunk.Row) (json.BinaryJSO
 		if err != nil {
 			return json.BinaryJSON{}, true, err
 		}
-		fmt.Println("const eval json", val.GetMysqlJSON().String())
 		c.Value.SetMysqlJSON(val.GetMysqlJSON())
 		c.GetType().Tp = mysql.TypeJSON
 	} else {
