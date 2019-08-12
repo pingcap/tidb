@@ -37,8 +37,6 @@ const (
 	MaxLogFileSize    = 4096 // MB
 	MinPessimisticTTL = time.Second * 15
 	MaxPessimisticTTL = time.Second * 120
-	// DefTxnEntryCountLimit is the default value of TxnEntryCountLimit.
-	DefTxnEntryCountLimit = 300 * 1000
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
@@ -198,7 +196,6 @@ type Performance struct {
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnEntryCountLimit  uint64  `toml:"txn-entry-count-limit" json:"txn-entry-count-limit"`
 	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 }
 
@@ -369,7 +366,6 @@ var defaultConf = Config{
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
 		BindInfoLease:       "3s",
-		TxnEntryCountLimit:  DefTxnEntryCountLimit,
 		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
 	},
 	ProxyProtocol: ProxyProtocol{
