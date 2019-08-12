@@ -58,6 +58,7 @@ const (
 	DatabaseOptionNone DatabaseOptionType = iota
 	DatabaseOptionCharset
 	DatabaseOptionCollate
+	DatabaseOptionEncryption
 )
 
 // DatabaseOption represents database option.
@@ -77,6 +78,10 @@ func (n *DatabaseOption) Restore(ctx *RestoreCtx) error {
 		ctx.WriteKeyWord("COLLATE")
 		ctx.WritePlain(" = ")
 		ctx.WritePlain(n.Value)
+	case DatabaseOptionEncryption:
+		ctx.WriteKeyWord("ENCRYPTION")
+		ctx.WritePlain(" = ")
+		ctx.WriteString(n.Value)
 	default:
 		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
 	}
