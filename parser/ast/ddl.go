@@ -1461,6 +1461,7 @@ const (
 	TableOptionStatsSamplePages
 	TableOptionSecondaryEngine
 	TableOptionSecondaryEngineNull
+	TableOptionInsertMethod
 )
 
 // RowFormat types
@@ -1649,6 +1650,10 @@ func (n *TableOption) Restore(ctx *RestoreCtx) error {
 		ctx.WriteKeyWord("SECONDARY_ENGINE ")
 		ctx.WritePlain("= ")
 		ctx.WriteKeyWord("NULL")
+	case TableOptionInsertMethod:
+		ctx.WriteKeyWord("INSERT_METHOD ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
