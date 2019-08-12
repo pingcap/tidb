@@ -110,7 +110,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DbStmtNodeCounter)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TiKVBackoffCounter)
-	prometheus.MustRegister(TiKVBackoffHistogram)
+	prometheus.MustRegister(TiKVBackoffDuration)
 	prometheus.MustRegister(TiKVCoprocessorHistogram)
 	prometheus.MustRegister(TiKVLoadSafepointCounter)
 	prometheus.MustRegister(TiKVLockResolverCounter)
