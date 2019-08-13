@@ -76,19 +76,19 @@ type connArray struct {
 	*batchConn
 }
 
-func newConnArray(maxSize uint, addr string, security config.Security, eventCh chan<- *eventMSG) (*connArray, error) {
+func newConnArray(maxSize uint, addr string, security config.Security, eventCh chan<- *eventMSG, done <-chan struct{}) (*connArray, error) {
 	a := &connArray{
 		index:         0,
 		v:             make([]*grpc.ClientConn, maxSize),
 		streamTimeout: make(chan *tikvrpc.Lease, 1024),
 	}
-	if err := a.Init(addr, security, eventCh); err != nil {
+	if err := a.Init(addr, security, eventCh, done); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-func (a *connArray) Init(addr string, security config.Security, eventCh chan<- *eventMSG) error {
+func (a *connArray) Init(addr string, security config.Security, eventCh chan<- *eventMSG, done <-chan struct{}) error {
 	a.target = addr
 
 	opt := grpc.WithInsecure()
@@ -198,6 +198,7 @@ func (a *connArray) Close() {
 type rpcClient struct {
 	sync.RWMutex
 	isClosed bool
+	done     chan struct{}
 	conns    map[string]*connArray
 	security config.Security
 
@@ -244,7 +245,7 @@ func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 	if !ok {
 		var err error
 		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-		array, err = newConnArray(connCount, addr, c.security, c.eventCh)
+		array, err = newConnArray(connCount, addr, c.security, c.eventCh, c.done)
 		if err != nil {
 			return nil, err
 		}
