@@ -194,19 +194,19 @@ func (s *testMyTimeSuite) TestIsLeapYear(c *C) {
 		T      MysqlTime
 		Expect bool
 	}{
-		{MysqlTime{1960, 1, 1, 0, 0, 0, 0}, true},
-		{MysqlTime{1963, 2, 21, 0, 0, 0, 0}, false},
-		{MysqlTime{2008, 11, 25, 0, 0, 0, 0}, true},
-		{MysqlTime{2017, 4, 24, 0, 0, 0, 0}, false},
-		{MysqlTime{1988, 2, 29, 0, 0, 0, 0}, true},
-		{MysqlTime{2000, 3, 15, 0, 0, 0, 0}, true},
-		{MysqlTime{1992, 5, 3, 0, 0, 0, 0}, true},
-		{MysqlTime{2024, 10, 1, 0, 0, 0, 0}, true},
-		{MysqlTime{2016, 6, 29, 0, 0, 0, 0}, true},
-		{MysqlTime{2015, 6, 29, 0, 0, 0, 0}, false},
-		{MysqlTime{2014, 9, 31, 0, 0, 0, 0}, false},
-		{MysqlTime{2001, 12, 7, 0, 0, 0, 0}, false},
-		{MysqlTime{1989, 7, 6, 0, 0, 0, 0}, false},
+		{MysqlTime{year: 1960, month: 1, day: 1, hour: 0, minute: 0, second: 0, microsecond: 0}, true},
+		{MysqlTime{year: 1963, month: 2, day: 21, hour: 0, minute: 0, second: 0, microsecond: 0}, false},
+		{MysqlTime{year: 2008, month: 11, day: 25, hour: 0, minute: 0, second: 0, microsecond: 0}, true},
+		{MysqlTime{year: 2017, month: 4, day: 24, hour: 0, minute: 0, second: 0, microsecond: 0}, false},
+		{MysqlTime{year: 1988, month: 2, day: 29, hour: 0, minute: 0, second: 0, microsecond: 0}, true},
+		{MysqlTime{year: 2000, month: 3, day: 15, hour: 0, minute: 0, second: 0, microsecond: 0}, true},
+		{MysqlTime{year: 1992, month: 5, day: 3, hour: 0, minute: 0, second: 0, microsecond: 0}, true},
+		{MysqlTime{year: 2024, month: 10, day: 1, hour: 0, minute: 0, second: 0, microsecond: 0}, true},
+		{MysqlTime{year: 2016, month: 6, day: 29, hour: 0, minute: 0, second: 0, microsecond: 0}, true},
+		{MysqlTime{year: 2015, month: 6, day: 29, hour: 0, minute: 0, second: 0, microsecond: 0}, false},
+		{MysqlTime{year: 2014, month: 9, day: 31, hour: 0, minute: 0, second: 0, microsecond: 0}, false},
+		{MysqlTime{year: 2001, month: 12, day: 7, hour: 0, minute: 0, second: 0, microsecond: 0}, false},
+		{MysqlTime{year: 1989, month: 7, day: 6, hour: 0, minute: 0, second: 0, microsecond: 0}, false},
 	}
 
 	for _, tt := range tests {
@@ -278,9 +278,9 @@ func (s *testMyTimeSuite) TestWeekday(c *C) {
 		Input  MysqlTime
 		Expect string
 	}{
-		{MysqlTime{2019, 01, 01, 0, 0, 0, 0}, "Tuesday"},
-		{MysqlTime{2019, 02, 31, 0, 0, 0, 0}, "Sunday"},
-		{MysqlTime{2019, 04, 31, 0, 0, 0, 0}, "Wednesday"},
+		{MysqlTime{year: 2019, month: 01, day: 01, hour: 0, minute: 0, second: 0, microsecond: 0}, "Tuesday"},
+		{MysqlTime{year: 2019, month: 02, day: 31, hour: 0, minute: 0, second: 0, microsecond: 0}, "Sunday"},
+		{MysqlTime{year: 2019, month: 04, day: 31, hour: 0, minute: 0, second: 0, microsecond: 0}, "Wednesday"},
 	}
 
 	for _, tt := range tests {
