@@ -55,10 +55,10 @@ func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTy
 }
 
 // GetTimeValue gets the time value with type tp.
-func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d types.Datum, err error) {
+func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d types.Datum, err error) {
 	value := types.Time{
 		Type: tp,
-		Fsp:  int8(fsp),
+		Fsp:  fsp,
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
@@ -70,7 +70,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 			if err != nil {
 				return d, err
 			}
-			value.Time = types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond))
+			value.Time = types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond))
 			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
 				if err != nil {
@@ -78,10 +78,10 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 				}
 			}
 		} else if upperX == types.ZeroDatetimeStr {
-			value, err = types.ParseTimeFromNum(sc, 0, tp, int8(fsp))
+			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
 			terror.Log(err)
 		} else {
-			value, err = types.ParseTime(sc, x, tp, int8(fsp))
+			value, err = types.ParseTime(sc, x, tp, fsp)
 			if err != nil {
 				return d, err
 			}
@@ -89,12 +89,12 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 	case *driver.ValueExpr:
 		switch x.Kind() {
 		case types.KindString:
-			value, err = types.ParseTime(sc, x.GetString(), tp, int8(fsp))
+			value, err = types.ParseTime(sc, x.GetString(), tp, fsp)
 			if err != nil {
 				return d, err
 			}
 		case types.KindInt64:
-			value, err = types.ParseTimeFromNum(sc, x.GetInt64(), tp, int8(fsp))
+			value, err = types.ParseTimeFromNum(sc, x.GetInt64(), tp, fsp)
 			if err != nil {
 				return d, err
 			}
@@ -121,7 +121,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 			return d, err
 		}
 
-		value, err = types.ParseTimeFromNum(sc, xval.GetInt64(), tp, int8(fsp))
+		value, err = types.ParseTimeFromNum(sc, xval.GetInt64(), tp, fsp)
 		if err != nil {
 			return d, err
 		}

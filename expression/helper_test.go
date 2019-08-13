@@ -31,7 +31,7 @@ import (
 func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, int(types.MinFsp))
+	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
 	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
@@ -39,7 +39,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 	sessionVars := ctx.GetSessionVars()
 	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum(""))
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, int(types.MinFsp))
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
 	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
@@ -47,7 +47,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
 	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("0"))
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, int(types.MinFsp))
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
 	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
@@ -55,7 +55,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
 	variable.SetSessionSystemVar(sessionVars, "timestamp", types.Datum{})
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, int(types.MinFsp))
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
 	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
@@ -80,7 +80,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 
 	for i, t := range tbl {
 		comment := Commentf("expr: %d", i)
-		v, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, int(types.MinFsp))
+		v, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, types.MinFsp)
 		c.Assert(err, IsNil)
 
 		switch v.Kind() {
@@ -102,7 +102,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	}
 
 	for _, t := range errTbl {
-		_, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, int(types.MinFsp))
+		_, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, types.MinFsp)
 		c.Assert(err, NotNil)
 	}
 }
@@ -140,7 +140,7 @@ func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
 
 	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
 	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+00:00"))
-	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, int(types.MinFsp))
+	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
 		Time: types.FromDate(1970, 1, 1, 0, 20, 34, 0),
@@ -149,7 +149,7 @@ func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
 	// CurrentTimestamp from "timestamp" session variable is based on UTC, so change timezone
 	// would get different value.
 	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+08:00"))
-	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, int(types.MinFsp))
+	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
 		Time: types.FromDate(1970, 1, 1, 8, 20, 34, 0),

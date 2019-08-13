@@ -437,7 +437,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
 		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
 		if vv, ok := value.(string); ok {
-			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, col.Decimal)
+			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, int8(col.Decimal))
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
