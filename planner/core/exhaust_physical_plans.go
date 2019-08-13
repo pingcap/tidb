@@ -1005,9 +1005,9 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	defer func() {
 		if !forced && hasIndexJoinHint {
 			// Construct warning message prefix.
-			errMsg := "Optimizer Hint TIDB_INLJ is inapplicable"
+			errMsg := "Optimizer Hint INL_JOIN is inapplicable"
 			if p.hintInfo != nil {
-				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(TiDBIndexNestedLoopJoin, p.hintInfo.indexNestedLoopJoinTables))
+				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLJ, p.hintInfo.indexNestedLoopJoinTables))
 			}
 
 			// Append inapplicable reason.

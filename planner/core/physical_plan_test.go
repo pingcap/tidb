@@ -1557,7 +1557,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 		{
 			sql:     "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)",
-			warning: "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t1) */ is inapplicable",
+			warning: "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ is inapplicable",
 		},
 	}
 	ctx := context.Background()
