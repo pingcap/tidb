@@ -55,14 +55,14 @@ type delRangeManager interface {
 }
 
 type delRange struct {
-	store        kv.Storage
-	sessPool     *sessionPool
-	storeSupport bool
-	emulatorCh   chan struct{}
-	keys         []kv.Key
-	quitCh       chan struct{}
+	store      kv.Storage
+	sessPool   *sessionPool
+	emulatorCh chan struct{}
+	keys       []kv.Key
+	quitCh     chan struct{}
 
-	wait sync.WaitGroup // wait is only used when storeSupport is false.
+	wait         sync.WaitGroup // wait is only used when storeSupport is false.
+	storeSupport bool
 }
 
 // newDelRangeManager returns a delRangeManager.
