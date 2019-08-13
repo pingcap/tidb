@@ -20,15 +20,17 @@ import (
 )
 
 // MysqlTime is the internal struct type for Time.
+// The order of the attributes is refined to reduce the memory overhead
+// considering memory alignment.
 type MysqlTime struct {
-	year  uint16 // year <= 9999
-	month uint8  // month <= 12
-	day   uint8  // day <= 31
 	// When it's type is Time, HH:MM:SS may be 839:59:59, so use uint32 to avoid overflow.
 	hour        uint32 // hour <= 23
 	microsecond uint32
-	minute      uint8 // minute <= 59
-	second      uint8 // second <= 59
+	year        uint16 // year <= 9999
+	month       uint8  // month <= 12
+	day         uint8  // day <= 31
+	minute      uint8  // minute <= 59
+	second      uint8  // second <= 59
 }
 
 // Year returns the year value.
