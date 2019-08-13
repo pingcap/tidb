@@ -256,16 +256,20 @@ func (n *ReferenceDef) Restore(ctx *RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while splicing ReferenceDef")
 		}
 	}
-	ctx.WritePlain("(")
-	for i, indexColNames := range n.IndexColNames {
-		if i > 0 {
-			ctx.WritePlain(", ")
+
+	if n.IndexColNames != nil {
+		ctx.WritePlain("(")
+		for i, indexColNames := range n.IndexColNames {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := indexColNames.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while splicing IndexColNames: [%v]", i)
+			}
 		}
-		if err := indexColNames.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing IndexColNames: [%v]", i)
-		}
+		ctx.WritePlain(")")
 	}
-	ctx.WritePlain(")")
+
 	if n.Match != MatchNone {
 		ctx.WriteKeyWord(" MATCH ")
 		switch n.Match {
