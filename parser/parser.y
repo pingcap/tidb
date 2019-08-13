@@ -793,6 +793,7 @@ import (
 	IgnoreOptional			"IGNORE or empty"
 	IndexColName			"Index column name"
 	IndexColNameList		"List of index column name"
+	IndexColNameListOpt		"List of index column name opt"
 	IndexHint			"index hint"
 	IndexHintList			"index hint list"
 	IndexHintListOpt		"index hint list opt"
@@ -1054,7 +1055,6 @@ import (
 	FromOrIn		"From or In"
 	OptTable		"Optional table keyword"
 	OptInteger		"Optional Integer keyword"
-	NationalOpt		"National option"
 	CharsetKw		"charset or charater set"
 	CommaOpt		"optional comma"
 	logAnd			"logical and operator"
@@ -2210,17 +2210,27 @@ MatchOpt:
 	}
 
 ReferDef:
-	"REFERENCES" TableName '(' IndexColNameList ')' MatchOpt OnDeleteUpdateOpt
+	"REFERENCES" TableName IndexColNameListOpt MatchOpt OnDeleteUpdateOpt
 	{
-		onDeleteUpdate := $7.([2]interface{})
+		onDeleteUpdate := $5.([2]interface{})
 		$$ = &ast.ReferenceDef{
 			Table: $2.(*ast.TableName),
-			IndexColNames: $4.([]*ast.IndexColName),
+			IndexColNames: $3.([]*ast.IndexColName),
 			OnDelete: onDeleteUpdate[0].(*ast.OnDeleteOpt),
 			OnUpdate: onDeleteUpdate[1].(*ast.OnUpdateOpt),
-			Match: $6.(ast.MatchType),
+			Match: $4.(ast.MatchType),
 		}
 	}
+
+IndexColNameListOpt:
+{
+	$$ = ([]*ast.IndexColName)(nil)
+}
+|
+'(' IndexColNameList ')'
+{
+	$$ = $2
+}
 
 OnDelete:
 	"ON" "DELETE" ReferOpt
@@ -8163,10 +8173,6 @@ StringType:
 		x.Collate = charset.CollationBin
 		$$ = x
 	}
-
-NationalOpt:
-	{}
-|	"NATIONAL"
 
 Char:
 	"CHARACTER"
