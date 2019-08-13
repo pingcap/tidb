@@ -214,6 +214,15 @@ func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
 	return resErr
 }
 
+// ExecToErr executes a sql statement and discard results.
+func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
+	res, err := tk.Exec(sql, args...)
+	if res != nil {
+		tk.c.Assert(res.Close(), check.IsNil)
+	}
+	return err
+}
+
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
 // It is used to check results of execute statement in binary mode.
 func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
