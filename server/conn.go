@@ -1055,7 +1055,7 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-		err := loadDataInfo.CheckAndInsertOneBatch()
+		err := loadDataInfo.CheckAndInsertOneBatch(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -1123,7 +1123,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if err != nil {
 		loadDataInfo.Ctx.StmtRollback()
 	} else {
-		err = loadDataInfo.CheckAndInsertOneBatch()
+		err = loadDataInfo.CheckAndInsertOneBatch(ctx)
 		if err == nil {
 			err = loadDataInfo.Ctx.StmtCommit()
 		}

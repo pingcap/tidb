@@ -44,7 +44,7 @@ func (s *testStoreSuite) TestFailBusyServerKV(c *C) {
 		defer wg.Done()
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		val, err := txn.Get([]byte("key"))
+		val, err := txn.Get(context.TODO(), []byte("key"))
 		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, []byte("value"))
 	}()

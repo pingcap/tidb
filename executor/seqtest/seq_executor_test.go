@@ -794,12 +794,12 @@ func (s *seqTestSuite) TestCartesianProduct(c *C) {
 }
 
 func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
-	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
+	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
 	defer func() {
-		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
+		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnEntryCountLimit, 100)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5000)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -827,19 +827,22 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("160"))
+	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("320"))
 	// for on duplicate key
-	for i := 0; i < 160; i++ {
+	for i := 0; i < 320; i++ {
 		tk.MustExec(fmt.Sprintf("insert into batch_insert_on_duplicate values(%d, %d);", i, i))
 	}
 	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
-	r.Check(testkit.Rows("160"))
+	r.Check(testkit.Rows("320"))
 
 	// This will meet txn too large error.
 	_, err := tk.Exec("insert into batch_insert (c) select * from batch_insert;")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
 	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("160"))
+	r.Check(testkit.Rows("320"))
 
 	// for on duplicate key
 	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
@@ -847,23 +850,23 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue, Commentf("%v", err))
 	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("160"))
+	r.Check(testkit.Rows("320"))
 
 	// Change to batch inset mode and batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
 	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
+	r.Check(testkit.Rows("640"))
 
 	// Enlarge the batch size to 150 which is larger than the txn limitation (100).
 	// So the insert will meet error.
-	tk.MustExec("set @@session.tidb_dml_batch_size=150;")
+	tk.MustExec("set @@session.tidb_dml_batch_size=600;")
 	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
 	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
+	r.Check(testkit.Rows("640"))
 	// Set it back to 50.
 	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 
@@ -872,7 +875,7 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
-	r.Check(testkit.Rows("160"))
+	r.Check(testkit.Rows("320"))
 
 	// Disable BachInsert mode in transition.
 	tk.MustExec("begin;")
@@ -881,7 +884,7 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
 	tk.MustExec("rollback;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
+	r.Check(testkit.Rows("640"))
 
 	tk.MustExec("drop table if exists com_batch_insert")
 	tk.MustExec("create table com_batch_insert (c int)")
@@ -900,7 +903,7 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
 	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
+	r.Check(testkit.Rows("640"))
 	// Enable batch delete and set batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_delete=on;")
 	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
