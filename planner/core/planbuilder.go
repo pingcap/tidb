@@ -173,7 +173,6 @@ type PlanBuilder struct {
 	ctx          sessionctx.Context
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
-	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -188,11 +187,11 @@ type PlanBuilder struct {
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
 
+	windowSpecs  map[string]*ast.WindowSpec
+	inUpdateStmt bool
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
-
-	windowSpecs map[string]*ast.WindowSpec
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
