@@ -463,13 +463,13 @@ func (s *testCommitterSuite) TestPrewriteTxnSize(c *C) {
 	// Check the written locks in the first region (50 keys)
 	for i := byte(50); i < 100; i++ {
 		lock := s.getLockInfo(c, []byte{i})
-		c.Assert(lock.TxnSize, Equals, 50)
+		c.Assert(int(lock.TxnSize), Equals, 50)
 	}
 
 	// Check the written locks in the second region (20 keys)
 	for i := byte(100); i < 120; i++ {
 		lock := s.getLockInfo(c, []byte{i})
-		c.Assert(lock.TxnSize, Equals, 20)
+		c.Assert(int(lock.TxnSize), Equals, 20)
 	}
 }
 
