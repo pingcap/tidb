@@ -218,10 +218,7 @@ type Request struct {
 	StartTs   uint64
 	Data      []byte
 	KeyRanges []KeyRange
-	// KeepOrder is true, if the response should be returned in order.
-	KeepOrder bool
-	// Desc is true, if the request is sent in descending order.
-	Desc bool
+
 	// Concurrency is 1, if it only sends the request to a single storage unit when
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
@@ -230,6 +227,12 @@ type Request struct {
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
+	// MemTracker is used to trace and control memory usage in co-processor layer.
+	MemTracker *memory.Tracker
+	// KeepOrder is true, if the response should be returned in order.
+	KeepOrder bool
+	// Desc is true, if the request is sent in descending order.
+	Desc bool
 	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
 	NotFillCache bool
 	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
@@ -237,8 +240,6 @@ type Request struct {
 	// Streaming indicates using streaming API for this request, result in that one Next()
 	// call would not corresponds to a whole region result.
 	Streaming bool
-	// MemTracker is used to trace and control memory usage in co-processor layer.
-	MemTracker *memory.Tracker
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
 	ReplicaRead ReplicaReadType
 }

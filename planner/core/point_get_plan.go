@@ -43,11 +43,11 @@ type PointGetPlan struct {
 	IndexInfo        *model.IndexInfo
 	Handle           int64
 	HandleParam      *driver.ParamMarkerExpr
-	UnsignedHandle   bool
 	IndexValues      []types.Datum
 	IndexValueParams []*driver.ParamMarkerExpr
 	expr             expression.Expression
 	ctx              sessionctx.Context
+	UnsignedHandle   bool
 	IsTableDual      bool
 	Lock             bool
 	IsForUpdate      bool
@@ -94,6 +94,9 @@ func (p *PointGetPlan) ExplainInfo() string {
 		} else {
 			fmt.Fprintf(buffer, ", handle:%d", p.Handle)
 		}
+	}
+	if p.Lock {
+		fmt.Fprintf(buffer, ", lock")
 	}
 	return buffer.String()
 }
@@ -148,8 +151,14 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				return tableDual.Init(ctx, &property.StatsInfo{})
 			}
 			if x.LockTp == ast.SelectLockForUpdate {
-				fp.Lock = true
-				fp.IsForUpdate = true
+				// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
+				// is disabled (either by beginning transaction with START TRANSACTION or by setting
+				// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
+				// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
+				if ctx.GetSessionVars().InTxn() {
+					fp.Lock = true
+					fp.IsForUpdate = true
+				}
 			}
 			return fp
 		}

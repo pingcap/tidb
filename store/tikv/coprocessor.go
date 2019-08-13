@@ -332,10 +332,6 @@ type copIterator struct {
 	req         *kv.Request
 	concurrency int
 	finishCh    chan struct{}
-	// closed represents when the Close is called.
-	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
-	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
-	closed uint32
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
@@ -346,13 +342,18 @@ type copIterator struct {
 
 	// Otherwise, results are stored in respChan.
 	respChan chan *copResponse
-	wg       sync.WaitGroup
 
 	vars *kv.Variables
 
 	memTracker *memory.Tracker
 
 	replicaReadSeed uint32
+
+	wg sync.WaitGroup
+	// closed represents when the Close is called.
+	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
+	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
+	closed uint32
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -442,9 +443,6 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 		bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(worker.vars)
 		worker.handleTask(bo, task, respCh)
-		if bo.totalSleep > 0 {
-			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
-		}
 		close(task.respChan)
 		select {
 		case <-worker.finishCh:
