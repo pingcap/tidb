@@ -58,7 +58,7 @@ var (
 			Help:      "Counter of backoff.",
 		}, []string{LblType})
 
-	TiKVBackoffDuration = prometheus.NewHistogramVec(
+	TiKVBackoffHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
