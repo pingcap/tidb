@@ -82,14 +82,16 @@ func (ca twoPhaseCommitAction) MetricsTag() string {
 
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-	store     *tikvStore
-	txn       *tikvTxn
-	startTS   uint64
-	keys      [][]byte
-	mutations map[string]*mutationEx
-	lockTTL   uint64
-	commitTS  uint64
-	mu        struct {
+	store   *tikvStore
+	txn     *tikvTxn
+	startTS uint64
+	keys    [][]byte
+	// regionTxnSize stores the number of keys involved in each region
+	regionTxnSize map[RegionVerID]int
+	mutations     map[string]*mutationEx
+	lockTTL       uint64
+	commitTS      uint64
+	mu            struct {
 		sync.RWMutex
 		committed       bool
 		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
@@ -323,6 +325,12 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	var batches []batchKeys
 	var sizeFunc = c.keySize
 	if action == actionPrewrite {
+		if c.regionTxnSize == nil {
+			c.regionTxnSize = make(map[RegionVerID]int)
+		}
+		for region, keys := range groups {
+			c.regionTxnSize[region] = len(keys)
+		}
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
 	}
@@ -481,7 +489,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Reque
 		LockTtl:           c.lockTTL,
 		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
-		TxnSize:           uint64(len(batch.keys)),
+		TxnSize:           uint64(c.regionTxnSize[batch.region]),
 	}
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
