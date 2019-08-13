@@ -96,9 +96,9 @@ type Config struct {
 type Plugin struct {
 	*Manifest
 	library  *gplugin.Plugin
-	State    State
 	Path     string
 	Disabled uint32
+	State    State
 }
 
 // StateValue returns readable state string.
