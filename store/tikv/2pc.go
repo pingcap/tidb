@@ -112,7 +112,7 @@ type twoPhaseCommitter struct {
 	isPessimistic bool
 	isFirstLock   bool
 	// regionTxnSize stores the number of keys involved in each region
-	regionTxnSize map[RegionVerID]int
+	regionTxnSize map[uint64]int
 }
 
 type mutationEx struct {
@@ -124,10 +124,11 @@ type mutationEx struct {
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
 	return &twoPhaseCommitter{
-		store:   txn.store,
-		txn:     txn,
-		startTS: txn.StartTS(),
-		connID:  connID,
+		store:         txn.store,
+		txn:           txn,
+		startTS:       txn.StartTS(),
+		connID:        connID,
+		regionTxnSize: map[uint64]int{},
 	}, nil
 }
 
@@ -327,11 +328,8 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	var batches []batchKeys
 	var sizeFunc = c.keySize
 	if action == actionPrewrite {
-		if c.regionTxnSize == nil {
-			c.regionTxnSize = make(map[RegionVerID]int)
-		}
 		for region, keys := range groups {
-			c.regionTxnSize[region] = len(keys)
+			c.regionTxnSize[region.id] = len(keys)
 		}
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
@@ -471,7 +469,7 @@ func (c *twoPhaseCommitter) keySize(key []byte) int {
 	return len(key)
 }
 
-func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Request {
+func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64) *tikvrpc.Request {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	var isPessimisticLock []bool
 	if c.isPessimistic {
@@ -491,13 +489,20 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Reque
 		LockTtl:           c.lockTTL,
 		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
-		TxnSize:           uint64(c.regionTxnSize[batch.region]),
+		TxnSize:           txnSize,
 	}
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
 
 func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) error {
-	req := c.buildPrewriteRequest(batch)
+	txnSize := uint64(c.regionTxnSize[batch.region.id])
+	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
+	// to MaxUint64 to avoid unexpected "resolve lock lite".
+	if len(bo.errors) > 0 {
+		txnSize = math.MaxUint64
+	}
+
+	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {

@@ -485,7 +485,7 @@ func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	var batch batchKeys
 	batch.keys = append(batch.keys, []byte("t1"))
 	batch.region = RegionVerID{1, 1, 1}
-	req := commiter.buildPrewriteRequest(batch)
+	req := commiter.buildPrewriteRequest(batch, 1)
 	c.Assert(len(req.Prewrite().IsPessimisticLock), Greater, 0)
 	c.Assert(req.Prewrite().ForUpdateTs, Equals, uint64(100))
 }
@@ -551,7 +551,7 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
 	batch := batchKeys{region: loc.Region, keys: [][]byte{key}}
-	req := commiter.buildPrewriteRequest(batch)
+	req := commiter.buildPrewriteRequest(batch, 1)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
