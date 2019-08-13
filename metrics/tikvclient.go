@@ -58,14 +58,14 @@ var (
 			Help:      "Counter of backoff.",
 		}, []string{LblType})
 
-	TiKVBackoffHistogram = prometheus.NewHistogram(
+	TiKVBackoffHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "backoff_seconds",
 			Help:      "total backoff seconds of a single backoffer.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 524s
-		})
+		}, []string{LblType})
 
 	TiKVSendReqHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
