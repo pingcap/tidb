@@ -636,7 +636,7 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 				}
 			}
 		}
-		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
+		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, int8(fsp))
 		value := vd.GetValue()
 		if err != nil {
 			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
