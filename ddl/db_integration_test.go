@@ -598,6 +598,31 @@ func (s *testIntegrationSuite7) TestNullGeneratedColumn(c *C) {
 	tk.MustExec("drop table t")
 }
 
+func (s *testIntegrationSuite7) TestDependedGeneratedColumnPrior2GeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`a` int(11) DEFAULT NULL," +
+		"`b` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL," +
+		"`c` int(11) GENERATED ALWAYS AS (`b` + 1) VIRTUAL" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	// should check unknown column first, then the prior ones.
+	sql := "alter table t add column d int as (c + f + 1) first"
+	assertErrorCode(c, tk, sql, mysql.ErrBadField)
+
+	// depended generated column should be prior to generated column self
+	sql = "alter table t add column d int as (c+1) first"
+	assertErrorCode(c, tk, sql, mysql.ErrGeneratedColumnNonPrior)
+
+	// correct case
+	tk.MustExec("alter table t add column d int as (c+1) after c")
+
+	// check position nil case
+	tk.MustExec("alter table t add column(e int as (c+1))")
+	tk.MustExec("drop table if exists t")
+}
+
 func (s *testIntegrationSuite9) TestChangingCharsetToUtf8(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 

@@ -84,3 +84,7 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 		a.eliminateMaxMin(child)
 	}
 }
+
+func (*maxMinEliminator) name() string {
+	return "max_min_eliminate"
+}

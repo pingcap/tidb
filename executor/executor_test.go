@@ -90,11 +90,13 @@ var _ = Suite(&testSuite1{})
 var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
 var _ = Suite(&testSuite4{})
+var _ = SerialSuites(&testShowStatsSuite{testSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testFlushSuite{})
+var _ = SerialSuites(&testShowStatsSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster

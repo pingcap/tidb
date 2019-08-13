@@ -2345,7 +2345,7 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 	tk.MustExec("insert kvvars values (1, 1)")
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("set @@tidb_backoff_lock_fast = 1")
-	tk2.MustExec("set @@tidb_back_off_weight = 100")
+	tk2.MustExec("set @@tidb_backoff_weight = 100")
 	backoffVal := new(int64)
 	backOffWeightVal := new(int32)
 	tk2.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {

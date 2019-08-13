@@ -327,8 +327,9 @@ func IsQuery(sql string) bool {
 	return false
 }
 
+// Session errors.
 var (
-	errForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
+	ErrForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
 		mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
 )
 

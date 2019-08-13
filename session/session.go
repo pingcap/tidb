@@ -579,7 +579,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	connID := s.sessionVars.ConnectionID
 	s.sessionVars.RetryInfo.Retrying = true
 	if s.sessionVars.TxnCtx.ForUpdate {
-		err = errForUpdateCantRetry.GenWithStackByArgs(connID)
+		err = ErrForUpdateCantRetry.GenWithStackByArgs(connID)
 		return err
 	}
 
@@ -1495,6 +1495,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	err = executor.LoadOptRuleBlacklist(se)
+	if err != nil {
+		return nil, err
+	}
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -1595,7 +1600,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 33
+	currentBootstrapVersion = 35
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
