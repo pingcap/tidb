@@ -351,7 +351,6 @@ type field struct {
 
 type fieldWriter struct {
 	pos           int
-	term          *string
 	ReadBuf       []byte
 	OutputBuf     []byte
 	enclosedChar  byte
