@@ -29,16 +29,17 @@ import (
 type Scanner struct {
 	snapshot     *tikvSnapshot
 	batchSize    int
-	valid        bool
 	cache        []*pb.KvPair
 	idx          int
 	nextStartKey []byte
 	endKey       []byte
-	eof          bool
 
 	// Use for reverse scan.
-	reverse    bool
 	nextEndKey []byte
+	reverse    bool
+
+	valid bool
+	eof   bool
 }
 
 func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int, reverse bool) (*Scanner, error) {
