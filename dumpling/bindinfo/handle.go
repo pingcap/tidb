@@ -14,7 +14,6 @@
 package bindinfo
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"go.uber.org/zap"
@@ -188,7 +187,6 @@ func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 	}
 	record.UpdateTime = record.CreateTime
 	record.Status = Using
-	record.BindSQL = h.getEscapeCharacter(record.BindSQL)
 
 	// insert the BindRecord to the storage.
 	_, err = exec.Execute(context.TODO(), h.insertBindInfoSQL(record))
@@ -445,15 +443,4 @@ func (h *BindHandle) logicalDeleteBindInfoSQL(normdOrigSQL, db string, updateTs 
 		updateTs,
 		normdOrigSQL,
 		db)
-}
-
-func (h *BindHandle) getEscapeCharacter(str string) string {
-	var buffer bytes.Buffer
-	for _, v := range str {
-		if v == '\'' || v == '"' || v == '\\' {
-			buffer.WriteString("\\")
-		}
-		buffer.WriteString(string(v))
-	}
-	return buffer.String()
 }
