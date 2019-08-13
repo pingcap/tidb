@@ -188,9 +188,11 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		start := time.Now()
 		defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	sessVars := base.ctx.GetSessionVars()
-	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
-		return ErrQueryInterrupted
+	if base.ctx != nil {
+		sessVars := base.ctx.GetSessionVars()
+		if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+			return ErrQueryInterrupted
+		}
 	}
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
