@@ -49,6 +49,7 @@ var (
 	tikvRegionCacheCounterWithScanRegionsError            = metrics.TiKVRegionCacheCounter.WithLabelValues("scan_regions", "err")
 	tikvRegionCacheCounterWithGetStoreOK                  = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "ok")
 	tikvRegionCacheCounterWithGetStoreError               = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "err")
+	tikvRegionCacheCounterWithInvalidateStoreRegionsOK    = metrics.TiKVRegionCacheCounter.WithLabelValues("invalidate_store_regions", "ok")
 )
 
 const (
@@ -359,6 +360,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 			// no region data, return error if failure.
 			return nil, err
 		}
+		logutil.Eventf(bo.ctx, "load region %d from pd, due to cache-miss", lr.GetID())
 		r = lr
 		c.mu.Lock()
 		c.insertRegionToCache(r)
@@ -371,6 +373,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 			logutil.Logger(bo.ctx).Error("load region failure",
 				zap.ByteString("key", key), zap.Error(err))
 		} else {
+			logutil.Eventf(bo.ctx, "load region %d from pd, due to need-reload", lr.GetID())
 			r = lr
 			c.mu.Lock()
 			c.insertRegionToCache(r)
@@ -647,7 +650,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 		if len(meta.Peers) == 0 {
 			return nil, errors.New("receive Region with no peer")
 		}
-		if isEndKey && !searchPrev && bytes.Compare(meta.StartKey, key) == 0 && len(meta.StartKey) != 0 {
+		if isEndKey && !searchPrev && bytes.Equal(meta.StartKey, key) && len(meta.StartKey) != 0 {
 			searchPrev = true
 			continue
 		}
@@ -967,6 +970,7 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 		epoch := rs.storeFails[rs.workStoreIdx]
 		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
 	}
 
@@ -1099,6 +1103,11 @@ func (s *Store) reResolve(c *RegionCache) {
 		return
 	}
 	if store == nil {
+		// store has be removed in PD, we should invalidate all regions using those store.
+		logutil.BgLogger().Info("invalidate regions in removed store",
+			zap.Uint64("store", s.storeID), zap.String("add", s.addr))
+		atomic.AddUint32(&s.fail, 1)
+		tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		return
 	}
 

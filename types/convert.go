@@ -98,6 +98,7 @@ func IntergerSignedLowerBound(intType byte) int64 {
 }
 
 // ConvertFloatToInt converts a float64 value to a int value.
+// `tp` is used in err msg, if there is overflow, this func will report err according to `tp`
 func ConvertFloatToInt(fval float64, lowerBound, upperBound int64, tp byte) (int64, error) {
 	val := RoundFloat(fval)
 	if val < float64(lowerBound) {
@@ -567,7 +568,11 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
 		str := string(hack.String(j.GetString()))
-		return StrToInt(sc, str)
+		if !unsigned {
+			return StrToInt(sc, str)
+		}
+		u, err := StrToUint(sc, str)
+		return int64(u), errors.Trace(err)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }

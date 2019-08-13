@@ -54,6 +54,10 @@ const (
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
+	// TiDBHashAgg is hint enforce hash aggregation.
+	TiDBHashAgg = "tidb_hashagg"
+	// TiDBStreamAgg is hint enforce stream aggregation.
+	TiDBStreamAgg = "tidb_streamagg"
 )
 
 const (
@@ -137,6 +141,9 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	plan4Agg.GroupByItems = gbyItems
 	plan4Agg.SetSchema(schema4Agg)
 	plan4Agg.collectGroupByColumns()
+	if hint := b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	return plan4Agg, aggIndexMap, nil
 }
 
@@ -327,9 +334,9 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 	return nil
 }
 
-func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
+func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 	if hintInfo == nil {
-		return nil
+		return
 	}
 
 	lhsAlias := extractTableAlias(p.children[0])
@@ -355,9 +362,10 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
 	// If there're multiple join types and one of them is not index join hint,
 	// then there is a conflict of join types.
 	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexInner^preferLeftAsIndexInner) > 0 {
-		return errors.New("Join hints are conflict, you can only specify one type of join")
+		errMsg := "Join hints are conflict, you can only specify one type of join"
+		warning := ErrInternal.GenWithStack(errMsg)
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 	}
-	return nil
 }
 
 func resetNotNullFlag(schema *expression.Schema, start, end int) {
@@ -428,10 +436,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
 
 	// Set preferred join algorithm if some join hints is specified by user.
-	err = joinPlan.setPreferredJoinType(b.TableHints())
-	if err != nil {
-		return nil, err
-	}
+	joinPlan.setPreferredJoinType(b.TableHints())
 
 	// "NATURAL JOIN" doesn't have "ON" or "USING" conditions.
 	//
@@ -856,7 +861,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			}
 		}
 		b.optFlag |= flagEliminateProjection
-		proj := LogicalProjection{Exprs: exprs, avoidColumnEvaluator: true}.Init(b.ctx)
+		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx)
 		proj.SetSchema(u.schema.Clone())
 		proj.SetChildren(child)
 		u.children[childID] = proj
@@ -1940,8 +1945,9 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
+func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) {
 	var sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
+	var preferAggType uint
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin:
@@ -1950,19 +1956,20 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 			INLJTables = tableNames2HintTableInfo(hint.Tables)
 		case TiDBHashJoin:
 			hashJoinTables = tableNames2HintTableInfo(hint.Tables)
+		case TiDBHashAgg:
+			preferAggType |= preferHashAgg
+		case TiDBStreamAgg:
+			preferAggType |= preferStreamAgg
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 {
-		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
-			sortMergeJoinTables:       sortMergeTables,
-			indexNestedLoopJoinTables: INLJTables,
-			hashJoinTables:            hashJoinTables,
-		})
-		return true
-	}
-	return false
+	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
+		sortMergeJoinTables:       sortMergeTables,
+		indexNestedLoopJoinTables: INLJTables,
+		hashJoinTables:            hashJoinTables,
+		preferAggType:             preferAggType,
+	})
 }
 
 func (b *PlanBuilder) popTableHints() {
@@ -1992,10 +1999,10 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
-	if b.pushTableHints(sel.TableHints) {
-		// table hints are only visible in the current SELECT statement.
-		defer b.popTableHints()
-	}
+	b.pushTableHints(sel.TableHints)
+	// table hints are only visible in the current SELECT statement.
+	defer b.popTableHints()
+
 	if sel.SelectStmtOpts != nil {
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
@@ -2103,6 +2110,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	var windowMapper map[*ast.WindowFuncExpr]int
 	if hasWindowFuncField {
 		windowFuncs := extractWindowFuncs(sel.Fields.Fields)
+		// we need to check the func args first before we check the window spec
+		err := b.checkWindowFuncArgs(ctx, p, windowFuncs, windowAggMap)
+		if err != nil {
+			return nil, err
+		}
 		groupedFuncs, err := b.groupWindowFuncs(windowFuncs)
 		if err != nil {
 			return nil, err
@@ -2272,6 +2284,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		partitionNames:      tn.PartitionNames,
+		TblCols:             make([]*expression.Column, 0, len(columns)),
 	}.Init(b.ctx)
 
 	var handleCol *expression.Column
@@ -2292,9 +2305,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 			handleCol = newCol
 		}
 		schema.Append(newCol)
+		ds.TblCols = append(ds.TblCols, newCol)
 	}
-	ds.SetSchema(schema)
-
 	// We append an extra handle column to the schema when "ds" is not a memory
 	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
 	// column is not the primary key of "ds".
@@ -2303,6 +2315,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
+		ds.TblCols = append(ds.TblCols, handleCol)
 	}
 	if handleCol != nil {
 		ds.handleCol = handleCol
@@ -2312,6 +2325,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 	} else {
 		b.handleHelper.pushMap(nil)
 	}
+	ds.SetSchema(schema)
 
 	var result LogicalPlan = ds
 
@@ -2622,10 +2636,9 @@ func buildColumns2Handle(
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
-	if b.pushTableHints(update.TableHints) {
-		// table hints are only visible in the current UPDATE statement.
-		defer b.popTableHints()
-	}
+	b.pushTableHints(update.TableHints)
+	// table hints are only visible in the current UPDATE statement.
+	defer b.popTableHints()
 
 	// update subquery table should be forbidden
 	var asNameList []string
@@ -2848,10 +2861,9 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
-	if b.pushTableHints(delete.TableHints) {
-		// table hints are only visible in the current DELETE statement.
-		defer b.popTableHints()
-	}
+	b.pushTableHints(delete.TableHints)
+	// table hints are only visible in the current DELETE statement.
+	defer b.popTableHints()
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {
@@ -3089,6 +3101,35 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 	return proj, propertyItems[:lenPartition], propertyItems[lenPartition:], newArgList, nil
 }
 
+func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p LogicalPlan, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) ([]expression.Expression, error) {
+	b.optFlag |= flagEliminateProjection
+
+	newArgList := make([]expression.Expression, 0, len(args))
+	// use below index for created a new col definition
+	// it's okay here because we only want to return the args used in window function
+	newColIndex := 0
+	for _, arg := range args {
+		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
+		if err != nil {
+			return nil, err
+		}
+		p = np
+		switch newArg.(type) {
+		case *expression.Column, *expression.Constant:
+			newArgList = append(newArgList, newArg)
+			continue
+		}
+		col := &expression.Column{
+			ColName:  model.NewCIStr(fmt.Sprintf("%d_proj_window_%d", p.ID(), newColIndex)),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  newArg.GetType(),
+		}
+		newColIndex += 1
+		newArgList = append(newArgList, col)
+	}
+	return newArgList, nil
+}
+
 func (b *PlanBuilder) buildByItemsForWindow(
 	ctx context.Context,
 	p LogicalPlan,
@@ -3179,10 +3220,13 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 	}
 
 	desc := orderByItems[0].Desc
-	if boundClause.Unit != nil {
-		// It can be guaranteed by the parser.
-		unitVal := boundClause.Unit.(*driver.ValueExpr)
-		unit := expression.Constant{Value: unitVal.Datum, RetType: unitVal.GetType()}
+	if boundClause.Unit != ast.TimeUnitInvalid {
+		// TODO: Perhaps we don't need to transcode this back to generic string
+		unitVal := boundClause.Unit.String()
+		unit := expression.Constant{
+			Value:   types.NewStringDatum(unitVal),
+			RetType: types.NewFieldType(mysql.TypeVarchar),
+		}
 
 		// When the order is asc:
 		//   `+` for following, and `-` for the preceding
@@ -3248,6 +3292,23 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 	}
 	frame.End, err = b.buildWindowFunctionFrameBound(ctx, spec, orderByItems, &frameClause.Extent.End)
 	return frame, err
+}
+
+func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
+	for _, windowFuncExpr := range windowFuncExprs {
+		args, err := b.buildArgs4WindowFunc(ctx, p, windowFuncExpr.Args, windowAggMap)
+		if err != nil {
+			return err
+		}
+		desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFuncExpr.F, args)
+		if err != nil {
+			return err
+		}
+		if desc == nil {
+			return ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFuncExpr.F))
+		}
+	}
+	return nil
 }
 
 func getAllByItems(itemsBuf []*ast.ByItem, spec *ast.WindowSpec) []*ast.ByItem {
@@ -3369,6 +3430,15 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 // Because of the grouped specification is different from it, we should especially check them before build window frame.
 func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderByItems []property.Item) error {
 	for _, f := range funcs {
+		if f.IgnoreNull {
+			return ErrNotSupportedYet.GenWithStackByArgs("IGNORE NULLS")
+		}
+		if f.Distinct {
+			return ErrNotSupportedYet.GenWithStackByArgs("<window function>(DISTINCT ..)")
+		}
+		if f.FromLast {
+			return ErrNotSupportedYet.GenWithStackByArgs("FROM LAST")
+		}
 		spec := f.Spec
 		if spec.Frame == nil {
 			continue
@@ -3406,7 +3476,7 @@ func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *a
 
 	frameType := spec.Frame.Type
 	if frameType == ast.Rows {
-		if bound.Unit != nil {
+		if bound.Unit != ast.TimeUnitInvalid {
 			return ErrWindowRowsIntervalUse.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
 		_, isNull, isExpectedType := getUintFromNode(b.ctx, bound.Expr)
@@ -3424,10 +3494,10 @@ func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *a
 	if !isNumeric && !isTemporal {
 		return ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
-	if bound.Unit != nil && !isTemporal {
+	if bound.Unit != ast.TimeUnitInvalid && !isTemporal {
 		return ErrWindowRangeFrameNumericType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
-	if bound.Unit == nil && !isNumeric {
+	if bound.Unit == ast.TimeUnitInvalid && !isNumeric {
 		return ErrWindowRangeFrameTemporalType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
 	return nil

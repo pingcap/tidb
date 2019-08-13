@@ -636,7 +636,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				} else {
 					errStack := errors.ErrorStack(err)
 					if !strings.Contains(errStack, "use of closed network connection") {
-						logutil.Logger(ctx).Error("read packet failed, close this connection", zap.Error(err))
+						logutil.Logger(ctx).Warn("read packet failed, close this connection",
+							zap.Error(errors.SuspendStack(err)))
 					}
 				}
 			}
@@ -1054,7 +1055,7 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-		err := loadDataInfo.CheckAndInsertOneBatch()
+		err := loadDataInfo.CheckAndInsertOneBatch(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -1122,7 +1123,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if err != nil {
 		loadDataInfo.Ctx.StmtRollback()
 	} else {
-		err = loadDataInfo.CheckAndInsertOneBatch()
+		err = loadDataInfo.CheckAndInsertOneBatch(ctx)
 		if err == nil {
 			err = loadDataInfo.Ctx.StmtCommit()
 		}

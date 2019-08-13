@@ -758,10 +758,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		join.attachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {
-			er.err = join.setPreferredJoinType(er.b.TableHints())
-			if er.err != nil {
-				return v, true
-			}
+			join.setPreferredJoinType(er.b.TableHints())
 		}
 		er.p = join
 	} else {
@@ -908,6 +905,22 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.isTrueToScalarFunc(v)
 	case *ast.DefaultExpr:
 		er.evalDefaultExpr(v)
+	// TODO: Perhaps we don't need to transcode these back to generic integers/strings
+	case *ast.TrimDirectionExpr:
+		er.ctxStack = append(er.ctxStack, &expression.Constant{
+			Value:   types.NewIntDatum(int64(v.Direction)),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		})
+	case *ast.TimeUnitExpr:
+		er.ctxStack = append(er.ctxStack, &expression.Constant{
+			Value:   types.NewStringDatum(v.Unit.String()),
+			RetType: types.NewFieldType(mysql.TypeVarchar),
+		})
+	case *ast.GetFormatSelectorExpr:
+		er.ctxStack = append(er.ctxStack, &expression.Constant{
+			Value:   types.NewStringDatum(v.Selector.String()),
+			RetType: types.NewFieldType(mysql.TypeVarchar),
+		})
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false

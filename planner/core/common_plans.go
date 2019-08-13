@@ -75,9 +75,10 @@ type ShowNextRowID struct {
 type CheckTable struct {
 	baseSchemaProducer
 
-	Tables []*ast.TableName
-
-	GenExprs map[model.TableColumnID]expression.Expression
+	DBName             string
+	TblInfo            *model.TableInfo
+	Indices            []table.Index
+	IndexLookUpReaders []*PhysicalIndexLookUpReader
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
@@ -273,8 +274,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 }
 
 func (e *Execute) rebuildRange(p Plan) error {
-	sctx := p.context()
-	sc := p.context().GetSessionVars().StmtCtx
+	sctx := p.SCtx()
+	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
 	case *PhysicalTableReader:
