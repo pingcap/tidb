@@ -132,7 +132,6 @@ type AfFinalResult struct {
 type HashAggExec struct {
 	baseExecutor
 
-	prepared         bool
 	sc               *stmtctx.StatementContext
 	PartialAggFuncs  []aggfuncs.AggFunc
 	FinalAggFuncs    []aggfuncs.AggFunc
@@ -144,10 +143,6 @@ type HashAggExec struct {
 	groupKeyBuffer   []byte
 	groupValDatums   []types.Datum
 
-	// After we support parallel execution for aggregation functions with distinct,
-	// we can remove this attribute.
-	isUnparallelExec bool
-
 	finishCh         chan struct{}
 	finalOutputCh    chan *AfFinalResult
 	finalInputCh     chan *chunk.Chunk
@@ -157,10 +152,14 @@ type HashAggExec struct {
 	partialWorkers   []HashAggPartialWorker
 	finalWorkers     []HashAggFinalWorker
 	defaultVal       *chunk.Chunk
+	childResult      *chunk.Chunk
+
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
 	isChildReturnEmpty bool
-
-	childResult *chunk.Chunk
+	// After we support parallel execution for aggregation functions with distinct,
+	// we can remove this attribute.
+	isUnparallelExec bool
+	prepared         bool
 }
 
 // HashAggInput indicates the input of hash agg exec.
