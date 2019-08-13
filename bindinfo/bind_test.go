@@ -263,7 +263,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(113))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
 
 	handle := tk.Se.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindData := handle.GetBindRecord("select * from t where i > ?", "test")
