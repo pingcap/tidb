@@ -14,6 +14,8 @@
 package aggfuncs
 
 import (
+	"strings"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -22,11 +24,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-// valueEvaluator is used to evaluate values for `first_value`, `last_value`, `nth_value`,
+// valueExtractor is used to extract values for `first_value`, `last_value`, `nth_value`,
 // `lead` and `lag`.
-type valueEvaluator interface {
-	// evaluateRow evaluates the expression using row and stores the result inside.
-	evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error
+type valueExtractor interface {
+	// extractRow extracts the expression using row and stores the result inside.
+	extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error
 	// appendResult appends the result to chunk.
 	appendResult(chk *chunk.Chunk, colIdx int)
 }
@@ -36,9 +38,11 @@ type value4Int struct {
 	isNull bool
 }
 
-func (v *value4Int) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Int) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
-	v.val, v.isNull, err = expr.EvalInt(ctx, row)
+	var val int64
+	val, v.isNull, err = expr.EvalInt(ctx, row)
+	v.val = val
 	return err
 }
 
@@ -55,7 +59,7 @@ type value4Float32 struct {
 	isNull bool
 }
 
-func (v *value4Float32) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Float32) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	var val float64
 	val, v.isNull, err = expr.EvalReal(ctx, row)
@@ -76,9 +80,10 @@ type value4Decimal struct {
 	isNull bool
 }
 
-func (v *value4Decimal) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Decimal) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	v.val, v.isNull, err = expr.EvalDecimal(ctx, row)
+	v.val = v.val.Copy()
 	return err
 }
 
@@ -95,9 +100,11 @@ type value4Float64 struct {
 	isNull bool
 }
 
-func (v *value4Float64) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Float64) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
-	v.val, v.isNull, err = expr.EvalReal(ctx, row)
+	var val float64
+	val, v.isNull, err = expr.EvalReal(ctx, row)
+	v.val = val
 	return err
 }
 
@@ -114,12 +121,16 @@ type value4String struct {
 	isNull bool
 }
 
-func (v *value4String) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4String) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
-	v.val, v.isNull, err = expr.EvalString(ctx, row)
+	var val string
+	val, v.isNull, err = expr.EvalString(ctx, row)
+	// memcopy val to v.val
+	var b strings.Builder
+	b.WriteString(val)
+	v.val = b.String()
 	return err
 }
-
 func (v *value4String) appendResult(chk *chunk.Chunk, colIdx int) {
 	if v.isNull {
 		chk.AppendNull(colIdx)
@@ -133,7 +144,7 @@ type value4Time struct {
 	isNull bool
 }
 
-func (v *value4Time) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Time) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	v.val, v.isNull, err = expr.EvalTime(ctx, row)
 	return err
@@ -152,9 +163,11 @@ type value4Duration struct {
 	isNull bool
 }
 
-func (v *value4Duration) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Duration) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
-	v.val, v.isNull, err = expr.EvalDuration(ctx, row)
+	var val types.Duration
+	val, v.isNull, err = expr.EvalDuration(ctx, row)
+	v.val = val
 	return err
 }
 
@@ -171,7 +184,7 @@ type value4JSON struct {
 	isNull bool
 }
 
-func (v *value4JSON) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4JSON) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	v.val, v.isNull, err = expr.EvalJSON(ctx, row)
 	v.val = v.val.Copy() // deep copy to avoid content change.
@@ -186,7 +199,7 @@ func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
 	}
 }
 
-func buildValueEvaluator(tp *types.FieldType) valueEvaluator {
+func buildValueExtractor(tp *types.FieldType) valueExtractor {
 	evalType := tp.EvalType()
 	if tp.Tp == mysql.TypeBit {
 		evalType = types.ETString
@@ -223,11 +236,11 @@ type firstValue struct {
 
 type partialResult4FirstValue struct {
 	gotFirstValue bool
-	evaluator     valueEvaluator
+	extractor     valueExtractor
 }
 
 func (v *firstValue) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4FirstValue{evaluator: buildValueEvaluator(v.tp)})
+	return PartialResult(&partialResult4FirstValue{extractor: buildValueExtractor(v.tp)})
 }
 
 func (v *firstValue) ResetPartialResult(pr PartialResult) {
@@ -242,7 +255,7 @@ func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 	}
 	if len(rowsInGroup) > 0 {
 		p.gotFirstValue = true
-		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[0])
+		err := p.extractor.extractRow(sctx, v.args[0], rowsInGroup[0])
 		if err != nil {
 			return err
 		}
@@ -255,7 +268,7 @@ func (v *firstValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partial
 	if !p.gotFirstValue {
 		chk.AppendNull(v.ordinal)
 	} else {
-		p.evaluator.appendResult(chk, v.ordinal)
+		p.extractor.appendResult(chk, v.ordinal)
 	}
 	return nil
 }
@@ -268,11 +281,11 @@ type lastValue struct {
 
 type partialResult4LastValue struct {
 	gotLastValue bool
-	evaluator    valueEvaluator
+	extractor    valueExtractor
 }
 
 func (v *lastValue) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4LastValue{evaluator: buildValueEvaluator(v.tp)})
+	return PartialResult(&partialResult4LastValue{extractor: buildValueExtractor(v.tp)})
 }
 
 func (v *lastValue) ResetPartialResult(pr PartialResult) {
@@ -284,7 +297,7 @@ func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []c
 	p := (*partialResult4LastValue)(pr)
 	if len(rowsInGroup) > 0 {
 		p.gotLastValue = true
-		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[len(rowsInGroup)-1])
+		err := p.extractor.extractRow(sctx, v.args[0], rowsInGroup[len(rowsInGroup)-1])
 		if err != nil {
 			return err
 		}
@@ -297,7 +310,7 @@ func (v *lastValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialR
 	if !p.gotLastValue {
 		chk.AppendNull(v.ordinal)
 	} else {
-		p.evaluator.appendResult(chk, v.ordinal)
+		p.extractor.appendResult(chk, v.ordinal)
 	}
 	return nil
 }
@@ -311,11 +324,11 @@ type nthValue struct {
 
 type partialResult4NthValue struct {
 	seenRows  uint64
-	evaluator valueEvaluator
+	extractor valueExtractor
 }
 
 func (v *nthValue) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4NthValue{evaluator: buildValueEvaluator(v.tp)})
+	return PartialResult(&partialResult4NthValue{extractor: buildValueExtractor(v.tp)})
 }
 
 func (v *nthValue) ResetPartialResult(pr PartialResult) {
@@ -330,7 +343,7 @@ func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []ch
 	p := (*partialResult4NthValue)(pr)
 	numRows := uint64(len(rowsInGroup))
 	if v.nth > p.seenRows && v.nth-p.seenRows <= numRows {
-		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[v.nth-p.seenRows-1])
+		err := p.extractor.extractRow(sctx, v.args[0], rowsInGroup[v.nth-p.seenRows-1])
 		if err != nil {
 			return err
 		}
@@ -344,7 +357,7 @@ func (v *nthValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialRe
 	if v.nth == 0 || p.seenRows < v.nth {
 		chk.AppendNull(v.ordinal)
 	} else {
-		p.evaluator.appendResult(chk, v.ordinal)
+		p.extractor.appendResult(chk, v.ordinal)
 	}
 	return nil
 }
