@@ -45,19 +45,14 @@ func splitTableRegion(store kv.SplitableStore, tbInfo *model.TableInfo, scatter 
 
 func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
 	// Example:
-	// ShardRowIDBits = 5
 	// PreSplitRegions = 3
 	//
 	// then will pre-split 2^(3-1) = 4 regions.
 	//
-	// in this code:
-	// max   = 1 << (tblInfo.ShardRowIDBits - 1) = 1 << (5-1) = 16
-	// step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions)) = 1 << (5-3) = 4;
-	//
 	// then split regionID is below:
-	// 4  << 59 = 2305843009213693952
-	// 8  << 59 = 4611686018427387904
-	// 12 << 59 = 6917529027641081856
+	// 1  << 61 = 2305843009213693952
+	// 2  << 61 = 4611686018427387904
+	// 3  << 61 = 6917529027641081856
 	//
 	// The 4 pre-split regions range is below:
 	// 0                   ~ 2305843009213693952
@@ -69,12 +64,10 @@ func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scat
 
 	// Split table region.
 	regionIDs := make([]uint64, 0, 1<<(tbInfo.PreSplitRegions-1)+len(tbInfo.Indices))
-	step := int64(1 << (tbInfo.ShardRowIDBits - tbInfo.PreSplitRegions))
-	// The highest bit is the symbol bit,and alloc _tidb_rowid will always be positive number.
-	// So we only need to split the region for the positive number.
-	max := int64(1 << (tbInfo.ShardRowIDBits - 1))
-	for p := int64(step); p < max; p += step {
-		recordID := p << (64 - tbInfo.ShardRowIDBits)
+
+	regionLen := int64(1) << (tbInfo.PreSplitRegions - 1)
+	for i := int64(1); i < regionLen; i++ {
+		recordID := i << (64 - tbInfo.PreSplitRegions)
 		recordPrefix := tablecodec.GenTableRecordPrefix(tbInfo.ID)
 		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
 		regionID, err := store.SplitRegion(key, scatter)
