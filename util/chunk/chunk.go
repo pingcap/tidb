@@ -79,9 +79,9 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	return chk
 }
 
-// RenewWithCapacity creates a new Chunk based on an existing Chunk with capacity. The newly
+// renewWithCapacity creates a new Chunk based on an existing Chunk with capacity. The newly
 // created Chunk has the same data schema with the old Chunk.
-func RenewWithCapacity(chk *Chunk, cap int) *Chunk {
+func renewWithCapacity(chk *Chunk, cap int) *Chunk {
 	newChk := new(Chunk)
 	if chk.columns == nil {
 		return newChk
@@ -99,16 +99,8 @@ func RenewWithCapacity(chk *Chunk, cap int) *Chunk {
 //  chk: old chunk(often used in previous call).
 //  maxChunkSize: the limit for the max number of rows.
 func Renew(chk *Chunk, maxChunkSize int) *Chunk {
-	newChk := new(Chunk)
-	if chk.columns == nil {
-		return newChk
-	}
 	newCap := reCalcCapacity(chk, maxChunkSize)
-	newChk.columns = renewColumns(chk.columns, newCap)
-	newChk.numVirtualRows = 0
-	newChk.capacity = newCap
-	newChk.requiredRows = maxChunkSize
-	return newChk
+	return renewWithCapacity(chk, newCap)
 }
 
 // renewColumns creates the columns of a Chunk. The capacity of the newly

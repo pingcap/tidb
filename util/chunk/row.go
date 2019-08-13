@@ -205,9 +205,9 @@ func (r Row) IsNull(colIdx int) bool {
 	return r.c.columns[colIdx].IsNull(r.idx)
 }
 
-// CopyConstruct creates a new chunk and copies this chunk's data into it.
+// CopyConstruct creates a new row and copies this row's data into it.
 func (r Row) CopyConstruct() Row {
-	newChk := RenewWithCapacity(r.c, 1)
+	newChk := renewWithCapacity(r.c, 1)
 	newChk.AppendRow(r)
 	return newChk.GetRow(0)
 }

@@ -92,7 +92,7 @@ func (v *lead) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4Lead)(pr)
 	p.seenRows = 0
 	p.curIdx = 0
-	p.extractors = nil
+	p.extractors = p.extractors[:0]
 	p.defaultExtractors.reset()
 	p.defaultConstExtractor = nil
 }
@@ -169,7 +169,7 @@ func (v *lag) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4Lag)(pr)
 	p.seenRows = 0
 	p.curIdx = 0
-	p.extractors = nil
+	p.extractors = p.extractors[:0]
 	p.defaultExtractors = p.defaultExtractors[:0]
 }
 
