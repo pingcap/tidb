@@ -1022,9 +1022,9 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		{
 			colPos:      0,
 			exprStr:     "a in (1, 2, 3)",
-			accessConds: "",
+			accessConds: "[in(test.t.a, 1, 2, 3)]",
 			filterConds: "",
-			resultStr:   "[[1, 1] [2, 2] [3, 3]]",
+			resultStr:   "[[1,1] [2,2] [3,3]]",
 			length:      types.UnspecifiedLength,
 		},
 	}

@@ -973,6 +973,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 				newRange.HighVal[i] = oneColumnRan[ranIdx].HighVal[0]
 				newRanges = append(newRanges, newRange)
 			}
+			ranges = append(ranges, newRanges...)
 		}
 		j++
 	}
