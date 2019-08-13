@@ -118,7 +118,7 @@ func splitIndexRegion(store kv.SplitableStore, tblInfo *model.TableInfo, scatter
 
 func waitScatterRegionFinish(store kv.SplitableStore, regionIDs ...uint64) {
 	for _, regionID := range regionIDs {
-		err := store.WaitScatterRegionFinish(regionID)
+		err := store.WaitScatterRegionFinish(regionID, 0)
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 		}

@@ -15,6 +15,7 @@ package cascades
 
 import (
 	plannercore "github.com/pingcap/tidb/planner/core"
+	impl "github.com/pingcap/tidb/planner/implementation"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
 )
@@ -25,7 +26,7 @@ type ImplementationRule interface {
 	Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool)
 	// OnImplement generates physical plan using this rule for current GroupExpr. Note that
 	// childrenReqProps of generated physical plan should be set correspondingly in this function.
-	OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (impl memo.Implementation, err error)
+	OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error)
 }
 
 // GetImplementationRules gets the all the candidate implementation rules based
@@ -44,4 +45,57 @@ var implementationMap = map[memo.Operand][]ImplementationRule{
 		nil,
 	},
 	*/
+	memo.OperandTableDual: {
+		&ImplTableDual{},
+	},
+	memo.OperandProjection: {
+		&ImplProjection{},
+	},
+}
+
+// ImplTableDual implements LogicalTableDual as PhysicalTableDual.
+type ImplTableDual struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplTableDual) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	if !prop.IsEmpty() {
+		return false
+	}
+	return true
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplTableDual) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicProp := expr.Group.Prop
+	logicDual := expr.ExprNode.(*plannercore.LogicalTableDual)
+	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats)
+	dual.SetSchema(logicProp.Schema)
+	return impl.NewTableDualImpl(dual), nil
+}
+
+// ImplProjection implements LogicalProjection as PhysicalProjection.
+type ImplProjection struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplProjection) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return true
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicProp := expr.Group.Prop
+	logicProj := expr.ExprNode.(*plannercore.LogicalProjection)
+	childProp, ok := logicProj.TryToGetChildProp(reqProp)
+	if !ok {
+		return nil, nil
+	}
+	proj := plannercore.PhysicalProjection{
+		Exprs:                logicProj.Exprs,
+		CalculateNoDelay:     logicProj.CalculateNoDelay,
+		AvoidColumnEvaluator: logicProj.AvoidColumnEvaluator,
+	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), childProp)
+	proj.SetSchema(logicProp.Schema)
+	return impl.NewProjectionImpl(proj), nil
 }

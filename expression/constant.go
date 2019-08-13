@@ -88,6 +88,14 @@ func (c *Constant) GetType() *types.FieldType {
 	return c.RetType
 }
 
+// VecEval evaluates this expression in a vectorized manner.
+func (c *Constant) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, input, result)
+	}
+	return c.DeferredExpr.VecEval(ctx, input, result)
+}
+
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 	if c.DeferredExpr != nil {
@@ -276,7 +284,6 @@ func (c *Constant) EvalJSON(ctx sessionctx.Context, _ chunk.Row) (json.BinaryJSO
 		if err != nil {
 			return json.BinaryJSON{}, true, err
 		}
-		fmt.Println("const eval json", val.GetMysqlJSON().String())
 		c.Value.SetMysqlJSON(val.GetMysqlJSON())
 		c.GetType().Tp = mysql.TypeJSON
 	} else {

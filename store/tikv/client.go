@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/debugpb"
@@ -43,14 +44,16 @@ import (
 var MaxRecvMsgSize = math.MaxInt64
 
 // Timeout durations.
-const (
+var (
 	dialTimeout               = 5 * time.Second
 	readTimeoutShort          = 20 * time.Second  // For requests that read/write several key-values.
 	ReadTimeoutMedium         = 60 * time.Second  // For requests that may need scan region.
 	ReadTimeoutLong           = 150 * time.Second // For requests that may need scan region multiple times.
 	GCTimeout                 = 5 * time.Minute
 	UnsafeDestroyRangeTimeout = 5 * time.Minute
+)
 
+const (
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
 )
@@ -163,7 +166,7 @@ func (a *connArray) Init(addr string, security config.Security, eventCh chan<- *
 			go batchClient.batchRecvLoop(cfg.TiKVClient, &a.tikvTransportLayerLoad)
 		}
 	}
-	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
+	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout, done)
 	if allowBatch {
 		go a.batchSendLoop(cfg.TiKVClient, addr, eventCh)
 	}
@@ -188,7 +191,6 @@ func (a *connArray) Close() {
 			a.v[i] = nil
 		}
 	}
-	close(a.streamTimeout)
 }
 
 // rpcClient is RPC client struct.
@@ -199,6 +201,7 @@ type rpcClient struct {
 	sync.RWMutex
 	isClosed bool
 	done     chan struct{}
+
 	conns    map[string]*connArray
 	security config.Security
 
@@ -209,6 +212,7 @@ type rpcClient struct {
 
 func newRPCClient(security config.Security) *rpcClient {
 	return &rpcClient{
+		done:     make(chan struct{}, 1),
 		conns:    make(map[string]*connArray),
 		security: security,
 		eventCh:  make(chan *eventMSG),
@@ -268,6 +272,12 @@ func (c *rpcClient) closeConns() {
 
 // SendRequest sends a Request to server and receives Response.
 func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("rpcClient.SendRequest", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	start := time.Now()
 	reqType := req.Type.String()
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
@@ -304,9 +314,12 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	// Coprocessor streaming request.
 	// Use context to support timeout for grpc streaming client.
 	ctx1, cancel := context.WithCancel(ctx)
-	defer cancel()
+	// Should NOT call defer cancel() here because it will cancel further stream.Recv()
+	// We put it in copStream.Lease.Cancel call this cancel at copStream.Close
+	// TODO: add unit test for SendRequest.
 	resp, err := tikvrpc.CallRPC(ctx1, client, req)
 	if err != nil {
+		cancel()
 		return nil, errors.Trace(err)
 	}
 
@@ -332,6 +345,8 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 }
 
 func (c *rpcClient) Close() error {
+	// TODO: add a unit test for SendRequest After Closed
+	close(c.done)
 	c.closeConns()
 	return nil
 }

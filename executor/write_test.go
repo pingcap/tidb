@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
@@ -1846,7 +1845,7 @@ func (s *testSuite4) TestLoadData(c *C) {
 	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
-	err = ld.CheckAndInsertOneBatch()
+	err = ld.CheckAndInsertOneBatch(context.Background())
 	c.Assert(err, IsNil)
 	r := tk.MustQuery(selectSQL)
 	r.Check(nil)
@@ -2097,7 +2096,7 @@ func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 
 	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	c.Assert(err, IsNil)
-	err = ld.CheckAndInsertOneBatch()
+	err = ld.CheckAndInsertOneBatch(context.Background())
 	c.Assert(err, IsNil)
 	ld.SetMessage()
 	err = ctx.StmtCommit()
@@ -2469,24 +2468,6 @@ func (s *testSuite4) TestDefEnumInsert(c *C) {
 	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
 }
 
-func (s *testSuite4) TestAutoIDInRetry(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table t (id int not null auto_increment primary key)")
-
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values ()")
-	tk.MustExec("insert into t values (),()")
-	tk.MustExec("insert into t values ()")
-
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
-	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
-
-	tk.MustExec("insert into t values ()")
-	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
-}
-
 func (s *testSuite4) TestIssue11059(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (pk int primary key, uk int unique, v int)")
@@ -2537,4 +2518,16 @@ func (s *testSuite4) TestSetWithRefGenCol(c *C) {
 	tk.MustQuery("select * from t3").Check(testkit.Rows("<nil> <nil>"))
 	_, err = tk.Exec(`insert into t3 set j = i + 1`)
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite4) TestSetWithCurrentTimestampAndNow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists tbl;`)
+	tk.MustExec(`create table t1(c1 timestamp default current_timestamp, c2 int, c3 timestamp default current_timestamp);`)
+	//c1 insert using now() function result, c3 using default value calculation, should be same
+	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(2);`)
+	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1"))
+	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(1);`)
+	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1", "1"))
 }

@@ -70,6 +70,11 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
+	// CastStrToIntStrict is used to control the way we cast float format string to int.
+	// If ConvertStrToIntStrict is false, we convert it to a valid float string first,
+	// then cast the float string to int string. Otherwise, we cast string to integer
+	// prefix in a strict way, only extract 0-9 and (+ or - in first bit).
+	CastStrToIntStrict bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -120,8 +125,8 @@ type StatementContext struct {
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexIDs         []int64
-	NowTs            time.Time
-	SysTs            time.Time
+	nowTs            time.Time // use this variable for now/current_timestamp calculation/cache for one stmt
+	stmtTimeCached   bool
 	StmtType         string
 	OriginalSQL      string
 	digestMemo       struct {
@@ -130,6 +135,21 @@ type StatementContext struct {
 		digest     string
 	}
 	Tables []TableEntry
+}
+
+// GetNowTsCached getter for nowTs, if not set get now time and cache it
+func (sc *StatementContext) GetNowTsCached() time.Time {
+	if !sc.stmtTimeCached {
+		now := time.Now()
+		sc.nowTs = now
+		sc.stmtTimeCached = true
+	}
+	return sc.nowTs
+}
+
+// ResetNowTs resetter for nowTs, clear cached time flag
+func (sc *StatementContext) ResetNowTs() {
+	sc.stmtTimeCached = false
 }
 
 // SQLDigest gets normalized and digest for provided sql.

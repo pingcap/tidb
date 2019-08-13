@@ -14,8 +14,10 @@
 package executor
 
 import (
+	"context"
 	"strings"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -43,9 +45,15 @@ var (
 //     2. handleChanged (bool) : is the handle changed after the update.
 //     3. newHandle (int64) : if handleChanged == true, the newHandle means the new handle after update.
 //     4. err (error) : error in the update.
-func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
+func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
 	onDup bool) (bool, bool, int64, error) {
-	sc := ctx.GetSessionVars().StmtCtx
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("executor.updateRecord", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	sc := sctx.GetSessionVars().StmtCtx
 	changed, handleChanged := false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
@@ -60,7 +68,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	for i, col := range t.Cols() {
 		if modified[i] {
 			// Cast changed fields with respective columns.
-			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
+			v, err := table.CastValue(sctx, newData[i], col.ToInfo())
 			if err != nil {
 				return false, false, 0, err
 			}
@@ -91,7 +99,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 				if err != nil {
 					return false, false, 0, err
 				}
-				if err = t.RebaseAutoID(ctx, recordID, true); err != nil {
+				if err = t.RebaseAutoID(sctx, recordID, true); err != nil {
 					return false, false, 0, err
 				}
 			}
@@ -112,7 +120,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// If no changes, nothing to do, return directly.
 	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
-		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
+		if sctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
 		return false, false, 0, nil
@@ -121,7 +129,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// 4. Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
-			if v, err := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal); err == nil {
+			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal); err == nil {
 				newData[i] = v
 				modified[i] = true
 			} else {
@@ -136,19 +144,19 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if sc.DupKeyAsWarning {
 			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
 			// If the new handle exists, this will avoid to remove the record.
-			err = tables.CheckHandleExists(ctx, t, newHandle, newData)
+			err = tables.CheckHandleExists(ctx, sctx, t, newHandle, newData)
 			if err != nil {
 				return false, handleChanged, newHandle, err
 			}
 		}
-		if err = t.RemoveRecord(ctx, h, oldData); err != nil {
+		if err = t.RemoveRecord(sctx, h, oldData); err != nil {
 			return false, false, 0, err
 		}
 		// the `affectedRows` is increased when adding new record.
 		if sc.DupKeyAsWarning {
-			newHandle, err = t.AddRecord(ctx, newData, table.IsUpdate, table.SkipHandleCheck)
+			newHandle, err = t.AddRecord(sctx, newData, table.IsUpdate, table.SkipHandleCheck, table.WithCtx(ctx))
 		} else {
-			newHandle, err = t.AddRecord(ctx, newData, table.IsUpdate)
+			newHandle, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
 		}
 
 		if err != nil {
@@ -159,7 +167,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	} else {
 		// Update record to new value and update index.
-		if err = t.UpdateRecord(ctx, h, oldData, newData, modified); err != nil {
+		if err = t.UpdateRecord(sctx, h, oldData, newData, modified); err != nil {
 			return false, false, 0, err
 		}
 		if onDup {
@@ -181,13 +189,4 @@ func resetErrDataTooLong(colName string, rowIdx int, err error) error {
 	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
 	logutil.BgLogger().Error("data too long for column", zap.String("colName", colName), zap.Int("rowIndex", rowIdx))
 	return newErr
-}
-
-func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int {
-	for i, col := range schema.Columns {
-		if col.DBName.L == handleCol.DBName.L && col.TblName.L == handleCol.TblName.L {
-			return i
-		}
-	}
-	panic("Couldn't get column information when do update/delete")
 }

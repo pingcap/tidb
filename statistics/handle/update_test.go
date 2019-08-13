@@ -1257,6 +1257,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 }
 
 func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
+	c.Skip("support update the topn of index equal conditions")
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
@@ -1299,11 +1300,11 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 			hist: "index:1 ndv:20\n" +
 				"num: 16 lower_bound: -inf upper_bound: 7 repeats: 0\n" +
 				"num: 16 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
-				"num: 8 lower_bound: 16 upper_bound: 21 repeats: 0",
+				"num: 9 lower_bound: 16 upper_bound: 21 repeats: 0",
 			rangeID: tblInfo.Indices[0].ID,
 			idxID:   tblInfo.Indices[1].ID,
 			idxCols: 1,
-			eqCount: 39,
+			eqCount: 32,
 		},
 		{
 			sql: "select * from t use index(idx_ac) where a = 1 and c < 21",
@@ -1314,7 +1315,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 			rangeID: tblInfo.Columns[2].ID,
 			idxID:   tblInfo.Indices[2].ID,
 			idxCols: 0,
-			eqCount: 35,
+			eqCount: 32,
 		},
 		{
 			sql: "select * from t use index(idx_ad) where a = 1 and d < 21",
@@ -1353,18 +1354,18 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 			sql: "select * from t use index(idx_ag) where a = 1 and g < 21",
 			hist: "column:7 ndv:20 totColSize:196\n" +
 				"num: 13 lower_bound: -838:59:59 upper_bound: 00:00:06 repeats: 0\n" +
-				"num: 11 lower_bound: 00:00:07 upper_bound: 00:00:13 repeats: 0\n" +
+				"num: 12 lower_bound: 00:00:07 upper_bound: 00:00:13 repeats: 0\n" +
 				"num: 10 lower_bound: 00:00:14 upper_bound: 00:00:21 repeats: 0",
 			rangeID: tblInfo.Columns[6].ID,
 			idxID:   tblInfo.Indices[6].ID,
 			idxCols: 0,
-			eqCount: 32,
+			eqCount: 30,
 		},
 		{
 			sql: `select * from t use index(idx_ah) where a = 1 and h < "1000-01-21"`,
 			hist: "column:8 ndv:20 totColSize:360\n" +
 				"num: 13 lower_bound: 1000-01-01 upper_bound: 1000-01-07 repeats: 0\n" +
-				"num: 11 lower_bound: 1000-01-08 upper_bound: 1000-01-14 repeats: 0\n" +
+				"num: 12 lower_bound: 1000-01-08 upper_bound: 1000-01-14 repeats: 0\n" +
 				"num: 10 lower_bound: 1000-01-15 upper_bound: 1000-01-21 repeats: 0",
 			rangeID: tblInfo.Columns[7].ID,
 			idxID:   tblInfo.Indices[7].ID,
@@ -1388,6 +1389,47 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, uint64(t.eqCount))
 	}
+}
+
+func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability.Store(1)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), index idx(a))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(`insert into t values (1)`)
+	}
+	h := s.do.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	testKit.MustExec("set @@tidb_enable_fast_analyze = 1")
+	testKit.MustExec("analyze table t with 3 buckets")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(`insert into t values (1)`)
+	}
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	is := s.do.InfoSchema()
+	c.Assert(h.Update(is), IsNil)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+
+	testKit.MustQuery("select * from t use index(idx) where a = 1")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tbl := h.GetTableStats(tblInfo)
+	val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Indices[1].CMSketch.QueryBytes(val), Equals, uint64(40))
 }
 
 func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {

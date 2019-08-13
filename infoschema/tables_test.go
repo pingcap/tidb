@@ -18,10 +18,13 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -84,7 +87,21 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 		testkit.Rows("1"))
 	tk.MustExec("insert into t(c, d) values(1, 1)")
 	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("30002"))
+		testkit.Rows("2"))
+
+	tk.MustQuery("show create table t").Check(
+		testkit.Rows("" +
+			"t CREATE TABLE `t` (\n" +
+			"  `c` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  `d` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`c`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002"))
+
+	// Test auto_increment for table without auto_increment column
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (d int)")
+	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("<nil>"))
 
 	tk.MustExec("create user xxx")
 	tk.MustExec("flush privileges")
@@ -257,23 +274,27 @@ func (s *testTableSuite) TestCurrentTimestampAsDefault(c *C) {
 					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
 					c_varchar_default varchar(20) default "current_timestamp",
 					c_varchar_default_3 varchar(20) default "current_timestamp(3)",
+					c_varchar_default_on_update datetime default current_timestamp on update current_timestamp,
+					c_varchar_default_on_update_fsp datetime(3) default current_timestamp(3) on update current_timestamp(3),
 					c_varchar_default_with_case varchar(20) default "cUrrent_tImestamp"
 				);`)
 
-	tk.MustQuery(`SELECT column_name, column_default
+	tk.MustQuery(`SELECT column_name, column_default, extra
 					FROM information_schema.COLUMNS
 					WHERE table_schema = "default_time_test" AND table_name = "default_time_table"
 					ORDER BY column_name`,
 	).Check(testkit.Rows(
-		"c_datetime <nil>",
-		"c_datetime_default CURRENT_TIMESTAMP",
-		"c_datetime_default_2 CURRENT_TIMESTAMP(2)",
-		"c_timestamp <nil>",
-		"c_timestamp_default CURRENT_TIMESTAMP",
-		"c_timestamp_default_3 CURRENT_TIMESTAMP(3)",
-		"c_varchar_default current_timestamp",
-		"c_varchar_default_3 current_timestamp(3)",
-		"c_varchar_default_with_case cUrrent_tImestamp",
+		"c_datetime <nil> ",
+		"c_datetime_default CURRENT_TIMESTAMP ",
+		"c_datetime_default_2 CURRENT_TIMESTAMP(2) ",
+		"c_timestamp <nil> ",
+		"c_timestamp_default CURRENT_TIMESTAMP ",
+		"c_timestamp_default_3 CURRENT_TIMESTAMP(3) ",
+		"c_varchar_default current_timestamp ",
+		"c_varchar_default_3 current_timestamp(3) ",
+		"c_varchar_default_on_update CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+		"c_varchar_default_on_update_fsp CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3)",
+		"c_varchar_default_with_case cUrrent_tImestamp ",
 	))
 	tk.MustExec("DROP DATABASE default_time_test")
 }
@@ -329,8 +350,8 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0 ", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s 0 ", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -351,24 +372,24 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		DB:      "information_schema",
 		Command: byte(1),
 		State:   1,
-		Info:    nil,
 		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
 	sm.processInfoMap[2] = &util.ProcessInfo{
-		ID:      2,
-		User:    "user-2",
-		Host:    "localhost",
-		DB:      nil,
-		Command: byte(2),
-		State:   2,
-		Info:    strings.Repeat("x", 101),
-		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+		ID:            2,
+		User:          "user-2",
+		Host:          "localhost",
+		Command:       byte(2),
+		State:         2,
+		Info:          strings.Repeat("x", 101),
+		StmtCtx:       tk.Se.GetSessionVars().StmtCtx,
+		CurTxnStartTS: 410090409861578752,
 	}
 	tk.Se.SetSessionManager(sm)
+	tk.Se.GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0 ", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0 07-29 03:26:05.158(410090409861578752)", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -382,11 +403,11 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0 07-29 03:26:05.158(410090409861578752)", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "<nil>"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0 ", "<nil>"),
 		))
 }
 
@@ -444,18 +465,36 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 # Cop_proc_avg: 0.1 Cop_proc_p90: 0.2 Cop_proc_max: 0.03 Cop_proc_addr: 127.0.0.1:20160
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8 Cop_wait_addr: 0.0.0.0:20160
 # Mem_max: 70724
+# Succ: true
 select * from t_slim;`))
-	c.Assert(f.Close(), IsNil)
+	c.Assert(f.Sync(), IsNil)
 	c.Assert(err, IsNil)
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
+		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|select * from t_slim;"))
+
+	// Test for long query.
+	_, err = f.Write([]byte(`
+# Time: 2019-02-13T19:33:56.571953+08:00
+`))
+	c.Assert(err, IsNil)
+	sql := "select * from "
+	for len(sql) < 5000 {
+		sql += "abcdefghijklmnopqrstuvwxyz_1234567890_qwertyuiopasdfghjklzxcvbnm"
+	}
+	sql += ";"
+	_, err = f.Write([]byte(sql))
+	c.Assert(err, IsNil)
+	c.Assert(f.Close(), IsNil)
+	re = tk.MustQuery("select query from information_schema.slow_query order by time desc limit 1")
+	rows := re.Rows()
+	c.Assert(rows[0][0], Equals, sql)
 }
 
 func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
@@ -491,4 +530,22 @@ func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
 func (s *testTableSuite) TestColumnStatistics(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.column_statistics").Check(testkit.Rows())
+}
+
+func (s *testTableSuite) TestReloadDropDatabase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database test_dbs")
+	tk.MustExec("use test_dbs")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("create table t3 (a int)")
+	is := domain.GetDomain(tk.Se).InfoSchema()
+	t2, err := is.TableByName(model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	tk.MustExec("drop database test_dbs")
+	is = domain.GetDomain(tk.Se).InfoSchema()
+	_, err = is.TableByName(model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
+	c.Assert(terror.ErrorEqual(infoschema.ErrTableNotExists, err), IsTrue)
+	_, ok := is.TableByID(t2.Meta().ID)
+	c.Assert(ok, IsFalse)
 }

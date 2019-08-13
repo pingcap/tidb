@@ -411,3 +411,13 @@ func IsMemoryDB(dbName string) bool {
 	}
 	return false
 }
+
+// HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
+func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
+	for _, col := range tbInfo.Columns {
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			return true, col.Name.L
+		}
+	}
+	return false, ""
+}

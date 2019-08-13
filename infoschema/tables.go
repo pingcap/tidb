@@ -552,6 +552,7 @@ var tableProcesslistCols = []columnInfo{
 	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
 	{"INFO", mysql.TypeString, 512, 0, nil, nil},
 	{"MEM", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"TxnStart", mysql.TypeVarchar, 64, mysql.NotNullFlag, "", nil},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -615,6 +616,12 @@ var tableTiKVRegionStatusCols = []columnInfo{
 	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"START_KEY", mysql.TypeBlob, types.UnspecifiedLength, 0, nil, nil},
 	{"END_KEY", mysql.TypeBlob, types.UnspecifiedLength, 0, nil, nil},
+	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"IS_INDEX", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
+	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"EPOCH_CONF_VER", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"EPOCH_VERSION", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"WRITTEN_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
@@ -625,6 +632,12 @@ var tableTiKVRegionStatusCols = []columnInfo{
 
 var tableTiKVRegionPeersCols = []columnInfo{
 	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"IS_INDEX", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
+	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"PEER_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"STORE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"IS_LEARNER", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
@@ -642,24 +655,49 @@ func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, e
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	regionsStat, err := tikvHelper.GetRegionsInfo()
+	regionsInfo, err := tikvHelper.GetRegionsInfo()
 	if err != nil {
 		return nil, err
 	}
-	for _, regionStat := range regionsStat.Regions {
-		row := make([]types.Datum, len(tableTiKVRegionStatusCols))
-		row[0].SetInt64(regionStat.ID)
-		row[1].SetString(regionStat.StartKey)
-		row[2].SetString(regionStat.EndKey)
-		row[3].SetInt64(regionStat.Epoch.ConfVer)
-		row[4].SetInt64(regionStat.Epoch.Version)
-		row[5].SetInt64(regionStat.WrittenBytes)
-		row[6].SetInt64(regionStat.ReadBytes)
-		row[7].SetInt64(regionStat.ApproximateSize)
-		row[8].SetInt64(regionStat.ApproximateKeys)
-		records = append(records, row)
+	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
+	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
+	for _, region := range regionsInfo.Regions {
+		tableList := tableInfos[region.ID]
+		if len(tableList) == 0 {
+			records = append(records, newTiKVRegionStatusCol(&region, nil))
+		}
+		for _, table := range tableList {
+			row := newTiKVRegionStatusCol(&region, &table)
+			records = append(records, row)
+		}
 	}
 	return records, nil
+}
+
+func newTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) []types.Datum {
+	row := make([]types.Datum, len(tableTiKVRegionStatusCols))
+	row[0].SetInt64(region.ID)
+	row[1].SetString(region.StartKey)
+	row[2].SetString(region.EndKey)
+	if table != nil {
+		row[3].SetInt64(table.Table.ID)
+		row[4].SetString(table.DB.Name.O)
+		row[5].SetString(table.Table.Name.O)
+		if table.IsIndex {
+			row[6].SetInt64(1)
+			row[7].SetInt64(table.Index.ID)
+			row[8].SetString(table.Index.Name.O)
+		} else {
+			row[6].SetInt64(0)
+		}
+	}
+	row[9].SetInt64(region.Epoch.ConfVer)
+	row[10].SetInt64(region.Epoch.Version)
+	row[11].SetInt64(region.WrittenBytes)
+	row[12].SetInt64(region.ReadBytes)
+	row[13].SetInt64(region.ApproximateSize)
+	row[14].SetInt64(region.ApproximateKeys)
+	return row
 }
 
 const (
@@ -677,46 +715,75 @@ func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, er
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	regionsStat, err := tikvHelper.GetRegionsInfo()
+	regionsInfo, err := tikvHelper.GetRegionsInfo()
 	if err != nil {
 		return nil, err
 	}
-	for _, regionStat := range regionsStat.Regions {
-		pendingPeerIDSet := set.NewInt64Set()
-		for _, peer := range regionStat.PendingPeers {
-			pendingPeerIDSet.Insert(peer.ID)
+	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
+	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
+	for _, region := range regionsInfo.Regions {
+		tableList := tableInfos[region.ID]
+		if len(tableList) == 0 {
+			records = append(records, newTiKVRegionPeersCols(&region, nil)...)
 		}
-		downPeerMap := make(map[int64]int64)
-		for _, peerStat := range regionStat.DownPeers {
-			downPeerMap[peerStat.ID] = peerStat.DownSec
-		}
-		for _, peer := range regionStat.Peers {
-			row := make([]types.Datum, len(tableTiKVRegionPeersCols))
-			row[0].SetInt64(regionStat.ID)
-			row[1].SetInt64(peer.ID)
-			row[2].SetInt64(peer.StoreID)
-			if peer.IsLearner {
-				row[3].SetInt64(1)
-			} else {
-				row[3].SetInt64(0)
-			}
-			if peer.ID == regionStat.Leader.ID {
-				row[4].SetInt64(1)
-			} else {
-				row[3].SetInt64(0)
-			}
-			if pendingPeerIDSet.Exist(peer.ID) {
-				row[4].SetString(pendingPeer)
-			} else if downSec, ok := downPeerMap[peer.ID]; ok {
-				row[5].SetString(downPeer)
-				row[6].SetInt64(downSec)
-			} else {
-				row[5].SetString(normalPeer)
-			}
-			records = append(records, row)
+		for _, table := range tableList {
+			rows := newTiKVRegionPeersCols(&region, &table)
+			records = append(records, rows...)
 		}
 	}
 	return records, nil
+}
+
+func newTiKVRegionPeersCols(region *helper.RegionInfo, table *helper.TableInfo) [][]types.Datum {
+	records := make([][]types.Datum, 0, len(region.Peers))
+	pendingPeerIDSet := set.NewInt64Set()
+	for _, peer := range region.PendingPeers {
+		pendingPeerIDSet.Insert(peer.ID)
+	}
+	downPeerMap := make(map[int64]int64)
+	for _, peerStat := range region.DownPeers {
+		downPeerMap[peerStat.ID] = peerStat.DownSec
+	}
+	template := make([]types.Datum, 7)
+	template[0].SetInt64(region.ID)
+	if table != nil {
+		template[1].SetInt64(table.Table.ID)
+		template[2].SetString(table.DB.Name.O)
+		template[3].SetString(table.Table.Name.O)
+		if table.IsIndex {
+			template[4].SetInt64(1)
+			template[5].SetInt64(table.Index.ID)
+			template[6].SetString(table.Index.Name.O)
+		} else {
+			template[4].SetInt64(0)
+		}
+	}
+	for _, peer := range region.Peers {
+		row := make([]types.Datum, len(tableTiKVRegionPeersCols))
+		copy(row, template)
+		row[7].SetInt64(peer.ID)
+		row[8].SetInt64(peer.StoreID)
+		if peer.IsLearner {
+			row[9].SetInt64(1)
+		} else {
+			row[9].SetInt64(0)
+		}
+		if peer.ID == region.Leader.ID {
+			row[10].SetInt64(1)
+		} else {
+			row[10].SetInt64(0)
+		}
+		if pendingPeerIDSet.Exist(peer.ID) {
+			row[11].SetString(pendingPeer)
+		} else if downSec, ok := downPeerMap[peer.ID]; ok {
+			row[11].SetString(downPeer)
+			row[12].SetInt64(downSec)
+		} else {
+			row[11].SetString(normalPeer)
+		}
+		records = append(records, row)
+	}
+	return records
 }
 
 func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -871,7 +938,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 			continue
 		}
 
-		rows := pi.ToRow()
+		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone)
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
@@ -1082,26 +1149,12 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
-	hasAutoIncID := false
-	for _, col := range tblInfo.Cols() {
-		if mysql.HasAutoIncrementFlag(col.Flag) {
-			hasAutoIncID = true
-			break
-		}
+	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
+	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
+	if err != nil {
+		return 0, err
 	}
-	autoIncID := tblInfo.AutoIncID
-	if hasAutoIncID {
-		is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
-		tbl, err := is.TableByName(schema.Name, tblInfo.Name)
-		if err != nil {
-			return 0, err
-		}
-		autoIncID, err = tbl.Allocator(ctx).NextGlobalAutoID(tblInfo.ID)
-		if err != nil {
-			return 0, err
-		}
-	}
-	return autoIncID, nil
+	return tbl.Allocator(ctx).Base() + 1, nil
 }
 
 func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
@@ -1172,10 +1225,15 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
 				}
-				autoIncID, err := getAutoIncrementID(ctx, schema, table)
-				if err != nil {
-					return nil, err
+				var autoIncID interface{}
+				hasAutoIncID, _ := HasAutoIncrementColumn(table)
+				if hasAutoIncID {
+					autoIncID, err = getAutoIncrementID(ctx, schema, table)
+					if err != nil {
+						return nil, err
+					}
 				}
+
 				rowCount := tableRowsMap[table.ID]
 				dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
 				avgRowLength := uint64(0)

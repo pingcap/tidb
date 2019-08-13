@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
@@ -123,18 +124,30 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
+	tk.MustExec("insert into t values (19), (19), (19)")
 
-	tk.MustExec("analyze table t")
+	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
+	tk.MustExec("analyze table t with 30 samples")
 	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.Columns[1].Len(), Equals, 20)
+	col := tbl.Columns[1]
+	c.Assert(col.Len(), Equals, 20)
+	c.Assert(len(col.CMSketch.TopN()), Equals, 1)
+	width, depth := col.CMSketch.GetWidthAndDepth()
+	c.Assert(depth, Equals, int32(5))
+	c.Assert(width, Equals, int32(2048))
 
-	tk.MustExec("analyze table t with 4 buckets")
+	tk.MustExec("analyze table t with 4 buckets, 0 topn, 4 cmsketch width, 4 cmsketch depth")
 	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.Columns[1].Len(), Equals, 4)
+	col = tbl.Columns[1]
+	c.Assert(col.Len(), Equals, 4)
+	c.Assert(len(col.CMSketch.TopN()), Equals, 0)
+	width, depth = col.CMSketch.GetWidthAndDepth()
+	c.Assert(depth, Equals, int32(4))
+	c.Assert(width, Equals, int32(4))
 }
 
 func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
@@ -168,7 +181,6 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
-	executor.MaxSampleSize = 20
 	executor.RandSeed = 123
 
 	tk.MustExec("use test")
@@ -201,6 +213,8 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 			indicesInfo = append(indicesInfo, idx)
 		}
 	}
+	opts := make(map[ast.AnalyzeOptionType]uint64)
+	opts[ast.AnalyzeOptNumSamples] = 20
 	mockExec := &executor.AnalyzeTestFastExec{
 		Ctx:             tk.Se.(sessionctx.Context),
 		PKInfo:          pkCol,
@@ -209,6 +223,7 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 		Concurrency:     1,
 		PhysicalTableID: tbl.(table.PhysicalTable).GetPhysicalID(),
 		TblInfo:         tblInfo,
+		Opts:            opts,
 	}
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
@@ -239,7 +254,6 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
-	executor.MaxSampleSize = 6
 	executor.RandSeed = 123
 
 	tk.MustExec("use test")
@@ -258,14 +272,14 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "char")`, i*3, i*3))
 	}
-	tk.MustExec("analyze table t with 5 buckets")
+	tk.MustExec("analyze table t with 5 buckets, 6 samples")
 
 	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.String(), Equals, "Table:41 Count:20\n"+
+	c.Assert(tbl.String(), Equals, "Table:43 Count:20\n"+
 		"column:1 ndv:20 totColSize:0\n"+
 		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
 		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
@@ -305,6 +319,19 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableStreaming = false
+	s.testAnalyzeIncremental(tk, c)
+}
+
+func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableStreaming = true
+	s.testAnalyzeIncremental(tk, c)
+}
+
+func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b))")
@@ -448,4 +475,31 @@ func (s *testSuite1) TestFailedAnalyzeRequest(c *C) {
 	_, err := tk.Exec("analyze table t")
 	c.Assert(err.Error(), Equals, "mock buildStatsFromResult error")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/buildStatsFromResult"), IsNil)
+}
+
+func (s *testSuite1) TestExtractTopN(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, 0)", i+10))
+	}
+	tk.MustExec("analyze table t")
+	is := s.dom.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	tblStats := s.dom.StatsHandle().GetTableStats(tblInfo)
+	colStats := tblStats.Columns[tblInfo.Columns[1].ID]
+	c.Assert(len(colStats.CMSketch.TopN()), Equals, 1)
+	item := colStats.CMSketch.TopN()[0]
+	c.Assert(item.Count, Equals, uint64(11))
+	idxStats := tblStats.Indices[tblInfo.Indices[0].ID]
+	c.Assert(len(idxStats.CMSketch.TopN()), Equals, 1)
+	item = idxStats.CMSketch.TopN()[0]
+	c.Assert(item.Count, Equals, uint64(11))
 }

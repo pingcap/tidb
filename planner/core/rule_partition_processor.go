@@ -13,6 +13,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -39,7 +41,7 @@ import (
 // partitionProcessor is here because it's easier to prune partition after predicate push down.
 type partitionProcessor struct{}
 
-func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
+func (s *partitionProcessor) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
 	return s.rewriteDataSource(lp)
 }
 
@@ -110,7 +112,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
 		// If the select condition would never be satisified, prune that partition.
-		pruned, err := s.canBePruned(ds.context(), col, expr, ds.allConds)
+		pruned, err := s.canBePruned(ds.SCtx(), col, expr, ds.allConds)
 		if err != nil {
 			return nil, err
 		}
@@ -126,19 +128,19 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 
 		// Not a deep copy.
 		newDataSource := *ds
-		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.context(), TypeTableScan, &newDataSource)
+		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), TypeTableScan, &newDataSource)
 		newDataSource.isPartition = true
 		newDataSource.physicalTableID = pi.Definitions[i].ID
 		// There are many expression nodes in the plan tree use the original datasource
 		// id as FromID. So we set the id of the newDataSource with the original one to
 		// avoid traversing the whole plan tree to update the references.
 		newDataSource.id = ds.id
-		newDataSource.statisticTable = getStatsTable(ds.context(), ds.table.Meta(), pi.Definitions[i].ID)
+		newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[i].ID)
 		children = append(children, &newDataSource)
 	}
 	if len(children) == 0 {
 		// No result after table pruning.
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.context())
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx())
 		tableDual.schema = ds.Schema()
 		return tableDual, nil
 	}
@@ -146,7 +148,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		// No need for the union all.
 		return children[0], nil
 	}
-	unionAll := LogicalUnionAll{}.Init(ds.context())
+	unionAll := LogicalUnionAll{}.Init(ds.SCtx())
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema)
 	return unionAll, nil
@@ -201,4 +203,8 @@ func (s *partitionProcessor) findByName(partitionNames []model.CIStr, partitionN
 		}
 	}
 	return false
+}
+
+func (*partitionProcessor) name() string {
+	return "partition_processor"
 }

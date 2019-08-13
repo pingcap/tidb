@@ -302,6 +302,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 				panic("batchRecvLoop receives a unknown response")
 			}
 			entry := value.(*batchCommandsEntry)
+			logutil.Eventf(entry.ctx, "receive %T response with other %d batched requests from %s", responses[i].GetCmd(), len(responses), c.target)
 			if atomic.LoadInt32(&entry.canceled) == 0 {
 				// Put the response only if the request is not canceled.
 				entry.res <- responses[i]
@@ -341,6 +342,7 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) (stopped bool) 
 }
 
 type batchCommandsEntry struct {
+	ctx context.Context
 	req *tikvpb.BatchCommandsRequest_Request
 	res chan *tikvpb.BatchCommandsResponse_Response
 
@@ -411,14 +413,25 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient, addr string, eventCh ch
 
 func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*tikvpb.BatchCommandsRequest_Request, requestIDs []uint64) {
 	// Choose a connection by round-robbin.
-	var cli *batchCommandsClient
-	for {
+	var cli *batchCommandsClient = nil
+	var target string = ""
+	for i := 0; i < len(a.batchCommandsClients); i++ {
 		a.index = (a.index + 1) % uint32(len(a.batchCommandsClients))
-		cli = a.batchCommandsClients[a.index]
+		target = a.batchCommandsClients[a.index].target
 		// The lock protects the batchCommandsClient from been closed while it's inuse.
-		if cli.tryLockForSend() {
+		if a.batchCommandsClients[a.index].tryLockForSend() {
+			cli = a.batchCommandsClients[a.index]
 			break
 		}
+	}
+	if cli == nil {
+		logutil.BgLogger().Warn("no available connections", zap.String("target", target))
+		for _, entry := range entries {
+			// Please ensure the error is handled in region cache correctly.
+			entry.err = errors.New("no available connections")
+			close(entry.res)
+		}
+		return
 	}
 	defer cli.unlockForSend()
 
@@ -471,6 +484,7 @@ func sendBatchRequest(
 	timeout time.Duration,
 ) (*tikvrpc.Response, error) {
 	entry := &batchCommandsEntry{
+		ctx:      ctx,
 		req:      req,
 		res:      make(chan *tikvpb.BatchCommandsResponse_Response, 1),
 		canceled: 0,

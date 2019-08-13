@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -45,7 +46,7 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64,
 		}
 		if bytes.Equal(splitKey, loc.StartKey) {
 			logutil.BgLogger().Info("skip split region",
-				zap.Binary("at", splitKey))
+				zap.String("at", hex.EncodeToString(splitKey)))
 			return 0, nil
 		}
 		res, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
@@ -65,9 +66,9 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64,
 		}
 		splitRegion := res.Resp.(*kvrpcpb.SplitRegionResponse)
 		logutil.BgLogger().Info("split region complete",
-			zap.Binary("at", splitKey),
-			zap.Stringer("new region left", splitRegion.GetLeft()),
-			zap.Stringer("new region right", splitRegion.GetRight()))
+			zap.String("at", hex.EncodeToString(splitKey)),
+			zap.Stringer("new region left", logutil.Hex(splitRegion.GetLeft())),
+			zap.Stringer("new region right", logutil.Hex(splitRegion.GetRight())))
 		left := splitRegion.GetLeft()
 		if left == nil {
 			return 0, nil
@@ -103,10 +104,15 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 }
 
 // WaitScatterRegionFinish implements SplitableStore interface.
-func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
+// backOff is the back off time of the wait scatter region.(Milliseconds)
+// if backOff <= 0, the default wait scatter back off time will be used.
+func (s *tikvStore) WaitScatterRegionFinish(regionID uint64, backOff int) error {
 	logutil.BgLogger().Info("wait scatter region",
 		zap.Uint64("regionID", regionID))
-	bo := NewBackoffer(context.Background(), waitScatterRegionFinishBackoff)
+	if backOff <= 0 {
+		backOff = waitScatterRegionFinishBackoff
+	}
+	bo := NewBackoffer(context.Background(), backOff)
 	logFreq := 0
 	for {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
