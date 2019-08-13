@@ -204,3 +204,10 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 func (r Row) IsNull(colIdx int) bool {
 	return r.c.columns[colIdx].IsNull(r.idx)
 }
+
+// CopyConstruct creates a new chunk and copies this chunk's data into it.
+func (r Row) CopyConstruct() Row {
+	newChk := RenewWithCapacity(r.c, 1)
+	newChk.AppendRow(r)
+	return newChk.GetRow(0)
+}
