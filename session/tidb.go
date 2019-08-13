@@ -328,8 +328,9 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 	return sRows, nil
 }
 
+// Session errors.
 var (
-	errForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
+	ErrForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
 		mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
 )
 
