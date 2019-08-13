@@ -55,10 +55,8 @@ func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Con
 type TableReaderExecutor struct {
 	baseExecutor
 
-	table     table.Table
-	keepOrder bool
-	desc      bool
-	ranges    []*ranger.Range
+	table  table.Table
+	ranges []*ranger.Range
 	// kvRanges are only use for union scan.
 	kvRanges []kv.KeyRange
 	dagPB    *tipb.DAGRequest
@@ -68,18 +66,19 @@ type TableReaderExecutor struct {
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
-	streaming     bool
 	feedback      *statistics.QueryFeedback
+	plans         []plannercore.PhysicalPlan
 
+	memTracker       *memory.Tracker
+	selectResultHook // for testing
+
+	keepOrder bool
+	desc      bool
+	streaming bool
 	// corColInFilter tells whether there's correlated column in filter.
 	corColInFilter bool
 	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
-	plans          []plannercore.PhysicalPlan
-
-	memTracker *memory.Tracker
-
-	selectResultHook // for testing
 }
 
 // Open initialzes necessary variables for using this executor.
