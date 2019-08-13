@@ -684,6 +684,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					logutil.Logger(ctx).Info("read packet timeout, close this connection",
 						zap.Duration("idle", idleTime),
 						zap.Uint64("waitTimeout", waitTimeout),
+						zap.Error(err),
 					)
 				} else {
 					errStack := errors.ErrorStack(err)
