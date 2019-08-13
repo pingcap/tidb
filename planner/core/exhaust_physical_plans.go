@@ -950,45 +950,29 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			HighVal: make([]types.Datum, pointLength, pointLength),
 		})
 	}
-	emptyRow := chunk.Row{}
+	sc := ijHelper.join.ctx.GetSessionVars().StmtCtx
 	for i, j := 0, 0; j < len(eqAndInFuncs); i++ {
 		// This position is occupied by join key.
 		if ijHelper.curIdxOff2KeyOff[i] != -1 {
 			continue
 		}
-		sf := eqAndInFuncs[j].(*expression.ScalarFunction)
-		// Deal with the first two args.
-		if _, ok := sf.GetArgs()[0].(*expression.Column); ok {
-			for _, ran := range ranges {
-				ran.LowVal[i], err = sf.GetArgs()[1].Eval(emptyRow)
-				if err != nil {
-					return nil, err
-				}
-				ran.HighVal[i] = ran.LowVal[i]
-			}
-		} else {
-			for _, ran := range ranges {
-				ran.LowVal[i], err = sf.GetArgs()[0].Eval(emptyRow)
-				if err != nil {
-					return nil, err
-				}
-				ran.HighVal[i] = ran.LowVal[i]
-			}
+		oneColumnRan, err := ranger.BuildColumnRange([]expression.Expression{eqAndInFuncs[j]}, sc, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
+		if err != nil {
+			return nil, err
 		}
-		// If the length of in function's constant list is more than one, we will expand ranges.
+		for _, ran := range ranges {
+			ran.LowVal[i] = oneColumnRan[0].LowVal[0]
+			ran.HighVal[i] = oneColumnRan[0].HighVal[0]
+		}
 		curRangeLen := len(ranges)
-		for argIdx := 2; argIdx < len(sf.GetArgs()); argIdx++ {
+		for ranIdx := 1; ranIdx < len(oneColumnRan); ranIdx++ {
 			newRanges := make([]*ranger.Range, 0, curRangeLen)
 			for oldRangeIdx := 0; oldRangeIdx < curRangeLen; oldRangeIdx++ {
 				newRange := ranges[oldRangeIdx].Clone()
-				newRange.LowVal[i], err = sf.GetArgs()[argIdx].Eval(emptyRow)
-				if err != nil {
-					return nil, err
-				}
-				newRange.HighVal[i] = newRange.LowVal[i]
+				newRange.LowVal[i] = oneColumnRan[ranIdx].LowVal[0]
+				newRange.HighVal[i] = oneColumnRan[ranIdx].HighVal[0]
 				newRanges = append(newRanges, newRange)
 			}
-			ranges = append(ranges, newRanges...)
 		}
 		j++
 	}
