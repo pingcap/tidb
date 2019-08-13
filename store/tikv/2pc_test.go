@@ -450,15 +450,15 @@ func (s *testCommitterSuite) TestPrewriteTxnSize(c *C) {
 	var val [1024]byte
 	for i := byte(50); i < 120; i++ {
 		err := txn.Set([]byte{i}, val[:])
-		c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
 	}
 
 	commiter, err := newTwoPhaseCommitterWithInit(txn, 1)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 
 	ctx := context.Background()
 	err = commiter.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), commiter.keys)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 
 	// Check the written locks in the first region (50 keys)
 	for i := byte(50); i < 100; i++ {
