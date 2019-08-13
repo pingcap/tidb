@@ -257,6 +257,7 @@ type MVCCStore interface {
 	ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error)
 	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
 	BatchResolveLock(startKey, endKey []byte, txnInfos map[uint64]uint64) error
+	GC(startKey, endKey []byte, safePoint uint64) error
 	DeleteRange(startKey, endKey []byte) error
 	Close() error
 }

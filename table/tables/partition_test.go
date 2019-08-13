@@ -83,10 +83,10 @@ PARTITION BY RANGE ( id ) (
 	// Check that add record writes to the partition, rather than the table.
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
-	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
+	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid))
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Greater, 0)
-	_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
+	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
@@ -174,10 +174,10 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 	// Check that add record writes to the partition, rather than the table.
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
-	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
+	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid))
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Greater, 0)
-	_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
+	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
@@ -210,10 +210,10 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 		c.Assert(err, IsNil)
 		txn, err = ts.se.Txn(true)
 		c.Assert(err, IsNil)
-		val, err = txn.Get(tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid))
+		val, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid))
 		c.Assert(err, IsNil)
 		c.Assert(len(val), Greater, 0)
-		_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
+		_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
 		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 	}
 	_, err = ts.se.Execute(context.Background(), "drop table if exists t1, t2;")

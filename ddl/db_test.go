@@ -207,6 +207,17 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	return testGetTableByName(c, ctx, s.schemaName, name)
 }
 
+func (s *testDBSuite) testGetDB(c *C, dbName string) *model.DBInfo {
+	ctx := s.s.(sessionctx.Context)
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
+	c.Assert(ok, IsTrue)
+	return db
+}
+
 func backgroundExec(s kv.Storage, sql string, done chan error) {
 	se, err := session.CreateSession4Test(s)
 	if err != nil {
@@ -628,8 +639,11 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
 	testCase := &testCases[0]
+	s.mustExec(c, "create database if not exists test_drop_db")
+	dbInfo := s.testGetDB(c, "test_drop_db")
+
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState && job.SchemaID == dbInfo.ID {
 			jobIDs := []int64{job.ID}
 			jobID = job.ID
 			hookCtx := mock.NewContext()
@@ -668,6 +682,8 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 			s.mustExec(c, "use test_drop_db")
 			s.mustExec(c, "create table if not exists t(c1 int, c2 int)")
 		}
+
+		dbInfo = s.testGetDB(c, "test_drop_db")
 
 		if testCase.action == model.ActionDropTable {
 			sql = "drop table t;"
@@ -2990,6 +3006,138 @@ func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {
 	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")
 }
 
+// port from mysql
+// https://github.com/mysql/mysql-server/blob/124c7ab1d6f914637521fd4463a993aa73403513/mysql-test/t/lock.test
+func (s *testDBSuite2) TestLock(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk.MustExec("use test")
+
+	/* Testing of table locking */
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1 (  `id` int(11) NOT NULL default '0', `id2` int(11) NOT NULL default '0', `id3` int(11) NOT NULL default '0', `dummy1` char(30) default NULL, PRIMARY KEY  (`id`,`id2`), KEY `index_id3` (`id3`))")
+	tk.MustExec("insert into t1 (id,id2) values (1,1),(1,2),(1,3)")
+	tk.MustExec("LOCK TABLE t1 WRITE")
+	tk.MustExec("select dummy1,count(distinct id) from t1 group by dummy1")
+	tk.MustExec("update t1 set id=-1 where id=1")
+	tk.MustExec("LOCK TABLE t1 READ")
+	_, err := tk.Exec("update t1 set id=1 where id=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+	tk.MustExec("unlock tables")
+	tk.MustExec("update t1 set id=1 where id=-1")
+	tk.MustExec("drop table t1")
+}
+
+// port from mysql
+// https://github.com/mysql/mysql-server/blob/4f1d7cf5fcb11a3f84cff27e37100d7295e7d5ca/mysql-test/t/tablelock.test
+func (s *testDBSuite2) TestTableLock(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+
+	/* Test of lock tables */
+	tk.MustExec("create table t1 ( n int auto_increment primary key)")
+	tk.MustExec("lock tables t1 write")
+	tk.MustExec("insert into t1 values(NULL)")
+	tk.MustExec("unlock tables")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+
+	tk.MustExec("lock tables t1 write")
+	tk.MustExec("insert into t1 values(NULL)")
+	tk.MustExec("unlock tables")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+
+	tk.MustExec("drop table if exists t1")
+
+	/* Test of locking and delete of files */
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("CREATE TABLE t1 (a int)")
+	tk.MustExec("CREATE TABLE t2 (a int)")
+	tk.MustExec("lock tables t1 write, t2 write")
+	tk.MustExec("drop table t1,t2")
+
+	tk.MustExec("CREATE TABLE t1 (a int)")
+	tk.MustExec("CREATE TABLE t2 (a int)")
+	tk.MustExec("lock tables t1 write, t2 write")
+	tk.MustExec("drop table t2,t1")
+}
+
+// port from mysql
+// https://github.com/mysql/mysql-server/blob/4f1d7cf5fcb11a3f84cff27e37100d7295e7d5ca/mysql-test/t/lock_tables_lost_commit.test
+func (s *testDBSuite2) TestTableLocksLostCommit(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1(a INT)")
+	tk.MustExec("LOCK TABLES t1 WRITE")
+	tk.MustExec("INSERT INTO t1 VALUES(10)")
+
+	_, err := tk2.Exec("SELECT * FROM t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	tk.Se.Close()
+
+	tk2.MustExec("SELECT * FROM t1")
+	tk2.MustExec("DROP TABLE t1")
+
+	tk.MustExec("unlock tables")
+}
+
+// test write local lock
+func (s *testDBSuite2) TestWriteLocal(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 ( n int auto_increment primary key)")
+
+	// Test: allow read
+	tk.MustExec("lock tables t1 write local")
+	tk.MustExec("insert into t1 values(NULL)")
+	tk2.MustQuery("select count(*) from t1")
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+
+	// Test: forbid write
+	tk.MustExec("lock tables t1 write local")
+	_, err := tk2.Exec("insert into t1 values(NULL)")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+
+	// Test mutex: lock write local first
+	tk.MustExec("lock tables t1 write local")
+	_, err = tk2.Exec("lock tables t1 write local")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("lock tables t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("lock tables t1 read")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+
+	// Test mutex: lock write first
+	tk.MustExec("lock tables t1 write")
+	_, err = tk2.Exec("lock tables t1 write local")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+
+	// Test mutex: lock read first
+	tk.MustExec("lock tables t1 read")
+	_, err = tk2.Exec("lock tables t1 write local")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+}
+
 func (s *testDBSuite2) TestLockTables(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("skip race test")
@@ -3098,9 +3246,9 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	// Test lock table by other session in transaction and commit with retry.
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
+	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1")
-	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0")
 	tk2.MustExec("lock tables t1 write")
 	_, err = tk.Exec("commit")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue, Commentf("err: %v\n", err))

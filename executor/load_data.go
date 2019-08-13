@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -25,9 +26,14 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
+)
+
+var (
+	null = []byte("NULL")
 )
 
 // LoadDataExec represents a load data executor.
@@ -106,11 +112,18 @@ type LoadDataInfo struct {
 	LinesInfo   *ast.LinesClause
 	IgnoreLines uint64
 	Ctx         sessionctx.Context
+	rows        [][]types.Datum
 }
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
 func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 	e.maxRowsInBatch = limit
+	if uint64(cap(e.rows)) < limit {
+		e.rows = make([][]types.Datum, 0, limit)
+		for i := 0; uint64(i) < limit; i++ {
+			e.rows = append(e.rows, make([]types.Datum, len(e.Table.Cols())))
+		}
+	}
 }
 
 // getValidData returns prevData and curData that starts from starting symbol.
@@ -125,7 +138,7 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 	prevLen := len(prevData)
 	if prevLen > 0 {
 		// starting symbol in the prevData
-		idx := strings.Index(string(prevData), e.LinesInfo.Starting)
+		idx := strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
 		if idx != -1 {
 			return prevData[idx:], curData
 		}
@@ -136,14 +149,14 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 			restStart = curData[:startingLen-1]
 		}
 		prevData = append(prevData, restStart...)
-		idx = strings.Index(string(prevData), e.LinesInfo.Starting)
+		idx = strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
 		if idx != -1 {
 			return prevData[idx:prevLen], curData
 		}
 	}
 
 	// starting symbol in the curData
-	idx := strings.Index(string(curData), e.LinesInfo.Starting)
+	idx := strings.Index(string(hack.String(curData)), e.LinesInfo.Starting)
 	if idx != -1 {
 		return nil, curData[idx:]
 	}
@@ -172,7 +185,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 	}
 	endIdx := -1
 	if len(curData) >= curStartIdx {
-		endIdx = strings.Index(string(curData[curStartIdx:]), e.LinesInfo.Terminated)
+		endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
 	}
 	if endIdx == -1 {
 		// no terminated symbol
@@ -182,7 +195,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 		// terminated symbol in the middle of prevData and curData
 		curData = append(prevData, curData...)
-		endIdx = strings.Index(string(curData[startingLen:]), e.LinesInfo.Terminated)
+		endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
 			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
@@ -199,7 +212,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 	// terminated symbol in the curData
 	prevData = append(prevData, curData[:nextDataIdx]...)
-	endIdx = strings.Index(string(prevData[startingLen:]), e.LinesInfo.Terminated)
+	endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
 	}
@@ -223,7 +236,6 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		isEOF = true
 		prevData, curData = curData, prevData
 	}
-	rows := make([][]types.Datum, 0, e.maxRowsInBatch)
 	for len(curData) > 0 {
 		line, curData, hasStarting = e.getLine(prevData, curData)
 		prevData = nil
@@ -252,8 +264,9 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		if err != nil {
 			return nil, false, err
 		}
-		rows = append(rows, e.colsToRow(ctx, cols))
+		e.colsToRow(ctx, cols)
 		e.rowCount++
+		e.curBatchCnt++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
 			logutil.BgLogger().Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
@@ -261,12 +274,22 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 			break
 		}
 	}
-	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(rows)))
-	err := e.batchCheckAndInsert(rows, e.addRecordLD)
-	if err != nil {
-		return nil, reachLimit, err
-	}
 	return curData, reachLimit, nil
+}
+
+// CheckAndInsertOneBatch is used to commit one transaction batch full filled data
+func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context) error {
+	var err error
+	if e.curBatchCnt == 0 {
+		return err
+	}
+	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(e.curBatchCnt)
+	err = e.batchCheckAndInsert(ctx, e.rows[0:e.curBatchCnt], e.addRecordLD)
+	if err != nil {
+		return err
+	}
+	e.curBatchCnt = 0
+	return err
 }
 
 // SetMessage sets info message(ERR_LOAD_INFO) generated by LOAD statement, it is public because of the special way that
@@ -282,8 +305,14 @@ func (e *LoadDataInfo) SetMessage() {
 }
 
 func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datum {
+	totalCols := e.Table.Cols()
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
+			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
+			if types.IsTypeTime(totalCols[i].Tp) && mysql.HasNotNullFlag(totalCols[i].Flag) {
+				e.row[i].SetMysqlTime(types.CurrentTime(totalCols[i].Tp))
+				continue
+			}
 			e.row[i].SetNull()
 			continue
 		}
@@ -295,7 +324,7 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 			e.row[i].SetString(string(cols[i].str))
 		}
 	}
-	row, err := e.getRow(ctx, e.row)
+	row, err := e.getRowInPlace(ctx, e.row, e.rows[e.curBatchCnt])
 	if err != nil {
 		e.handleWarning(err)
 		return nil
@@ -303,11 +332,11 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 	return row
 }
 
-func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
+func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) (int64, error) {
 	if row == nil {
 		return 0, nil
 	}
-	h, err := e.addRecord(row)
+	h, err := e.addRecord(ctx, row)
 	if err != nil {
 		e.handleWarning(err)
 	}
@@ -324,15 +353,15 @@ type fieldWriter struct {
 	pos           int
 	enclosedChar  byte
 	fieldTermChar byte
-	term          *string
+	term          string
 	isEnclosed    bool
 	isLineStart   bool
 	isFieldStart  bool
-	ReadBuf       *[]byte
+	ReadBuf       []byte
 	OutputBuf     []byte
 }
 
-func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf *[]byte, term *string) {
+func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf []byte, term string) {
 	w.isEnclosed = false
 	w.isLineStart = true
 	w.isFieldStart = true
@@ -347,8 +376,8 @@ func (w *fieldWriter) putback() {
 }
 
 func (w *fieldWriter) getChar() (bool, byte) {
-	if w.pos < len(*w.ReadBuf) {
-		ret := (*w.ReadBuf)[w.pos]
+	if w.pos < len(w.ReadBuf) {
+		ret := w.ReadBuf[w.pos]
 		w.pos++
 		return true, ret
 	}
@@ -357,9 +386,9 @@ func (w *fieldWriter) getChar() (bool, byte) {
 
 func (w *fieldWriter) isTerminator() bool {
 	chkpt, isterm := w.pos, true
-	for i := 1; i < len(*w.term); i++ {
+	for i := 1; i < len(w.term); i++ {
 		flag, ch := w.getChar()
-		if !flag || ch != (*w.term)[i] {
+		if !flag || ch != w.term[i] {
 			isterm = false
 			break
 		}
@@ -473,11 +502,11 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 		return fields, nil
 	}
 
-	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Terminated[0], &line, &e.FieldsInfo.Terminated)
+	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Terminated[0], line, e.FieldsInfo.Terminated)
 	for {
 		eol, f := reader.GetField()
 		f = f.escape()
-		if string(f.str) == "NULL" && !f.enclosed {
+		if bytes.Equal(f.str, null) && !f.enclosed {
 			f.str = []byte{'N'}
 			f.maybeNull = true
 		}

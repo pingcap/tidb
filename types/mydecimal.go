@@ -107,6 +107,14 @@ var (
 	zeroMyDecimal = MyDecimal{}
 )
 
+// get the zero of MyDecimal with the specified result fraction digits
+func zeroMyDecimalWithFrac(frac int8) MyDecimal {
+	zero := MyDecimal{}
+	zero.digitsFrac = frac
+	zero.resultFrac = frac
+	return zero
+}
+
 // add adds a and b and carry, returns the sum and new carry.
 func add(a, b, carry int32) (int32, int32) {
 	sum := a + b + carry
@@ -1080,7 +1088,7 @@ with the correct -1/0/+1 result
 		then the encoded value is not memory comparable.
 
   NOTE
-    the buffer is assumed to be of the size decimalBinSize(precision, frac)
+    the buffer is assumed to be of the size DecimalBinSize(precision, frac)
 
   RETURN VALUE
   	bin     - binary value
@@ -1326,7 +1334,7 @@ func (d *MyDecimal) FromBin(bin []byte, precision, frac int) (binSize int, err e
 	if bin[binIdx]&0x80 > 0 {
 		mask = 0
 	}
-	binSize = decimalBinSize(precision, frac)
+	binSize = DecimalBinSize(precision, frac)
 	dCopy := make([]byte, 40)
 	dCopy = dCopy[:binSize]
 	copy(dCopy, bin)
@@ -1401,8 +1409,8 @@ func (d *MyDecimal) FromBin(bin []byte, precision, frac int) (binSize int, err e
 	return binSize, err
 }
 
-// decimalBinSize returns the size of array to hold a binary representation of a decimal.
-func decimalBinSize(precision, frac int) int {
+// DecimalBinSize returns the size of array to hold a binary representation of a decimal.
+func DecimalBinSize(precision, frac int) int {
 	digitsInt := precision - frac
 	wordsInt := digitsInt / digitsPerWord
 	wordsFrac := frac / digitsPerWord
@@ -1556,7 +1564,7 @@ func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
 				if to == nil {
 					return 0, nil
 				}
-				*to = zeroMyDecimal
+				*to = zeroMyDecimalWithFrac(to.resultFrac)
 				return 0, nil
 			}
 		}
@@ -1911,7 +1919,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 			idx++
 			/* We got decimal zero */
 			if idx == end {
-				*to = zeroMyDecimal
+				*to = zeroMyDecimalWithFrac(to.resultFrac)
 				break
 			}
 		}
@@ -2010,7 +2018,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	}
 	if prec1 <= 0 {
 		/* short-circuit everything: from1 == 0 */
-		*to = zeroMyDecimal
+		*to = zeroMyDecimalWithFrac(to.resultFrac)
 		return nil
 	}
 	prec1 -= countLeadingZeroes((prec1-1)%digitsPerWord, from1.wordBuf[idx1])
@@ -2234,7 +2242,7 @@ func DecimalPeak(b []byte) (int, error) {
 	}
 	precision := int(b[0])
 	frac := int(b[1])
-	return decimalBinSize(precision, frac) + 2, nil
+	return DecimalBinSize(precision, frac) + 2, nil
 }
 
 // NewDecFromInt creates a MyDecimal from int.

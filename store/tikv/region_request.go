@@ -15,6 +15,9 @@ package tikv
 
 import (
 	"context"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"sync/atomic"
 	"time"
 
@@ -26,9 +29,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 )
 
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
@@ -82,15 +82,13 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		case "GCNotLeader":
 			if req.Type == tikvrpc.CmdGC {
 				failpoint.Return(&tikvrpc.Response{
-					Type: tikvrpc.CmdGC,
-					GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+					Resp: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
 				}, nil, nil)
 			}
 		case "GCServerIsBusy":
 			if req.Type == tikvrpc.CmdGC {
 				failpoint.Return(&tikvrpc.Response{
-					Type: tikvrpc.CmdGC,
-					GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
+					Resp: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
 				}, nil, nil)
 			}
 		}
@@ -112,6 +110,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 			return resp, nil, err
 		}
 
+		logutil.Eventf(bo.ctx, "send %s request to region %d at %s", req.Type, regionID.id, ctx.Addr)
 		s.storeAddr = ctx.Addr
 		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {
