@@ -203,13 +203,13 @@ func FromGoTime(t gotime.Time) MysqlTime {
 // FromDate makes a internal time representation from the given date.
 func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) MysqlTime {
 	return MysqlTime{
-		uint16(year),
-		uint8(month),
-		uint8(day),
-		int16(hour),
-		uint8(minute),
-		uint8(second),
-		uint32(microsecond),
+		year:        uint16(year),
+		month:       uint8(month),
+		day:         uint8(day),
+		hour:        uint32(hour),
+		minute:      uint8(minute),
+		second:      uint8(second),
+		microsecond: uint32(microsecond),
 	}
 }
 
@@ -988,8 +988,7 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 	year, month, day := gotime.Now().In(sc.TimeZone).Date()
 	sign, hour, minute, second, frac := splitDuration(d.Duration)
 	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
-	timePart := MysqlTime{}
-	seconds2MysqlTime(hour*3600+minute*60+second, frac, &timePart)
+	timePart := FromDate(0, 0, 0, hour, minute, second, frac)
 	mixDateAndTime(&datePart, &timePart, sign < 0)
 
 	t := Time{
@@ -2355,7 +2354,7 @@ func hour24TwoDigits(t *MysqlTime, input string, ctx map[string]int) (string, bo
 	if !succ || v >= 24 {
 		return input, false
 	}
-	t.hour = int16(v)
+	t.hour = uint32(v)
 	return input[2:], true
 }
 
@@ -2408,9 +2407,9 @@ func time12Hour(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	remain := skipWhiteSpace(input[8:])
 	switch {
 	case strings.HasPrefix(remain, "AM"):
-		t.hour = int16(hour)
+		t.hour = uint32(hour)
 	case strings.HasPrefix(remain, "PM"):
-		t.hour = int16(hour + 12)
+		t.hour = uint32(hour + 12)
 	default:
 		return input, false
 	}
@@ -2443,7 +2442,7 @@ func time24Hour(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 		return input, false
 	}
 
-	t.hour = int16(hour)
+	t.hour = uint32(hour)
 	t.minute = uint8(minute)
 	t.second = uint8(second)
 	return input[8:], true
@@ -2524,7 +2523,7 @@ func hour24Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 	if !ok || v > 23 {
 		return input, false
 	}
-	t.hour = int16(v)
+	t.hour = uint32(v)
 	ctx["%H"] = v
 	return input[length:], true
 }
@@ -2538,7 +2537,7 @@ func hour12Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 	if !ok || v > 12 || v == 0 {
 		return input, false
 	}
-	t.hour = int16(v)
+	t.hour = uint32(v)
 	return input[length:], true
 }
 

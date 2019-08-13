@@ -24,11 +24,11 @@ type MysqlTime struct {
 	year  uint16 // year <= 9999
 	month uint8  // month <= 12
 	day   uint8  // day <= 31
-	// When it's type is Time, HH:MM:SS may be 839:59:59, so use int to avoid overflow.
-	hour        int16 // hour <= 23
+	// When it's type is Time, HH:MM:SS may be 839:59:59, so use uint32 to avoid overflow.
+	hour        uint32 // hour <= 23
+	microsecond uint32
 	minute      uint8 // minute <= 59
 	second      uint8 // second <= 59
-	microsecond uint32
 }
 
 // Year returns the year value.
@@ -173,7 +173,7 @@ func AddDate(year, month, day int64, ot gotime.Time) (nt gotime.Time) {
 }
 
 func calcTimeFromSec(to *MysqlTime, seconds, microseconds int) {
-	to.hour = int16(seconds / 3600)
+	to.hour = uint32(seconds / 3600)
 	seconds = seconds % 3600
 	to.minute = uint8(seconds / 60)
 	to.second = uint8(seconds % 60)
@@ -337,34 +337,30 @@ func calcWeek(t *MysqlTime, wb weekBehaviour) (year int, week int) {
 
 // mixDateAndTime mixes a date value and a time value.
 func mixDateAndTime(date, time *MysqlTime, neg bool) {
+	if !neg && time.hour < 24 {
+		date.hour = time.hour
+		date.minute = time.minute
+		date.second = time.second
+		date.microsecond = time.microsecond
+		return
+	}
+
+	// Time is negative or outside of 24 hours internal.
 	sign := -1
 	if neg {
 		sign = 1
 	}
 	seconds, microseconds, _ := calcTimeDiff(*date, *time, sign)
+
 	// If we want to use this function with arbitrary dates, this code will need
 	// to cover cases when time is negative and "date < -time".
-	seconds2MysqlTime(seconds, microseconds, date)
-}
 
-func seconds2MysqlTime(seconds, microseconds int, to *MysqlTime) {
 	days := seconds / secondsIn24Hour
-	calcTimeFromSec(to, seconds%secondsIn24Hour, microseconds)
+	calcTimeFromSec(date, seconds%secondsIn24Hour, microseconds)
 	year, month, day := getDateFromDaynr(uint(days))
-	to.year = uint16(year)
-	to.month = uint8(month)
-	to.day = uint8(day)
-	if to.year != 0 || to.month != 0 {
-		return
-	}
-	for i, d := range daysInMonth {
-		if days-d < 0 {
-			to.day = uint8(days)
-			to.month = uint8(i + 1)
-			break
-		}
-		days -= d
-	}
+	date.year = uint16(year)
+	date.month = uint8(month)
+	date.day = uint8(day)
 }
 
 var daysInMonth = []int{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}

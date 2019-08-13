@@ -17,6 +17,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"unsafe"
 )
 
 type testMyTimeSuite struct{}
@@ -39,9 +40,9 @@ func (s *testMyTimeSuite) TestWeek(c *C) {
 		Mode   int
 		Expect int
 	}{
-		{MysqlTime{2008, 2, 20, 0, 0, 0, 0}, 0, 7},
-		{MysqlTime{2008, 2, 20, 0, 0, 0, 0}, 1, 8},
-		{MysqlTime{2008, 12, 31, 0, 0, 0, 0}, 1, 53},
+		{MysqlTime{year: 2008, month: 2, day: 20, hour: 0, minute: 0, second: 0, microsecond: 0}, 0, 7},
+		{MysqlTime{year: 2008, month: 2, day: 20, hour: 0, minute: 0, second: 0, microsecond: 0}, 1, 8},
+		{MysqlTime{year: 2008, month: 12, day: 31, hour: 0, minute: 0, second: 0, microsecond: 0}, 1, 53},
 	}
 
 	for ith, tt := range tests {
@@ -68,22 +69,22 @@ func (s *testMyTimeSuite) TestCalcTimeDiff(c *C) {
 	}{
 		// calcTimeDiff can be used for month = 0.
 		{
-			MysqlTime{2006, 0, 1, 12, 23, 21, 0},
-			MysqlTime{2006, 0, 3, 21, 23, 22, 0},
+			MysqlTime{year: 2006, month: 0, day: 1, hour: 12, minute: 23, second: 21, microsecond: 0},
+			MysqlTime{year: 2006, month: 0, day: 3, hour: 21, minute: 23, second: 22, microsecond: 0},
 			1,
-			MysqlTime{0, 0, 0, 57, 0, 1, 0},
+			MysqlTime{year: 0, month: 0, day: 0, hour: 57, minute: 0, second: 1, microsecond: 0},
 		},
 		{
-			MysqlTime{0, 0, 0, 21, 23, 24, 0},
-			MysqlTime{0, 0, 0, 11, 23, 22, 0},
+			MysqlTime{year: 0, month: 0, day: 0, hour: 21, minute: 23, second: 24, microsecond: 0},
+			MysqlTime{year: 0, month: 0, day: 0, hour: 11, minute: 23, second: 22, microsecond: 0},
 			1,
-			MysqlTime{0, 0, 0, 10, 0, 2, 0},
+			MysqlTime{year: 0, month: 0, day: 0, hour: 10, minute: 0, second: 2, microsecond: 0},
 		},
 		{
-			MysqlTime{0, 0, 0, 1, 2, 3, 0},
-			MysqlTime{0, 0, 0, 5, 2, 0, 0},
+			MysqlTime{year: 0, month: 0, day: 0, hour: 1, minute: 2, second: 3, microsecond: 0},
+			MysqlTime{year: 0, month: 0, day: 0, hour: 5, minute: 2, second: 0, microsecond: 0},
 			-1,
-			MysqlTime{0, 0, 0, 6, 4, 3, 0},
+			MysqlTime{year: 0, month: 0, day: 0, hour: 6, minute: 4, second: 3, microsecond: 0},
 		},
 	}
 
@@ -101,11 +102,11 @@ func (s *testMyTimeSuite) TestCompareTime(c *C) {
 		T2     MysqlTime
 		Expect int
 	}{
-		{MysqlTime{0, 0, 0, 0, 0, 0, 0}, MysqlTime{0, 0, 0, 0, 0, 0, 0}, 0},
-		{MysqlTime{0, 0, 0, 0, 1, 0, 0}, MysqlTime{0, 0, 0, 0, 0, 0, 0}, 1},
-		{MysqlTime{2006, 1, 2, 3, 4, 5, 6}, MysqlTime{2016, 1, 2, 3, 4, 5, 0}, -1},
-		{MysqlTime{0, 0, 0, 11, 22, 33, 0}, MysqlTime{0, 0, 0, 12, 21, 33, 0}, -1},
-		{MysqlTime{9999, 12, 30, 23, 59, 59, 999999}, MysqlTime{0, 1, 2, 3, 4, 5, 6}, 1},
+		{MysqlTime{year: 0, month: 0, day: 0, hour: 0, minute: 0, second: 0, microsecond: 0}, MysqlTime{year: 0, month: 0, day: 0, hour: 0, minute: 0, second: 0, microsecond: 0}, 0},
+		{MysqlTime{year: 0, month: 0, day: 0, hour: 0, minute: 1, second: 0, microsecond: 0}, MysqlTime{year: 0, month: 0, day: 0, hour: 0, minute: 0, second: 0, microsecond: 0}, 1},
+		{MysqlTime{year: 2006, month: 1, day: 2, hour: 3, minute: 4, second: 5, microsecond: 6}, MysqlTime{year: 2016, month: 1, day: 2, hour: 3, minute: 4, second: 5, microsecond: 0}, -1},
+		{MysqlTime{year: 0, month: 0, day: 0, hour: 11, minute: 22, second: 33, microsecond: 0}, MysqlTime{year: 0, month: 0, day: 0, hour: 12, minute: 21, second: 33, microsecond: 0}, -1},
+		{MysqlTime{year: 9999, month: 12, day: 30, hour: 23, minute: 59, second: 59, microsecond: 999999}, MysqlTime{year: 0, month: 1, day: 2, hour: 3, minute: 4, second: 5, microsecond: 6}, 1},
 	}
 
 	for _, tt := range tests {
@@ -151,34 +152,34 @@ func (s *testMyTimeSuite) TestMixDateAndTime(c *C) {
 		expect MysqlTime
 	}{
 		{
-			date:   MysqlTime{1896, 3, 4, 0, 0, 0, 0},
-			time:   MysqlTime{0, 0, 0, 12, 23, 24, 5},
+			date:   MysqlTime{year: 1896, month: 3, day: 4, hour: 0, minute: 0, second: 0, microsecond: 0},
+			time:   MysqlTime{year: 0, month: 0, day: 0, hour: 12, minute: 23, second: 24, microsecond: 5},
 			neg:    false,
-			expect: MysqlTime{1896, 3, 4, 12, 23, 24, 5},
+			expect: MysqlTime{year: 1896, month: 3, day: 4, hour: 12, minute: 23, second: 24, microsecond: 5},
 		},
 		{
-			date:   MysqlTime{1896, 3, 4, 0, 0, 0, 0},
-			time:   MysqlTime{0, 0, 0, 24, 23, 24, 5},
+			date:   MysqlTime{year: 1896, month: 3, day: 4, hour: 0, minute: 0, second: 0, microsecond: 0},
+			time:   MysqlTime{year: 0, month: 0, day: 0, hour: 24, minute: 23, second: 24, microsecond: 5},
 			neg:    false,
-			expect: MysqlTime{1896, 3, 5, 0, 23, 24, 5},
+			expect: MysqlTime{year: 1896, month: 3, day: 5, hour: 0, minute: 23, second: 24, microsecond: 5},
 		},
 		{
-			date:   MysqlTime{2016, 12, 31, 0, 0, 0, 0},
-			time:   MysqlTime{0, 0, 0, 24, 0, 0, 0},
+			date:   MysqlTime{year: 2016, month: 12, day: 31, hour: 0, minute: 0, second: 0, microsecond: 0},
+			time:   MysqlTime{year: 0, month: 0, day: 0, hour: 24, minute: 0, second: 0, microsecond: 0},
 			neg:    false,
-			expect: MysqlTime{2017, 1, 1, 0, 0, 0, 0},
+			expect: MysqlTime{year: 2017, month: 1, day: 1, hour: 0, minute: 0, second: 0, microsecond: 0},
 		},
 		{
-			date:   MysqlTime{2016, 12, 0, 0, 0, 0, 0},
-			time:   MysqlTime{0, 0, 0, 24, 0, 0, 0},
+			date:   MysqlTime{year: 2016, month: 12, day: 0, hour: 0, minute: 0, second: 0, microsecond: 0},
+			time:   MysqlTime{year: 0, month: 0, day: 0, hour: 24, minute: 0, second: 0, microsecond: 0},
 			neg:    false,
-			expect: MysqlTime{2016, 12, 1, 0, 0, 0, 0},
+			expect: MysqlTime{year: 2016, month: 12, day: 1, hour: 0, minute: 0, second: 0, microsecond: 0},
 		},
 		{
-			date:   MysqlTime{2017, 1, 12, 3, 23, 15, 0},
-			time:   MysqlTime{0, 0, 0, 2, 21, 10, 0},
+			date:   MysqlTime{year: 2017, month: 1, day: 12, hour: 3, minute: 23, second: 15, microsecond: 0},
+			time:   MysqlTime{year: 0, month: 0, day: 0, hour: 2, minute: 21, second: 10, microsecond: 0},
 			neg:    true,
-			expect: MysqlTime{2017, 1, 12, 1, 2, 5, 0},
+			expect: MysqlTime{year: 2017, month: 1, day: 12, hour: 1, minute: 2, second: 5, microsecond: 0},
 		},
 	}
 
@@ -286,4 +287,9 @@ func (s *testMyTimeSuite) TestWeekday(c *C) {
 		weekday := tt.Input.Weekday()
 		c.Check(weekday.String(), Equals, tt.Expect)
 	}
+}
+
+func (s *testMyTimeSuite) TestTimeStructSize(c *C) {
+	c.Assert(unsafe.Sizeof(MysqlTime{}), Equals, 0x10)
+	c.Assert(unsafe.Sizeof(Time{}), Equals, 0x14)
 }

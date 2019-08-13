@@ -160,7 +160,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(113))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
 
 	sql, hash := parser.NormalizeDigest("select * from t where i > ?")
 
@@ -216,7 +216,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	// From newly created global bind handle.
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(113))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
 
 	bindHandle = bindinfo.NewBindHandle(tk.Se)
 	err = bindHandle.Update(true)
