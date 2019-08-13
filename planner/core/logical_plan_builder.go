@@ -1983,7 +1983,7 @@ func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAl
 		return
 	}
 	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s or %s. Maybe you can use the table alias name",
-		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables), restore2JoinHint(joinType, hintTables))
+		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables), restore2JoinHint(joinTypeAlias, hintTables))
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
