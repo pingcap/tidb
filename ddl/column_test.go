@@ -280,7 +280,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	data, err := txn.Get(key)
+	data, err := txn.Get(context.TODO(), key)
 	if !isExist {
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			return nil

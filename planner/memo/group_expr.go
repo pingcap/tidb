@@ -28,6 +28,7 @@ type GroupExpr struct {
 	ExprNode plannercore.LogicalPlan
 	Children []*Group
 	Explored bool
+	Group    *Group
 
 	selfFingerprint string
 }
