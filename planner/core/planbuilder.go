@@ -2209,7 +2209,7 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	case TraceFormatJSON:
 		retFields := []string{"json"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "url", mysql.TypeString, mysql.MaxBlobWidth))
 		p.SetSchema(schema)
 	case TraceFormatLog:
 		retFields := []string{"time", "event", "tags", "spanName", "spanID"}

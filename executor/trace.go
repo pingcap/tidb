@@ -15,8 +15,8 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -52,6 +53,9 @@ type TraceExec struct {
 	builder *executorBuilder
 	format  string
 }
+
+// TraceStore is the storage for trace results.
+var TraceStore *appdash.MemoryStore = appdash.NewMemoryStore()
 
 // Next executes real query and collects span later.
 func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
@@ -88,44 +92,44 @@ func (e *TraceExec) nextTraceLog(ctx context.Context, se sqlexec.SQLExecutor, re
 }
 
 func (e *TraceExec) nextRowJSON(ctx context.Context, se sqlexec.SQLExecutor, req *chunk.Chunk) error {
-	store := appdash.NewMemoryStore()
-	tracer := traceImpl.NewTracer(store)
+	tracer := traceImpl.NewTracer(TraceStore)
 	span := tracer.StartSpan("trace")
 	ctx = opentracing.ContextWithSpan(ctx, span)
 
 	e.executeChild(ctx, se)
 	span.Finish()
 
-	traces, err := store.Traces(appdash.TracesOpts{})
+	traces, err := TraceStore.Traces(appdash.TracesOpts{})
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	sort.Sort(sortByStartTime(traces))
+	if len(traces) < 1 {
+		e.exhausted = true
+		return nil
+	}
+	trace := traces[len(traces)-1]
+	sortTraceByStartTime(trace)
+
 	// Row format.
 	if e.format != core.TraceFormatJSON {
-		if len(traces) < 1 {
-			e.exhausted = true
-			return nil
-		}
-		trace := traces[0]
 		dfsTree(trace, "", false, req)
 		e.exhausted = true
 		return nil
 	}
 
 	// Json format.
-	data, err := json.Marshal(traces)
-	if err != nil {
-		return errors.Trace(err)
+	conf := config.GetGlobalConfig()
+	host, port := conf.Status.StatusHost, conf.Status.StatusPort
+	if port == 0 {
+		port = 10080
 	}
+	if host == "" || host == "0.0.0.0" {
+		host = "127.0.0.1"
+	}
+	req.AppendString(0, fmt.Sprintf("http://%s:%d/web/trace/traces/%s", host, port, trace.ID.String()))
 
-	// Split json data into rows to avoid the max packet size limitation.
-	const maxRowLen = 4096
-	for len(data) > maxRowLen {
-		req.AppendString(0, string(data[:maxRowLen]))
-		data = data[maxRowLen:]
-	}
-	req.AppendString(0, string(data))
 	e.exhausted = true
 	return nil
 }
@@ -227,5 +231,27 @@ func generateLogResult(allSpans []basictracer.RawSpan, chk *chunk.Chunk) {
 				}
 			}
 		}
+	}
+}
+
+type sortByStartTime []*appdash.Trace
+
+func (t sortByStartTime) Len() int { return len(t) }
+func (t sortByStartTime) Less(i, j int) bool {
+	return getStartTime(t[j]).After(getStartTime(t[i]))
+}
+func (t sortByStartTime) Swap(i, j int) { t[i], t[j] = t[j], t[i] }
+
+func getStartTime(trace *appdash.Trace) (t time.Time) {
+	if e, err := trace.TimespanEvent(); err == nil {
+		t = e.Start()
+	}
+	return
+}
+
+func sortTraceByStartTime(trace *appdash.Trace) {
+	sort.Sort(sortByStartTime(trace.Sub))
+	for _, t := range trace.Sub {
+		sortTraceByStartTime(t)
 	}
 }

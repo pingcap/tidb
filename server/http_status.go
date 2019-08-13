@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/pprof"
 	"net/url"
@@ -34,13 +33,15 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
+	"sourcegraph.com/sourcegraph/appdash"
 	static "sourcegraph.com/sourcegraph/appdash-data"
+	"sourcegraph.com/sourcegraph/appdash/traceapp"
 )
 
 const defaultStatusPort = 10080
@@ -108,30 +109,33 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 	}
-	addr := fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
-	if s.cfg.Status.StatusPort == 0 {
-		addr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
+	statusHost, statusPort := s.cfg.Status.StatusHost, s.cfg.Status.StatusPort
+	if statusPort == 0 {
+		statusPort = defaultStatusPort
 	}
-
-	// HTTP path for web UI.
-	if host, port, err := net.SplitHostPort(addr); err == nil {
-		if host == "" {
-			host = "localhost"
-		}
-		baseURL := &url.URL{
-			Scheme: "http",
-			Host:   fmt.Sprintf("%s:%s", host, port),
-		}
-		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
-		sr := router.PathPrefix("/web/trace/").Subrouter()
-		if _, err := traceapp.New(traceapp.NewRouter(sr), baseURL); err != nil {
-			logutil.BgLogger().Error("new failed", zap.Error(err))
-		}
-		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
+	if statusHost == "" || statusHost == "0.0.0.0" {
+		statusHost = "localhost"
 	}
+	addr := fmt.Sprintf("%s:%d", statusHost, statusPort)
 
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
+
+	// HTTP path for web UI.
+	if baseURL, err := url.Parse(fmt.Sprintf("http://%s:%d/web/trace/", statusHost, statusPort)); err == nil {
+		sr := router.PathPrefix("/web/trace/").Subrouter()
+		traceRouter := traceapp.NewRouter(sr)
+		if app, err := traceapp.New(traceRouter, baseURL); err == nil {
+			app.Store = &appdash.RecentStore{
+				MinEvictAge: 3 * time.Minute,
+				DeleteStore: executor.TraceStore,
+			}
+			app.Queryer = executor.TraceStore
+
+			serverMux.Handle("/trace/", app)
+			router.PathPrefix("/web/trace/static/").Handler(http.StripPrefix("/web/trace/static", http.FileServer(static.Data)))
+		}
+	}
 
 	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
 	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
