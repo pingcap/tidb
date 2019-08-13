@@ -4096,7 +4096,9 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
 	re := tk.MustQuery("show table t_regions regions")
 	rows := re.Rows()
-	// Table t_regions should have 4 regions now.
+	// Table t_regions should have 5 regions now.
+	// 4 regions to store record data.
+	// 1 region to store index data.
 	c.Assert(len(rows), Equals, 5)
 	c.Assert(len(rows[0]), Equals, 7)
 	tbl := testGetTableByName(c, tk.Se, "test", "t_regions")
@@ -4121,7 +4123,10 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 
 	re = tk.MustQuery("show table t_regions regions")
 	rows = re.Rows()
-	// The index `idx` of table t_regions should have 4 regions now.
+	// The index `idx` of table t_regions should have 9 regions now.
+	// 4 regions to store record data.
+	// 4 region to store index idx data.
+	// 1 region to store index idx2 data.
 	c.Assert(len(rows), Equals, 9)
 	// Check the region start key.
 	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
@@ -4171,7 +4176,6 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	re = tk.MustQuery("show table partition_t regions")
 	rows = re.Rows()
-	// Table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][1], Matches, "t_.*")
 
