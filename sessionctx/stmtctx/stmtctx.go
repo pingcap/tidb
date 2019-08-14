@@ -420,6 +420,9 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.Unlock()
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexIDs = sc.IndexIDs[:0]
+	sc.StartTime = time.Now()
+	sc.DurationCompile = time.Duration(0)
+	sc.DurationParse = time.Duration(0)
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print
