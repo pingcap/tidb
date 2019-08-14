@@ -946,6 +946,47 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 	s.RunTest(c, table)
 }
 
+func (s *testParserSuite) TestSetVariable(c *C) {
+	table := []struct {
+		Input    string
+		Name     string
+		IsGlobal bool
+		IsSystem bool
+	}{
+
+		// Set system variable xx.xx, although xx.xx isn't a system variable, the parser should accept it.
+		{"set xx.xx = 666", "xx.xx", false, true},
+		// Set session system variable xx.xx
+		{"set session xx.xx = 666", "xx.xx", false, true},
+		{"set global xx.xx = 666", "xx.xx", true, true},
+
+		{"set @@xx.xx = 666", "xx.xx", false, true},
+		{"set @@session.xx.xx = 666", "xx.xx", false, true},
+		{"set @@global.xx.xx = 666", "xx.xx", true, true},
+
+		// Set user defined variable xx.xx
+		{"set @xx.xx = 666", "xx.xx", false, false},
+	}
+
+	parser := parser.New()
+	for _, t := range table {
+		stmt, err := parser.ParseOneStmt(t.Input, "", "")
+		c.Assert(err, IsNil)
+
+		setStmt, ok := stmt.(*ast.SetStmt)
+		c.Assert(ok, IsTrue)
+		c.Assert(setStmt.Variables, HasLen, 1)
+
+		v := setStmt.Variables[0]
+		c.Assert(v.Name, Equals, t.Name)
+		c.Assert(v.IsGlobal, Equals, t.IsGlobal)
+		c.Assert(v.IsSystem, Equals, t.IsSystem)
+	}
+
+	_, err := parser.ParseOneStmt("set xx.xx.xx = 666", "", "")
+	c.Assert(err, NotNil)
+}
+
 func (s *testParserSuite) TestFlushTable(c *C) {
 	parser := parser.New()
 	stmt, _, err := parser.Parse("flush local tables tbl1,tbl2 with read lock", "", "")
