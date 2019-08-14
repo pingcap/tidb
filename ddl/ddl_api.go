@@ -437,7 +437,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
 		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
 		if vv, ok := value.(string); ok {
-			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, col.Decimal)
+			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, int8(col.Decimal))
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
@@ -455,7 +455,7 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 	}
 	if vv, ok := defaultVal.(string); ok {
 		if vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
-			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, col.Decimal)
+			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, int8(col.Decimal))
 			if err != nil {
 				return defaultVal, errors.Trace(err)
 			}
@@ -636,7 +636,7 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 				}
 			}
 		}
-		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
+		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, int8(fsp))
 		value := vd.GetValue()
 		if err != nil {
 			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
@@ -951,7 +951,7 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 			return types.ErrMBiggerThanD.GenWithStackByArgs(colName)
 		}
 	case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
-		if tp.Decimal != types.UnspecifiedFsp && (tp.Decimal < types.MinFsp || tp.Decimal > types.MaxFsp) {
+		if tp.Decimal != int(types.UnspecifiedFsp) && (tp.Decimal < int(types.MinFsp) || tp.Decimal > int(types.MaxFsp)) {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Decimal, colName, types.MaxFsp)
 		}
 	}
@@ -2093,9 +2093,8 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	// If new column is a generated column, do validation.
-	// NOTE: Because now we can only append columns to table,
-	// we don't need check whether the column refers other
-	// generated columns occurring later in table.
+	// NOTE: we do check whether the column refers other generated
+	// columns occurring later in a table, but we don't handle the col offset.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
@@ -2110,8 +2109,17 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 				return errors.Trace(err)
 			}
+			duplicateColNames := make(map[string]struct{}, len(dependColNames))
+			for k := range dependColNames {
+				duplicateColNames[k] = struct{}{}
+			}
+			cols := t.Cols()
 
-			if err = checkDependedColExist(dependColNames, t.Cols()); err != nil {
+			if err = checkDependedColExist(dependColNames, cols); err != nil {
+				return errors.Trace(err)
+			}
+
+			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
 				return errors.Trace(err)
 			}
 		}

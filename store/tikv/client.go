@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/debugpb"
@@ -198,15 +199,15 @@ func (a *connArray) Close() {
 // that there are too many concurrent requests which overload the service of TiKV.
 type rpcClient struct {
 	sync.RWMutex
-	isClosed bool
-	done     chan struct{}
+	done chan struct{}
 
 	conns    map[string]*connArray
 	security config.Security
 
-	// Implement background cleanup.
-	// Periodically check whether there is any connection that is idle and then close and remove these idle connections.
 	idleNotify uint32
+	// Periodically check whether there is any connection that is idle and then close and remove these idle connections.
+	// Implement background cleanup.
+	isClosed bool
 }
 
 func newRPCClient(security config.Security) *rpcClient {
@@ -270,6 +271,12 @@ func (c *rpcClient) closeConns() {
 
 // SendRequest sends a Request to server and receives Response.
 func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("rpcClient.SendRequest", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	start := time.Now()
 	reqType := req.Type.String()
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
