@@ -118,10 +118,10 @@ func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 
 func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldType) {
 	var deca, decb = a.Decimal, b.Decimal
-	if deca == types.UnspecifiedFsp {
+	if deca == int(types.UnspecifiedFsp) {
 		deca = 0
 	}
-	if decb == types.UnspecifiedFsp {
+	if decb == int(types.UnspecifiedFsp) {
 		decb = 0
 	}
 	retTp.Decimal = deca + precIncrement
