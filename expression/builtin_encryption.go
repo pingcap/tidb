@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
@@ -77,6 +78,15 @@ var (
 
 // ivSize indicates the initialization vector supplied to aes_decrypt
 const ivSize = aes.BlockSize
+
+// the max length of a password is 100 in mysql
+const maxPwdLength int64 = 100
+
+// VALIDATE_PASSWORD_STRENGTH() will return 0 when the length of a password is less than minPwsLength
+const minPwdLength int64 = 4
+
+// Differential score between levels in password test
+const differentialScore int64 = 25
 
 // aesModeAttr indicates that the key length and iv attribute for specific block_encryption_mode.
 // keySize is the key length in bits and mode is the encryption mode.
@@ -1005,7 +1015,7 @@ func (c *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
 }
 
 // evalInt evals VALIDATE_PASSWORD_STRENGTH(str).
-// See https://dev.mysql.com/doc/refman/8.0/en/encryption-functions.html#function_validate-password-strength
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_validate-password-strength
 func (c *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	sv := c.ctx.GetSessionVars()
 	pwd, isNull, err := c.args[0].EvalString(c.ctx, row)
@@ -1015,14 +1025,9 @@ func (c *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool
 		return score, true, err
 	}
 
-	// In MySQL, the max length of a password is 100
-	l := int64(0)
-	for index := range pwd {
-		l++
-		if l > 100 {
-			pwd = pwd[:index]
-			break
-		}
+	l := int64(utf8.RuneCountInString(pwd))
+	if l > maxPwdLength {
+		pwd = string([]rune(pwd)[0:maxPwdLength])
 	}
 
 	valid, err := validateByUser(sv, pwd)
@@ -1030,10 +1035,10 @@ func (c *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool
 		return score, err != nil, err
 	}
 
-	if l < 4 {
+	if l < minPwdLength {
 		return score, false, nil
 	}
-	score += 25
+	score += differentialScore
 
 	v, err := variable.GetGlobalSystemVar(sv, variable.ValidatePasswordLength)
 	if err != nil {
@@ -1043,19 +1048,19 @@ func (c *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool
 	if err != nil || l < valPwdLen {
 		return score, err != nil, err
 	}
-	score += 25
+	score += differentialScore
 
 	valid, err = validateByMixedDigitSpecial(sv, pwd)
 	if err != nil || !valid {
 		return score, err != nil, err
 	}
-	score += 25
+	score += differentialScore
 
 	valid, err = validateByDictionary(sv, pwd)
 	if err != nil || !valid {
 		return score, err != nil, nil
 	}
-	score += 25
+	score += differentialScore
 
 	return score, false, nil
 }
