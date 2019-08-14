@@ -153,8 +153,6 @@ type ExecStmt struct {
 
 	Ctx sessionctx.Context
 
-	// StartTime stands for the starting time when executing the statement.
-	StartTime time.Time
 	// LowerPriority represents whether to lower the execution priority of a query.
 	LowerPriority bool
 	// Cacheable represents whether the physical plan can be cached.
@@ -618,7 +616,7 @@ func (a *ExecStmt) logAudit() {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.StartTime)
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StmtCtx.StartTime)
 			audit.OnGeneralEvent(ctx, sessVars, plugin.Log, cmd)
 		}
 		return nil
