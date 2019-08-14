@@ -1076,6 +1076,7 @@ import (
 	FunctionNameDatetimePrecision	"Function with optional datetime precision, all of them are reserved keywords."
 	FunctionNameDateArith		"Date arith function call names (date_add or date_sub)"
 	FunctionNameDateArithMultiForms	"Date arith function call names (adddate or subdate)"
+	VariableName			"A simple Identifier like xx or the xx.xx form"
 
 %precedence empty
 
@@ -6543,20 +6544,27 @@ SetExpr:
 EqOrAssignmentEq:
     eq | assignmentEq
 
+VariableName:
+	Identifier
+|	Identifier '.' Identifier
+	{
+		$$ = $1 + "." + $3
+	}
+
 VariableAssignment:
-	Identifier EqOrAssignmentEq SetExpr
+	VariableName EqOrAssignmentEq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $1, Value: $3, IsSystem: true}
 	}
-|	"GLOBAL" Identifier EqOrAssignmentEq SetExpr
+|	"GLOBAL" VariableName EqOrAssignmentEq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsGlobal: true, IsSystem: true}
 	}
-|	"SESSION" Identifier EqOrAssignmentEq SetExpr
+|	"SESSION" VariableName EqOrAssignmentEq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
 	}
-|	"LOCAL" Identifier EqOrAssignmentEq Expression
+|	"LOCAL" VariableName EqOrAssignmentEq Expression
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
 	}
