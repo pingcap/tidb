@@ -426,7 +426,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
 		t.Type = ft.Tp
-		t.Fsp = ft.Decimal
+		t.Fsp = int8(ft.Decimal)
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
@@ -442,7 +442,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration: //duration should read fsp from column meta data
-		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: ft.Decimal}
+		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: int8(ft.Decimal)}
 		datum.SetValue(dur)
 		return datum, nil
 	case mysql.TypeEnum:

@@ -729,7 +729,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		v := types.Duration{Duration: time.Duration(r), Fsp: ft.Decimal}
+		v := types.Duration{Duration: time.Duration(r), Fsp: int8(ft.Decimal)}
 		chk.AppendDuration(colIdx, v)
 	case jsonFlag:
 		var size int
@@ -753,7 +753,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
 	switch ft.Tp {
 	case mysql.TypeDuration:
-		v := types.Duration{Duration: time.Duration(val), Fsp: ft.Decimal}
+		v := types.Duration{Duration: time.Duration(val), Fsp: int8(ft.Decimal)}
 		chk.AppendDuration(colIdx, v)
 	default:
 		chk.AppendInt64(colIdx, val)
@@ -765,7 +765,7 @@ func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.Field
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
 		t.Type = ft.Tp
-		t.Fsp = ft.Decimal
+		t.Fsp = int8(ft.Decimal)
 		var err error
 		err = t.FromPackedUint(val)
 		if err != nil {
