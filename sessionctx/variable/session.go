@@ -99,22 +99,22 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
-	ForUpdate     bool
 	forUpdateTS   uint64
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
-	CouldRetry    bool
 	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
-	IsPessimistic bool
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
+	ForUpdate      bool
+	CouldRetry     bool
+	IsPessimistic  bool
 }
 
 // UpdateDeltaForTable updates the delta info for some table.

@@ -57,18 +57,19 @@ type Table struct {
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
 	PhysicalID int64
-	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
-	// The physical id is used when try to load column stats from storage.
-	HavePhysicalID bool
-	Columns        map[int64]*Column
-	Indices        map[int64]*Index
+	Columns    map[int64]*Column
+	Indices    map[int64]*Index
 	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
 	Idx2ColumnIDs map[int64][]int64
 	// ColID2IdxID maps the column id to index id whose first column is it. It's used to calculate the selectivity in planner.
 	ColID2IdxID map[int64]int64
-	Pseudo      bool
 	Count       int64
 	ModifyCount int64 // Total modify count in a table.
+
+	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
+	// The physical id is used when try to load column stats from storage.
+	HavePhysicalID bool
+	Pseudo         bool
 }
 
 // Copy copies the current table.
