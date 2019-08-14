@@ -651,6 +651,6 @@ func readTime(buf []byte) types.Time {
 	return types.Time{
 		Time: types.FromDate(year, month, day, hour, minute, second, microseconds),
 		Type: tp,
-		Fsp:  fsp,
+		Fsp:  int8(fsp),
 	}
 }
