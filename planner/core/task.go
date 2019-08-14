@@ -15,9 +15,9 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/parser/ast"
 	"math"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -684,6 +684,12 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	}
 
 	// Optimize
+	// Remove unnecessary schema column.
+	// When the select column is same with the group by key, the column can be removed and gets value from the group by key.
+	// e.g
+	// select a, count(b) from t group by a;
+	// The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
+	// Can optimize the schema to [count(b), a] , and change the index to get value.
 	partialCursor = 0
 	partialAggNum := 0
 	partialAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
