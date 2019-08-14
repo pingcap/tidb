@@ -200,6 +200,7 @@ func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expressio
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
 func ComposeCNFCondition(ctx sessionctx.Context, conditions ...Expression) Expression {
+	var nullExpr Expression
 	for _, cond := range conditions {
 		con, ok := cond.(*Constant)
 		if !ok {
@@ -210,9 +211,14 @@ func ComposeCNFCondition(ctx sessionctx.Context, conditions ...Expression) Expre
 			logutil.BgLogger().Debug("compose AND/OR conditions", zap.String("expression", con.ExplainInfo()), zap.Error(err))
 			continue
 		}
-		if d.IsNull() || (d.Kind() == types.KindInt64 && d.GetInt64() == 0) {
+		if d.Kind() == types.KindInt64 && d.GetInt64() == 0 {
 			return con
+		} else if d.IsNull() {
+			nullExpr = con
 		}
+	}
+	if nullExpr != nil {
+		return nullExpr
 	}
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicAnd)
 }
