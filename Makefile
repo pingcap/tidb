@@ -174,7 +174,7 @@ ifeq ("$(WITH_RACE)", "1")
 	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
-GOBUILDCOVERAGE = GOPATH=$(GOPATH) CGO_ENABLED=1 cd tidb-server; $(GO) test -coverpkg="../..." -c -tags coverageServer . -o "../bin/tidb-server.test"
+GOBUILDCOVERAGE = GOPATH=$(GOPATH) CGO_ENABLED=1 cd tidb-server; $(GO) test -coverpkg="../..." -c -tags coverageServer . -o "../bin/tidb-server"
 
 CHECK_FLAG =
 ifeq ("$(WITH_CHECK)", "1")
@@ -183,7 +183,6 @@ endif
 
 server:
 	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)'
-	cp tidb-server/run.sh bin/tidb-server
 
 server_check:
 ifeq ($(TARGET), "")
