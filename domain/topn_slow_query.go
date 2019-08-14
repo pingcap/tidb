@@ -217,13 +217,13 @@ type SlowQueryInfo struct {
 	Start    time.Time
 	Duration time.Duration
 	Detail   execdetails.ExecDetails
-	Succ     bool
 	ConnID   uint64
 	TxnTS    uint64
 	User     string
 	DB       string
 	TableIDs string
 	IndexIDs string
-	Internal bool
 	Digest   string
+	Internal bool
+	Succ     bool
 }

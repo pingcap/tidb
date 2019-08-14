@@ -14,9 +14,13 @@
 package core_test
 
 import (
+	"fmt"
 	"math"
+	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
@@ -27,20 +31,31 @@ import (
 var _ = Suite(&testPointGetSuite{})
 
 type testPointGetSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+}
+
+func (s *testPointGetSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	s.store = store
+	s.dom = dom
+}
+
+func (s *testPointGetSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
+	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	orgCapacity := core.PreparedPlanCacheCapacity
 	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
 	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
-		dom.Close()
-		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 		core.PreparedPlanCacheCapacity = orgCapacity
 		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
@@ -151,4 +166,30 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	counter.Write(pb)
 	hit = pb.GetCounter().GetValue()
 	c.Check(hit, Equals, float64(2))
+}
+
+func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table fu (id int primary key)")
+	tk.MustExec("insert into fu values (6)")
+	tk.MustQuery("select * from fu where id = 6 for update").Check(testkit.Rows("6"))
+
+	// In autocommit mode, outside a transaction, "for update" doesn't take effect.
+	res := tk.MustQuery("explain select * from fu where id = 6 for update")
+	// Point_Get_1	1.00	root	table:fu, handle:6
+	opInfo := res.Rows()[0][3]
+	selectLock := strings.Contains(fmt.Sprintf("%s", opInfo), "lock")
+	c.Assert(selectLock, IsFalse)
+
+	tk.MustExec("begin")
+	tk.MustQuery("select * from fu where id = 6 for update").Check(testkit.Rows("6"))
+	res = tk.MustQuery("explain select * from fu where id = 6 for update")
+	// Point_Get_1	1.00	root	table:fu, handle:6
+	opInfo = res.Rows()[0][3]
+	selectLock = strings.Contains(fmt.Sprintf("%s", opInfo), "lock")
+	c.Assert(selectLock, IsTrue)
+
+	tk.MustExec("rollback")
+
 }
