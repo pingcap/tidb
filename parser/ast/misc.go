@@ -2026,25 +2026,53 @@ type TableOptimizerHint struct {
 	// It allows only table name or alias (if table has an alias)
 	HintName model.CIStr
 	Tables   []model.CIStr
+	Indexes  []model.CIStr
 	// Statement Execution Time Optimizer Hints
 	// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html#optimizer-hints-execution-time
 	MaxExecutionTime uint64
+	MemoryQuota      uint64
+	QueryType        model.CIStr
+	HintFlag         bool
 }
 
 // Restore implements Node interface.
 func (n *TableOptimizerHint) Restore(ctx *RestoreCtx) error {
 	ctx.WriteKeyWord(n.HintName.String())
+	// Hints without args.
+	switch n.HintName.L {
+	case "hash_agg", "stream_agg", "read_consistent_replica", "no_index_merge":
+		return nil
+	}
+	// Hints with args.
 	ctx.WritePlain("(")
 	switch n.HintName.L {
 	case "max_execution_time":
 		ctx.WritePlainf("%d", n.MaxExecutionTime)
-	case "tidb_hj", "tidb_smj", "tidb_inlj":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "sm_join", "inl_join":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")
 			}
 			ctx.WriteName(table.String())
 		}
+	case "index", "use_index_merge":
+		if len(n.Tables) != 0 {
+			ctx.WriteName(n.Tables[0].String())
+		}
+		for _, index := range n.Indexes {
+			ctx.WritePlain(", ")
+			ctx.WriteName(index.String())
+		}
+	case "use_toja", "enable_plan_cache":
+		if n.HintFlag {
+			ctx.WritePlain("TRUE")
+		} else {
+			ctx.WritePlain("FALSE")
+		}
+	case "query_type":
+		ctx.WriteKeyWord(n.QueryType.String())
+	case "memory_quota":
+		ctx.WritePlainf("%d M", n.MemoryQuota)
 	}
 	ctx.WritePlain(")")
 	return nil

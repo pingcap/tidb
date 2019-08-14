@@ -205,12 +205,26 @@ func (ts *testMiscSuite) TestUserSpec(c *C) {
 
 func (ts *testMiscSuite) TestTableOptimizerHintRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
+		{"INDEX(t1, c1)", "INDEX(`t1`, `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},
 		{"TIDB_INLJ(t1,t2)", "TIDB_INLJ(`t1`, `t2`)"},
 		{"TIDB_HJ(t1,t2)", "TIDB_HJ(`t1`, `t2`)"},
+		{"SM_JOIN(t1,t2)", "SM_JOIN(`t1`, `t2`)"},
+		{"INL_JOIN(t1,t2)", "INL_JOIN(`t1`, `t2`)"},
+		{"HASH_JOIN(t1,t2)", "HASH_JOIN(`t1`, `t2`)"},
 		{"MAX_EXECUTION_TIME(3000)", "MAX_EXECUTION_TIME(3000)"},
+		{"USE_INDEX_MERGE(t1, c1)", "USE_INDEX_MERGE(`t1`, `c1`)"},
+		{"USE_TOJA(TRUE)", "USE_TOJA(TRUE)"},
+		{"USE_TOJA(FALSE)", "USE_TOJA(FALSE)"},
+		{"QUERY_TYPE(OLAP)", "QUERY_TYPE(OLAP)"},
+		{"QUERY_TYPE(OLTP)", "QUERY_TYPE(OLTP)"},
+		{"MEMORY_QUOTA(1 G)", "MEMORY_QUOTA(1024 M)"},
+		{"HASH_AGG", "HASH_AGG"},
+		{"STREAM_AGG", "STREAM_AGG"},
+		{"NO_INDEX_MERGE", "NO_INDEX_MERGE"},
+		{"READ_CONSISTENT_REPLICA", "READ_CONSISTENT_REPLICA"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).TableHints[0]
