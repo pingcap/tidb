@@ -1936,7 +1936,7 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) {
+func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	var sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 	var preferAggType uint
 	for _, hint := range hints {
@@ -1955,12 +1955,16 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) {
 			// ignore hints that not implemented
 		}
 	}
-	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
-		sortMergeJoinTables:       sortMergeTables,
-		indexNestedLoopJoinTables: INLJTables,
-		hashJoinTables:            hashJoinTables,
-		preferAggType:             preferAggType,
-	})
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 || preferAggType != 0 {
+		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
+			sortMergeJoinTables:       sortMergeTables,
+			indexNestedLoopJoinTables: INLJTables,
+			hashJoinTables:            hashJoinTables,
+			preferAggType:             preferAggType,
+		})
+		return true
+	}
+	return false
 }
 
 func (b *PlanBuilder) popTableHints() {
@@ -1990,9 +1994,10 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
-	b.pushTableHints(sel.TableHints)
-	// table hints are only visible in the current SELECT statement.
-	defer b.popTableHints()
+	if b.pushTableHints(sel.TableHints) {
+		// table hints are only visible in the current SELECT statement.
+		defer b.popTableHints()
+	}
 
 	if sel.SelectStmtOpts != nil {
 		origin := b.inStraightJoin
@@ -2616,9 +2621,10 @@ func buildColumns2Handle(
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
-	b.pushTableHints(update.TableHints)
-	// table hints are only visible in the current UPDATE statement.
-	defer b.popTableHints()
+	if b.pushTableHints(update.TableHints) {
+		// table hints are only visible in the current UPDATE statement.
+		defer b.popTableHints()
+	}
 
 	// update subquery table should be forbidden
 	var asNameList []string
@@ -2836,9 +2842,10 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
-	b.pushTableHints(delete.TableHints)
-	// table hints are only visible in the current DELETE statement.
-	defer b.popTableHints()
+	if b.pushTableHints(delete.TableHints) {
+		// table hints are only visible in the current DELETE statement.
+		defer b.popTableHints()
+	}
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {
