@@ -333,6 +333,7 @@ import (
 	event		"EVENT"
 	events		"EVENTS"
 	escape 		"ESCAPE"
+	exchange	"EXCHANGE"
 	exclusive       "EXCLUSIVE"
 	execute		"EXECUTE"
 	expire		"EXPIRE"
@@ -960,6 +961,8 @@ import (
 	WhenClauseList		"When clause list"
 	WithReadLockOpt		"With Read Lock opt"
 	WithGrantOptionOpt	"With Grant Option opt"
+	WithValidation		"with validation"
+	WithValidationOpt	"optional with validation"
 	ElseOpt			"Optional else clause"
 	Type			"Types"
 
@@ -1295,6 +1298,17 @@ AlterTableSpec:
 			PartitionNames: $4.([]model.CIStr),
 		}
 	}
+|	"EXCHANGE" "PARTITION" Identifier "WITH" "TABLE" TableName WithValidationOpt
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableExchangePartition,
+			PartitionNames: []model.CIStr{model.NewCIStr($3)},
+			NewTable: $6.(*ast.TableName),
+			WithValidation: $7.(bool),
+		}
+		yylex.AppendError(yylex.Errorf("TiDB does not support EXCHANGE PARTITION now, it would be parsed but ignored."))
+		parser.lastErrorAsWarn()
+	}
 |	"TRUNCATE" "PARTITION" PartitionNameList %prec lowerThanComma
 	{
 		$$ = &ast.AlterTableSpec{
@@ -1451,6 +1465,25 @@ AlterTableSpec:
 		}
 		yylex.AppendError(yylex.Errorf("The WITH/WITHOUT VALIDATION clause is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
+	}
+
+WithValidationOpt:
+	{
+		$$ = true
+	}
+|	WithValidation
+	{
+		$$ = $1
+	}
+
+WithValidation:
+	"WITH" "VALIDATION"
+	{
+		$$ = true
+	}
+|	"WITHOUT" "VALIDATION"
+	{
+		$$ = false
 	}
 
 
@@ -3819,7 +3852,7 @@ UnReservedKeyword:
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 | "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT" | "INCREMENTAL" | "CPU" | "MEMORY" | "BLOCK" | "IO" | "CONTEXT" | "SWITCHES" | "PAGE" | "FAULTS" | "IPC" | "SWAPS" | "SOURCE"
 | "TRADITIONAL" | "SQL_BUFFER_RESULT" | "DIRECTORY" | "HISTORY" | "LIST" | "NODEGROUP" | "SYSTEM_TIME" | "PARTIAL" | "SIMPLE" | "REMOVE" | "PARTITIONING" | "STORAGE" | "DISK" | "STATS_SAMPLE_PAGES" | "SECONDARY_ENGINE" | "VALIDATION"
-| "WITHOUT" | "RTREE"
+| "WITHOUT" | "RTREE" | "EXCHANGE"
 
 
 TiDBKeyword:
