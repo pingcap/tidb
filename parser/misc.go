@@ -264,6 +264,7 @@ var tokenMap = map[string]int{
 	"EVENTS":                   events,
 	"EXCLUSIVE":                exclusive,
 	"EXCEPT":                   except,
+	"EXCHANGE":                 exchange,
 	"EXECUTE":                  execute,
 	"EXISTS":                   exists,
 	"EXPIRE":                   expire,
