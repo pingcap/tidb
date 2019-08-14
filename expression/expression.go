@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // These are byte flags used for `HashCode()`.
@@ -188,20 +190,67 @@ func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expressio
 	if length == 1 {
 		return conditions[0]
 	}
-	expr := NewFunctionInternal(ctx, funcName,
+	expr, err := NewFunctionBase(ctx, funcName,
 		types.NewFieldType(mysql.TypeTiny),
 		composeConditionWithBinaryOp(ctx, conditions[:length/2], funcName),
 		composeConditionWithBinaryOp(ctx, conditions[length/2:], funcName))
+	terror.Log(err)
 	return expr
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
 func ComposeCNFCondition(ctx sessionctx.Context, conditions ...Expression) Expression {
+	for _, cond := range conditions {
+		con, ok := cond.(*Constant)
+		if !ok {
+			continue
+		}
+		d, err := con.Eval(chunk.Row{})
+		if err != nil {
+			logutil.BgLogger().Debug("compose AND/OR conditions", zap.String("expression", con.ExplainInfo()), zap.Error(err))
+			continue
+		}
+		if d.IsNull() || (d.Kind() == types.KindInt64 && d.GetInt64() == 0) {
+			return con
+		}
+	}
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
 func ComposeDNFCondition(ctx sessionctx.Context, conditions ...Expression) Expression {
+	for _, cond := range conditions {
+		con, ok := cond.(*Constant)
+		if !ok {
+			continue
+		}
+		d, err := con.Eval(chunk.Row{})
+		if err != nil {
+			logutil.BgLogger().Debug("compose AND/OR conditions", zap.String("expression", con.ExplainInfo()), zap.Error(err))
+			continue
+		}
+		k := d.Kind()
+		if k == types.KindInt64 && d.GetInt64() > 0 {
+			newCon := &Constant{
+				Value:   types.NewIntDatum(1),
+				RetType: types.NewFieldType(mysql.TypeTiny),
+			}
+			// If the deferred expr is not nil. Rewrite a new one.
+			if con.DeferredExpr != nil {
+				newCon.DeferredExpr, err = NewFunctionBase(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), con.DeferredExpr)
+				if err != nil {
+					terror.Log(err)
+					continue
+				}
+				newCon.DeferredExpr, err = NewFunctionBase(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), newCon.DeferredExpr)
+				if err != nil {
+					terror.Log(err)
+					continue
+				}
+			}
+			return newCon
+		}
+	}
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicOr)
 }
 
