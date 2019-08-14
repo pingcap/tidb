@@ -1008,7 +1008,7 @@ func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 	}
 
 	for _, tc := range testCases {
-		dur, err := NumberToDuration(tc.number, tc.fsp)
+		dur, err := NumberToDuration(tc.number, int8(tc.fsp))
 		if tc.hasErr {
 			c.Assert(err, NotNil)
 			continue
@@ -1038,7 +1038,7 @@ func (s *testTypeConvertSuite) TestStrToDuration(c *C) {
 	sc := new(stmtctx.StatementContext)
 	var tests = []struct {
 		str        string
-		fsp        int
+		fsp        int8
 		isDuration bool
 	}{
 		{"20190412120000", 4, false},

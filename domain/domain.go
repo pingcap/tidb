@@ -61,7 +61,6 @@ type Domain struct {
 	bindHandle           *bindinfo.BindHandle
 	statsHandle          unsafe.Pointer
 	statsLease           time.Duration
-	statsUpdating        sync2.AtomicInt32
 	ddl                  ddl.DDL
 	info                 *InfoSyncer
 	m                    sync.Mutex
@@ -69,10 +68,11 @@ type Domain struct {
 	sysSessionPool       *sessionPool
 	exit                 chan struct{}
 	etcdClient           *clientv3.Client
-	wg                   sync.WaitGroup
 	gvc                  GlobalVariableCache
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
+	wg                   sync.WaitGroup
+	statsUpdating        sync2.AtomicInt32
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used

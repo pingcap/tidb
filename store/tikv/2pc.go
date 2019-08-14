@@ -89,26 +89,28 @@ type twoPhaseCommitter struct {
 	mutations map[string]*mutationEx
 	lockTTL   uint64
 	commitTS  uint64
-	mu        struct {
-		sync.RWMutex
-		committed       bool
-		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
-	}
-	priority pb.CommandPri
-	syncLog  bool
-	connID   uint64 // connID is used for log.
-	cleanWg  sync.WaitGroup
+	priority  pb.CommandPri
+	connID    uint64 // connID is used for log.
+	cleanWg   sync.WaitGroup
 	// maxTxnTimeUse represents max time a Txn may use (in ms) from its startTS to commitTS.
 	// We use it to guarantee GC worker will not influence any active txn. The value
 	// should be less than GC life time.
 	maxTxnTimeUse uint64
 	detail        *execdetails.CommitDetails
-	// For pessimistic transaction
-	isPessimistic  bool
+
 	primaryKey     []byte
 	forUpdateTS    uint64
-	isFirstLock    bool
 	pessimisticTTL uint64
+
+	mu struct {
+		sync.RWMutex
+		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
+		committed       bool
+	}
+	syncLog bool
+	// For pessimistic transaction
+	isPessimistic bool
+	isFirstLock   bool
 }
 
 type mutationEx struct {

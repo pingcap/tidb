@@ -1243,14 +1243,14 @@ type UnionExec struct {
 	baseExecutor
 
 	stopFetchData atomic.Value
-	wg            sync.WaitGroup
 
 	finished      chan struct{}
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
-	initialized   bool
 
 	childrenResults []*chunk.Chunk
+	wg              sync.WaitGroup
+	initialized     bool
 }
 
 // unionWorkerResult stores the result for a union worker.
