@@ -14,6 +14,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -28,7 +30,7 @@ import (
 type columnPruner struct {
 }
 
-func (s *columnPruner) optimize(lp LogicalPlan) (LogicalPlan, error) {
+func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
 	err := lp.PruneColumns(lp.Schema().Columns)
 	return lp, err
 }
@@ -262,8 +264,15 @@ func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) err
 		}
 	}
 	for k, cols := range p.schema.TblID2Handle {
-		if p.schema.ColumnIndex(cols[0]) == -1 {
+		for i := len(cols) - 1; i >= 0; i-- {
+			if p.schema.ColumnIndex(cols[i]) == -1 {
+				cols = append(cols[:i], cols[i+1:]...)
+			}
+		}
+		if len(cols) == 0 {
 			delete(p.schema.TblID2Handle, k)
+		} else {
+			p.schema.TblID2Handle[k] = cols
 		}
 	}
 	return nil
@@ -404,4 +413,8 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 		parentUsedCols = append(parentUsedCols, by.Col)
 	}
 	return parentUsedCols
+}
+
+func (*columnPruner) name() string {
+	return "column_prune"
 }

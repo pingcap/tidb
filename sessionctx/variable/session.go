@@ -99,7 +99,6 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
-	ForUpdate     bool
 	forUpdateTS   uint64
 	DirtyDB       interface{}
 	Binlog        interface{}
@@ -109,11 +108,13 @@ type TransactionContext struct {
 	StartTS       uint64
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
-	IsPessimistic bool
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
+	ForUpdate      bool
+	CouldRetry     bool
+	IsPessimistic  bool
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -135,7 +136,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
-	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
+	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
 	tc.DirtyDB = nil
 	tc.Binlog = nil
 	tc.History = nil
@@ -1018,6 +1019,8 @@ const (
 	SlowLogCopWaitAddr = "Cop_wait_addr"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
+	// SlowLogSucc is used to indicate whether this sql execute successfully.
+	SlowLogSucc = "Succ"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -1034,6 +1037,7 @@ type SlowQueryLogItems struct {
 	CopTasks    *stmtctx.CopTasksDetails
 	ExecDetail  execdetails.ExecDetails
 	MemMax      int64
+	Succ        bool
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1053,6 +1057,7 @@ type SlowQueryLogItems struct {
 // # Cop_process: Avg_time: 1s P90_time: 2s Max_time: 3s Max_addr: 10.6.131.78
 // # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
 // # Memory_max: 4096
+// # Succ: true
 // select * from t_slim;
 func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	var buf bytes.Buffer
@@ -1117,6 +1122,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.MemMax > 0 {
 		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
 	}
+
+	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 
 	buf.WriteString(logItems.SQL)
 	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {

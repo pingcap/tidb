@@ -29,16 +29,17 @@ import (
 type Scanner struct {
 	snapshot     *tikvSnapshot
 	batchSize    int
-	valid        bool
 	cache        []*pb.KvPair
 	idx          int
 	nextStartKey []byte
 	endKey       []byte
-	eof          bool
 
 	// Use for reverse scan.
-	reverse    bool
 	nextEndKey []byte
+	reverse    bool
+
+	valid bool
+	eof   bool
 }
 
 func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int, reverse bool) (*Scanner, error) {
@@ -185,25 +186,22 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			}
 		}
 
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdScan,
-			Scan: &pb.ScanRequest{
-				StartKey: s.nextStartKey,
-				EndKey:   reqEndKey,
-				Limit:    uint32(s.batchSize),
-				Version:  s.startTS(),
-				KeyOnly:  s.snapshot.keyOnly,
-			},
-			Context: pb.Context{
-				Priority:     s.snapshot.priority,
-				NotFillCache: s.snapshot.notFillCache,
-			},
+		sreq := &pb.ScanRequest{
+			StartKey: s.nextStartKey,
+			EndKey:   reqEndKey,
+			Limit:    uint32(s.batchSize),
+			Version:  s.startTS(),
+			KeyOnly:  s.snapshot.keyOnly,
 		}
 		if s.reverse {
-			req.Scan.StartKey = s.nextEndKey
-			req.Scan.EndKey = reqStartKey
-			req.Scan.Reverse = true
+			sreq.StartKey = s.nextEndKey
+			sreq.EndKey = reqStartKey
+			sreq.Reverse = true
 		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdScan, sreq, pb.Context{
+			Priority:     s.snapshot.priority,
+			NotFillCache: s.snapshot.notFillCache,
+		})
 		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
@@ -221,10 +219,10 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			}
 			continue
 		}
-		cmdScanResp := resp.Scan
-		if cmdScanResp == nil {
+		if resp.Resp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}
+		cmdScanResp := resp.Resp.(*pb.ScanResponse)
 
 		err = s.snapshot.store.CheckVisibility(s.startTS())
 		if err != nil {

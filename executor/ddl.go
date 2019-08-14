@@ -49,14 +49,7 @@ type DDLExec struct {
 
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
 func (e *DDLExec) toErr(err error) error {
-	if e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
-		return err
-	}
-
-	// Before the DDL job is ready, it encouters an error that may be due to the outdated schema information.
-	// After the DDL job is ready, the ErrInfoSchemaChanged error won't happen because we are getting the schema directly from storage.
-	// So we needn't to consider this condition.
-	// Here we distinguish the ErrInfoSchemaChanged error from other errors.
+	// The err may be cause by schema changed, here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
 	txn, err1 := e.ctx.Txn(true)
@@ -113,9 +106,19 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeLockTables(x)
 	case *ast.UnlockTablesStmt:
 		err = e.executeUnlockTables(x)
+	case *ast.CleanupTableLockStmt:
+		err = e.executeCleanupTableLock(x)
+
 	}
 	if err != nil {
-		return e.toErr(err)
+		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,
+		// otherwise, ErrTableNotExists can be returned before putting this DDL job to the job queue.
+		if (e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) ||
+			!e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
+			return e.toErr(err)
+		}
+		return err
+
 	}
 
 	dom := domain.GetDomain(e.ctx)
@@ -452,4 +455,9 @@ func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
 	}
 	lockedTables := e.ctx.GetAllTableLocks()
 	return domain.GetDomain(e.ctx).DDL().UnlockTables(e.ctx, lockedTables)
+}
+
+func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)
+	return err
 }

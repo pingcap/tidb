@@ -42,9 +42,33 @@ const (
 	maxFlag          byte = 250
 )
 
+func preRealloc(b []byte, vals []types.Datum, comparable bool) []byte {
+	var size int
+	for i := range vals {
+		switch vals[i].Kind() {
+		case types.KindInt64, types.KindUint64, types.KindMysqlEnum, types.KindMysqlSet, types.KindMysqlBit, types.KindBinaryLiteral:
+			size += sizeInt(comparable)
+		case types.KindString, types.KindBytes:
+			size += sizeBytes(vals[i].GetBytes(), comparable)
+		case types.KindMysqlTime, types.KindMysqlDuration, types.KindFloat32, types.KindFloat64:
+			size += 9
+		case types.KindNull, types.KindMinNotNull, types.KindMaxValue:
+			size += 1
+		case types.KindMysqlJSON:
+			size += 2 + len(vals[i].GetBytes())
+		case types.KindMysqlDecimal:
+			size += 1 + types.MyDecimalStructSize
+		default:
+			return b
+		}
+	}
+	return reallocBytes(b, size)
+}
+
 // encode will encode a datum and append it to a byte slice. If comparable is true, the encoded bytes can be sorted as it's original order.
 // If hash is true, the encoded bytes can be checked equal as it's original value.
 func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparable bool, hash bool) (_ []byte, err error) {
+	b = preRealloc(b, vals, comparable)
 	for i, length := 0, len(vals); i < length; i++ {
 		switch vals[i].Kind() {
 		case types.KindInt64:
@@ -69,7 +93,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = append(b, uintFlag)
 			b, err = EncodeMySQLTime(sc, vals[i], mysql.TypeUnspecified, b)
 			if err != nil {
-				return nil, err
+				return b, err
 			}
 		case types.KindMysqlDuration:
 			// duration may have negative value, so we cannot use String to encode directly.
@@ -83,7 +107,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				var bin []byte
 				bin, err = dec.ToHashKey()
 				if err != nil {
-					return nil, errors.Trace(err)
+					return b, errors.Trace(err)
 				}
 				b = append(b, bin...)
 			} else {
@@ -116,11 +140,43 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 		case types.KindMaxValue:
 			b = append(b, maxFlag)
 		default:
-			return nil, errors.Errorf("unsupport encode type %d", vals[i].Kind())
+			return b, errors.Errorf("unsupport encode type %d", vals[i].Kind())
 		}
 	}
 
 	return b, errors.Trace(err)
+}
+
+// EstimateValueSize uses to estimate the value  size of the encoded values.
+func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, error) {
+	l := 0
+	switch val.Kind() {
+	case types.KindInt64:
+		l = valueSizeOfSignedInt(val.GetInt64())
+	case types.KindUint64:
+		l = valueSizeOfUnsignedInt(val.GetUint64())
+	case types.KindFloat32, types.KindFloat64, types.KindMysqlTime, types.KindMysqlDuration:
+		l = 9
+	case types.KindString, types.KindBytes:
+		l = valueSizeOfBytes(val.GetBytes())
+	case types.KindMysqlDecimal:
+		l = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac()) + 1
+	case types.KindMysqlEnum:
+		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlEnum().ToNumber()))
+	case types.KindMysqlSet:
+		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlSet().ToNumber()))
+	case types.KindMysqlBit, types.KindBinaryLiteral:
+		val, err := val.GetBinaryLiteral().ToInt(sc)
+		terror.Log(errors.Trace(err))
+		l = valueSizeOfUnsignedInt(val)
+	case types.KindMysqlJSON:
+		l = 2 + len(val.GetMysqlJSON().Value)
+	case types.KindNull, types.KindMinNotNull, types.KindMaxValue:
+		l = 1
+	default:
+		return l, errors.Errorf("unsupported encode type %d", val.Kind())
+	}
+	return l, nil
 }
 
 // EncodeMySQLTime encodes datum of `KindMysqlTime` to []byte.
@@ -157,6 +213,19 @@ func encodeBytes(b []byte, v []byte, comparable bool) []byte {
 	return b
 }
 
+func valueSizeOfBytes(v []byte) int {
+	return valueSizeOfSignedInt(int64(len(v))) + len(v)
+}
+
+func sizeBytes(v []byte, comparable bool) int {
+	if comparable {
+		reallocSize := (len(v)/encGroupSize + 1) * (encGroupSize + 1)
+		return 1 + reallocSize
+	}
+	reallocSize := binary.MaxVarintLen64 + len(v)
+	return 1 + reallocSize
+}
+
 func encodeSignedInt(b []byte, v int64, comparable bool) []byte {
 	if comparable {
 		b = append(b, intFlag)
@@ -168,6 +237,20 @@ func encodeSignedInt(b []byte, v int64, comparable bool) []byte {
 	return b
 }
 
+func valueSizeOfSignedInt(v int64) int {
+	if v < 0 {
+		v = 0 - v - 1
+	}
+	// Flag occupy 1 bit and at lease 1 bit.
+	size := 2
+	v = v >> 6
+	for v > 0 {
+		size++
+		v = v >> 7
+	}
+	return size
+}
+
 func encodeUnsignedInt(b []byte, v uint64, comparable bool) []byte {
 	if comparable {
 		b = append(b, uintFlag)
@@ -177,6 +260,24 @@ func encodeUnsignedInt(b []byte, v uint64, comparable bool) []byte {
 		b = EncodeUvarint(b, v)
 	}
 	return b
+}
+
+func valueSizeOfUnsignedInt(v uint64) int {
+	// Flag occupy 1 bit and at lease 1 bit.
+	size := 2
+	v = v >> 7
+	for v > 0 {
+		size++
+		v = v >> 7
+	}
+	return size
+}
+
+func sizeInt(comparable bool) int {
+	if comparable {
+		return 9
+	}
+	return 1 + binary.MaxVarintLen64
 }
 
 // EncodeKey appends the encoded values to byte slice b, returns the appended
@@ -628,7 +729,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		v := types.Duration{Duration: time.Duration(r), Fsp: ft.Decimal}
+		v := types.Duration{Duration: time.Duration(r), Fsp: int8(ft.Decimal)}
 		chk.AppendDuration(colIdx, v)
 	case jsonFlag:
 		var size int
@@ -652,7 +753,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
 	switch ft.Tp {
 	case mysql.TypeDuration:
-		v := types.Duration{Duration: time.Duration(val), Fsp: ft.Decimal}
+		v := types.Duration{Duration: time.Duration(val), Fsp: int8(ft.Decimal)}
 		chk.AppendDuration(colIdx, v)
 	default:
 		chk.AppendInt64(colIdx, val)
@@ -664,7 +765,7 @@ func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.Field
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
 		t.Type = ft.Tp
-		t.Fsp = ft.Decimal
+		t.Fsp = int8(ft.Decimal)
 		var err error
 		err = t.FromPackedUint(val)
 		if err != nil {

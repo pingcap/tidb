@@ -90,6 +90,15 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 				Name:      origColName,
 			},
 		}
+		// This is for compatibility.
+		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
+		}
+		// Usually the length of O equals the length of L.
+		// Add this len judgement to avoid panic.
+		if len(rf.ColumnAsName.L) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.L = rf.ColumnAsName.L[:mysql.MaxAliasIdentifierLen]
+		}
 		rfs = append(rfs, rf)
 	}
 	return rfs
@@ -137,10 +146,6 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan plannercore.Plan
-	// LowerPriority represents whether to lower the execution priority of a query.
-	LowerPriority bool
-	// Cacheable represents whether the physical plan can be cached.
-	Cacheable bool
 	// Text represents the origin query text.
 	Text string
 
@@ -148,6 +153,12 @@ type ExecStmt struct {
 
 	Ctx sessionctx.Context
 
+	// StartTime stands for the starting time when executing the statement.
+	StartTime time.Time
+	// LowerPriority represents whether to lower the execution priority of a query.
+	LowerPriority bool
+	// Cacheable represents whether the physical plan can be cached.
+	Cacheable         bool
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
@@ -180,13 +191,13 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
-func (a *ExecStmt) RebuildPlan() (int64, error) {
+func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
 	}
-	p, err := planner.Optimize(a.Ctx, a.StmtNode, is)
+	p, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
 	if err != nil {
 		return 0, err
 	}
@@ -251,17 +262,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
-	// If the executor doesn't return any result to the client, we execute it without delay.
-	if e.Schema().Len() == 0 {
-		if isPessimistic {
-			return nil, a.handlePessimisticDML(ctx, e)
-		}
-		return a.handleNoDelayExecutor(ctx, e)
-	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
-		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
-		// the Projection has two expressions and two columns in the schema, but we should
-		// not return the result of the two expressions.
-		return a.handleNoDelayExecutor(ctx, e)
+	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled {
+		return result, err
 	}
 
 	var txnStartTS uint64
@@ -277,6 +279,32 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (bool, sqlexec.RecordSet, error) {
+	toCheck := e
+	if explain, ok := e.(*ExplainExec); ok {
+		if explain.analyzeExec != nil {
+			toCheck = explain.analyzeExec
+		}
+	}
+
+	// If the executor doesn't return any result to the client, we execute it without delay.
+	if toCheck.Schema().Len() == 0 {
+		if isPessimistic {
+			return true, nil, a.handlePessimisticDML(ctx, e)
+		}
+		r, err := a.handleNoDelayExecutor(ctx, e)
+		return true, r, err
+	} else if proj, ok := toCheck.(*ProjectionExec); ok && proj.calculateNoDelay {
+		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
+		// the Projection has two expressions and two columns in the schema, but we should
+		// not return the result of the two expressions.
+		r, err := a.handleNoDelayExecutor(ctx, e)
+		return true, r, err
+	}
+
+	return false, nil, nil
 }
 
 // getMaxExecutionTime get the max execution timeout value.
@@ -370,6 +398,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
 	// Check if "tidb_snapshot" is set for the write executors.
@@ -589,7 +618,8 @@ func (a *ExecStmt) logAudit() {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-			audit.OnGeneralEvent(context.Background(), sessVars, plugin.Log, cmd)
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.StartTime)
+			audit.OnGeneralEvent(ctx, sessVars, plugin.Log, cmd)
 		}
 		return nil
 	})
@@ -642,6 +672,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			CopTasks:    copTaskInfo,
 			ExecDetail:  execDetail,
 			MemMax:      memMax,
+			Succ:        succ,
 		}))
 	} else {
 		_, digest := sessVars.StmtCtx.SQLDigest()
@@ -657,6 +688,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			CopTasks:    copTaskInfo,
 			ExecDetail:  execDetail,
 			MemMax:      memMax,
+			Succ:        succ,
 		}))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())

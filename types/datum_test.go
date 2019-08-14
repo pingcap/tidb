@@ -227,7 +227,7 @@ func (ts *testTypeConvertSuite) TestToFloat64(c *C) {
 }
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
-func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
+func mustParseTimeIntoDatum(s string, tp byte, fsp int8) (d Datum) {
 	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp)
 	if err != nil {
 		panic("ParseTime fail")
@@ -250,6 +250,7 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 		{NewStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
 		{NewStringDatum("{}"), `{}`, true},
 		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
+		{NewStringDatum(`{"a": "9223372036854775809"}`), `{"a": "9223372036854775809"}`, true},
 
 		// can not parse JSON from this string, so error occurs.
 		{NewStringDatum("hello, 世界"), "", false},
@@ -313,14 +314,6 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(bin, BytesEquals, tt.out)
 	}
-}
-
-func mustParseDurationDatum(str string, fsp int) Datum {
-	dur, err := ParseDuration(nil, str, fsp)
-	if err != nil {
-		panic(err)
-	}
-	return NewDurationDatum(dur)
 }
 
 func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {

@@ -84,10 +84,12 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 		if err != nil {
 			return err
 		}
+		p.LeftJoinKeys[i] = lArg.(*expression.Column)
 		rArg, err := fun.GetArgs()[1].ResolveIndices(rSchema)
 		if err != nil {
 			return err
 		}
+		p.RightJoinKeys[i] = rArg.(*expression.Column)
 		p.EqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, expr := range p.LeftConditions {
@@ -478,17 +480,6 @@ func (p *Insert) ResolveIndices() (err error) {
 		}
 	}
 	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *Show) ResolveIndices() (err error) {
-	for i, expr := range p.Conditions {
-		p.Conditions[i], err = expr.ResolveIndices(p.schema)
-		if err != nil {
-			return err
-		}
-	}
-	return err
 }
 
 func (p *physicalSchemaProducer) ResolveIndices() (err error) {

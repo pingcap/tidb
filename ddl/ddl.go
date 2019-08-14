@@ -249,6 +249,7 @@ type DDL interface {
 	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident, isAlterTable bool) error
 	LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
+	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
@@ -511,10 +512,8 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 }
 
 func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
-	ret := make([]int64, count)
+	var ret []int64
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		var err error
-
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
 				failpoint.Return(errors.New("gofail genGlobalIDs error"))
@@ -522,13 +521,9 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 		})
 
 		m := meta.NewMeta(txn)
-		for i := 0; i < count; i++ {
-			ret[i], err = m.GenGlobalID()
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+		var err error
+		ret, err = m.GenGlobalIDs(count)
+		return err
 	})
 
 	return ret, err
