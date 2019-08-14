@@ -650,6 +650,19 @@ func (s *testChunkSuite) TestPreAllocDecimal(c *check.C) {
 	c.Assert(len(col.Float64s()), check.Equals, 257)
 }
 
+func (s *testChunkSuite) TestPreAllocTime(c *check.C) {
+	col := newFixedLenColumn(sizeTime, 128)
+	col.ResizeTime(256)
+	ds := col.Times()
+	c.Assert(len(ds), check.Equals, 256)
+	for i := 0; i < 256; i++ {
+		c.Assert(col.IsNull(i), check.Equals, true)
+	}
+	col.AppendTime(types.ZeroDatetime)
+	c.Assert(col.IsNull(256), check.Equals, false)
+	c.Assert(len(col.Times()), check.Equals, 257)
+}
+
 func (s *testChunkSuite) TestNull(c *check.C) {
 	col := newFixedLenColumn(sizeFloat64, 32)
 	col.ResizeFloat64(1024)
