@@ -32,6 +32,7 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
+	columnBufferAllocator
 	args   []Expression
 	ctx    sessionctx.Context
 	tp     *types.FieldType
@@ -60,6 +61,8 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 		panic("ctx should not be nil")
 	}
 	return baseBuiltinFunc{
+		columnBufferAllocator: newLocalSliceBuffer(),
+
 		args: args,
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
@@ -162,6 +165,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 	return baseBuiltinFunc{
+		columnBufferAllocator: newLocalSliceBuffer(),
+
 		args: args,
 		ctx:  ctx,
 		tp:   fieldType,
@@ -287,6 +292,8 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 
 // vecBuiltinFunc contains all vectorized methods for a builtin function.
 type vecBuiltinFunc interface {
+	columnBufferAllocator
+
 	// vecEval evaluates this builtin function in a vectorized manner.
 	vecEval(input *chunk.Chunk, result *chunk.Column) error
 	// vectorized returns if this builtin function supports vectorized evaluation.

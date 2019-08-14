@@ -28,6 +28,115 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
+type mockVecPlusIntBuiltinFunc struct {
+	baseBuiltinFunc
+
+	buf         *chunk.Column
+	enableAlloc bool
+}
+
+func (p *mockVecPlusIntBuiltinFunc) allocBuf(n int) (*chunk.Column, error) {
+	if p.enableAlloc {
+		return p.alloc(types.ETInt, n)
+	}
+	if p.buf == nil {
+		p.buf = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), n)
+	}
+	return p.buf, nil
+}
+
+func (p *mockVecPlusIntBuiltinFunc) releaseBuf(buf *chunk.Column) {
+	if p.enableAlloc {
+		p.release(buf)
+	}
+}
+
+func (p *mockVecPlusIntBuiltinFunc) vecEval(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := p.allocBuf(n)
+	if err != nil {
+		return err
+	}
+	defer p.releaseBuf(buf)
+	if err := p.args[0].VecEval(p.ctx, input, result); err != nil {
+		return err
+	}
+	if err := p.args[1].VecEval(p.ctx, input, buf); err != nil {
+		return err
+	}
+	dst64s := result.Int64s()
+	src64s := buf.Int64s()
+	for i := range dst64s {
+		dst64s[i] += src64s[i]
+	}
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) && !result.IsNull(i) {
+			result.SetNull(i, true)
+		}
+	}
+	return nil
+}
+
+func genMockVecPlusIntBuiltinFunc() (*mockVecPlusIntBuiltinFunc, *chunk.Chunk, *chunk.Column) {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	col1 := newColumn(0)
+	col1.Index, col1.RetType = 0, tp
+	col2 := newColumn(1)
+	col2.Index, col2.RetType = 1, tp
+	bf := newBaseBuiltinFuncWithTp(mock.NewContext(), []Expression{col1, col2}, types.ETInt, types.ETInt, types.ETInt)
+	plus := &mockVecPlusIntBuiltinFunc{bf, nil, false}
+	input := chunk.New([]*types.FieldType{tp, tp}, 1024, 1024)
+	buf := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+	for i := 0; i < 1024; i++ {
+		input.AppendInt64(0, int64(i))
+		input.AppendInt64(1, int64(i))
+	}
+	return plus, input, buf
+}
+
+func (s *testEvaluatorSuite) TestMockVecPlusInt(c *C) {
+	plus, input, buf := genMockVecPlusIntBuiltinFunc()
+	plus.enableAlloc = false
+	c.Assert(plus.vecEval(input, buf), IsNil)
+	for i := 0; i < 1024; i++ {
+		c.Assert(buf.IsNull(i), IsFalse)
+		c.Assert(buf.GetInt64(i), Equals, int64(i*2))
+	}
+
+	plus.enableAlloc = true
+	c.Assert(plus.vecEval(input, buf), IsNil)
+	for i := 0; i < 1024; i++ {
+		c.Assert(buf.IsNull(i), IsFalse)
+		c.Assert(buf.GetInt64(i), Equals, int64(i*2))
+	}
+}
+
+func BenchmarkColumnBufferAllocate(b *testing.B) {
+	allocator := newLocalSliceBuffer()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf, _ := allocator.alloc(types.ETInt, 1024)
+		allocator.release(buf)
+	}
+}
+
+func BenchmarkPlusIntBufAllocator(b *testing.B) {
+	plus, input, buf := genMockVecPlusIntBuiltinFunc()
+	names := []string{"enable", "disable"}
+	enable := []bool{true, false}
+	for i := range enable {
+		b.Run(names[i], func(b *testing.B) {
+			plus.enableAlloc = enable[i]
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := plus.vecEval(input, buf); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 type mockRowBuiltinDouble struct {
 	baseBuiltinFunc
 }

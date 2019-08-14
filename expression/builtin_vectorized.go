@@ -14,12 +14,96 @@
 package expression
 
 import (
+	"sync"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
+
+// columnBufferAllocator is used to allocate and release column buffer in vectorized evaluation.
+type columnBufferAllocator interface {
+	// alloc allocates a column buffer with the specific eval type and capacity.
+	// the allocator is not responsible for initializing the column, so please initialize it before using.
+	alloc(evalType types.EvalType, capacity int) (*chunk.Column, error)
+	// release releases a column buffer.
+	release(buf *chunk.Column)
+}
+
+type localSliceBuffer struct {
+	sync.Mutex
+	buffers []*chunk.Column
+	head    int
+	tail    int
+	size    int
+}
+
+func newLocalSliceBuffer() *localSliceBuffer {
+	// in most cases, expressions are called serially, so 1 buffer is enough.
+	return &localSliceBuffer{buffers: make([]*chunk.Column, 1)}
+}
+
+func (r *localSliceBuffer) newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+	switch evalType {
+	case types.ETInt:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), capacity), nil
+	case types.ETReal:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeDouble), capacity), nil
+	case types.ETDecimal:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), capacity), nil
+	case types.ETDuration:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeDuration), capacity), nil
+	case types.ETDatetime, types.ETTimestamp:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeDatetime), capacity), nil
+	case types.ETString:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeString), capacity), nil
+	case types.ETJson:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeJSON), capacity), nil
+	}
+	return nil, errors.Errorf("alloc column buffer for unsupported EvalType=%v", evalType)
+}
+
+func (r *localSliceBuffer) alloc(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+	r.Lock()
+	defer r.Unlock()
+	if r.size > 0 {
+		buf := r.buffers[r.head]
+		r.head++
+		if r.head == len(r.buffers) {
+			r.head = 0
+		}
+		r.size--
+		return buf, nil
+	}
+	return r.newBuffer(evalType, capacity)
+}
+
+func (r *localSliceBuffer) release(buf *chunk.Column) {
+	r.Lock()
+	defer r.Unlock()
+	if r.size == len(r.buffers) {
+		buffers := make([]*chunk.Column, len(r.buffers)*2)
+		for pos, i := r.head, 0; i < len(r.buffers); i++ {
+			buffers[i] = r.buffers[pos]
+			pos++
+			if pos > len(r.buffers) {
+				pos -= len(r.buffers)
+			}
+		}
+		r.head = 0
+		r.tail = len(r.buffers)
+		r.buffers = buffers
+	}
+	r.buffers[r.tail] = buf
+	r.tail++
+	if r.tail == len(r.buffers) {
+		r.tail = 0
+	}
+	r.size++
+}
 
 type vecRowConverter struct {
 	builtinFunc
