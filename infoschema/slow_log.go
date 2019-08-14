@@ -184,7 +184,6 @@ type slowQueryTuple struct {
 	processKeys       uint64
 	db                string
 	indexIDs          string
-	isInternal        bool
 	digest            string
 	statsInfo         string
 	avgProcessTime    float64
@@ -196,8 +195,9 @@ type slowQueryTuple struct {
 	maxWaitTime       float64
 	maxWaitAddress    string
 	memMax            int64
-	succ              bool
 	sql               string
+	isInternal        bool
+	succ              bool
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {

@@ -52,7 +52,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 
 // removeRow removes the duplicate row and cleanup its keys in the key-value map,
 // but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
-func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
+func (e *ReplaceExec) removeRow(ctx context.Context, handle int64, r toBeCheckedRow) (bool, error) {
 	newRow := r.row
 	oldRow, err := e.batchChecker.getOldRow(e.ctx, r.t, handle, e.GenExprs)
 	if err != nil {
@@ -75,7 +75,7 @@ func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 
 	// Cleanup keys map, because the record was removed.
-	err = e.deleteDupKeys(e.ctx, r.t, [][]types.Datum{oldRow})
+	err = e.deleteDupKeys(ctx, e.ctx, r.t, [][]types.Datum{oldRow})
 	if err != nil {
 		return false, err
 	}
@@ -83,14 +83,14 @@ func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
 }
 
 // replaceRow removes all duplicate rows for one row, then inserts it.
-func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
+func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	if r.handleKey != nil {
 		if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
 			if err != nil {
 				return err
 			}
-			rowUnchanged, err := e.removeRow(handle, r)
+			rowUnchanged, err := e.removeRow(ctx, handle, r)
 			if err != nil {
 				return err
 			}
@@ -102,7 +102,7 @@ func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
 
 	// Keep on removing duplicated rows.
 	for {
-		rowUnchanged, foundDupKey, err := e.removeIndexRow(r)
+		rowUnchanged, foundDupKey, err := e.removeIndexRow(ctx, r)
 		if err != nil {
 			return err
 		}
@@ -116,7 +116,7 @@ func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
 	}
 
 	// No duplicated rows now, insert the row.
-	newHandle, err := e.addRecord(r.row)
+	newHandle, err := e.addRecord(ctx, r.row)
 	if err != nil {
 		return err
 	}
@@ -130,14 +130,14 @@ func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
 //     2. bool: true when found the duplicated key. This only means that duplicated key was found,
 //              and the row was removed.
 //     3. error: the error.
-func (e *ReplaceExec) removeIndexRow(r toBeCheckedRow) (bool, bool, error) {
+func (e *ReplaceExec) removeIndexRow(ctx context.Context, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
 		if val, found := e.dupKVs[string(uk.newKV.key)]; found {
 			handle, err := tables.DecodeHandle(val)
 			if err != nil {
 				return false, found, err
 			}
-			rowUnchanged, err := e.removeRow(handle, r)
+			rowUnchanged, err := e.removeRow(ctx, handle, r)
 			if err != nil {
 				return false, found, err
 			}
@@ -160,19 +160,19 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	 * because in this case, one row was inserted after the duplicate was deleted.
 	 * See http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
 	 */
-	err := e.batchGetInsertKeys(e.ctx, e.Table, newRows)
+	err := e.batchGetInsertKeys(ctx, e.ctx, e.Table, newRows)
 	if err != nil {
 		return err
 	}
 
 	// Batch get the to-be-replaced rows in storage.
-	err = e.initDupOldRowValue(e.ctx, e.Table, newRows)
+	err = e.initDupOldRowValue(ctx, e.ctx, e.Table, newRows)
 	if err != nil {
 		return err
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(newRows)))
 	for _, r := range e.toBeCheckedRows {
-		err = e.replaceRow(r)
+		err = e.replaceRow(ctx, r)
 		if err != nil {
 			return err
 		}

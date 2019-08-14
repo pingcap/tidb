@@ -57,18 +57,19 @@ type Table struct {
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
 	PhysicalID int64
-	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
-	// The physical id is used when try to load column stats from storage.
-	HavePhysicalID bool
-	Columns        map[int64]*Column
-	Indices        map[int64]*Index
+	Columns    map[int64]*Column
+	Indices    map[int64]*Index
 	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
 	Idx2ColumnIDs map[int64][]int64
 	// ColID2IdxID maps the column id to index id whose first column is it. It's used to calculate the selectivity in planner.
 	ColID2IdxID map[int64]int64
-	Pseudo      bool
 	Count       int64
 	ModifyCount int64 // Total modify count in a table.
+
+	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
+	// The physical id is used when try to load column stats from storage.
+	HavePhysicalID bool
+	Pseudo         bool
 }
 
 // Copy copies the current table.
@@ -293,6 +294,26 @@ func GetOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
+}
+
+// ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
+func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
+	cols := make(map[int64]*Column)
+	for _, col := range columns {
+		colHist, ok := coll.Columns[col.ID]
+		if ok {
+			cols[col.UniqueID] = colHist
+		}
+	}
+	newColl := &HistColl{
+		PhysicalID:     coll.PhysicalID,
+		HavePhysicalID: coll.HavePhysicalID,
+		Pseudo:         coll.Pseudo,
+		Count:          coll.Count,
+		ModifyCount:    coll.ModifyCount,
+		Columns:        cols,
+	}
+	return newColl
 }
 
 // GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxID and IdxID2ColIDs is built from the given parameter.
@@ -654,7 +675,7 @@ func (coll *HistColl) GetAvgRowSize(cols []*expression.Column, isEncodedKey bool
 			colHist, ok := coll.Columns[col.UniqueID]
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
-			if !ok || (colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
+			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
 				size += pseudoColSize
 				continue
 			}
