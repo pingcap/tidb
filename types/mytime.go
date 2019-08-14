@@ -34,9 +34,9 @@ type MysqlTime struct {
 	second      uint8  // second <= 59
 }
 
-// String implements fmt.Stringer
+// String implements fmt.Stringer.
 func (t MysqlTime) String() string {
-	return fmt.Sprintf("%d-%d-%d %d:%d:%d.%d", t.year, t.month, t.day, t.hour, t.minute, t.second, t.microsecond)
+	return fmt.Sprintf("{%d %d %d %d %d %d %d}", t.year, t.month, t.day, t.hour, t.minute, t.second, t.microsecond)
 }
 
 // Year returns the year value.
