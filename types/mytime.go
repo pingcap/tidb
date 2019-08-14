@@ -16,6 +16,7 @@ package types
 import (
 	gotime "time"
 
+	"fmt"
 	"github.com/pingcap/errors"
 )
 
@@ -31,6 +32,11 @@ type MysqlTime struct {
 	day         uint8  // day <= 31
 	minute      uint8  // minute <= 59
 	second      uint8  // second <= 59
+}
+
+// String implements fmt.Stringer
+func (t MysqlTime) String() string {
+	return fmt.Sprintf("%d-%d-%d %d:%d:%d.%d", t.year, t.month, t.day, t.hour, t.minute, t.second, t.microsecond)
 }
 
 // Year returns the year value.
