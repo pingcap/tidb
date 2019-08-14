@@ -8382,6 +8382,11 @@ TextType:
 		x := types.NewFieldType(mysql.TypeLongBlob)
 		$$ = x
 	}
+|	"LONG"
+	{
+		x := types.NewFieldType(mysql.TypeMediumBlob)
+		$$ = x
+	}
 |	"LONG" "VARCHAR"
 	{
 		x := types.NewFieldType(mysql.TypeMediumBlob)

@@ -2370,6 +2370,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table nchar (a int);", true, "CREATE TABLE `nchar` (`a` INT)"},
 		{"create table nchar (a int, b nchar);", true, "CREATE TABLE `nchar` (`a` INT,`b` CHAR)"},
 		{"create table nchar (a int, b nchar(50));", true, "CREATE TABLE `nchar` (`a` INT,`b` CHAR(50))"},
+
+		// for LONG syntax
+		{"create table t (a long);", true, "CREATE TABLE `t` (`a` MEDIUMTEXT)"},
+		{"create table t (a long varchar);", true, "CREATE TABLE `t` (`a` MEDIUMTEXT)"},
+		{"create table t (a mediumtext, b long varchar, c long);", true, "CREATE TABLE `t` (`a` MEDIUMTEXT,`b` MEDIUMTEXT,`c` MEDIUMTEXT)"},
 	}
 	s.RunTest(c, table)
 }
