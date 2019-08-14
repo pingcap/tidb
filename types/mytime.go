@@ -345,6 +345,14 @@ func calcWeek(t *MysqlTime, wb weekBehaviour) (year int, week int) {
 
 // mixDateAndTime mixes a date value and a time value.
 func mixDateAndTime(date, time *MysqlTime, neg bool) {
+	if !neg && time.hour < 24 {
+		date.hour = time.hour
+		date.minute = time.minute
+		date.second = time.second
+		date.microsecond = time.microsecond
+		return
+	}
+
 	// Time is negative or outside of 24 hours internal.
 	sign := -1
 	if neg {
