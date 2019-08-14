@@ -168,7 +168,7 @@ func (decoder *Decoder) decodeColData(colIdx int, colData []byte, chk *chunk.Chu
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
 		t.Type = ft.Tp
-		t.Fsp = ft.Decimal
+		t.Fsp = int8(ft.Decimal)
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
 			return err
@@ -183,7 +183,7 @@ func (decoder *Decoder) decodeColData(colIdx int, colData []byte, chk *chunk.Chu
 	case mysql.TypeDuration:
 		var dur types.Duration
 		dur.Duration = time.Duration(decodeInt(colData))
-		dur.Fsp = ft.Decimal
+		dur.Fsp = int8(ft.Decimal)
 		chk.AppendDuration(colIdx, dur)
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
