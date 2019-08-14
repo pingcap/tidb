@@ -204,6 +204,10 @@ func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error)
 	return json.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
 }
 
+func (b *baseBuiltinFunc) vectorized() bool {
+	return false
+}
+
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	switch b.tp.EvalType() {
 	case types.ETString:
@@ -285,6 +289,8 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 type vecBuiltinFunc interface {
 	// vecEval evaluates this builtin function in a vectorized manner.
 	vecEval(input *chunk.Chunk, result *chunk.Column) error
+	// vectorized returns if this builtin function supports vectorized evaluation.
+	vectorized() bool
 }
 
 // builtinFunc stands for a particular function signature.
@@ -344,6 +350,12 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
+}
+
+func init() {
+	for k, v := range funcs {
+		funcs[k] = &vecRowConvertFuncClass{v}
+	}
 }
 
 // funcs holds all registered builtin functions. When new function is added,
