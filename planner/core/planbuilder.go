@@ -58,12 +58,18 @@ type tableHintInfo struct {
 	indexNestedLoopJoinTables []hintTableInfo
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
+	indexHintList             []indexHintInfo
 	preferAggType             uint
 }
 
 type hintTableInfo struct {
 	name    model.CIStr
 	matched bool
+}
+
+type indexHintInfo struct {
+	tblName   model.CIStr
+	indexHint *ast.IndexHint
 }
 
 func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
