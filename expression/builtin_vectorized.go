@@ -26,11 +26,11 @@ import (
 
 // columnBufferAllocator is used to allocate and release column buffer in vectorized evaluation.
 type columnBufferAllocator interface {
-	// alloc allocates a column buffer with the specific eval type and capacity.
+	// get allocates a column buffer with the specific eval type and capacity.
 	// the allocator is not responsible for initializing the column, so please initialize it before using.
-	alloc(evalType types.EvalType, capacity int) (*chunk.Column, error)
-	// release releases a column buffer.
-	release(buf *chunk.Column)
+	get(evalType types.EvalType, capacity int) (*chunk.Column, error)
+	// put releases a column buffer.
+	put(buf *chunk.Column)
 }
 
 type localSliceBuffer struct {
@@ -63,7 +63,7 @@ func (r *localSliceBuffer) newBuffer(evalType types.EvalType, capacity int) (*ch
 	case types.ETJson:
 		return chunk.NewColumn(types.NewFieldType(mysql.TypeJSON), capacity), nil
 	}
-	return nil, errors.Errorf("alloc column buffer for unsupported EvalType=%v", evalType)
+	return nil, errors.Errorf("get column buffer for unsupported EvalType=%v", evalType)
 }
 
 func (r *localSliceBuffer) alloc(evalType types.EvalType, capacity int) (*chunk.Column, error) {

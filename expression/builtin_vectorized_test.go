@@ -38,7 +38,7 @@ type mockVecPlusIntBuiltinFunc struct {
 
 func (p *mockVecPlusIntBuiltinFunc) allocBuf(n int) (*chunk.Column, error) {
 	if p.enableAlloc {
-		return p.alloc(types.ETInt, n)
+		return p.get(types.ETInt, n)
 	}
 	if p.buf == nil {
 		p.buf = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), n)
@@ -48,7 +48,7 @@ func (p *mockVecPlusIntBuiltinFunc) allocBuf(n int) (*chunk.Column, error) {
 
 func (p *mockVecPlusIntBuiltinFunc) releaseBuf(buf *chunk.Column) {
 	if p.enableAlloc {
-		p.release(buf)
+		p.put(buf)
 	}
 }
 
