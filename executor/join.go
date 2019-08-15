@@ -543,7 +543,9 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 		e.innerFinished <- errors.Trace(err)
 		close(doneCh)
 	}
-	// wait fetchInnerRows be finished.
+	// Wait fetchInnerRows be finished.
+	// 1. if buildHashTableForList fails
+	// 2. if outerResult.NumRows() == 0, fetchOutChunks will not wait for inner.
 	for range innerResultCh {
 	}
 }
