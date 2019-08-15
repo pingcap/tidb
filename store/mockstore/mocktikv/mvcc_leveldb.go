@@ -1273,3 +1273,93 @@ func (mvcc *MVCCLevelDB) doRawDeleteRange(startKey, endKey []byte) error {
 
 	return mvcc.db.Write(batch, nil)
 }
+
+func (mvcc *MVCCLevelDB) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte) {
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
+	pairs := mvcc.ReverseScan(nil, nil, 1, starTS, kvrpcpb.IsolationLevel_RC)
+	if len(pairs) != 1 {
+		return nil, nil
+	}
+
+	key := pairs[0].Key
+	return mvcc.MvccGetByKey(key), key
+}
+
+var ValueTypeOpMap = map[mvccValueType]kvrpcpb.Op{
+	typePut:      kvrpcpb.Op_Put,
+	typeDelete:   kvrpcpb.Op_Del,
+	typeRollback: kvrpcpb.Op_Rollback,
+}
+
+func (mvcc *MVCCLevelDB) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
+	info := &kvrpcpb.MvccInfo{}
+
+	startKey := mvccEncode(key, lockVer)
+	iter := newIterator(mvcc.db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	dec1 := lockDecoder{expectKey: key}
+	ok, err := dec1.Decode(iter)
+	if err != nil {
+		return nil
+	}
+	if ok {
+		var shortValue []byte
+		if isShortValue(dec1.lock.value) {
+			shortValue = dec1.lock.value
+		}
+		info.Lock = &kvrpcpb.MvccLock{
+			Type:       dec1.lock.op,
+			StartTs:    dec1.lock.startTS,
+			Primary:    dec1.lock.primary,
+			ShortValue: shortValue,
+		}
+	}
+
+	dec2 := valueDecoder{expectKey: key}
+	var writes []*kvrpcpb.MvccWrite
+	var values []*kvrpcpb.MvccValue
+	for iter.Valid() {
+		ok, err := dec2.Decode(iter)
+		if err != nil {
+			return nil
+		}
+		if !ok {
+			iter.Next()
+			continue
+		}
+		var shortValue []byte
+		if isShortValue(dec2.value.value) {
+			shortValue = dec2.value.value
+		}
+		write := &kvrpcpb.MvccWrite{
+			Type:       ValueTypeOpMap[dec2.value.valueType],
+			StartTs:    dec2.value.startTS,
+			CommitTs:   dec2.value.commitTS,
+			ShortValue: shortValue,
+		}
+		writes = append(writes, write)
+		value := &kvrpcpb.MvccValue{
+			StartTs: dec2.value.startTS,
+			Value:   dec2.value.value,
+		}
+		values = append(values, value)
+	}
+	info.Writes = writes
+	info.Values = values
+
+	return info
+}
+
+const ShortValueMaxLen = 64
+
+func isShortValue(value []byte) bool {
+	return len(value) <= ShortValueMaxLen
+}
