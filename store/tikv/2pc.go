@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/util/hack"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -86,7 +88,7 @@ type twoPhaseCommitter struct {
 	txn       *tikvTxn
 	startTS   uint64
 	keys      [][]byte
-	mutations map[string]*mutationEx
+	mutations map[hack.MutableString]*mutationEx
 	lockTTL   uint64
 	commitTS  uint64
 	priority  pb.CommandPri
@@ -137,12 +139,12 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		delCnt  int
 		lockCnt int
 	)
-	mutations := make(map[string]*mutationEx)
+	mutations := make(map[hack.MutableString]*mutationEx)
 	txn := c.txn
 	c.isPessimistic = txn.IsPessimistic()
 	if c.isPessimistic && len(c.primaryKey) > 0 {
 		keys = append(keys, c.primaryKey)
-		mutations[string(c.primaryKey)] = &mutationEx{
+		mutations[hack.String(c.primaryKey)] = &mutationEx{
 			Mutation: pb.Mutation{
 				Op:  pb.Op_Lock,
 				Key: c.primaryKey,
@@ -156,7 +158,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			if c := txn.us.LookupConditionPair(k); c != nil && c.ShouldNotExist() {
 				op = pb.Op_Insert
 			}
-			mutations[string(k)] = &mutationEx{
+			mutations[hack.String(k)] = &mutationEx{
 				Mutation: pb.Mutation{
 					Op:    op,
 					Key:   k,
@@ -165,7 +167,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			}
 			putCnt++
 		} else {
-			mutations[string(k)] = &mutationEx{
+			mutations[hack.String(k)] = &mutationEx{
 				Mutation: pb.Mutation{
 					Op:  pb.Op_Del,
 					Key: k,
@@ -191,9 +193,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		return errors.Trace(err)
 	}
 	for _, lockKey := range txn.lockKeys {
-		muEx, ok := mutations[string(lockKey)]
+		muEx, ok := mutations[hack.String(lockKey)]
 		if !ok {
-			mutations[string(lockKey)] = &mutationEx{
+			mutations[hack.String(lockKey)] = &mutationEx{
 				Mutation: pb.Mutation{
 					Op:  pb.Op_Lock,
 					Key: lockKey,
@@ -212,7 +214,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 
 	for _, pair := range txn.assertions {
-		mutation, ok := mutations[string(pair.key)]
+		mutation, ok := mutations[hack.String(pair.key)]
 		if !ok {
 			// It's possible when a transaction inserted a key then deleted it later.
 			continue
@@ -453,7 +455,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 
 func (c *twoPhaseCommitter) keyValueSize(key []byte) int {
 	size := len(key)
-	if mutation := c.mutations[string(key)]; mutation != nil {
+	if mutation := c.mutations[hack.String(key)]; mutation != nil {
 		size += len(mutation.Value)
 	}
 	return size
@@ -470,7 +472,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Reque
 		isPessimisticLock = make([]bool, len(mutations))
 	}
 	for i, k := range batch.keys {
-		tmp := c.mutations[string(k)]
+		tmp := c.mutations[hack.String(k)]
 		mutations[i] = &tmp.Mutation
 		if tmp.isPessimisticLock {
 			isPessimisticLock[i] = true
