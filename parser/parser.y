@@ -191,6 +191,7 @@ import (
 	numericType		"NUMERIC"
 	nvarcharType		"NVARCHAR"
 	on			"ON"
+	optimize		"OPTIMIZE"
 	option			"OPTION"
 	optionally		"OPTIONALLY"
 	or			"OR"
@@ -321,6 +322,7 @@ import (
 	delayKeyWrite	"DELAY_KEY_WRITE"
 	directory	"DIRECTORY"
 	disable		"DISABLE"
+	discard		"DISCARD"
 	disk		"DISK"
 	do		"DO"
 	duplicate	"DUPLICATE"
@@ -352,6 +354,7 @@ import (
 	history		"HISTORY"
 	hour		"HOUR"
 	identified	"IDENTIFIED"
+	importKwd	"IMPORT"
 	insertMethod 	"INSERT_METHOD"
 	isolation	"ISOLATION"
 	issuer		"ISSUER"
@@ -413,6 +416,7 @@ import (
 	redundant	"REDUNDANT"
 	reload		"RELOAD"
 	remove 		"REMOVE"
+	repair		"REPAIR"
 	repeatable	"REPEATABLE"
 	respect		"RESPECT"
 	replication	"REPLICATION"
@@ -718,6 +722,7 @@ import (
 
 %type   <item>
 	AdminShowSlow			"Admin Show Slow statement"
+	AllOrPartitionNameList		"All or partition name list"
 	AlgorithmClause			"Alter table algorithm"
 	AlterTablePartitionOpt		"Alter table partition option"
 	AlterTableSpec			"Alter table specification"
@@ -1113,6 +1118,8 @@ import (
 %precedence charsetKwd
 %precedence lowerThanKey
 %precedence key
+%precedence lowerThanLocal
+%precedence local
 
 %left   join straightJoin inner cross left right full natural
 /* A dummy token to force the priority of TableRef production in a join. */
@@ -1325,12 +1332,77 @@ AlterTableSpec:
 		yylex.AppendError(yylex.Errorf("TiDB does not support EXCHANGE PARTITION now, it would be parsed but ignored."))
 		parser.lastErrorAsWarn()
 	}
-|	"TRUNCATE" "PARTITION" PartitionNameList %prec lowerThanComma
+|	"TRUNCATE" "PARTITION" AllOrPartitionNameList
 	{
-		$$ = &ast.AlterTableSpec{
+		ret := &ast.AlterTableSpec{
 			Tp: ast.AlterTableTruncatePartition,
-			PartitionNames: $3.([]model.CIStr),
 		}
+		if $3 == nil {
+			ret.OnAllPartitions = true
+			yylex.AppendError(yylex.Errorf("The TRUNCATE PARTITION ALL clause is parsed but ignored by all storage engines."))
+			parser.lastErrorAsWarn()
+		} else {
+			ret.PartitionNames = $3.([]model.CIStr)
+		}
+		$$ = ret
+	}
+|	"OPTIMIZE" "PARTITION" NoWriteToBinLogAliasOpt AllOrPartitionNameList
+	{
+		ret := &ast.AlterTableSpec{
+			NoWriteToBinlog: $3.(bool),
+			Tp: ast.AlterTableOptimizePartition,
+		}
+		if $4 == nil {
+			ret.OnAllPartitions = true
+		} else {
+			ret.PartitionNames = $4.([]model.CIStr)
+		}
+		$$ = ret
+		yylex.AppendError(yylex.Errorf("The OPTIMIZE PARTITION clause is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"REPAIR" "PARTITION" NoWriteToBinLogAliasOpt AllOrPartitionNameList
+	{
+		ret := &ast.AlterTableSpec{
+			NoWriteToBinlog: $3.(bool),
+			Tp: ast.AlterTableRepairPartition,
+		}
+		if $4 == nil {
+			ret.OnAllPartitions = true
+		} else {
+			ret.PartitionNames = $4.([]model.CIStr)
+		}
+		$$ = ret
+		yylex.AppendError(yylex.Errorf("The REPAIR PARTITION clause is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"IMPORT" "PARTITION" AllOrPartitionNameList "TABLESPACE"
+	{
+		ret := &ast.AlterTableSpec{
+			Tp: ast.AlterTableImportPartitionTablespace,
+		}
+		if $3 == nil {
+			ret.OnAllPartitions = true
+		} else {
+			ret.PartitionNames = $3.([]model.CIStr)
+		}
+		$$ = ret
+		yylex.AppendError(yylex.Errorf("The IMPORT PARTITION TABLESPACE clause is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"DISCARD" "PARTITION" AllOrPartitionNameList "TABLESPACE"
+	{
+		ret := &ast.AlterTableSpec{
+			Tp: ast.AlterTableDiscardPartitionTablespace,
+		}
+		if $3 == nil {
+			ret.OnAllPartitions = true
+		} else {
+			ret.PartitionNames = $3.([]model.CIStr)
+		}
+		$$ = ret
+		yylex.AppendError(yylex.Errorf("The DISCARD PARTITION TABLESPACE clause is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 |	"DROP" KeyOrIndex IfExists Identifier
 	{
@@ -1483,6 +1555,16 @@ AlterTableSpec:
 		parser.lastErrorAsWarn()
 	}
 
+AllOrPartitionNameList:
+	"ALL"
+	{
+		$$ = nil
+	}
+|	PartitionNameList %prec lowerThanComma
+	{
+		$$ = $1
+	}
+
 WithValidationOpt:
 	{
 		$$ = true
@@ -1501,7 +1583,6 @@ WithValidation:
 	{
 		$$ = false
 	}
-
 
 AlgorithmClause:
 	"ALGORITHM" EqOpt "DEFAULT"
@@ -3935,8 +4016,7 @@ UnReservedKeyword:
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 | "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT" | "INCREMENTAL" | "CPU" | "MEMORY" | "BLOCK" | "IO" | "CONTEXT" | "SWITCHES" | "PAGE" | "FAULTS" | "IPC" | "SWAPS" | "SOURCE"
 | "TRADITIONAL" | "SQL_BUFFER_RESULT" | "DIRECTORY" | "HISTORY" | "LIST" | "NODEGROUP" | "SYSTEM_TIME" | "PARTIAL" | "SIMPLE" | "REMOVE" | "PARTITIONING" | "STORAGE" | "DISK" | "STATS_SAMPLE_PAGES" | "SECONDARY_ENGINE" | "VALIDATION"
-| "WITHOUT" | "RTREE" | "EXCHANGE"
-
+| "WITHOUT" | "RTREE" | "EXCHANGE" | "REPAIR" | "IMPORT" | "DISCARD"
 
 TiDBKeyword:
  "ADMIN" | "BUCKETS" | "CANCEL" | "CMSKETCH" | "DDL" | "DEPTH" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "SAMPLES" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB"
@@ -7657,6 +7737,7 @@ FlushOption:
 	}
 
 NoWriteToBinLogAliasOpt:
+	%prec lowerThanLocal
 	{
 		$$ = false
 	}
