@@ -207,6 +207,18 @@ func (s *testEvaluatorSuite) checkVecEval(c *C, eType types.EvalType, sel []int,
 		for i, j := range sel {
 			c.Assert(ds[i], Equals, time.Duration(j+j))
 		}
+	case types.ETDatetime:
+		ds := result.Times()
+		c.Assert(len(ds), Equals, len(sel))
+		for i, j := range sel {
+			gt := types.FromDate(j, 0, 0, 0, 0, 0, 0)
+			t := types.Time{Time: gt, Type: convertETType(eType)}
+			d, err := t.ConvertToDuration()
+			c.Assert(err, IsNil)
+			v, err := t.Add(mock.NewContext().GetSessionVars().StmtCtx, d)
+			c.Assert(err, IsNil)
+			c.Assert(v.Compare(ds[i]), Equals, 0)
+		}
 	case types.ETJson:
 		for i, j := range sel {
 			path, err := json.ParseJSONPathExpr("$.key")
@@ -218,16 +230,6 @@ func (s *testEvaluatorSuite) checkVecEval(c *C, eType types.EvalType, sel []int,
 	case types.ETString:
 		for i, j := range sel {
 			c.Assert(result.GetString(i), Equals, fmt.Sprintf("%v%v", j, j))
-		}
-	case types.ETDatetime:
-		for i, j := range sel {
-			gt := types.FromDate(j, 0, 0, 0, 0, 0, 0)
-			t := types.Time{Time: gt, Type: convertETType(eType)}
-			d, err := t.ConvertToDuration()
-			c.Assert(err, IsNil)
-			v, err := t.Add(mock.NewContext().GetSessionVars().StmtCtx, d)
-			c.Assert(err, IsNil)
-			c.Assert(v.Compare(result.GetTime(i)), Equals, 0)
 		}
 	}
 }
