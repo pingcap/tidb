@@ -61,12 +61,13 @@ type tikvSnapshot struct {
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
-func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
+func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
 	return &tikvSnapshot{
-		store:    store,
-		version:  ver,
-		priority: pb.CommandPri_Normal,
-		vars:     kv.DefaultVars,
+		store:           store,
+		version:         ver,
+		priority:        pb.CommandPri_Normal,
+		vars:            kv.DefaultVars,
+		replicaReadSeed: replicaReadSeed,
 	}
 }
 

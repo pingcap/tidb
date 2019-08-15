@@ -268,7 +268,7 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 
 // BeginWithStartTS begins a transaction with startTS.
 func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
-	txn, err := newTikvTxnWithStartTS(s, startTS)
+	txn, err := newTikvTxnWithStartTS(s, startTS, s.nextReplicaReadSeed())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -277,7 +277,7 @@ func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 }
 
 func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
-	snapshot := newTiKVSnapshot(s, ver)
+	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
 	metrics.TiKVSnapshotCounter.Inc()
 	return snapshot, nil
 }
