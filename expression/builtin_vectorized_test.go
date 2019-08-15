@@ -16,6 +16,7 @@ package expression
 import (
 	"fmt"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -109,6 +110,27 @@ func (s *testEvaluatorSuite) TestMockVecPlusInt(c *C) {
 		c.Assert(buf.IsNull(i), IsFalse)
 		c.Assert(buf.GetInt64(i), Equals, int64(i*2))
 	}
+}
+
+func (s *testEvaluatorSuite) TestMockVecPlusIntParallel(c *C) {
+	plus, input, buf := genMockVecPlusIntBuiltinFunc()
+	plus.enableAlloc = true // it's concurrency-safe if enableAlloc is true
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i ++ {
+		wg.Add(1)
+		go func() {
+			result := buf.CopyConstruct(nil)
+			for i := 0; i < 200; i++ {
+				c.Assert(plus.vecEval(input, result), IsNil)
+				for i := 0; i < 1024; i++ {
+					c.Assert(result.IsNull(i), IsFalse)
+					c.Assert(result.GetInt64(i), Equals, int64(i*2))
+				}
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 }
 
 func BenchmarkColumnBufferAllocate(b *testing.B) {
