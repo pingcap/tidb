@@ -2238,7 +2238,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustExec(`drop table if exists tb5`)
 	tk.MustExec(`create table tb5 (a bigint(64) unsigned, b double(64, 10));`)
 	tk.MustExec(`insert into tb5 (a, b) values (9223372036854775808, 9223372036854775808);`)
-	result = tk.MustQuery(`select a from nb1 where a = b union all select b from nb1;`)
+	result = tk.MustQuery(`select a from tb5 where a = b union all select b from tb5;`)
 	result.Check(testkit.Rows("9223372036854776000", "9223372036854776000"))
 	tk.MustExec(`drop table tb5`)
 
