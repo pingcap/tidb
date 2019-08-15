@@ -75,6 +75,8 @@ type partialResult4Lead struct {
 	defaultConstExtractor valueExtractor
 }
 
+const maxDefaultExtractorBufferSize = 1000
+
 type lead struct {
 	baseLeadLag
 }
@@ -82,7 +84,9 @@ type lead struct {
 func (v *lead) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4Lead{
 		defaultExtractors: circleBuf{
-			buf:  make([]valueExtractor, 0, mathutil.MinUint64(v.offset, 1000)),
+			// Do not use v.offset directly since v.offset is defined by user
+			// and may larger than a table size.
+			buf:  make([]valueExtractor, 0, mathutil.MinUint64(v.offset, maxDefaultExtractorBufferSize)),
 			size: int(v.offset),
 		},
 	})
@@ -111,7 +115,7 @@ func (v *lead) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.
 		}
 		if v.offset > 0 {
 			if !v.defaultExpr.ConstItem() {
-				// we must cache the results of last v.offset lines
+				// We must cache the results of last v.offset lines.
 				e := buildValueExtractor(v.retTp)
 				err = e.extractRow(sctx, v.defaultExpr, row)
 				if err != nil {
