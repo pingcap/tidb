@@ -227,6 +227,7 @@ import (
 	set			"SET"
 	show			"SHOW"
 	smallIntType		"SMALLINT"
+	spatial			"SPATIAL"
 	sql			"SQL"
 	sqlBigResult		"SQL_BIG_RESULT"
 	sqlCalcFoundRows	"SQL_CALC_FOUND_ROWS"
@@ -717,7 +718,7 @@ import (
 
 %type   <item>
 	AdminShowSlow			"Admin Show Slow statement"
-	AlterAlgorithm			"Alter table algorithm"
+	AlgorithmClause			"Alter table algorithm"
 	AlterTablePartitionOpt		"Alter table partition option"
 	AlterTableSpec			"Alter table specification"
 	AlterTableSpecList		"Alter table specification list"
@@ -759,7 +760,6 @@ import (
 	Constraint			"table constraint"
 	ConstraintElem			"table constraint element"
 	ConstraintKeywordOpt		"Constraint Keyword or empty"
-	CreateIndexStmtUnique		"CREATE INDEX optional UNIQUE clause"
 	CreateTableOptionListOpt	"create table option list opt"
 	CreateTableSelectOpt	        "Select/Union statement in CREATE TABLE ... SELECT"
 	DatabaseOption			"CREATE Database specification"
@@ -810,6 +810,8 @@ import (
 	IndexHintListOpt		"index hint list opt"
 	IndexHintScope			"index hint scope"
 	IndexHintType			"index hint type"
+	IndexKeyTypeOpt			"index key type"
+	IndexLockAndAlgorithmOpt	"index lock and algorithm"
 	IndexName			"index name"
 	IndexNameList			"index name list"
 	IndexOption			"Index Option"
@@ -1447,12 +1449,12 @@ AlterTableSpec:
 			LockType:   $1.(ast.LockType),
 		}
 	}
-| "ALGORITHM" EqOpt AlterAlgorithm
+|	AlgorithmClause
 	{
 		// Parse it and ignore it. Just for compatibility.
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableAlgorithm,
-			Algorithm:	$3.(ast.AlterAlgorithm),
+			Algorithm:	$1.(ast.AlgorithmType),
 		}
 	}
 | "FORCE"
@@ -1501,32 +1503,28 @@ WithValidation:
 	}
 
 
-AlterAlgorithm:
-	"DEFAULT"
+AlgorithmClause:
+	"ALGORITHM" EqOpt "DEFAULT"
 	{
-		$$ = ast.AlterAlgorithmDefault
+		$$ = ast.AlgorithmTypeDefault
 	}
-| 	"COPY"
+| 	"ALGORITHM" EqOpt "COPY"
 	{
-		$$ = ast.AlterAlgorithmCopy
+		$$ = ast.AlgorithmTypeCopy
 	}
-| 	"INPLACE"
+| 	"ALGORITHM" EqOpt "INPLACE"
 	{
-		$$ = ast.AlterAlgorithmInplace
+		$$ = ast.AlgorithmTypeInplace
 	}
-|	"INSTANT"
+|	"ALGORITHM" EqOpt "INSTANT"
 	{
-		$$ = ast.AlterAlgorithmInstant
+		$$ = ast.AlgorithmTypeInstant
 	}
-|	identifier
+|	"ALGORITHM" EqOpt identifier
 	{
 		yylex.AppendError(ErrUnknownAlterAlgorithm.GenWithStackByArgs($1))
 		return 1
 	}
-
-LockClauseOpt:
-	{}
-| 	LockClause {}
 
 LockClause:
 	"LOCK" EqOpt "NONE"
@@ -2393,9 +2391,33 @@ NumLiteral:
 |	floatLit
 |	decLit
 
-
+/**************************************CreateIndexStmt***************************************
+ * See https://dev.mysql.com/doc/refman/8.0/en/create-index.html
+ *
+ * CREATE [UNIQUE | FULLTEXT | SPATIAL] INDEX index_name
+ *     [index_type]
+ *     ON tbl_name (key_part,...)
+ *     [index_option]
+ *     [algorithm_option | lock_option] ...
+ *
+ * key_part: {col_name [(length)] | (expr)} [ASC | DESC]
+ *
+ * index_option:
+ *     KEY_BLOCK_SIZE [=] value
+ *   | index_type
+ *   | COMMENT 'string'
+ *
+ * index_type:
+ *     USING {BTREE | HASH}
+ *
+ * algorithm_option:
+ *     ALGORITHM [=] {DEFAULT | INPLACE | COPY}
+ *
+ * lock_option:
+ *     LOCK [=] {DEFAULT | NONE | SHARED | EXCLUSIVE}
+ *******************************************************************************************/
 CreateIndexStmt:
-	"CREATE" CreateIndexStmtUnique "INDEX" IfNotExists Identifier IndexTypeOpt "ON" TableName '(' IndexColNameList ')' IndexOptionList LockClauseOpt
+	"CREATE" IndexKeyTypeOpt "INDEX" IfNotExists Identifier IndexTypeOpt "ON" TableName '(' IndexColNameList ')' IndexOptionList IndexLockAndAlgorithmOpt
 	{
 		var indexOption *ast.IndexOption
 		if $12 != nil {
@@ -2411,23 +2433,22 @@ CreateIndexStmt:
 				indexOption.Tp = $6.(model.IndexType)
 			}
 		}
+		var indexLockAndAlgorithm *ast.IndexLockAndAlgorithm
+		if $13 != nil {
+			indexLockAndAlgorithm = $13.(*ast.IndexLockAndAlgorithm)
+			if indexLockAndAlgorithm.LockTp == ast.LockTypeDefault && indexLockAndAlgorithm.AlgorithmTp == ast.AlgorithmTypeDefault {
+				indexLockAndAlgorithm = nil
+			}
+		}
 		$$ = &ast.CreateIndexStmt{
-			Unique:        $2.(bool),
 			IfNotExists:   $4.(bool),
 			IndexName:     $5,
 			Table:         $8.(*ast.TableName),
 			IndexColNames: $10.([]*ast.IndexColName),
 			IndexOption:   indexOption,
+			KeyType:       $2.(ast.IndexKeyType),
+			LockAlg:       indexLockAndAlgorithm,
 		}
-	}
-
-CreateIndexStmtUnique:
-	{
-		$$ = false
-	}
-|	"UNIQUE"
-	{
-		$$ = true
 	}
 
 IndexColName:
@@ -2447,7 +2468,55 @@ IndexColNameList:
 		$$ = append($1.([]*ast.IndexColName), $3.(*ast.IndexColName))
 	}
 
+IndexLockAndAlgorithmOpt:
+	{
+		$$ = nil
+	}
+|	LockClause
+	{
+		$$ = &ast.IndexLockAndAlgorithm{
+			LockTp:		$1.(ast.LockType),
+			AlgorithmTp:	ast.AlgorithmTypeDefault,
+		}
+	}
+|	AlgorithmClause
+	{
+		$$ = &ast.IndexLockAndAlgorithm{
+			LockTp:		ast.LockTypeDefault,
+			AlgorithmTp:	$1.(ast.AlgorithmType),
+		}
+	}
+|	LockClause AlgorithmClause
+	{
+		$$ = &ast.IndexLockAndAlgorithm{
+			LockTp:		$1.(ast.LockType),
+			AlgorithmTp:	$2.(ast.AlgorithmType),
+		}
+	}
+|	AlgorithmClause LockClause
+	{
+		$$ = &ast.IndexLockAndAlgorithm{
+			LockTp:		$2.(ast.LockType),
+			AlgorithmTp:	$1.(ast.AlgorithmType),
+		}
+	}
 
+IndexKeyTypeOpt:
+	{
+		$$ = ast.IndexKeyTypeNone
+	}
+|	"UNIQUE"
+	{
+		$$ = ast.IndexKeyTypeUnique
+	}
+|	"SPATIAL"
+	{
+		$$ = ast.IndexKeyTypeSpatial
+	}
+|	"FULLTEXT"
+	{
+		$$ = ast.IndexKeyTypeFullText
+	}
 
 /**************************************AlterDatabaseStmt***************************************
  * See https://dev.mysql.com/doc/refman/5.7/en/alter-database.html
