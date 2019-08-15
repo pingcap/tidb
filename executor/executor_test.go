@@ -98,6 +98,7 @@ var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
+var _ = Suite(&testBatchPointGetSuite{})
 var _ = Suite(&testRecoverTable{})
 var _ = Suite(&testFlushSuite{})
 
@@ -2104,6 +2105,40 @@ func (s *testSuiteP1) TestPointGetRepeatableRead(c *C) {
 	<-updateWaitCh // Wait `POINT GET` first time `get`
 	c.Assert(failpoint.Disable(step1), IsNil)
 	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
+	c.Assert(failpoint.Disable(step2), IsNil)
+}
+
+func (s *testSuiteP1) TestBatchPointGetRepeatableRead(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec(`create table batch_point_get (a int, b int, c int, unique key k_b(a, b, c))`)
+	tk1.MustExec("insert into batch_point_get values (1, 1, 1), (2, 3, 4), (3, 4, 5)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	var (
+		step1 = "github.com/pingcap/tidb/executor/batchPointGetRepeatableReadTest-step1"
+		step2 = "github.com/pingcap/tidb/executor/batchPointGetRepeatableReadTest-step2"
+	)
+
+	c.Assert(failpoint.Enable(step1, "return"), IsNil)
+	c.Assert(failpoint.Enable(step2, "pause"), IsNil)
+
+	updateWaitCh := make(chan struct{})
+	go func() {
+		ctx := context.WithValue(context.Background(), "batchPointGetRepeatableReadTest", updateWaitCh)
+		ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
+			return fpname == step1 || fpname == step2
+		})
+		rs, err := tk1.Se.Execute(ctx, "select c from batch_point_get where (a, b, c) in ((1, 1, 1))")
+		c.Assert(err, IsNil)
+		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+		result.Check(testkit.Rows("1"))
+	}()
+
+	<-updateWaitCh // Wait `POINT GET` first time `get`
+	c.Assert(failpoint.Disable(step1), IsNil)
+	tk2.MustExec("update batch_point_get set b = 2, c = 2 where a = 1")
 	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
