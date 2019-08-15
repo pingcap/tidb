@@ -1,6 +1,7 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+
 ## [3.0.2] 2019-08-06
 ### SQL Optimizer
 * Fix the issue that the “Can’t find column in schema” message is reported when the same table occurs multiple times in a query and logically the query result is always empty [#11247](https://github.com/pingcap/tidb/pull/11247)
@@ -87,6 +88,7 @@ All notable changes to this project will be documented in this file. See also [R
 ### Monitor
 * Fix the issue that data is not collected and reported because the `TiKVTxnCmdCounter` monitoring metric is not registered [#11316](https://github.com/pingcap/tidb/pull/11316)
 * Add the `BindUsageCounter`, `BindTotalGauge` and `BindMemoryUsage` monitoring metrics for the Bind Info [#11467](https://github.com/pingcap/tidb/pull/11467)<Paste>
+
 
 ## [3.0.1] 2019-07-16
 * Add the `tidb_wait_split_region_finish_backoff` session variable to control the backoff time of splitting Regions [#11166](https://github.com/pingcap/tidb/pull/11166)
