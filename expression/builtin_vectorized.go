@@ -33,6 +33,8 @@ type columnBufferAllocator interface {
 	put(buf *chunk.Column)
 }
 
+// localSliceBuffer implements columnBufferAllocator interface.
+// It works like a concurrency-safe deque which is implemented by a lock + slice.
 type localSliceBuffer struct {
 	sync.Mutex
 	buffers []*chunk.Column
@@ -41,9 +43,8 @@ type localSliceBuffer struct {
 	size    int
 }
 
-func newLocalSliceBuffer() *localSliceBuffer {
-	// in most cases, expressions are called serially, so 1 buffer is enough.
-	return &localSliceBuffer{buffers: make([]*chunk.Column, 1)}
+func newLocalSliceBuffer(initCap int) *localSliceBuffer {
+	return &localSliceBuffer{buffers: make([]*chunk.Column, initCap)}
 }
 
 func (r *localSliceBuffer) newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {

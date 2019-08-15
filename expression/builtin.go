@@ -61,7 +61,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 		panic("ctx should not be nil")
 	}
 	return baseBuiltinFunc{
-		columnBufferAllocator: newLocalSliceBuffer(),
+		columnBufferAllocator: newLocalSliceBuffer(len(args)),
 
 		args: args,
 		ctx:  ctx,
@@ -165,7 +165,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 	return baseBuiltinFunc{
-		columnBufferAllocator: newLocalSliceBuffer(),
+		columnBufferAllocator: newLocalSliceBuffer(len(args)),
 
 		args: args,
 		ctx:  ctx,
