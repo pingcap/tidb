@@ -169,6 +169,18 @@ func (c *vecRowConverter) vecEval(input *chunk.Chunk, result *chunk.Column) erro
 			result.SetNull(i, isNull)
 			row = it.Next()
 		}
+	case types.ETDatetime, types.ETTimestamp:
+		result.ResizeTime(input.NumRows())
+		ds := result.Times()
+		var v types.Time
+		for i := range ds {
+			if v, isNull, err = c.builtinFunc.evalTime(row); err != nil {
+				return err
+			}
+			ds[i] = v
+			result.SetNull(i, isNull)
+			row = it.Next()
+		}
 	case types.ETJson:
 		result.ReserveJSON(input.NumRows())
 		var v json.BinaryJSON
@@ -193,19 +205,6 @@ func (c *vecRowConverter) vecEval(input *chunk.Chunk, result *chunk.Column) erro
 				result.AppendNull()
 			} else {
 				result.AppendString(v)
-			}
-		}
-	case types.ETDatetime, types.ETTimestamp:
-		result.Reset()
-		var v types.Time
-		for ; row != it.End(); row = it.Next() {
-			if v, isNull, err = c.builtinFunc.evalTime(row); err != nil {
-				return err
-			}
-			if isNull {
-				result.AppendNull()
-			} else {
-				result.AppendTime(v)
 			}
 		}
 	default:
