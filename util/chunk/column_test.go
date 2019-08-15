@@ -799,3 +799,55 @@ func BenchmarkDurationVec(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkTimeRow(b *testing.B) {
+	chk1 := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDate)}, 1024)
+	col1 := chk1.Column(0)
+	for i := 0; i < 1024; i++ {
+		col1.AppendTime(types.ZeroDate)
+	}
+	chk2 := chk1.CopyConstruct()
+	result := chk1.CopyConstruct()
+
+	b.ResetTimer()
+	for k := 0; k < b.N; k++ {
+		result.Reset()
+		it1 := NewIterator4Chunk(chk1)
+		it2 := NewIterator4Chunk(chk2)
+		for r1, r2 := it1.Begin(), it2.Begin(); r1 != it1.End() && r2 != it2.End(); r1, r2 = it1.Next(), it2.Next() {
+			d1 := r1.GetTime(0)
+			d2 := r2.GetTime(0)
+			if r := d1.Compare(d2); r > 0 {
+				result.AppendTime(0, d1)
+			} else {
+				result.AppendTime(0, d2)
+			}
+		}
+	}
+}
+
+func BenchmarkTimeVec(b *testing.B) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDate)}, 1024)
+	col1 := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col1.AppendTime(types.ZeroDate)
+	}
+	col2 := col1.CopyConstruct(nil)
+	result := col1.CopyConstruct(nil)
+
+	ds1 := col1.Times()
+	ds2 := col2.Times()
+	rs := result.Times()
+
+	b.ResetTimer()
+	for k := 0; k < b.N; k++ {
+		result.ResizeTime(1024)
+		for i := 0; i < 1024; i++ {
+			if r := ds1[i].Compare(ds2[i]); r > 0 {
+				rs[i] = ds1[i]
+			} else {
+				rs[i] = ds2[i]
+			}
+		}
+	}
+}
