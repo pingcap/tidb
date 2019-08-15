@@ -278,7 +278,7 @@ func parseIndex(table *table, stmt *ast.CreateIndexStmt) error {
 
 	for _, indexCol := range stmt.IndexColNames {
 		name := indexCol.Column.Name.L
-		if stmt.Unique {
+		if stmt.KeyType == ast.IndexKeyTypeUnique {
 			table.uniqIndices[name] = table.findCol(table.columns, name)
 		} else {
 			table.indices[name] = table.findCol(table.columns, name)
