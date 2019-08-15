@@ -116,7 +116,7 @@ func (s *testEvaluatorSuite) TestMockVecPlusIntParallel(c *C) {
 	plus, input, buf := genMockVecPlusIntBuiltinFunc()
 	plus.enableAlloc = true // it's concurrency-safe if enableAlloc is true
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i ++ {
+	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func() {
 			result := buf.CopyConstruct(nil)
