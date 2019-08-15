@@ -46,10 +46,10 @@ type GrantExec struct {
 	ObjectType ast.ObjectTypeType
 	Level      *ast.GrantLevel
 	Users      []*ast.UserSpec
-	WithGrant  bool
 
-	is   infoschema.InfoSchema
-	done bool
+	is        infoschema.InfoSchema
+	WithGrant bool
+	done      bool
 }
 
 // Next implements the Executor Next interface.

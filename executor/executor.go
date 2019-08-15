@@ -195,6 +195,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	return e.Next(ctx, req)
 }
@@ -759,7 +760,6 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	}
 
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.ForUpdate = true
 	for id := range e.Schema().TblID2Handle {
 		// This operation is only for schema validator check.
 		txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
@@ -789,13 +789,18 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
+	return doLockKeys(ctx, e.ctx, e.keys...)
+}
+
+func doLockKeys(ctx context.Context, se sessionctx.Context, keys ...kv.Key) error {
+	se.GetSessionVars().TxnCtx.ForUpdate = true
 	// Lock keys only once when finished fetching all results.
-	txn, err := e.ctx.Txn(true)
+	txn, err := se.Txn(true)
 	if err != nil {
 		return err
 	}
-	forUpdateTS := e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, forUpdateTS, e.keys...)
+	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
+	return txn.LockKeys(ctx, forUpdateTS, keys...)
 }
 
 // LimitExec represents limit executor
@@ -907,6 +912,7 @@ func init() {
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
 			defer span1.Finish()
+			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
 
 		e := &executorBuilder{is: is, ctx: sctx}
@@ -1234,14 +1240,14 @@ type UnionExec struct {
 	baseExecutor
 
 	stopFetchData atomic.Value
-	wg            sync.WaitGroup
 
 	finished      chan struct{}
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
-	initialized   bool
 
 	childrenResults []*chunk.Chunk
+	wg              sync.WaitGroup
+	initialized     bool
 }
 
 // unionWorkerResult stores the result for a union worker.

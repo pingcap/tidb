@@ -756,10 +756,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		join.attachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {
-			er.err = join.setPreferredJoinType(er.b.TableHints())
-			if er.err != nil {
-				return v, true
-			}
+			join.setPreferredJoinType(er.b.TableHints())
 		}
 		er.p = join
 	} else {
@@ -942,7 +939,7 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 }
 
 func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
-	if ft.EvalType() == types.ETDuration && ft.Decimal > types.MaxFsp {
+	if ft.EvalType() == types.ETDuration && ft.Decimal > int(types.MaxFsp) {
 		return errTooBigPrecision.GenWithStackByArgs(ft.Decimal, "CAST", types.MaxFsp)
 	}
 	return nil
@@ -1530,7 +1527,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		zero := types.Time{
 			Time: types.ZeroTime,
 			Type: mysql.TypeTimestamp,
-			Fsp:  col.Decimal,
+			Fsp:  int8(col.Decimal),
 		}
 		val = &expression.Constant{
 			Value:   types.NewDatum(zero),

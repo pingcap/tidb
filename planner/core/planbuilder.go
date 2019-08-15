@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -57,6 +58,7 @@ type tableHintInfo struct {
 	indexNestedLoopJoinTables []hintTableInfo
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
+	preferAggType             uint
 }
 
 type hintTableInfo struct {
@@ -171,7 +173,6 @@ type PlanBuilder struct {
 	ctx          sessionctx.Context
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
-	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -186,11 +187,11 @@ type PlanBuilder struct {
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
 
+	windowSpecs  map[string]*ast.WindowSpec
+	inUpdateStmt bool
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
-
-	windowSpecs map[string]*ast.WindowSpec
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -336,7 +337,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) 
 	proj.SetChildren(p)
 	proj.self = proj
 	proj.SetSchema(schema)
-	proj.calculateNoDelay = true
+	proj.CalculateNoDelay = true
 	return proj, nil
 }
 
@@ -781,11 +782,16 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		Ranges:           ranger.FullRange(),
 		GenExprs:         genExprsMap,
 	}.Init(b.ctx)
-	is.stats = property.NewSimpleStats(0)
+	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
+	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table}.Init(b.ctx)
 	ts.SetSchema(tblSchema)
-	cop := &copTask{indexPlan: is, tablePlan: ts}
+	cop := &copTask{
+		indexPlan:   is,
+		tablePlan:   ts,
+		tblColHists: is.stats.HistColl,
+	}
 	ts.HandleIdx = pkOffset
 	is.initSchema(id, idx, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
@@ -2177,26 +2183,43 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 	return p, nil
 }
 
+const (
+	// TraceFormatRow indicates row tracing format.
+	TraceFormatRow = "row"
+	// TraceFormatJSON indicates json tracing format.
+	TraceFormatJSON = "json"
+	// TraceFormatLog indicates log tracing format.
+	TraceFormatLog = "log"
+)
+
 // buildTrace builds a trace plan. Inside this method, it first optimize the
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
 	switch trace.Format {
-	case "row":
+	case TraceFormatRow:
 		retFields := []string{"operation", "duration", "spanID"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
 		schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
 		schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
 		p.SetSchema(schema)
-	case "json":
+	case TraceFormatJSON:
 		retFields := []string{"json"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
 		p.SetSchema(schema)
+	case TraceFormatLog:
+		retFields := []string{"time", "event", "tags", "spanName", "spanID"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		schema.Append(buildColumn("", "time", mysql.TypeTimestamp, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "event", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "tags", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "spanName", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
 	default:
-		return nil, errors.New("trace format should be one of 'row' or 'json'")
+		return nil, errors.New("trace format should be one of 'row', 'log' or 'json'")
 	}
 	return p, nil
 }
