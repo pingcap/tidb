@@ -201,11 +201,15 @@ func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expressio
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
 func ComposeCNFCondition(ctx sessionctx.Context, conditions ...Expression) Expression {
 	var nullExpr Expression
+	notConstantArg := false
+	hasDeffered := false
 	for _, cond := range conditions {
 		con, ok := cond.(*Constant)
 		if !ok {
+			notConstantArg = true
 			continue
 		}
+		hasDeffered = hasDeffered || con.DeferredExpr != nil
 		d, err := con.Eval(chunk.Row{})
 		if err != nil {
 			logutil.BgLogger().Debug("compose AND/OR conditions", zap.String("expression", con.ExplainInfo()), zap.Error(err))
@@ -220,16 +224,34 @@ func ComposeCNFCondition(ctx sessionctx.Context, conditions ...Expression) Expre
 	if nullExpr != nil {
 		return nullExpr
 	}
+	if !notConstantArg {
+		cnfExpr := composeConditionWithBinaryOp(ctx, conditions, ast.LogicAnd)
+		val, err := cnfExpr.Eval(chunk.Row{})
+		if err != nil {
+			logutil.BgLogger().Debug("compose AND/OR conditions", zap.String("expression", cnfExpr.ExplainInfo()), zap.Error(err))
+		}
+		newCon := &Constant{
+			Value:   val,
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}
+		if hasDeffered {
+			newCon.DeferredExpr = cnfExpr
+		}
+		return newCon
+	}
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
 func ComposeDNFCondition(ctx sessionctx.Context, conditions ...Expression) Expression {
+	notConstantArg, hasDeffered := false, false
 	for _, cond := range conditions {
 		con, ok := cond.(*Constant)
 		if !ok {
+			notConstantArg = true
 			continue
 		}
+		hasDeffered = hasDeffered || con.DeferredExpr != nil
 		d, err := con.Eval(chunk.Row{})
 		if err != nil {
 			logutil.BgLogger().Debug("compose AND/OR conditions", zap.String("expression", con.ExplainInfo()), zap.Error(err))
@@ -256,6 +278,21 @@ func ComposeDNFCondition(ctx sessionctx.Context, conditions ...Expression) Expre
 			}
 			return newCon
 		}
+	}
+	if !notConstantArg {
+		dnfExpr := composeConditionWithBinaryOp(ctx, conditions, ast.LogicAnd)
+		val, err := dnfExpr.Eval(chunk.Row{})
+		if err != nil {
+			logutil.BgLogger().Debug("compose AND/OR conditions", zap.String("expression", dnfExpr.ExplainInfo()), zap.Error(err))
+		}
+		newCon := &Constant{
+			Value:   val,
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}
+		if hasDeffered {
+			newCon.DeferredExpr = dnfExpr
+		}
+		return newCon
 	}
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicOr)
 }
