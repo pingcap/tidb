@@ -142,14 +142,14 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	for i, r := range spResp.Regions {
 		err = s.scatterRegion(r.Id)
 		if err == nil {
-			logutil.BgLogger().Info("scatter a region complete",
+			logutil.BgLogger().Info("batch split regions, scatter a region complete",
 				zap.Uint64("batch region ID", batch.regionID.id),
 				zap.String("at", hex.EncodeToString(batch.keys[i])),
 				zap.Stringer("new region left", logutil.Hex(r)))
 			continue
 		}
 
-		logutil.BgLogger().Info("scatter a region failed",
+		logutil.BgLogger().Info("batch split regions,scatter a region failed",
 			zap.Uint64("batch region ID", batch.regionID.id),
 			zap.String("at", hex.EncodeToString(batch.keys[i])),
 			zap.Stringer("new region left", logutil.Hex(r)),
@@ -172,6 +172,7 @@ func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatte
 		for _, r := range spResp.Regions {
 			regionIDs = append(regionIDs, r.Id)
 		}
+		logutil.BgLogger().Info("split regions complete", zap.Uint64s("region IDs", regionIDs))
 	}
 	return regionIDs, errors.Trace(err)
 }
