@@ -1823,7 +1823,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 // returns valied specs, and the occurred error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
-	algorithm := ast.AlterAlgorithmDefault
+	algorithm := ast.AlgorithmTypeDefault
 	for _, spec := range specs {
 		if spec.Tp == ast.AlterTableAlgorithm {
 			// Find the last AlterTableAlgorithm.
@@ -1844,7 +1844,7 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	for _, spec := range validSpecs {
 		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
 		if err != nil {
-			if algorithm != ast.AlterAlgorithmCopy {
+			if algorithm != ast.AlgorithmTypeCopy {
 				return nil, errors.Trace(err)
 			}
 			// For the compatibility, we return warning instead of error when the algorithm is COPY,
