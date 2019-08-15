@@ -463,7 +463,7 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	}
 	if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = float64(val)
-	} else if b.inUnion && val < 0 {
+	} else if b.inUnion && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) && val < 0 {
 		res = 0
 	} else {
 		// recall that, int to float is different from uint to float
@@ -489,7 +489,7 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	}
 	if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = types.NewDecFromInt(val)
-	} else if b.inUnion && val < 0 {
+	} else if b.inUnion && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) && val < 0 {
 		res = &types.MyDecimal{}
 	} else {
 		res = types.NewDecFromUint(uint64(val))
