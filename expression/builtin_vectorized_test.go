@@ -120,6 +120,17 @@ func BenchmarkColumnBufferAllocate(b *testing.B) {
 	}
 }
 
+func BenchmarkColumnBufferAllocateParallel(b *testing.B) {
+	allocator := newLocalSliceBuffer()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			buf, _ := allocator.alloc(types.ETInt, 1024)
+			allocator.release(buf)
+		}
+	})
+}
+
 func BenchmarkPlusIntBufAllocator(b *testing.B) {
 	plus, input, buf := genMockVecPlusIntBuiltinFunc()
 	names := []string{"enable", "disable"}

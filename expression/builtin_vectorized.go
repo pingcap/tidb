@@ -89,8 +89,8 @@ func (r *localSliceBuffer) release(buf *chunk.Column) {
 		for pos, i := r.head, 0; i < len(r.buffers); i++ {
 			buffers[i] = r.buffers[pos]
 			pos++
-			if pos > len(r.buffers) {
-				pos -= len(r.buffers)
+			if pos == len(r.buffers) {
+				pos = 0
 			}
 		}
 		r.head = 0
