@@ -50,14 +50,20 @@ import (
 const (
 	// TiDBMergeJoin is hint enforce merge join.
 	TiDBMergeJoin = "tidb_smj"
+	// HintSMJ is hint enforce merge join.
+	HintSMJ = "sm_join"
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
+	// HintINLJ is hint enforce index nested loop join.
+	HintINLJ = "inl_join"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
-	// TiDBHashAgg is hint enforce hash aggregation.
-	TiDBHashAgg = "tidb_hashagg"
-	// TiDBStreamAgg is hint enforce stream aggregation.
-	TiDBStreamAgg = "tidb_streamagg"
+	// HintHJ is hint enforce hash join.
+	HintHJ = "hash_join"
+	// HintHashAgg is hint enforce hash aggregation.
+	HintHashAgg = "hash_agg"
+	// HintStreamAgg is hint enforce stream aggregation.
+	HintStreamAgg = "stream_agg"
 )
 
 const (
@@ -1941,15 +1947,15 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	var preferAggType uint
 	for _, hint := range hints {
 		switch hint.HintName.L {
-		case TiDBMergeJoin:
+		case TiDBMergeJoin, HintSMJ:
 			sortMergeTables = tableNames2HintTableInfo(hint.Tables)
-		case TiDBIndexNestedLoopJoin:
+		case TiDBIndexNestedLoopJoin, HintINLJ:
 			INLJTables = tableNames2HintTableInfo(hint.Tables)
-		case TiDBHashJoin:
+		case TiDBHashJoin, HintHJ:
 			hashJoinTables = tableNames2HintTableInfo(hint.Tables)
-		case TiDBHashAgg:
+		case HintHashAgg:
 			preferAggType |= preferHashAgg
-		case TiDBStreamAgg:
+		case HintStreamAgg:
 			preferAggType |= preferStreamAgg
 		default:
 			// ignore hints that not implemented
@@ -1969,19 +1975,19 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
-	b.appendUnmatchedJoinHintWarning(TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables)
-	b.appendUnmatchedJoinHintWarning(TiDBMergeJoin, hintInfo.sortMergeJoinTables)
-	b.appendUnmatchedJoinHintWarning(TiDBHashJoin, hintInfo.hashJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
 }
 
-func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, hintTables []hintTableInfo) {
+func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []hintTableInfo) {
 	unMatchedTables := extractUnmatchedTables(hintTables)
 	if len(unMatchedTables) == 0 {
 		return
 	}
-	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s. Maybe you can use the table alias name",
-		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables))
+	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s or %s. Maybe you can use the table alias name",
+		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables), restore2JoinHint(joinTypeAlias, hintTables))
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
