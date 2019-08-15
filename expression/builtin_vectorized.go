@@ -66,7 +66,7 @@ func (r *localSliceBuffer) newBuffer(evalType types.EvalType, capacity int) (*ch
 	return nil, errors.Errorf("get column buffer for unsupported EvalType=%v", evalType)
 }
 
-func (r *localSliceBuffer) alloc(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	r.Lock()
 	defer r.Unlock()
 	if r.size > 0 {
@@ -81,18 +81,13 @@ func (r *localSliceBuffer) alloc(evalType types.EvalType, capacity int) (*chunk.
 	return r.newBuffer(evalType, capacity)
 }
 
-func (r *localSliceBuffer) release(buf *chunk.Column) {
+func (r *localSliceBuffer) put(buf *chunk.Column) {
 	r.Lock()
 	defer r.Unlock()
 	if r.size == len(r.buffers) {
 		buffers := make([]*chunk.Column, len(r.buffers)*2)
-		for pos, i := r.head, 0; i < len(r.buffers); i++ {
-			buffers[i] = r.buffers[pos]
-			pos++
-			if pos == len(r.buffers) {
-				pos = 0
-			}
-		}
+		copy(buffers, r.buffers[r.head:])
+		copy(buffers[r.size-r.head:], r.buffers[:r.tail])
 		r.head = 0
 		r.tail = len(r.buffers)
 		r.buffers = buffers

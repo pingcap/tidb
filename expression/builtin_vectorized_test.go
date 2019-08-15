@@ -137,8 +137,8 @@ func BenchmarkColumnBufferAllocate(b *testing.B) {
 	allocator := newLocalSliceBuffer()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buf, _ := allocator.alloc(types.ETInt, 1024)
-		allocator.release(buf)
+		buf, _ := allocator.get(types.ETInt, 1024)
+		allocator.put(buf)
 	}
 }
 
@@ -147,8 +147,8 @@ func BenchmarkColumnBufferAllocateParallel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			buf, _ := allocator.alloc(types.ETInt, 1024)
-			allocator.release(buf)
+			buf, _ := allocator.get(types.ETInt, 1024)
+			allocator.put(buf)
 		}
 	})
 }
