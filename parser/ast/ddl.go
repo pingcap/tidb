@@ -1209,6 +1209,56 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// IndexLockAndAlgorithm stores the algorithm option and the lock option.
+type IndexLockAndAlgorithm struct {
+	node
+
+	LockTp      LockType
+	AlgorithmTp AlgorithmType
+}
+
+// Restore implements Node interface.
+func (n *IndexLockAndAlgorithm) Restore(ctx *RestoreCtx) error {
+	hasPrevOption := false
+	if n.AlgorithmTp != AlgorithmTypeDefault {
+		ctx.WriteKeyWord("ALGORITHM")
+		ctx.WritePlain(" = ")
+		ctx.WriteKeyWord(n.AlgorithmTp.String())
+		hasPrevOption = true
+	}
+
+	if n.LockTp != LockTypeDefault {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("LOCK")
+		ctx.WritePlain(" = ")
+		ctx.WriteKeyWord(n.LockTp.String())
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *IndexLockAndAlgorithm) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*IndexLockAndAlgorithm)
+	return v.Leave(n)
+}
+
+// IndexKeyType is the type for index key.
+type IndexKeyType int
+
+// Index key types.
+const (
+	IndexKeyTypeNone IndexKeyType = iota
+	IndexKeyTypeUnique
+	IndexKeyTypeSpatial
+	IndexKeyTypeFullText
+)
+
 // CreateIndexStmt is a statement to create an index.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type CreateIndexStmt struct {
@@ -1220,16 +1270,22 @@ type CreateIndexStmt struct {
 
 	IndexName     string
 	Table         *TableName
-	Unique        bool
 	IndexColNames []*IndexColName
 	IndexOption   *IndexOption
+	KeyType       IndexKeyType
+	LockAlg       *IndexLockAndAlgorithm
 }
 
 // Restore implements Node interface.
 func (n *CreateIndexStmt) Restore(ctx *RestoreCtx) error {
 	ctx.WriteKeyWord("CREATE ")
-	if n.Unique {
+	switch n.KeyType {
+	case IndexKeyTypeUnique:
 		ctx.WriteKeyWord("UNIQUE ")
+	case IndexKeyTypeSpatial:
+		ctx.WriteKeyWord("SPATIAL ")
+	case IndexKeyTypeFullText:
+		ctx.WriteKeyWord("FULLTEXT ")
 	}
 	ctx.WriteKeyWord("INDEX ")
 	if n.IfNotExists {
@@ -1256,6 +1312,13 @@ func (n *CreateIndexStmt) Restore(ctx *RestoreCtx) error {
 		ctx.WritePlain(" ")
 		if err := n.IndexOption.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore CreateIndexStmt.IndexOption")
+		}
+	}
+
+	if n.LockAlg != nil {
+		ctx.WritePlain(" ")
+		if err := n.LockAlg.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateIndexStmt.LockAlg")
 		}
 	}
 
@@ -1287,6 +1350,13 @@ func (n *CreateIndexStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.IndexOption = node.(*IndexOption)
+	}
+	if n.LockAlg != nil {
+		node, ok := n.LockAlg.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.LockAlg = node.(*IndexLockAndAlgorithm)
 	}
 	return v.Leave(n)
 }
@@ -1779,29 +1849,29 @@ const (
 	LockTypeExclusive
 )
 
-// AlterAlgorithm is the algorithm of the DDL operations.
+// AlgorithmType is the algorithm of the DDL operations.
 // See https://dev.mysql.com/doc/refman/8.0/en/alter-table.html#alter-table-performance.
-type AlterAlgorithm byte
+type AlgorithmType byte
 
-// DDL alter algorithms.
+// DDL algorithms.
 // For now, TiDB only supported inplace and instance algorithms. If the user specify `copy`,
 // will get an error.
 const (
-	AlterAlgorithmDefault AlterAlgorithm = iota
-	AlterAlgorithmCopy
-	AlterAlgorithmInplace
-	AlterAlgorithmInstant
+	AlgorithmTypeDefault AlgorithmType = iota
+	AlgorithmTypeCopy
+	AlgorithmTypeInplace
+	AlgorithmTypeInstant
 )
 
-func (a AlterAlgorithm) String() string {
+func (a AlgorithmType) String() string {
 	switch a {
-	case AlterAlgorithmDefault:
+	case AlgorithmTypeDefault:
 		return "DEFAULT"
-	case AlterAlgorithmCopy:
+	case AlgorithmTypeCopy:
 		return "COPY"
-	case AlterAlgorithmInplace:
+	case AlgorithmTypeInplace:
 		return "INPLACE"
-	case AlterAlgorithmInstant:
+	case AlgorithmTypeInstant:
 		return "INSTANT"
 	default:
 		return "DEFAULT"
@@ -1831,7 +1901,7 @@ type AlterTableSpec struct {
 	OldColumnName   *ColumnName
 	Position        *ColumnPosition
 	LockType        LockType
-	Algorithm       AlterAlgorithm
+	Algorithm       AlgorithmType
 	Comment         string
 	FromKey         model.CIStr
 	ToKey           model.CIStr
