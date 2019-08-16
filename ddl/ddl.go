@@ -139,6 +139,7 @@ var (
 	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(codeUnsupportedPartitionByRangeColumns,
 		"unsupported partition by range columns")
 	errUnsupportedCreatePartition = terror.ClassDDL.New(codeUnsupportedCreatePartition, "unsupported partition type, treat as normal table")
+	errUnsupportedIndexType       = terror.ClassDDL.New(codeUnsupportedIndexType, "unsupported index type")
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
@@ -241,7 +242,7 @@ type DDL interface {
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
-	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
+	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption, ifNotExists bool) error
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr, ifExists bool) error
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
@@ -679,6 +680,7 @@ const (
 	codeUnsupportedModifyCharset           = 210
 	codeUnsupportedPartitionByRangeColumns = 211
 	codeUnsupportedCreatePartition         = 212
+	codeUnsupportedIndexType               = 213
 
 	codeFileNotFound                           = 1017
 	codeErrorOnRename                          = 1025
