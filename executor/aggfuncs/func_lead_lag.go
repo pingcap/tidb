@@ -165,7 +165,7 @@ type lag struct {
 
 func (v *lag) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4Lag{
-		defaultExtractors: make([]valueExtractor, 0, mathutil.MinUint64(v.offset, 1000)),
+		defaultExtractors: make([]valueExtractor, 0, mathutil.MinUint64(v.offset, maxDefaultExtractorBufferSize)),
 	})
 }
 
