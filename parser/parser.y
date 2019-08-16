@@ -3332,10 +3332,30 @@ DropDatabaseStmt:
 		$$ = &ast.DropDatabaseStmt{IfExists: $3.(bool), Name: $4.(string)}
 	}
 
+/******************************************************************
+ * Drop Index Statement
+ * See https://dev.mysql.com/doc/refman/8.0/en/drop-index.html
+ *
+ *  DROP INDEX index_name ON tbl_name
+ *      [algorithm_option | lock_option] ...
+ *
+ *  algorithm_option:
+ *      ALGORITHM [=] {DEFAULT|INPLACE|COPY}
+ *
+ *  lock_option:
+ *      LOCK [=] {DEFAULT|NONE|SHARED|EXCLUSIVE}
+ ******************************************************************/
 DropIndexStmt:
-	"DROP" "INDEX" IfExists Identifier "ON" TableName
+	"DROP" "INDEX" IfExists Identifier "ON" TableName IndexLockAndAlgorithmOpt
 	{
-		$$ = &ast.DropIndexStmt{IfExists: $3.(bool), IndexName: $4, Table: $6.(*ast.TableName)}
+		var indexLockAndAlgorithm *ast.IndexLockAndAlgorithm
+		if $7 != nil {
+			indexLockAndAlgorithm = $7.(*ast.IndexLockAndAlgorithm)
+			if indexLockAndAlgorithm.LockTp == ast.LockTypeDefault && indexLockAndAlgorithm.AlgorithmTp == ast.AlgorithmTypeDefault {
+				indexLockAndAlgorithm = nil
+			}
+		}
+		$$ = &ast.DropIndexStmt{IfExists: $3.(bool), IndexName: $4, Table: $6.(*ast.TableName), LockAlg: indexLockAndAlgorithm}
 	}
 
 DropTableStmt:
