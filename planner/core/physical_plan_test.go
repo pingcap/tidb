@@ -216,7 +216,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		},
 		{
 			sql:  "select * from t2 use index(b) where b = 1 and a = 1",
-			best: "IndexReader(Index(t2.b)[[1,1]]->Sel([eq(test.t2.a, 1)]))",
+			best: "IndexLookUp(Index(t2.b)[[1,1]]->Sel([eq(test.t2.a, 1)]), Table(t2))",
 		},
 	}
 	for i, tt := range tests {
@@ -1562,7 +1562,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 		{
 			sql:     "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
 			best:    "IndexJoin{IndexReader(Index(t2.b)[[NULL,+inf]])->TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t1.b)->Projection",
-			warning: "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t2) */ is inapplicable",
+			warning: "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
 		},
 	}
 	ctx := context.Background()
