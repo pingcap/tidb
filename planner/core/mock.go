@@ -275,11 +275,27 @@ func MockUnsignedTable() *model.TableInfo {
 				{
 					Name:   model.NewCIStr("b"),
 					Length: types.UnspecifiedLength,
-					Offset: 4,
+					Offset: 1,
 				},
 			},
 			State:  model.StatePublic,
 			Unique: true,
+		},
+		{
+			Name: model.NewCIStr("b_c"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+				{
+					Name:   model.NewCIStr("c"),
+					Length: types.UnspecifiedLength,
+					Offset: 2,
+				},
+			},
+			State: model.StatePublic,
 		},
 	}
 	pkColumn := &model.ColumnInfo{
@@ -296,11 +312,19 @@ func MockUnsignedTable() *model.TableInfo {
 		FieldType: newLongType(),
 		ID:        2,
 	}
+	col1 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    2,
+		Name:      model.NewCIStr("c"),
+		FieldType: newLongType(),
+		ID:        3,
+	}
 	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
 	col0.Flag = mysql.NotNullFlag
+	col1.Flag = mysql.UnsignedFlag
 	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col0},
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1},
 		Indices:    indices,
 		Name:       model.NewCIStr("t2"),
 		PKIsHandle: true,
