@@ -173,10 +173,17 @@ Projection_13	0.00	root	test.te.expect_time
     ├─TopN_95	0.00	root	test.te.expect_time:asc, offset:0, count:5
     │ └─IndexJoin_36	0.00	root	inner join, inner:IndexLookUp_35, outer key:test.tr.id, inner key:test.te.trade_id
     │   ├─IndexLookUp_74	0.00	root	
+<<<<<<< HEAD
     │   │ ├─Selection_72	0.00	cop[tikv]	eq(test.tr.business_type, 18), in(test.tr.trade_type, 1)
     │   │ │ └─IndexScan_70	10.00	cop[tikv]	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
     │   │ └─Selection_73	0.00	cop[tikv]	eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
     │   │   └─TableScan_71	0.00	cop[tikv]	table:tr, keep order:false, stats:pseudo
+=======
+    │   │ ├─Selection_72	0.00	cop	eq(test.tr.business_type, 18), eq(test.tr.trade_type, 1)
+    │   │ │ └─IndexScan_70	10.00	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
+    │   │ └─Selection_73	0.00	cop	eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
+    │   │   └─TableScan_71	0.00	cop	table:tr, keep order:false, stats:pseudo
+>>>>>>> 103cbcd... planner: rewrite `in` as `eq` when the rhs list has only one item
     │   └─IndexLookUp_35	0.25	root	
     │     ├─IndexScan_32	10.00	cop[tikv]	table:te, index:trade_id, range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:false, stats:pseudo
     │     └─Selection_34	0.25	cop[tikv]	ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)

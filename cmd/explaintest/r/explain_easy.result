@@ -722,6 +722,7 @@ TableReader_7	1.00	root	data:Selection_6
 └─Selection_6	1.00	cop[tikv]	eq(test.t.b, 1000-01-01 00:00:00.000000)
   └─TableScan_5	3.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
 drop table t;
+<<<<<<< HEAD
 create table t(a int, b int);
 explain format="dot" select * from t where a < 2;
 dot contents
@@ -742,4 +743,15 @@ label = "cop"
 "TableReader_7" -> "Selection_6"
 }
 
+=======
+create table t(a int, b int, index idx_ab(a, b));
+explain select a, b from t where a in (1) order by b;
+id	count	task	operator info
+IndexReader_12	10.00	root	index:IndexScan_11
+└─IndexScan_11	10.00	cop	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
+explain select a, b from t where a = 1 order by b;
+id	count	task	operator info
+IndexReader_12	10.00	root	index:IndexScan_11
+└─IndexScan_11	10.00	cop	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
+>>>>>>> 103cbcd... planner: rewrite `in` as `eq` when the rhs list has only one item
 drop table if exists t;

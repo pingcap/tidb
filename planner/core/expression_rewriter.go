@@ -1153,7 +1153,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		}
 	}
 	var function expression.Expression
-	if allSameType && l == 1 {
+	if allSameType && l == 1 && lLen > 1 {
 		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
 	} else {
 		eqFunctions := make([]expression.Expression, 0, lLen)

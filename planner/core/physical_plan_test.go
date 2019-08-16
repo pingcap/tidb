@@ -358,10 +358,215 @@ func (s *testPlanSuite) TestRefine(c *C) {
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
+<<<<<<< HEAD
 	var input []string
 	var output []struct {
 		SQL  string
 		Best string
+=======
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select a from t where c is not null",
+			best: "IndexReader(Index(t.c_d_e)[[-inf,+inf]])->Projection",
+		},
+		{
+			sql:  "select a from t where c >= 4",
+			best: "IndexReader(Index(t.c_d_e)[[4,+inf]])->Projection",
+		},
+		{
+			sql:  "select a from t where c <= 4",
+			best: "IndexReader(Index(t.c_d_e)[[-inf,4]])->Projection",
+		},
+		{
+			sql:  "select a from t where c = 4 and d = 5 and e = 6",
+			best: "IndexReader(Index(t.c_d_e)[[4 5 6,4 5 6]])->Projection",
+		},
+		{
+			sql:  "select a from t where d = 4 and c = 5",
+			best: "IndexReader(Index(t.c_d_e)[[5 4,5 4]])->Projection",
+		},
+		{
+			sql:  "select a from t where c = 4 and e < 5",
+			best: "IndexReader(Index(t.c_d_e)[[4,4]]->Sel([lt(test.t.e, 5)]))->Projection",
+		},
+		{
+			sql:  "select a from t where c = 4 and d <= 5 and d > 3",
+			best: "IndexReader(Index(t.c_d_e)[(4 3,4 5]])->Projection",
+		},
+		{
+			sql:  "select a from t where d <= 5 and d > 3",
+			best: "TableReader(Table(t)->Sel([le(test.t.d, 5) gt(test.t.d, 3)]))->Projection",
+		},
+		{
+			sql:  "select a from t where c between 1 and 2",
+			best: "IndexReader(Index(t.c_d_e)[[1,2]])->Projection",
+		},
+		{
+			sql:  "select a from t where c not between 1 and 2",
+			best: "IndexReader(Index(t.c_d_e)[[-inf,1) (2,+inf]])->Projection",
+		},
+		{
+			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
+			best: "IndexReader(Index(t.c_d_e)[[3,5]]->Sel([eq(test.t.d, 1)]))->Projection",
+		},
+		{
+			sql:  "select a from t where c = 1 or c = 2 or c = 3",
+			best: "IndexReader(Index(t.c_d_e)[[1,3]])->Projection",
+		},
+		{
+			sql:  "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,5]], Table(t))->Projection",
+		},
+		{
+			sql:  "select a from t where c = 5",
+			best: "IndexReader(Index(t.c_d_e)[[5,5]])->Projection",
+		},
+		{
+			sql:  "select a from t where c = 5 and b = 1",
+			best: "IndexLookUp(Index(t.c_d_e)[[5,5]], Table(t)->Sel([eq(test.t.b, 1)]))->Projection",
+		},
+		{
+			sql:  "select a from t where not a",
+			best: "TableReader(Table(t)->Sel([not(test.t.a)]))",
+		},
+		{
+			sql:  "select a from t where c in (1)",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->Projection",
+		},
+		{
+			sql:  "select a from t where c in ('1')",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->Projection",
+		},
+		{
+			sql:  "select a from t where c = 1.0",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1) and d > 3",
+			best: "IndexReader(Index(t.c_d_e)[(1 3,1 +inf]])->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
+			best: "Dual->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1, 2, 3) and (d > 2 and d < 4 or d > 5 and d < 7)",
+			best: "IndexReader(Index(t.c_d_e)[(1 2,1 4) (1 5,1 7) (2 2,2 4) (2 5,2 7) (3 2,3 4) (3 5,3 7)])->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1, 2, 3)",
+			best: "IndexReader(Index(t.c_d_e)[[1,1] [2,2] [3,3]])->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
+			best: "IndexReader(Index(t.c_d_e)[[1 1 1,1 1 1] [1 2 1,1 2 1] [2 1 1,2 1 1] [2 2 1,2 2 1] [3 1 1,3 1 1] [3 2 1,3 2 1]])->Projection",
+		},
+		{
+			sql:  "select a from t where d in (1, 2, 3)",
+			best: "TableReader(Table(t)->Sel([in(test.t.d, 1, 2, 3)]))->Projection",
+		},
+		{
+			sql:  "select a from t where c not in (1)",
+			best: "IndexReader(Index(t.c_d_e)[[-inf,1) (1,+inf]])->Projection",
+		},
+		// test like
+		{
+			sql:  "select a from t use index(c_d_e) where c != 1",
+			best: "IndexReader(Index(t.c_d_e)[[-inf,1) (1,+inf]])->Projection",
+		},
+		{
+			sql:  "select a from t where c_str like ''",
+			best: `IndexReader(Index(t.c_d_e_str)[["",""]])->Projection`,
+		},
+		{
+			sql:  "select a from t where c_str like 'abc'",
+			best: `IndexReader(Index(t.c_d_e_str)[["abc","abc"]])->Projection`,
+		},
+		{
+			sql:  "select a from t where c_str not like 'abc'",
+			best: `IndexReader(Index(t.c_d_e_str)[[-inf,"abc") ("abc",+inf]])->Projection`,
+		},
+		{
+			sql:  "select a from t where not (c_str like 'abc' or c_str like 'abd')",
+			best: `IndexReader(Index(t.c_d_e_str)[[-inf,"abc") ("abc","abd") ("abd",+inf]])->Projection`,
+		},
+		{
+			sql:  "select a from t where c_str like '_abc'",
+			best: "TableReader(Table(t)->Sel([like(test.t.c_str, _abc, 92)]))->Projection",
+		},
+		{
+			sql:  `select a from t where c_str like 'abc%'`,
+			best: `IndexReader(Index(t.c_d_e_str)[["abc","abd")])->Projection`,
+		},
+		{
+			sql:  "select a from t where c_str like 'abc_'",
+			best: `IndexReader(Index(t.c_d_e_str)[("abc","abd")]->Sel([like(test.t.c_str, abc_, 92)]))->Projection`,
+		},
+		{
+			sql:  "select a from t where c_str like 'abc%af'",
+			best: `IndexReader(Index(t.c_d_e_str)[["abc","abd")]->Sel([like(test.t.c_str, abc%af, 92)]))->Projection`,
+		},
+		{
+			sql:  `select a from t where c_str like 'abc\\_' escape ''`,
+			best: `IndexReader(Index(t.c_d_e_str)[["abc_","abc_"]])->Projection`,
+		},
+		{
+			sql:  `select a from t where c_str like 'abc\\_'`,
+			best: `IndexReader(Index(t.c_d_e_str)[["abc_","abc_"]])->Projection`,
+		},
+		{
+			sql:  `select a from t where c_str like 'abc\\\\_'`,
+			best: "IndexReader(Index(t.c_d_e_str)[(\"abc\\\",\"abc]\")]->Sel([like(test.t.c_str, abc\\\\_, 92)]))->Projection",
+		},
+		{
+			sql:  `select a from t where c_str like 'abc\\_%'`,
+			best: "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")])->Projection",
+		},
+		{
+			sql:  `select a from t where c_str like 'abc=_%' escape '='`,
+			best: "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")])->Projection",
+		},
+		{
+			sql:  `select a from t where c_str like 'abc\\__'`,
+			best: "IndexReader(Index(t.c_d_e_str)[(\"abc_\",\"abc`\")]->Sel([like(test.t.c_str, abc\\__, 92)]))->Projection",
+		},
+		{
+			// Check that 123 is converted to string '123'. index can be used.
+			sql:  `select a from t where c_str like 123`,
+			best: "IndexReader(Index(t.c_d_e_str)[[\"123\",\"123\"]])->Projection",
+		},
+		{
+			sql:  `select a from t where c = 1.9 and d > 3`,
+			best: "Dual",
+		},
+		{
+			sql:  `select a from t where c < 1.1`,
+			best: "IndexReader(Index(t.c_d_e)[[-inf,2)])->Projection",
+		},
+		{
+			sql:  `select a from t where c <= 1.9`,
+			best: "IndexReader(Index(t.c_d_e)[[-inf,1]])->Projection",
+		},
+		{
+			sql:  `select a from t where c >= 1.1`,
+			best: "IndexReader(Index(t.c_d_e)[[2,+inf]])->Projection",
+		},
+		{
+			sql:  `select a from t where c > 1.9`,
+			best: "IndexReader(Index(t.c_d_e)[(1,+inf]])->Projection",
+		},
+		{
+			sql:  `select a from t where c = 123456789098765432101234`,
+			best: "Dual",
+		},
+		{
+			sql:  `select a from t where c = 'hanfei'`,
+			best: "TableReader(Table(t))->Sel([eq(cast(test.t.c), cast(hanfei))])->Projection",
+		},
+>>>>>>> 103cbcd... planner: rewrite `in` as `eq` when the rhs list has only one item
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
