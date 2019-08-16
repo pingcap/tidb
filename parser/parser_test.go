@@ -1827,6 +1827,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) avg_row_length 3", true, "CREATE TABLE `t` (`c` INT) AVG_ROW_LENGTH = 3"},
 		{"create table t (c int) checksum = 0", true, "CREATE TABLE `t` (`c` INT) CHECKSUM = 0"},
 		{"create table t (c int) checksum 1", true, "CREATE TABLE `t` (`c` INT) CHECKSUM = 1"},
+		{"create table t (c int) table_checksum = 0", true, "CREATE TABLE `t` (`c` INT) TABLE_CHECKSUM = 0"},
+		{"create table t (c int) table_checksum 1", true, "CREATE TABLE `t` (`c` INT) TABLE_CHECKSUM = 1"},
 		{"create table t (c int) compression = 'NONE'", true, "CREATE TABLE `t` (`c` INT) COMPRESSION = 'NONE'"},
 		{"create table t (c int) compression 'lz4'", true, "CREATE TABLE `t` (`c` INT) COMPRESSION = 'lz4'"},
 		{"create table t (c int) connection = 'abc'", true, "CREATE TABLE `t` (`c` INT) CONNECTION = 'abc'"},

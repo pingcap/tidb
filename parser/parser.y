@@ -460,6 +460,7 @@ import (
 	super		"SUPER"
 	some 		"SOME"
 	global		"GLOBAL"
+	tableChecksum	"TABLE_CHECKSUM"
 	tables		"TABLES"
 	tablespace	"TABLESPACE"
 	temporary	"TEMPORARY"
@@ -4066,7 +4067,7 @@ UnReservedKeyword:
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 | "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT" | "INCREMENTAL" | "CPU" | "MEMORY" | "BLOCK" | "IO" | "CONTEXT" | "SWITCHES" | "PAGE" | "FAULTS" | "IPC" | "SWAPS" | "SOURCE"
 | "TRADITIONAL" | "SQL_BUFFER_RESULT" | "DIRECTORY" | "HISTORY" | "LIST" | "NODEGROUP" | "SYSTEM_TIME" | "PARTIAL" | "SIMPLE" | "REMOVE" | "PARTITIONING" | "STORAGE" | "DISK" | "STATS_SAMPLE_PAGES" | "SECONDARY_ENGINE" | "VALIDATION"
-| "WITHOUT" | "RTREE" | "EXCHANGE" | "REPAIR" | "IMPORT" | "DISCARD"
+| "WITHOUT" | "RTREE" | "EXCHANGE" | "REPAIR" | "IMPORT" | "DISCARD" | "TABLE_CHECKSUM"
 
 TiDBKeyword:
  "ADMIN" | "BUCKETS" | "CANCEL" | "CMSKETCH" | "DDL" | "DEPTH" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "SAMPLES" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB"
@@ -8019,6 +8020,10 @@ TableOption:
 |	"CHECKSUM" EqOpt LengthNum
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionCheckSum, UintValue: $3.(uint64)}
+	}
+|	"TABLE_CHECKSUM" EqOpt LengthNum
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionTableCheckSum, UintValue: $3.(uint64)}
 	}
 |	"PASSWORD" EqOpt stringLit
 	{
