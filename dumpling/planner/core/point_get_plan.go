@@ -39,6 +39,7 @@ import (
 type PointGetPlan struct {
 	basePlan
 	schema           *expression.Schema
+	DBName           model.CIStr
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
 	Handle           int64
@@ -194,6 +195,10 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if tbl == nil {
 		return nil
 	}
+	dbName := tblName.Schema
+	if dbName.L == "" {
+		dbName = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
 	// Do not handle partitioned table.
 	// Table partition implementation translates LogicalPlan from `DataSource` to
 	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
@@ -222,7 +227,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if schema == nil {
 			return nil
 		}
-		p := newPointGetPlan(ctx, schema, tbl)
+		p := newPointGetPlan(ctx, schema, dbName, tbl)
 		intDatum, err := handlePair.value.ConvertTo(ctx.GetSessionVars().StmtCtx, fieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
@@ -262,7 +267,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if schema == nil {
 			return nil
 		}
-		p := newPointGetPlan(ctx, schema, tbl)
+		p := newPointGetPlan(ctx, schema, dbName, tbl)
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
@@ -271,10 +276,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	return nil
 }
 
-func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *PointGetPlan {
+func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, dbName model.CIStr, tbl *model.TableInfo) *PointGetPlan {
 	p := &PointGetPlan{
 		basePlan: newBasePlan(ctx, "Point_Get"),
 		schema:   schema,
+		DBName:   dbName,
 		TblInfo:  tbl,
 	}
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
@@ -331,21 +337,11 @@ func buildSchemaFromFields(ctx sessionctx.Context, dbName model.CIStr, tbl *mode
 		return expression.NewSchema(columns...)
 	}
 	// fields len is 0 for update and delete.
-	var handleCol *expression.Column
 	for _, col := range tbl.Columns {
 		column := colInfoToColumn(dbName, tbl.Name, tblName, col.Name, col, len(columns))
-		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			handleCol = column
-		}
 		columns = append(columns, column)
 	}
-	if handleCol == nil {
-		handleCol = colInfoToColumn(dbName, tbl.Name, tblName, model.ExtraHandleName, model.NewExtraHandleColInfo(), len(columns))
-		columns = append(columns, handleCol)
-	}
 	schema := expression.NewSchema(columns...)
-	schema.TblID2Handle = make(map[int64][]*expression.Column)
-	schema.TblID2Handle[tbl.ID] = []*expression.Column{handleCol}
 	return schema
 }
 
@@ -495,10 +491,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	if orderedList == nil {
 		return nil
 	}
-	var handleCol *expression.Column
-	for _, handles := range fastSelect.schema.TblID2Handle {
-		handleCol = handles[0]
-	}
+	handleCol := fastSelect.findHandleCol()
 	updatePlan := Update{
 		SelectPlan:  fastSelect,
 		OrderedList: orderedList,
@@ -511,7 +504,6 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 			},
 		},
 	}.Init(ctx)
-	updatePlan.SetSchema(fastSelect.schema)
 	return updatePlan
 }
 
@@ -566,10 +558,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true
 	}
-	var handleCol *expression.Column
-	for _, handles := range fastSelect.schema.TblID2Handle {
-		handleCol = handles[0]
-	}
+	handleCol := fastSelect.findHandleCol()
 	delPlan := Delete{
 		SelectPlan: fastSelect,
 		TblColPosInfos: TblColPosInfoSlice{
@@ -581,7 +570,6 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 			},
 		},
 	}.Init(ctx)
-	delPlan.SetSchema(fastSelect.schema)
 	return delPlan
 }
 
@@ -605,4 +593,23 @@ func colInfoToColumn(db model.CIStr, origTblName model.CIStr, tblName model.CISt
 		UniqueID:    int64(col.Offset),
 		Index:       idx,
 	}
+}
+
+func (p *PointGetPlan) findHandleCol() *expression.Column {
+	// fields len is 0 for update and delete.
+	var handleCol *expression.Column
+	tbl := p.TblInfo
+	if tbl.PKIsHandle {
+		for i, col := range p.TblInfo.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) && tbl.PKIsHandle {
+				handleCol = p.schema.Columns[i]
+			}
+		}
+	}
+	if handleCol == nil {
+		oneCol := p.schema.Columns[0]
+		handleCol = colInfoToColumn(oneCol.DBName, oneCol.OrigTblName, oneCol.TblName, model.ExtraHandleName, model.NewExtraHandleColInfo(), p.schema.Len())
+		p.schema.Append(handleCol)
+	}
+	return handleCol
 }
