@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -294,6 +295,17 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(v.CorrelationThreshold, Equals, float64(0))
+
+	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("follower"))
+	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "follower")
+	c.Assert(v.ReplicaRead, Equals, kv.ReplicaReadFollower)
+	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader"))
+	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "leader")
+	c.Assert(v.ReplicaRead, Equals, kv.ReplicaReadLeader)
 }
 
 func (s *testVarsutilSuite) TestValidate(c *C) {
@@ -348,6 +360,7 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBTxnMode, "pessimistic", false},
 		{TiDBTxnMode, "optimistic", false},
 		{TiDBTxnMode, "", false},
+		{TiDBReplicaRead, "invalid", true},
 	}
 
 	for _, t := range tests {
