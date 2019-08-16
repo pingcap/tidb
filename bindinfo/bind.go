@@ -23,7 +23,7 @@ type HintsSet struct {
 
 type hintProcessor struct {
 	*HintsSet
-	bind         bool
+	bindHint2Ast bool // bindHint2Ast indicates the behavior of the processor, `true` for bind hint to ast, `false` for extract hint from ast.
 	tableCounter int64
 	indexCounter int64
 }
@@ -31,14 +31,14 @@ type hintProcessor struct {
 func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	switch v := in.(type) {
 	case *ast.SelectStmt:
-		if hp.bind {
+		if hp.bindHint2Ast {
 			v.TableHints = hp.tableHints[hp.tableCounter]
 			hp.tableCounter++
 		} else {
 			hp.tableHints = append(hp.tableHints, v.TableHints)
 		}
 	case *ast.TableName:
-		if hp.bind {
+		if hp.bindHint2Ast {
 			v.IndexHints = hp.indexHints[hp.indexCounter]
 			hp.indexCounter++
 		} else {
@@ -61,7 +61,7 @@ func CollectHint(in ast.StmtNode) *HintsSet {
 
 // BindHint will add hints for stmt according to the hints in `hintsSet`.
 func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
-	hp := hintProcessor{HintsSet: hintsSet, bind: true}
+	hp := hintProcessor{HintsSet: hintsSet, bindHint2Ast: true}
 	stmt.Accept(&hp)
 	return stmt
 }
