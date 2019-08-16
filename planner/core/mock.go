@@ -39,8 +39,8 @@ func newDateType() types.FieldType {
 	return *ft
 }
 
-// MockTable is only used for plan related tests.
-func MockTable() *model.TableInfo {
+// MockSignedTable is only used for plan related tests.
+func MockSignedTable() *model.TableInfo {
 	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
 	// PK: a
 	// indeices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
@@ -263,6 +263,75 @@ func MockTable() *model.TableInfo {
 	return table
 }
 
+// MockUnsignedTable is only used for plan related tests.
+func MockUnsignedTable() *model.TableInfo {
+	// column: a, b
+	// PK: a
+	// indeices: b
+	indices := []*model.IndexInfo{
+		{
+			Name: model.NewCIStr("b"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+			},
+			State:  model.StatePublic,
+			Unique: true,
+		},
+		{
+			Name: model.NewCIStr("b_c"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+				{
+					Name:   model.NewCIStr("c"),
+					Length: types.UnspecifiedLength,
+					Offset: 2,
+				},
+			},
+			State: model.StatePublic,
+		},
+	}
+	pkColumn := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    0,
+		Name:      model.NewCIStr("a"),
+		FieldType: newLongType(),
+		ID:        1,
+	}
+	col0 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    1,
+		Name:      model.NewCIStr("b"),
+		FieldType: newLongType(),
+		ID:        2,
+	}
+	col1 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    2,
+		Name:      model.NewCIStr("c"),
+		FieldType: newLongType(),
+		ID:        3,
+	}
+	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag
+	// Column 'b', 'c', 'd', 'f', 'g' is not null.
+	col0.Flag = mysql.NotNullFlag
+	col1.Flag = mysql.UnsignedFlag
+	table := &model.TableInfo{
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1},
+		Indices:    indices,
+		Name:       model.NewCIStr("t2"),
+		PKIsHandle: true,
+	}
+	return table
+}
+
 // MockView is only used for plan related tests.
 func MockView() *model.TableInfo {
 	selectStmt := "select b,c,d from t"
@@ -308,7 +377,7 @@ func MockContext() sessionctx.Context {
 
 // MockPartitionInfoSchema mocks an info schema for partition table.
 func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
-	tableInfo := MockTable()
+	tableInfo := MockSignedTable()
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
 	cols = append(cols, tableInfo.Columns...)
 	last := tableInfo.Columns[len(tableInfo.Columns)-1]
