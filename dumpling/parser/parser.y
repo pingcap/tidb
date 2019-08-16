@@ -1288,6 +1288,20 @@ AlterTableSpec:
 			Num: getUint64FromNUM($6),
 		}
 	}
+|	"CHECK" "PARTITION" AllOrPartitionNameList
+	{
+		yylex.AppendError(yylex.Errorf("The CHECK PARTITIONING clause is parsed but not implement yet."))
+		parser.lastErrorAsWarn()
+		ret := &ast.AlterTableSpec{
+			Tp: ast.AlterTableCheckPartitions,
+		}
+		if $3 == nil {
+			ret.OnAllPartitions = true
+		} else {
+			ret.PartitionNames = $3.([]model.CIStr)
+		}
+		$$ = ret
+	}
 |	"COALESCE" "PARTITION" NoWriteToBinLogAliasOpt NUM
 	{
 		noWriteToBinlog := $3.(bool)
