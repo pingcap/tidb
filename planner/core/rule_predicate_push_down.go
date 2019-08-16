@@ -218,7 +218,6 @@ func (p *LogicalJoin) updateEQCond() {
 			p.OtherConditions = append(p.OtherConditions[:i], p.OtherConditions[i+1:]...)
 		}
 	}
-	// set equal conditions.
 	if len(lKeys) > 0 {
 		needLProj, needRProj := false, false
 		for i := range lKeys {
@@ -236,15 +235,11 @@ func (p *LogicalJoin) updateEQCond() {
 			rProj = p.getProj(1)
 		}
 		for i := range lKeys {
-			var lKey, rKey *expression.Column
-			if !needLProj {
-				lKey, _ = lKeys[i].(*expression.Column)
-			} else {
+			lKey, rKey := lKeys[i], rKeys[i]
+			if lProj != nil {
 				lKey = lProj.appendExpr(lKeys[i])
 			}
-			if !needRProj {
-				rKey, _ = rKeys[i].(*expression.Column)
-			} else {
+			if rProj != nil {
 				rKey = rProj.appendExpr(rKeys[i])
 			}
 			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
