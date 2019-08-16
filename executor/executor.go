@@ -751,6 +751,8 @@ type SelectLockExec struct {
 
 	Lock ast.SelectLockType
 	keys []kv.Key
+
+	tblID2Handle map[int64][]*expression.Column
 }
 
 // Open implements the Executor Open interface.
@@ -760,7 +762,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	}
 
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	for id := range e.Schema().TblID2Handle {
+	for id := range e.tblID2Handle {
 		// This operation is only for schema validator check.
 		txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
 	}
@@ -775,12 +777,12 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
-	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
+	if len(e.tblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
 	if req.NumRows() != 0 {
 		iter := chunk.NewIterator4Chunk(req)
-		for id, cols := range e.Schema().TblID2Handle {
+		for id, cols := range e.tblID2Handle {
 			for _, col := range cols {
 				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
