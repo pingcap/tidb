@@ -1274,6 +1274,7 @@ func (mvcc *MVCCLevelDB) doRawDeleteRange(startKey, endKey []byte) error {
 	return mvcc.db.Write(batch, nil)
 }
 
+// MvccGetByStartTS implements the MVCCDebugger interface.
 func (mvcc *MVCCLevelDB) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte) {
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
@@ -1287,12 +1288,13 @@ func (mvcc *MVCCLevelDB) MvccGetByStartTS(startKey, endKey []byte, starTS uint64
 	return mvcc.MvccGetByKey(key), key
 }
 
-var ValueTypeOpMap = map[mvccValueType]kvrpcpb.Op{
+var valueTypeOpMap = map[mvccValueType]kvrpcpb.Op{
 	typePut:      kvrpcpb.Op_Put,
 	typeDelete:   kvrpcpb.Op_Del,
 	typeRollback: kvrpcpb.Op_Rollback,
 }
 
+// MvccGetByKey implements the MVCCDebugger interface.
 func (mvcc *MVCCLevelDB) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
@@ -1340,7 +1342,7 @@ func (mvcc *MVCCLevelDB) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
 			shortValue = dec2.value.value
 		}
 		write := &kvrpcpb.MvccWrite{
-			Type:       ValueTypeOpMap[dec2.value.valueType],
+			Type:       valueTypeOpMap[dec2.value.valueType],
 			StartTs:    dec2.value.startTS,
 			CommitTs:   dec2.value.commitTS,
 			ShortValue: shortValue,
@@ -1358,8 +1360,8 @@ func (mvcc *MVCCLevelDB) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
 	return info
 }
 
-const ShortValueMaxLen = 64
+const shortValueMaxLen = 64
 
 func isShortValue(value []byte) bool {
-	return len(value) <= ShortValueMaxLen
+	return len(value) <= shortValueMaxLen
 }
