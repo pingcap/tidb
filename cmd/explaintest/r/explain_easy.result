@@ -44,12 +44,12 @@ IndexReader_6	10.00	root	index:IndexScan_5
 └─IndexScan_5	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	count	task	operator info
-HashLeftJoin_13	4166.67	root	left outer join, inner:TableReader_27, equal:[eq(test.t1.c2, test.t2.c1)]
-├─TableReader_24	3333.33	root	data:TableScan_23
-│ └─TableScan_23	3333.33	cop	table:t1, range:(1,+inf], keep order:false, stats:pseudo
-└─TableReader_27	9990.00	root	data:Selection_26
-  └─Selection_26	9990.00	cop	not(isnull(test.t2.c1))
-    └─TableScan_25	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+HashLeftJoin_13	4166.67	root	left outer join, inner:TableReader_26, equal:[eq(test.t1.c2, test.t2.c1)]
+├─TableReader_23	3333.33	root	data:TableScan_22
+│ └─TableScan_22	3333.33	cop	table:t1, range:(1,+inf], keep order:false, stats:pseudo
+└─TableReader_26	9990.00	root	data:Selection_25
+  └─Selection_25	9990.00	cop	not(isnull(test.t2.c1))
+    └─TableScan_24	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
 Point_Get_1	1.00	root	table:t1, handle:1
@@ -704,3 +704,13 @@ TableReader_7	0.00	root	data:Selection_6
 └─Selection_6	0.00	cop	ge(test.t.a, 3), le(test.t.a, 8)
   └─TableScan_5	8.00	cop	table:t, range:[-inf,+inf], keep order:false
 drop table t;
+create table t(a int, b int, index idx_ab(a, b));
+explain select a, b from t where a in (1) order by b;
+id	count	task	operator info
+IndexReader_12	10.00	root	index:IndexScan_11
+└─IndexScan_11	10.00	cop	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
+explain select a, b from t where a = 1 order by b;
+id	count	task	operator info
+IndexReader_12	10.00	root	index:IndexScan_11
+└─IndexScan_11	10.00	cop	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
+drop table if exists t;
