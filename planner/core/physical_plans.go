@@ -82,6 +82,8 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	ExtraHandleCol *expression.Column
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -98,11 +100,6 @@ type PhysicalIndexScan struct {
 	Ranges     []*ranger.Range
 	Columns    []*model.ColumnInfo
 	DBName     model.CIStr
-	Desc       bool
-	KeepOrder  bool
-	// DoubleRead means if the index executor will read kv two times.
-	// If the query requires the columns that don't belong to index, DoubleRead will be true.
-	DoubleRead bool
 
 	TableAsName *model.CIStr
 
@@ -117,10 +114,16 @@ type PhysicalIndexScan struct {
 	rangeInfo string
 
 	// The index scan may be on a partition.
-	isPartition     bool
 	physicalTableID int64
 
 	GenExprs map[model.TableColumnID]expression.Expression
+
+	isPartition bool
+	Desc        bool
+	KeepOrder   bool
+	// DoubleRead means if the index executor will read kv two times.
+	// If the query requires the columns that don't belong to index, DoubleRead will be true.
+	DoubleRead bool
 }
 
 // PhysicalMemTable reads memory table.
@@ -144,27 +147,27 @@ type PhysicalTableScan struct {
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
-	Desc    bool
 	Ranges  []*ranger.Range
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr
 
-	// KeepOrder is true, if sort data by scanning pkcol,
-	KeepOrder bool
-
 	// Hist is the histogram when the query was issued.
 	// It is used for query feedback.
 	Hist *statistics.Histogram
 
-	// The table scan may be a partition, rather than a real table.
-	isPartition     bool
 	physicalTableID int64
 
 	rangeDecidedBy []*expression.Column
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx int
+
+	// The table scan may be a partition, rather than a real table.
+	isPartition bool
+	// KeepOrder is true, if sort data by scanning pkcol,
+	KeepOrder bool
+	Desc      bool
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
@@ -208,6 +211,10 @@ type PhysicalHashJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+
+	LeftJoinKeys  []*expression.Column
+	RightJoinKeys []*expression.Column
+
 	// InnerChildIdx indicates which child is to build the hash table.
 	// For inner join, the smaller one will be chosen.
 	// For outer join or semi join, it's exactly the inner one.
@@ -229,7 +236,7 @@ type PhysicalIndexJoin struct {
 	OtherConditions expression.CNFExprs
 	OuterIndex      int
 	outerSchema     *expression.Schema
-	innerPlan       PhysicalPlan
+	innerTask       task
 
 	DefaultValues []types.Datum
 
@@ -269,6 +276,8 @@ type PhysicalLock struct {
 	basePhysicalPlan
 
 	Lock ast.SelectLockType
+
+	TblID2Handle map[int64][]*expression.Column
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -316,13 +325,13 @@ type basePhysicalAgg struct {
 	GroupByItems []expression.Expression
 }
 
-func (p *basePhysicalAgg) hasDistinctFunc() bool {
+func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 	for _, fun := range p.AggFuncs {
 		if fun.HasDistinct {
-			return true
+			num++
 		}
 	}
-	return false
+	return
 }
 
 // PhysicalHashAgg is hash operator of aggregate.
@@ -353,6 +362,8 @@ type PhysicalUnionScan struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
+
+	HandleCol *expression.Column
 }
 
 // IsPartition returns true and partition ID if it works on a partition.

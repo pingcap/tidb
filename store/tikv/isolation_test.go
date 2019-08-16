@@ -92,7 +92,7 @@ func (s *testIsolationSuite) GetWithRetry(c *C, k []byte) readRecord {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 
-		val, err := txn.Get(k)
+		val, err := txn.Get(context.TODO(), k)
 		if err == nil {
 			return readRecord{
 				startTS: txn.StartTS(),

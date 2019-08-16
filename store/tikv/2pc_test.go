@@ -66,7 +66,7 @@ func (s *testCommitterSuite) begin(c *C) *tikvTxn {
 func (s *testCommitterSuite) checkValues(c *C, m map[string]string) {
 	txn := s.begin(c)
 	for k, v := range m {
-		val, err := txn.Get([]byte(k))
+		val, err := txn.Get(context.TODO(), []byte(k))
 		c.Assert(err, IsNil)
 		c.Assert(string(val), Equals, v)
 	}
@@ -140,7 +140,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 
 	txn2 := s.begin(c)
-	v, err := txn2.Get([]byte("a"))
+	v, err := txn2.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a0"))
 
@@ -163,7 +163,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)
-	v, err = txn3.Get([]byte("b"))
+	v, err = txn3.Get(context.TODO(), []byte("b"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("b1"))
 }
@@ -359,7 +359,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 
 	// check a
 	txn := s.begin(c)
-	v, err := txn.Get([]byte("a"))
+	v, err := txn.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a1"))
 
@@ -376,10 +376,10 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 
 	// txn2 failed with a rollback for record a.
 	txn = s.begin(c)
-	v, err = txn.Get([]byte("a"))
+	v, err = txn.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a1"))
-	_, err = txn.Get([]byte("b"))
+	_, err = txn.Get(context.TODO(), []byte("b"))
 	errMsgMustContain(c, err, "key not exist")
 
 	// clean again, shouldn't be failed when a rollback already exist.
@@ -391,7 +391,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 
 	// check the data after rollback twice.
 	txn = s.begin(c)
-	v, err = txn.Get([]byte("a"))
+	v, err = txn.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a1"))
 
@@ -402,7 +402,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	c.Assert(err, IsNil)
 	// check value
 	txn = s.begin(c)
-	v, err = txn.Get([]byte("a"))
+	v, err = txn.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a3"))
 }
@@ -432,7 +432,7 @@ func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
 		commiter1.cleanWg.Wait()
 		txn3 := s.begin(c)
 		start := time.Now()
-		txn3.Get([]byte("y1"))
+		txn3.Get(context.TODO(), []byte("y1"))
 		totalTime += time.Since(start)
 		txn3.Commit(context.Background())
 	}
@@ -466,7 +466,7 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 	txn = s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
 	txn.SetOption(kv.PresumeKeyNotExists, nil)
-	_, _ = txn.us.Get(key)
+	_, _ = txn.us.Get(context.TODO(), key)
 	c.Assert(txn.Set(key, key), IsNil)
 	txn.DelOption(kv.PresumeKeyNotExists)
 	err := txn.LockKeys(context.Background(), txn.startTS, key)

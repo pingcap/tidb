@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -52,7 +51,7 @@ type UpdateExec struct {
 	evalBuffer     chunk.MutRow
 }
 
-func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
+func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) ([]types.Datum, error) {
 	assignFlag, err := e.getUpdateColumns(e.ctx, schema.Len())
 	if err != nil {
 		return nil, err
@@ -100,7 +99,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 		}
 
 		// Update row
-		changed, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+		changed, _, _, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false)
 		if err1 == nil {
 			e.updatedRowKeys[content.TblID][handle] = changed
 			continue
@@ -129,11 +128,6 @@ func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
 
 // Next implements the Executor Next interface.
 func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("update.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
 	req.Reset()
 	if !e.fetched {
 		err := e.fetchChunkRows(ctx)
@@ -144,7 +138,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(e.rows)))
 
 		for {
-			row, err := e.exec(e.children[0].Schema())
+			row, err := e.exec(ctx, e.children[0].Schema())
 			if err != nil {
 				return err
 			}

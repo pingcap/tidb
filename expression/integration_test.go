@@ -901,7 +901,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select quote("aaaa"), quote(""), quote("\"\""), quote("\n\n");`)
 	result.Check(testkit.Rows("'aaaa' '' '\"\"' '\n\n'"))
 	result = tk.MustQuery(`select quote(0121), quote(0000), quote("中文"), quote(NULL);`)
-	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
+	result.Check(testkit.Rows("'121' '0' '中文' NULL"))
+	tk.MustQuery(`select quote(null) is NULL;`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select quote(null) is NOT NULL;`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select length(quote(null));`).Check(testkit.Rows(`4`))
+	tk.MustQuery(`select quote(null) REGEXP binary 'null'`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select quote(null) REGEXP binary 'NULL'`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select quote(null) REGEXP 'NULL'`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select quote(null) REGEXP 'null'`).Check(testkit.Rows(`1`))
 
 	// for convert
 	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
@@ -2193,6 +2200,31 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	msg := strings.Split(err.Error(), " ")
 	last := msg[len(msg)-1]
 	c.Assert(last, Equals, "bigint")
+	tk.MustExec(`drop table tb5;`)
+
+	// test builtinCastIntAsDecimalSig
+	tk.MustExec(`create table tb5(a bigint(64) unsigned, b decimal(64, 10));`)
+	tk.MustExec(`insert into tb5 (a, b) values (9223372036854775808, 9223372036854775808);`)
+	tk.MustExec(`insert into tb5 (select * from tb5 where a = b);`)
+	result = tk.MustQuery(`select * from tb5;`)
+	result.Check(testkit.Rows("9223372036854775808 9223372036854775808.0000000000", "9223372036854775808 9223372036854775808.0000000000"))
+	tk.MustExec(`drop table tb5;`)
+
+	// test builtinCastIntAsRealSig
+	tk.MustExec(`create table tb5(a bigint(64) unsigned, b double(64, 10));`)
+	tk.MustExec(`insert into tb5 (a, b) values (13835058000000000000, 13835058000000000000);`)
+	tk.MustExec(`insert into tb5 (select * from tb5 where a = b);`)
+	result = tk.MustQuery(`select * from tb5;`)
+	result.Check(testkit.Rows("13835058000000000000 13835058000000000000", "13835058000000000000 13835058000000000000"))
+	tk.MustExec(`drop table tb5;`)
+
+	// test builtinCastIntAsStringSig
+	tk.MustExec(`create table tb5(a bigint(64) unsigned,b varchar(50));`)
+	tk.MustExec(`insert into tb5(a, b) values (9223372036854775808, '9223372036854775808');`)
+	tk.MustExec(`insert into tb5(select * from tb5 where a = b);`)
+	result = tk.MustQuery(`select * from tb5;`)
+	result.Check(testkit.Rows("9223372036854775808 9223372036854775808", "9223372036854775808 9223372036854775808"))
+	tk.MustExec(`drop table tb5;`)
 
 	// Test corner cases of cast string as datetime
 	result = tk.MustQuery(`select cast("170102034" as datetime);`)
@@ -2398,6 +2430,34 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(123456789012345678901234567890 as float(40)) = 1.2345678901234568e29")
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select cast(0x12345678 as float(40)) = 305419896")
+	result.Check(testkit.Rows("1"))
+
+	// test cast as real
+	result = tk.MustQuery("select cast(1 as real)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(cast(12345 as unsigned) as real)")
+	result.Check(testkit.Rows("12345"))
+	result = tk.MustQuery("select cast(1.1 as real) = 1.1")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(-1.1 as real) = -1.1")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast('123.321' as real) =123.321")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast('12345678901234567890' as real) = 1.2345678901234567e19")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(-1 as real)")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast(null as real)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select cast(12345678901234567890 as real) = 1.2345678901234567e19")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(cast(-1 as unsigned) as real) = 1.8446744073709552e19")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(1e100 as real) = 1e100")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(123456789012345678901234567890 as real) = 1.2345678901234568e29")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast(0x12345678 as real) = 305419896")
 	result.Check(testkit.Rows("1"))
 
 	// test cast time as decimal overflow
@@ -4595,6 +4655,22 @@ func (s *testIntegrationSuite) TestIssue10675(c *C) {
 	tk.MustQuery(`select * from t where a < 184467440737095516167.1;`).Check(
 		testkit.Rows("1"))
 	tk.MustQuery(`select * from t where a > 184467440737095516167.1;`).Check(testkit.Rows())
+
+	// issue 11647
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(b bit(1));`)
+	tk.MustExec(`insert into t values(b'1');`)
+	tk.MustQuery(`select count(*) from t where b = 1;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select count(*) from t where b = '1';`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select count(*) from t where b = b'1';`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(b bit(63));`)
+	// Not 64, because the behavior of mysql is amazing. I have no idea to fix it.
+	tk.MustExec(`insert into t values(b'111111111111111111111111111111111111111111111111111111111111111');`)
+	tk.MustQuery(`select count(*) from t where b = 9223372036854775807;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select count(*) from t where b = '9223372036854775807';`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select count(*) from t where b = b'111111111111111111111111111111111111111111111111111111111111111';`).Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestDatetimeMicrosecond(c *C) {
@@ -4751,6 +4827,18 @@ func (s *testIntegrationSuite) TestFuncCaseWithLeftJoin(c *C) {
 	tk.MustExec("insert into kankan2 values(2, 'z')")
 
 	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1' order by t1.id").Check(testkit.Rows("1", "2"))
+}
+
+func (s *testIntegrationSuite) TestIssue11594(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1 (v bigint(20) UNSIGNED NOT NULL);")
+	tk.MustExec("INSERT INTO t1 VALUES (1), (2);")
+	tk.MustQuery("SELECT SUM(IF(v > 1, v, -v)) FROM t1;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT sum(IFNULL(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
+	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
+	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), v)) FROM t1;").Check(testkit.Rows("3"))
 }
 
 func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {

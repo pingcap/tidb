@@ -143,13 +143,13 @@ func (s *testSuite2) TestJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.5000"))
 
-	// Test that two conflict hints will return error.
-	err := tk.ExecToErr("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
-	c.Assert(err, NotNil)
-	err = tk.ExecToErr("select /*+ TIDB_INLJ(t) TIDB_HJ(t) */ from t join t1 on t.a=t1.a")
-	c.Assert(err, NotNil)
-	err = tk.ExecToErr("select /*+ TIDB_SMJ(t) TIDB_HJ(t) */ from t join t1 on t.a=t1.a")
-	c.Assert(err, NotNil)
+	// Test that two conflict hints will return warning.
+	tk.MustExec("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	tk.MustExec("select /*+ TIDB_INLJ(t) TIDB_HJ(t) */ * from t join t1 on t.a=t1.a")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	tk.MustExec("select /*+ TIDB_SMJ(t) TIDB_HJ(t) */ * from t join t1 on t.a=t1.a")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -888,11 +888,11 @@ func (s *testSuite2) TestMergejoinOrder(c *C) {
 	tk.MustExec("insert into t2 select a*100, b*100 from t1;")
 
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
-		"MergeJoin_15 10000.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
-		"├─TableReader_11 10000.00 root data:TableScan_10",
-		"│ └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
-		"└─TableReader_13 6666.67 root data:TableScan_12",
-		"  └─TableScan_12 6666.67 cop table:t2, range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
+		"MergeJoin_20 10000.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
+		"├─TableReader_12 10000.00 root data:TableScan_11",
+		"│ └─TableScan_11 10000.00 cop table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
+		"└─TableReader_14 6666.67 root data:TableScan_13",
+		"  └─TableScan_13 6666.67 cop table:t2, range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
 	))
 
 	tk.MustExec("set @@tidb_init_chunk_size=1")
@@ -1390,4 +1390,13 @@ func (s *testSuite2) TestIssue11544(c *C) {
 	tk.MustExec("insert into 11544t values(1)")
 	tk.MustExec("insert into 11544tt values(1, 'aaaaaaa'), (1, 'aaaabbb'), (1, 'aaaacccc')")
 	tk.MustQuery("select /*+ TIDB_INLJ(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and (tt.b = 'aaaaaaa' or tt.b = 'aaaabbb')").Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb"))
+	tk.MustQuery("select /*+ TIDB_INLJ(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and tt.b in ('aaaaaaa', 'aaaabbb', 'aaaacccc')").Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb", "1 1 aaaacccc"))
+}
+
+func (s *testSuite2) TestIssue11390(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table 11390t (k1 int unsigned, k2 int unsigned, key(k1, k2))")
+	tk.MustExec("insert into 11390t values(1, 1)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;").Check(testkit.Rows("1 1 1 1"))
 }
