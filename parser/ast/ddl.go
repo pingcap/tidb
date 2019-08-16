@@ -1369,6 +1369,7 @@ type DropIndexStmt struct {
 	IfExists  bool
 	IndexName string
 	Table     *TableName
+	LockAlg   *IndexLockAndAlgorithm
 }
 
 // Restore implements Node interface.
@@ -1382,6 +1383,13 @@ func (n *DropIndexStmt) Restore(ctx *RestoreCtx) error {
 
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while add index")
+	}
+
+	if n.LockAlg != nil {
+		ctx.WritePlain(" ")
+		if err := n.LockAlg.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateIndexStmt.LockAlg")
+		}
 	}
 
 	return nil
@@ -1399,6 +1407,13 @@ func (n *DropIndexStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Table = node.(*TableName)
+	if n.LockAlg != nil {
+		node, ok := n.LockAlg.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.LockAlg = node.(*IndexLockAndAlgorithm)
+	}
 	return v.Leave(n)
 }
 
