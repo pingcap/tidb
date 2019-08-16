@@ -44,7 +44,8 @@ var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogr
 // CopClient is coprocessor client.
 type CopClient struct {
 	kv.RequestTypeSupportedChecker
-	store *tikvStore
+	store           *tikvStore
+	replicaReadSeed uint32
 }
 
 // Send builds the request and gets the coprocessor iterator response.
@@ -56,12 +57,13 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		return copErrorResponse{err}
 	}
 	it := &copIterator{
-		store:       c.store,
-		req:         req,
-		concurrency: req.Concurrency,
-		finishCh:    make(chan struct{}),
-		vars:        vars,
-		memTracker:  req.MemTracker,
+		store:           c.store,
+		req:             req,
+		concurrency:     req.Concurrency,
+		finishCh:        make(chan struct{}),
+		vars:            vars,
+		memTracker:      req.MemTracker,
+		replicaReadSeed: c.replicaReadSeed,
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -345,6 +347,8 @@ type copIterator struct {
 
 	memTracker *memory.Tracker
 
+	replicaReadSeed uint32
+
 	wg sync.WaitGroup
 	// closed represents when the Close is called.
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
@@ -363,6 +367,8 @@ type copIteratorWorker struct {
 	vars     *kv.Variables
 
 	memTracker *memory.Tracker
+
+	replicaReadSeed uint32
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -462,6 +468,8 @@ func (it *copIterator) open(ctx context.Context) {
 			vars:     it.vars,
 
 			memTracker: it.memTracker,
+
+			replicaReadSeed: it.replicaReadSeed,
 		}
 		go worker.run(ctx)
 	}
@@ -630,11 +638,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 
 	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
-	req := tikvrpc.NewRequest(task.cmdType, &coprocessor.Request{
+	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &coprocessor.Request{
 		Tp:     worker.req.Tp,
 		Data:   worker.req.Data,
 		Ranges: task.ranges.toPBRanges(),
-	}, kvrpcpb.Context{
+	}, worker.req.ReplicaRead, worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
