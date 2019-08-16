@@ -45,34 +45,42 @@ const (
 )
 
 var (
-	tikvBackoffCounterRPC          = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
-	tikvBackoffCounterLock         = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
-	tikvBackoffCounterLockFast     = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
-	tikvBackoffCounterPD           = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
-	tikvBackoffCounterRegionMiss   = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
-	tikvBackoffCounterUpdateLeader = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
-	tikvBackoffCounterServerBusy   = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
-	tikvBackoffCounterEmpty        = metrics.TiKVBackoffCounter.WithLabelValues("")
+	tikvBackoffCounterRPC            = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
+	tikvBackoffCounterLock           = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
+	tikvBackoffCounterLockFast       = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
+	tikvBackoffCounterPD             = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
+	tikvBackoffCounterRegionMiss     = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
+	tikvBackoffCounterUpdateLeader   = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
+	tikvBackoffCounterServerBusy     = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
+	tikvBackoffCounterEmpty          = metrics.TiKVBackoffCounter.WithLabelValues("")
+	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
+	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
+	tikvBackoffHistogramLockFast     = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
+	tikvBackoffHistogramPD           = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
+	tikvBackoffHistogramRegionMiss   = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
+	tikvBackoffHistogramUpdateLeader = metrics.TiKVBackoffHistogram.WithLabelValues("updateLeader")
+	tikvBackoffHistogramServerBusy   = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
+	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
 )
 
-func (t backoffType) Counter() prometheus.Counter {
+func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
 	switch t {
 	case boTiKVRPC:
-		return tikvBackoffCounterRPC
+		return tikvBackoffCounterRPC, tikvBackoffHistogramRPC
 	case BoTxnLock:
-		return tikvBackoffCounterLock
+		return tikvBackoffCounterLock, tikvBackoffHistogramLock
 	case boTxnLockFast:
-		return tikvBackoffCounterLockFast
+		return tikvBackoffCounterLockFast, tikvBackoffHistogramLockFast
 	case BoPDRPC:
-		return tikvBackoffCounterPD
+		return tikvBackoffCounterPD, tikvBackoffHistogramPD
 	case BoRegionMiss:
-		return tikvBackoffCounterRegionMiss
+		return tikvBackoffCounterRegionMiss, tikvBackoffHistogramRegionMiss
 	case BoUpdateLeader:
-		return tikvBackoffCounterUpdateLeader
+		return tikvBackoffCounterUpdateLeader, tikvBackoffHistogramUpdateLeader
 	case boServerBusy:
-		return tikvBackoffCounterServerBusy
+		return tikvBackoffCounterServerBusy, tikvBackoffHistogramServerBusy
 	}
-	return tikvBackoffCounterEmpty
+	return tikvBackoffCounterEmpty, tikvBackoffHistogramEmpty
 }
 
 // NewBackoffFn creates a backoff func which implements exponential backoff with
@@ -276,7 +284,8 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	default:
 	}
 
-	typ.Counter().Inc()
+	backoffCounter, backoffDuration := typ.metric()
+	backoffCounter.Inc()
 	// Lazy initialize.
 	if b.fn == nil {
 		b.fn = make(map[backoffType]func(context.Context, int) int)
@@ -287,7 +296,9 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		b.fn[typ] = f
 	}
 
-	b.totalSleep += f(b.ctx, maxSleepMs)
+	realSleep := f(b.ctx, maxSleepMs)
+	backoffDuration.Observe(float64(realSleep) / 1000)
+	b.totalSleep += realSleep
 	b.types = append(b.types, typ)
 
 	var startTs interface{}
