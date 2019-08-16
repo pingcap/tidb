@@ -1818,6 +1818,7 @@ const (
 	AlterTableRemovePartitioning
 	AlterTableWithValidation
 	AlterTableWithoutValidation
+	AlterTableRebuildPartition
 	AlterTableCheckPartitions
 	AlterTableExchangePartition
 	AlterTableOptimizePartition
@@ -1895,8 +1896,8 @@ type AlterTableSpec struct {
 	// see https://mariadb.com/kb/en/library/alter-table/
 	IfNotExists bool
 
-	OnAllPartitions bool
 	NoWriteToBinlog bool
+	OnAllPartitions bool
 
 	Tp              AlterTableType
 	Name            string
@@ -2205,6 +2206,21 @@ func (n *AlterTableSpec) Restore(ctx *RestoreCtx) error {
 		ctx.WriteKeyWord("WITH VALIDATION")
 	case AlterTableWithoutValidation:
 		ctx.WriteKeyWord("WITHOUT VALIDATION")
+	case AlterTableRebuildPartition:
+		ctx.WriteKeyWord("REBUILD PARTITION ")
+		if n.NoWriteToBinlog {
+			ctx.WriteKeyWord("NO_WRITE_TO_BINLOG ")
+		}
+		if n.OnAllPartitions {
+			ctx.WriteKeyWord("ALL")
+			return nil
+		}
+		for i, name := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(name.O)
+		}
 	case AlterTableExchangePartition:
 		ctx.WriteKeyWord("EXCHANGE PARTITION ")
 		ctx.WriteName(n.PartitionNames[0].O)
