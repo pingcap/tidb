@@ -39,7 +39,7 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockTable()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	s.Parser = parser.New()
 	s.Parser.EnableWindowFunc(true)
 }
@@ -1541,6 +1541,11 @@ func (s *testPlanSuite) TestIndexJoinHint(c *C) {
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)",
 			warning: "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t1) */ is inapplicable",
 		},
+		{
+			sql:     "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
+			best:    "IndexJoin{IndexReader(Index(t2.b)[[NULL,+inf]])->TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t1.b)->Projection",
+			warning: "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t2) */ is inapplicable",
+		},
 	}
 	ctx := context.Background()
 	for i, test := range tests {
@@ -1548,6 +1553,7 @@ func (s *testPlanSuite) TestIndexJoinHint(c *C) {
 		stmt, err := s.ParseOneStmt(test.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
 		p, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, test.best)
@@ -1556,7 +1562,7 @@ func (s *testPlanSuite) TestIndexJoinHint(c *C) {
 		if test.warning == "" {
 			c.Assert(len(warnings), Equals, 0)
 		} else {
-			c.Assert(len(warnings), Equals, 1)
+			c.Assert(len(warnings), Equals, 1, Commentf("%v", warnings))
 			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning)
 			c.Assert(warnings[0].Err.Error(), Equals, test.warning)
 		}
