@@ -50,6 +50,10 @@ type CommitDetails struct {
 	CommitTime        time.Duration
 	LocalLatchTime    time.Duration
 	CommitBackoffTime int64
+	Mu                struct {
+		sync.Mutex
+		BackoffTypes []fmt.Stringer
+	}
 	ResolveLockTime   int64
 	WriteKeys         int
 	WriteSize         int
@@ -108,6 +112,11 @@ func (d ExecDetails) String() string {
 		if commitBackoffTime > 0 {
 			parts = append(parts, fmt.Sprintf("Commit_backoff_time: %v", time.Duration(commitBackoffTime).Seconds()))
 		}
+		commitDetails.Mu.Lock()
+		if len(commitDetails.Mu.BackoffTypes) > 0 {
+			parts = append(parts, fmt.Sprintf("Backoff_types: %v", commitDetails.Mu.BackoffTypes))
+		}
+		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		if resolveLockTime > 0 {
 			parts = append(parts, fmt.Sprintf("Resolve_lock_time: %v", time.Duration(resolveLockTime).Seconds()))
@@ -168,6 +177,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 		if commitBackoffTime > 0 {
 			fields = append(fields, zap.String("commit_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64)+"s")))
 		}
+		commitDetails.Mu.Lock()
+		if len(commitDetails.Mu.BackoffTypes) > 0 {
+			fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes)))
+		}
+		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		if resolveLockTime > 0 {
 			fields = append(fields, zap.String("resolve_lock_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64)+"s")))

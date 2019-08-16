@@ -14,6 +14,9 @@
 package execdetails
 
 import (
+	"fmt"
+	"github.com/pingcap/tidb/util/stringutil"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +37,17 @@ func TestString(t *testing.T) {
 			CommitTime:        time.Second,
 			LocalLatchTime:    time.Second,
 			CommitBackoffTime: int64(time.Second),
+			Mu: struct {
+				sync.Mutex
+				BackoffTypes []fmt.Stringer
+			}{BackoffTypes: []fmt.Stringer{
+				stringutil.MemoizeStr(func() string {
+					return "backoff1"
+				}),
+				stringutil.MemoizeStr(func() string {
+					return "backoff2"
+				}),
+			}},
 			ResolveLockTime:   1000000000, // 10^9 ns = 1s
 			WriteKeys:         1,
 			WriteSize:         1,
@@ -42,7 +56,7 @@ func TestString(t *testing.T) {
 		},
 	}
 	expected := "Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10 Prewrite_time: 1 Commit_time: 1 " +
-		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1"
+		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1"
 	if str := detail.String(); str != expected {
 		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)
 	}
