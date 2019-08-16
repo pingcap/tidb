@@ -84,4 +84,9 @@ func (s *testBatchPointGetSuite) TestBatchPointGetExec(c *C) {
 		"2 2 2",
 		"4 4 5",
 	))
+	tk.MustQuery("select a from t where a in (1, 2, 4, 1, 2, 100)").Check(testkit.Rows(
+		"1",
+		"2",
+		"4",
+	))
 }
