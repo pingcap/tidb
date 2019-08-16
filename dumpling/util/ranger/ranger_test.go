@@ -1018,6 +1018,15 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			resultStr:   "[[\"a\",\"a\"]]",
 			length:      1,
 		},
+		// This test case cannot be simplified to [1, 3] otherwise the index join will executes wrongly.
+		{
+			colPos:      0,
+			exprStr:     "a in (1, 2, 3)",
+			accessConds: "[in(test.t.a, 1, 2, 3)]",
+			filterConds: "",
+			resultStr:   "[[1,1] [2,2] [3,3]]",
+			length:      types.UnspecifiedLength,
+		},
 	}
 
 	ctx := context.Background()
