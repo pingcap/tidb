@@ -1011,9 +1011,11 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	defer func() {
 		if !forced && hasIndexJoinHint {
 			// Construct warning message prefix.
-			errMsg := "Optimizer Hint TIDB_INLJ is inapplicable"
+			errMsg := "Optimizer Hint INL_JOIN or TIDB_INLJ is inapplicable"
 			if p.hintInfo != nil {
-				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(TiDBIndexNestedLoopJoin, p.hintInfo.indexNestedLoopJoinTables))
+				errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
+					restore2JoinHint(HintINLJ, p.hintInfo.indexNestedLoopJoinTables),
+					restore2JoinHint(TiDBIndexNestedLoopJoin, p.hintInfo.indexNestedLoopJoinTables))
 			}
 
 			// Append inapplicable reason.
@@ -1335,7 +1337,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 	}
 
 	if streamAggs == nil && preferStream {
-		errMsg := "Optimizer Hint TIDB_STREAMAGG is inapplicable"
+		errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
 		warning := ErrInternal.GenWithStack(errMsg)
 		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 	}

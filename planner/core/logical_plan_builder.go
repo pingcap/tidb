@@ -50,14 +50,20 @@ import (
 const (
 	// TiDBMergeJoin is hint enforce merge join.
 	TiDBMergeJoin = "tidb_smj"
+	// HintSMJ is hint enforce merge join.
+	HintSMJ = "sm_join"
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
+	// HintINLJ is hint enforce index nested loop join.
+	HintINLJ = "inl_join"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
-	// TiDBHashAgg is hint enforce hash aggregation.
-	TiDBHashAgg = "tidb_hashagg"
-	// TiDBStreamAgg is hint enforce stream aggregation.
-	TiDBStreamAgg = "tidb_streamagg"
+	// HintHJ is hint enforce hash join.
+	HintHJ = "hash_join"
+	// HintHashAgg is hint enforce hash aggregation.
+	HintHashAgg = "hash_agg"
+	// HintStreamAgg is hint enforce stream aggregation.
+	HintStreamAgg = "stream_agg"
 )
 
 const (
@@ -1945,48 +1951,52 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) {
+func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	var sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 	var preferAggType uint
 	for _, hint := range hints {
 		switch hint.HintName.L {
-		case TiDBMergeJoin:
+		case TiDBMergeJoin, HintSMJ:
 			sortMergeTables = tableNames2HintTableInfo(hint.Tables)
-		case TiDBIndexNestedLoopJoin:
+		case TiDBIndexNestedLoopJoin, HintINLJ:
 			INLJTables = tableNames2HintTableInfo(hint.Tables)
-		case TiDBHashJoin:
+		case TiDBHashJoin, HintHJ:
 			hashJoinTables = tableNames2HintTableInfo(hint.Tables)
-		case TiDBHashAgg:
+		case HintHashAgg:
 			preferAggType |= preferHashAgg
-		case TiDBStreamAgg:
+		case HintStreamAgg:
 			preferAggType |= preferStreamAgg
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
-		sortMergeJoinTables:       sortMergeTables,
-		indexNestedLoopJoinTables: INLJTables,
-		hashJoinTables:            hashJoinTables,
-		preferAggType:             preferAggType,
-	})
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 || preferAggType != 0 {
+		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
+			sortMergeJoinTables:       sortMergeTables,
+			indexNestedLoopJoinTables: INLJTables,
+			hashJoinTables:            hashJoinTables,
+			preferAggType:             preferAggType,
+		})
+		return true
+	}
+	return false
 }
 
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
-	b.appendUnmatchedJoinHintWarning(TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables)
-	b.appendUnmatchedJoinHintWarning(TiDBMergeJoin, hintInfo.sortMergeJoinTables)
-	b.appendUnmatchedJoinHintWarning(TiDBHashJoin, hintInfo.hashJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
 }
 
-func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, hintTables []hintTableInfo) {
+func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []hintTableInfo) {
 	unMatchedTables := extractUnmatchedTables(hintTables)
 	if len(unMatchedTables) == 0 {
 		return
 	}
-	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s. Maybe you can use the table alias name",
-		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables))
+	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s or %s. Maybe you can use the table alias name",
+		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables), restore2JoinHint(joinTypeAlias, hintTables))
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
@@ -1999,9 +2009,10 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
-	b.pushTableHints(sel.TableHints)
-	// table hints are only visible in the current SELECT statement.
-	defer b.popTableHints()
+	if b.pushTableHints(sel.TableHints) {
+		// table hints are only visible in the current SELECT statement.
+		defer b.popTableHints()
+	}
 
 	if sel.SelectStmtOpts != nil {
 		origin := b.inStraightJoin
@@ -2636,9 +2647,10 @@ func buildColumns2Handle(
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
-	b.pushTableHints(update.TableHints)
-	// table hints are only visible in the current UPDATE statement.
-	defer b.popTableHints()
+	if b.pushTableHints(update.TableHints) {
+		// table hints are only visible in the current UPDATE statement.
+		defer b.popTableHints()
+	}
 
 	// update subquery table should be forbidden
 	var asNameList []string
@@ -2861,9 +2873,10 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
-	b.pushTableHints(delete.TableHints)
-	// table hints are only visible in the current DELETE statement.
-	defer b.popTableHints()
+	if b.pushTableHints(delete.TableHints) {
+		// table hints are only visible in the current DELETE statement.
+		defer b.popTableHints()
+	}
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {
