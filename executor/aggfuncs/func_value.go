@@ -14,14 +14,13 @@
 package aggfuncs
 
 import (
-	"strings"
-
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // valueExtractor is used to extract values for `first_value`, `last_value`, `nth_value`,
@@ -40,9 +39,7 @@ type value4Int struct {
 
 func (v *value4Int) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
-	var val int64
-	val, v.isNull, err = expr.EvalInt(ctx, row)
-	v.val = val
+	v.val, v.isNull, err = expr.EvalInt(ctx, row)
 	return err
 }
 
@@ -102,9 +99,7 @@ type value4Float64 struct {
 
 func (v *value4Float64) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
-	var val float64
-	val, v.isNull, err = expr.EvalReal(ctx, row)
-	v.val = val
+	v.val, v.isNull, err = expr.EvalReal(ctx, row)
 	return err
 }
 
@@ -123,12 +118,8 @@ type value4String struct {
 
 func (v *value4String) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
-	var val string
-	val, v.isNull, err = expr.EvalString(ctx, row)
-	// memcopy val to v.val
-	var b strings.Builder
-	b.WriteString(val)
-	v.val = b.String()
+	v.val, v.isNull, err = expr.EvalString(ctx, row)
+	v.val = stringutil.Copy(v.val)
 	return err
 }
 func (v *value4String) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -165,9 +156,7 @@ type value4Duration struct {
 
 func (v *value4Duration) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
-	var val types.Duration
-	val, v.isNull, err = expr.EvalDuration(ctx, row)
-	v.val = val
+	v.val, v.isNull, err = expr.EvalDuration(ctx, row)
 	return err
 }
 
