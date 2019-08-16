@@ -547,6 +547,7 @@ var tokenMap = map[string]int{
 	"SUM":                      sum,
 	"SUPER":                    super,
 	"TABLE":                    tableKwd,
+	"TABLE_CHECKSUM":           tableChecksum,
 	"TABLES":                   tables,
 	"TABLESPACE":               tablespace,
 	"TEMPORARY":                temporary,
