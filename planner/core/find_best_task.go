@@ -37,7 +37,7 @@ const (
 	scanFactor        = 1.5 * netWorkFactor
 	descScanFactor    = 2 * scanFactor
 	memoryFactor      = 0.001
-	concurrencyFactor = 0.001
+	concurrencyFactor = 3.0
 
 	selectionFactor = 0.8
 	distinctFactor  = 0.8
