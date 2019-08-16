@@ -97,8 +97,8 @@ func (s *testSplitSuite) TestStaleEpoch(c *C) {
 	mockPDClient.disable()
 
 	txn = s.begin(c)
-	_, err = txn.Get([]byte("a"))
+	_, err = txn.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
-	_, err = txn.Get([]byte("c"))
+	_, err = txn.Get(context.TODO(), []byte("c"))
 	c.Assert(err, IsNil)
 }

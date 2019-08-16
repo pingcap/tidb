@@ -15,10 +15,12 @@ package tables
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"io"
 	"unicode/utf8"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -196,15 +198,15 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...table.CreateIdxOptFunc) (int64, error) {
+func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...table.CreateIdxOptFunc) (int64, error) {
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
 		fn(&opt)
 	}
 	ss := opt.AssertionProto
-	writeBufs := ctx.GetSessionVars().GetWriteStmtBufs()
-	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
-	key, distinct, err := c.GenIndexKey(ctx.GetSessionVars().StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
+	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
+	skipCheck := sctx.GetSessionVars().LightningMode || sctx.GetSessionVars().StmtCtx.BatchCheck
+	key, distinct, err := c.GenIndexKey(sctx.GetSessionVars().StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
 		return 0, err
 	}
@@ -227,8 +229,19 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 		return 0, err
 	}
 
+	ctx := opt.Ctx
+	if ctx != nil {
+		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+			span1 := span.Tracer().StartSpan("index.Create", opentracing.ChildOf(span.Context()))
+			defer span1.Finish()
+			ctx = opentracing.ContextWithSpan(ctx, span1)
+		}
+	} else {
+		ctx = context.TODO()
+	}
+
 	var value []byte
-	value, err = rm.Get(key)
+	value, err = rm.Get(ctx, key)
 	if kv.IsErrNotFound(err) {
 		err = rm.Set(key, EncodeHandle(h))
 		if ss != nil {
@@ -324,7 +337,7 @@ func (c *index) Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, inde
 		return false, 0, err
 	}
 
-	value, err := rm.Get(key)
+	value, err := rm.Get(context.TODO(), key)
 	if kv.IsErrNotFound(err) {
 		return false, 0, nil
 	}

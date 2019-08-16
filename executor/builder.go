@@ -798,12 +798,25 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 // buildTrace builds a TraceExec for future executing. This method will be called
 // at build().
 func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
-	return &TraceExec{
+	t := &TraceExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		stmtNode:     v.StmtNode,
 		builder:      b,
 		format:       v.Format,
 	}
+	if t.format == plannercore.TraceFormatLog {
+		return &SortExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), t),
+			ByItems: []*plannercore.ByItems{
+				{Expr: &expression.Column{
+					Index:   0,
+					RetType: types.NewFieldType(mysql.TypeTimestamp),
+				}},
+			},
+			schema: v.Schema(),
+		}
+	}
+	return t
 }
 
 // buildExplain builds a explain executor. `e.rows` collects final result to `ExplainExec`.
@@ -966,15 +979,6 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 }
 
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executor {
-	leftHashKey := make([]*expression.Column, 0, len(v.EqualConditions))
-	rightHashKey := make([]*expression.Column, 0, len(v.EqualConditions))
-	for _, eqCond := range v.EqualConditions {
-		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
-		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
-		leftHashKey = append(leftHashKey, ln)
-		rightHashKey = append(rightHashKey, rn)
-	}
-
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1002,8 +1006,8 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.innerExec = leftExec
 		e.outerExec = rightExec
 		e.outerFilter = v.RightConditions
-		e.innerKeys = leftHashKey
-		e.outerKeys = rightHashKey
+		e.innerKeys = v.LeftJoinKeys
+		e.outerKeys = v.RightJoinKeys
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
@@ -1015,8 +1019,8 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.innerExec = rightExec
 		e.outerExec = leftExec
 		e.outerFilter = v.LeftConditions
-		e.innerKeys = rightHashKey
-		e.outerKeys = leftHashKey
+		e.innerKeys = v.RightJoinKeys
+		e.outerKeys = v.LeftJoinKeys
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}

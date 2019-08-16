@@ -18,6 +18,7 @@
 package tables
 
 import (
+	"context"
 	"encoding/binary"
 	"math"
 	"strings"
@@ -339,19 +340,18 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 			return err
 		}
 	}
-	colSize := make(map[int64]int64)
-	encodedCol := make([]byte, 0, 16)
+	colSize := make(map[int64]int64, len(t.Cols()))
 	for id, col := range t.Cols() {
-		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], newData[id])
+		size, err := codec.EstimateValueSize(sc, newData[id])
 		if err != nil {
 			continue
 		}
-		newLen := len(encodedCol) - 1
-		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], oldData[id])
+		newLen := size - 1
+		size, err = codec.EstimateValueSize(sc, oldData[id])
 		if err != nil {
 			continue
 		}
-		oldLen := len(encodedCol) - 1
+		oldLen := size - 1
 		colSize[col.ID] = int64(newLen - oldLen)
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSize)
@@ -544,14 +544,13 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	sc.AddAffectedRows(1)
-	colSize := make(map[int64]int64)
-	encodedCol := make([]byte, 0, 16)
+	colSize := make(map[int64]int64, len(r))
 	for id, col := range t.Cols() {
-		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], r[id])
+		size, err := codec.EstimateValueSize(sc, r[id])
 		if err != nil {
 			continue
 		}
-		colSize[col.ID] = int64(len(encodedCol) - 1)
+		colSize[col.ID] = int64(size) - 1
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
 	return recordID, nil
@@ -576,9 +575,9 @@ func (t *tableCommon) genIndexKeyStr(colVals []types.Datum) (string, error) {
 }
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
-func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []types.Datum, rm kv.RetrieverMutator,
+func (t *tableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []types.Datum, rm kv.RetrieverMutator,
 	opts []table.CreateIdxOptFunc) (int64, error) {
-	txn, err := ctx.Txn(true)
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return 0, err
 	}
@@ -588,14 +587,20 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 	for _, fn := range opts {
 		fn(&opt)
 	}
-	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
+	var ctx context.Context
+	if opt.Ctx != nil {
+		ctx = opt.Ctx
+	} else {
+		ctx = context.Background()
+	}
+	skipCheck := sctx.GetSessionVars().LightningMode || sctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !opt.SkipHandleCheck {
-		if err := CheckHandleExists(ctx, t, recordID, nil); err != nil {
+		if err := CheckHandleExists(ctx, sctx, t, recordID, nil); err != nil {
 			return recordID, err
 		}
 	}
 
-	writeBufs := ctx.GetSessionVars().GetWriteStmtBufs()
+	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	for _, v := range t.WritableIndices() {
 		var err2 error
@@ -612,7 +617,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opts...); err != nil {
+		if dupHandle, err := v.Create(sctx, rm, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupKeyErr
 			}
@@ -633,7 +638,7 @@ func (t *tableCommon) RowWithCols(ctx sessionctx.Context, h int64, cols []*table
 	if err != nil {
 		return nil, err
 	}
-	value, err := txn.Get(key)
+	value, err := txn.Get(context.TODO(), key)
 	if err != nil {
 		return nil, err
 	}
@@ -726,15 +731,14 @@ func (t *tableCommon) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Da
 		}
 		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
 	}
-	colSize := make(map[int64]int64)
-	encodedCol := make([]byte, 0, 16)
+	colSize := make(map[int64]int64, len(t.Cols()))
 	sc := ctx.GetSessionVars().StmtCtx
 	for id, col := range t.Cols() {
-		encodedCol, err = tablecodec.EncodeValue(sc, encodedCol[:0], r[id])
+		size, err := codec.EstimateValueSize(sc, r[id])
 		if err != nil {
 			continue
 		}
-		colSize[col.ID] = -int64(len(encodedCol) - 1)
+		colSize[col.ID] = -int64(size - 1)
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.physicalTableID, -1, 1, colSize)
 	return err
@@ -1087,16 +1091,16 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 // CheckHandleExists check whether recordID key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
-func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, data []types.Datum) error {
+func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID int64, data []types.Datum) error {
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
-		pid, err := pt.locatePartition(ctx, info, data)
+		pid, err := pt.locatePartition(sctx, info, data)
 		if err != nil {
 			return err
 		}
 		t = pt.GetPartition(pid)
 	}
-	txn, err := ctx.Txn(true)
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -1105,7 +1109,7 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, da
 	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 	txn.SetOption(kv.PresumeKeyNotExistsError, e)
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
-	_, err = txn.Get(recordKey)
+	_, err = txn.Get(ctx, recordKey)
 	if err == nil {
 		return e
 	} else if !kv.ErrNotExist.Equal(err) {
