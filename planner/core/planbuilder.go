@@ -496,11 +496,10 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, hintFr
 			if path == nil {
 				if i >= len(hintFromComment) {
 					return nil, ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
-				} else {
-					warn := ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
-					b.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
-					continue
 				}
+				warn := ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+				continue
 			}
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
