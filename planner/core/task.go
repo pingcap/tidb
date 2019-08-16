@@ -641,10 +641,10 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	// TODO: Refactor the way of constructing aggregation functions.
 	partialCursor := 0
 	finalAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
-	for i, aggFun := range p.AggFuncs {
+	for i, aggFunc := range p.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
-		finalAggFunc.Name = aggFun.Name
-		args := make([]expression.Expression, 0, len(aggFun.Args))
+		finalAggFunc.Name = aggFunc.Name
+		args := make([]expression.Expression, 0, len(aggFunc.Args))
 		if aggregation.NeedCount(finalAggFunc.Name) {
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
@@ -667,7 +667,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 		}
 		finalAggFunc.Args = args
 		finalAggFunc.Mode = aggregation.FinalMode
-		finalAggFunc.RetTp = aggFun.RetTp
+		finalAggFunc.RetTp = aggFunc.RetTp
 		finalAggFuncs[i] = finalAggFunc
 	}
 
@@ -694,11 +694,11 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	partialAggNum := 0
 	partialAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
 	partialOptimizeSchema := expression.NewSchema()
-	for i, aggFun := range p.AggFuncs {
-		if aggFun.Name == ast.AggFuncFirstRow {
+	for i, aggFunc := range p.AggFuncs {
+		if aggFunc.Name == ast.AggFuncFirstRow {
 			canOptimize := false
 			for j, gbyExpr := range p.GroupByItems {
-				if gbyExpr.Equal(p.ctx, aggFun.Args[0]) {
+				if gbyExpr.Equal(p.ctx, aggFunc.Args[0]) {
 					canOptimize = true
 					finalAggFuncs[i].Args[0] = groupByItems[j]
 					break
@@ -709,15 +709,15 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 				continue
 			}
 		}
-		if aggregation.NeedCount(aggFun.Name) {
+		if aggregation.NeedCount(aggFunc.Name) {
 			partialOptimizeSchema.Append(partialSchema.Columns[partialCursor])
 			partialCursor++
 		}
-		if aggregation.NeedValue(aggFun.Name) {
+		if aggregation.NeedValue(aggFunc.Name) {
 			partialOptimizeSchema.Append(partialSchema.Columns[partialCursor])
 			partialCursor++
 		}
-		partialAggFuncs[partialAggNum] = aggFun
+		partialAggFuncs[partialAggNum] = aggFunc
 		partialAggNum++
 	}
 	for i := range p.GroupByItems {
