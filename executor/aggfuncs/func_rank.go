@@ -27,7 +27,6 @@ type rank struct {
 
 type partialResult4Rank struct {
 	curIdx   int64
-	lastRank int64
 	seenRows int64
 	results  []int64
 	lastRow  chunk.Row
@@ -35,14 +34,15 @@ type partialResult4Rank struct {
 
 func (p *partialResult4Rank) reset() {
 	p.curIdx = 0
-	p.lastRank = 0
 	p.seenRows = 0
 	p.results = p.results[:0]
 }
 
-func (p *partialResult4Rank) updatePartialResult(rowsInGroup []chunk.Row, isDense bool,
-	compareRows func(prev, curr chunk.Row) int) {
-
+func (p *partialResult4Rank) updatePartialResult(
+	rowsInGroup []chunk.Row,
+	isDense bool,
+	compareRows func(prev, curr chunk.Row) int,
+) {
 	if len(rowsInGroup) == 0 {
 		return
 	}
@@ -50,19 +50,19 @@ func (p *partialResult4Rank) updatePartialResult(rowsInGroup []chunk.Row, isDens
 	for _, row := range rowsInGroup {
 		p.seenRows++
 		if p.seenRows == 1 {
-			p.lastRank = 1
-			p.results = append(p.results, p.lastRank)
+			p.results = append(p.results, 1)
 			lastRow = row
 			continue
 		}
-		if compareRows(lastRow, row) != 0 {
-			if isDense {
-				p.lastRank++
-			} else {
-				p.lastRank = p.seenRows
-			}
+		var rank int64
+		if compareRows(lastRow, row) == 0 {
+			rank = p.results[len(p.results)-1]
+		} else if isDense {
+			rank = p.results[len(p.results)-1] + 1
+		} else {
+			rank = p.seenRows
 		}
-		p.results = append(p.results, p.lastRank)
+		p.results = append(p.results, rank)
 		lastRow = row
 	}
 	p.lastRow = rowsInGroup[len(rowsInGroup)-1].CopyConstruct()
