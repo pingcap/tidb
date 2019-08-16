@@ -1953,23 +1953,11 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
-			if len(sortMergeTables) == 0 {
-				sortMergeTables = tableNames2HintTableInfo(hint.Tables)
-			} else {
-				sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(hint.Tables)...)
-			}
+			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(hint.Tables)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
-			if len(INLJTables) == 0 {
-				INLJTables = tableNames2HintTableInfo(hint.Tables)
-			} else {
-				INLJTables = append(INLJTables, tableNames2HintTableInfo(hint.Tables)...)
-			}
+			INLJTables = append(INLJTables, tableNames2HintTableInfo(hint.Tables)...)
 		case TiDBHashJoin, HintHJ:
-			if len(hashJoinTables) == 0 {
-				hashJoinTables = tableNames2HintTableInfo(hint.Tables)
-			} else {
-				hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(hint.Tables)...)
-			}
+			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(hint.Tables)...)
 		case HintHashAgg:
 			preferAggType |= preferHashAgg
 		case HintStreamAgg:
@@ -2290,12 +2278,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
-	possiblePaths, err, warns := getPossibleAccessPaths(tn.IndexHints, hintFromComment, tableInfo)
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, hintFromComment, tableInfo)
 	if err != nil {
 		return nil, err
-	}
-	for _, warn := range warns {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 
 	var columns []*table.Column
