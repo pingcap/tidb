@@ -183,7 +183,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) P
 		return nil
 	}
 	in, ok := selStmt.Where.(*ast.PatternInExpr)
-	if !ok || len(in.List) < 1 {
+	if !ok || in.Not || len(in.List) < 1 {
 		return nil
 	}
 
