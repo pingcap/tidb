@@ -1714,32 +1714,44 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	c.Assert(err, IsNil)
 
 	tests := []struct {
-		sql  string
-		best string
+		sql     string
+		best    string
+		hasWarn bool
 	}{
 		// simple case
 		{
-			sql:  "select /*+ INDEX(t, c_d_e) */ * from t t1",
-			best: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+			sql:     "select /*+ INDEX(t, c_d_e) */ * from t t1",
+			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+			hasWarn: false,
 		},
 		{
-			sql:  "select /*+ INDEX(t1, c_d_e) */ * from t t1",
-			best: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+			sql:     "select /*+ INDEX(t1, c_d_e) */ * from t t1",
+			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+			hasWarn: false,
 		},
 		// test use original table name
 		{
-			sql:  "select /*+ INDEX(t, c_d_e) */ * from t t1, t t2 where t1.a = t2.b",
-			best: "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
+			sql:     "select /*+ INDEX(t, c_d_e) */ * from t t1, t t2 where t1.a = t2.b",
+			best:    "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
+			hasWarn: false,
 		},
 		// test use table alias
 		{
-			sql:  "select /*+ INDEX(t1, c_d_e), INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
-			best: "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
+			sql:     "select /*+ INDEX(t1, c_d_e), INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+			best:    "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
+			hasWarn: false,
 		},
 		// test multiple indexes
 		{
-			sql:  "select /*+ INDEX(t, c_d_e, f, g) */ * from t order by f",
-			best: "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
+			sql:     "select /*+ INDEX(t, c_d_e, f, g) */ * from t order by f",
+			best:    "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
+			hasWarn: false,
+		},
+		// there will be a warning instead of error when index not exist
+		{
+			sql:     "select /*+ INDEX(t, no_such_index) */ * from t",
+			best:    "TableReader(Table(t))",
+			hasWarn: true,
 		},
 	}
 	ctx := context.Background()
@@ -1753,6 +1765,11 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		c.Assert(core.ToString(p), Equals, test.best, comment)
 
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
-		c.Assert(warnings, HasLen, 0, comment)
+		if test.hasWarn {
+			c.Assert(warnings, HasLen, 1, comment)
+		} else {
+			c.Assert(warnings, HasLen, 0, comment)
+		}
+
 	}
 }

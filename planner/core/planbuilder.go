@@ -471,7 +471,7 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo) ([]*accessPath, error) {
+func getPossibleAccessPaths(indexHints []*ast.IndexHint, hintFromComment []*ast.IndexHint, tblInfo *model.TableInfo) ([]*accessPath, error, []error) {
 	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
 	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
 	for _, index := range tblInfo.Indices {
@@ -480,10 +480,13 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 		}
 	}
 
+	var warns []error
 	hasScanHint, hasUseOrForce := false, false
 	available := make([]*accessPath, 0, len(publicPaths))
 	ignored := make([]*accessPath, 0, len(publicPaths))
-	for _, hint := range indexHints {
+
+	indexHints = append(hintFromComment, indexHints...)
+	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
 		}
@@ -492,7 +495,12 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
-				return nil, ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
+				if i >= len(hintFromComment) {
+					return nil, ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name), nil
+				} else {
+					warns = append(warns, ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name))
+					continue
+				}
 			}
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
@@ -518,7 +526,7 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 	if len(available) == 0 {
 		available = append(available, &accessPath{isTablePath: true})
 	}
-	return available, nil
+	return available, nil, warns
 }
 
 func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableInfo) []*accessPath {

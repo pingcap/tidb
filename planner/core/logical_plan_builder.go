@@ -2246,15 +2246,6 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 }
 
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName model.CIStr) (LogicalPlan, error) {
-	// Add comments style index hint like /*+ INDEX(t, idx1, idx2) */ into tn.IndexHints.
-	if hints := b.TableHints(); hints != nil {
-		for _, hint := range hints.indexHintList {
-			// Hints match both original table name and table alias.
-			if hint.tblName == tn.Name || hint.tblName == asName {
-				tn.IndexHints = append(tn.IndexHints, hint.indexHint)
-			}
-		}
-	}
 	dbName := tn.Schema
 	if dbName.L == "" {
 		dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -2289,9 +2280,22 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
+	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
+	var hintFromComment []*ast.IndexHint
+	if hints := b.TableHints(); hints != nil {
+		for _, hint := range hints.indexHintList {
+			// Hints from comments can match both original table name and table alias.
+			if hint.tblName == tn.Name || hint.tblName == asName {
+				hintFromComment = append(hintFromComment, hint.indexHint)
+			}
+		}
+	}
+	possiblePaths, err, warns := getPossibleAccessPaths(tn.IndexHints, hintFromComment, tableInfo)
 	if err != nil {
 		return nil, err
+	}
+	for _, warn := range warns {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 
 	var columns []*table.Column
