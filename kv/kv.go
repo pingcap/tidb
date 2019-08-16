@@ -50,6 +50,8 @@ const (
 	Pessimistic
 	// SnapshotTS is defined to set snapshot ts.
 	SnapshotTS
+	// Set replica read
+	ReplicaRead
 )
 
 // Priority value for transaction priority.
@@ -68,6 +70,23 @@ const (
 	// RC stands for 'read committed'.
 	RC
 )
+
+// ReplicaReadType is the type of replica to read data from
+type ReplicaReadType byte
+
+const (
+	// ReplicaReadLeader stands for 'read from leader'.
+	ReplicaReadLeader ReplicaReadType = 1 << iota
+	// ReplicaReadFollower stands for 'read from follower'.
+	ReplicaReadFollower
+	// ReplicaReadLearner stands for 'read from learner'.
+	ReplicaReadLearner
+)
+
+// IsFollowerRead checks if leader is going to be used to read data.
+func (r ReplicaReadType) IsFollowerRead() bool {
+	return r == ReplicaReadFollower
+}
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
@@ -221,6 +240,8 @@ type Request struct {
 	// Streaming indicates using streaming API for this request, result in that one Next()
 	// call would not corresponds to a whole region result.
 	Streaming bool
+	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
+	ReplicaRead ReplicaReadType
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -252,6 +273,12 @@ type Snapshot interface {
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	// SetPriority snapshot set the priority
 	SetPriority(priority int)
+
+	// SetOption sets an option with a value, when val is nil, uses the default
+	// value of this option. Only ReplicaRead is supported for snapshot
+	SetOption(opt Option, val interface{})
+	// DelOption deletes an option.
+	DelOption(opt Option)
 }
 
 // Driver is the interface that must be implemented by a KV storage.
