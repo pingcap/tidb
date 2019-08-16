@@ -751,6 +751,8 @@ type SelectLockExec struct {
 
 	Lock ast.SelectLockType
 	keys []kv.Key
+
+	tblID2Handle map[int64][]*expression.Column
 }
 
 // Open implements the Executor Open interface.
@@ -760,8 +762,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	}
 
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.ForUpdate = true
-	for id := range e.Schema().TblID2Handle {
+	for id := range e.tblID2Handle {
 		// This operation is only for schema validator check.
 		txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
 	}
@@ -776,12 +777,12 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
-	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
+	if len(e.tblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
 	if req.NumRows() != 0 {
 		iter := chunk.NewIterator4Chunk(req)
-		for id, cols := range e.Schema().TblID2Handle {
+		for id, cols := range e.tblID2Handle {
 			for _, col := range cols {
 				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
@@ -790,13 +791,18 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
+	return doLockKeys(ctx, e.ctx, e.keys...)
+}
+
+func doLockKeys(ctx context.Context, se sessionctx.Context, keys ...kv.Key) error {
+	se.GetSessionVars().TxnCtx.ForUpdate = true
 	// Lock keys only once when finished fetching all results.
-	txn, err := e.ctx.Txn(true)
+	txn, err := se.Txn(true)
 	if err != nil {
 		return err
 	}
-	forUpdateTS := e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, forUpdateTS, e.keys...)
+	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
+	return txn.LockKeys(ctx, forUpdateTS, keys...)
 }
 
 // LimitExec represents limit executor
@@ -1236,14 +1242,14 @@ type UnionExec struct {
 	baseExecutor
 
 	stopFetchData atomic.Value
-	wg            sync.WaitGroup
 
 	finished      chan struct{}
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
-	initialized   bool
 
 	childrenResults []*chunk.Chunk
+	wg              sync.WaitGroup
+	initialized     bool
 }
 
 // unionWorkerResult stores the result for a union worker.
