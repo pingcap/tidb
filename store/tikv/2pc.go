@@ -410,6 +410,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 
 		batch := batch1
 		go func() {
+			var singleBatchBackoffer *Backoffer
 			if action == actionCommit {
 				// Because the secondary batches of the commit actions are implemented to be
 				// committed asynchronously in background goroutines, we should not
@@ -418,12 +419,18 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				// Here we makes a new clone of the original backoffer for this goroutine
 				// exclusively to avoid the data race when using the same backoffer
 				// in concurrent goroutines.
-				singleBatchBackoffer := backoffer.Clone()
-				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
+				singleBatchBackoffer = backoffer.Clone()
 			} else {
-				singleBatchBackoffer, singleBatchCancel := backoffer.Fork()
+				var singleBatchCancel context.CancelFunc
+				singleBatchBackoffer, singleBatchCancel = backoffer.Fork()
 				defer singleBatchCancel()
-				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
+			}
+			beforeSleep := singleBatchBackoffer.totalSleep
+			ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
+			if c.detail != nil {
+				if delta := singleBatchBackoffer.totalSleep - beforeSleep; delta > 0 {
+					atomic.AddInt64(&c.detail.CommitBackoffTime, int64(singleBatchBackoffer.totalSleep-beforeSleep)*int64(time.Millisecond))
+				}
 			}
 		}()
 	}
@@ -873,7 +880,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	start := time.Now()
 	err := c.prewriteKeys(prewriteBo, c.keys)
 	c.detail.PrewriteTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(prewriteBo.totalSleep) * time.Millisecond
+	if prewriteBo.totalSleep > 0 {
+		atomic.AddInt64(&c.detail.CommitBackoffTime, int64(prewriteBo.totalSleep)*int64(time.Millisecond))
+	}
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
@@ -928,7 +937,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
 	err = c.commitKeys(commitBo, c.keys)
 	c.detail.CommitTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(commitBo.totalSleep) * time.Millisecond
+	if commitBo.totalSleep > 0 {
+		atomic.AddInt64(&c.detail.CommitBackoffTime, int64(commitBo.totalSleep)*int64(time.Millisecond))
+	}
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
 			logutil.Logger(ctx).Error("2PC commit result undetermined",
