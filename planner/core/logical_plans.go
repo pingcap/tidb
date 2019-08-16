@@ -324,6 +324,8 @@ type LogicalUnionScan struct {
 	baseLogicalPlan
 
 	conditions []expression.Expression
+
+	handleCol *expression.Column
 }
 
 // DataSource represents a tableScan without condition push down.
@@ -474,26 +476,6 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.
 	return noIntervalRange, err
 }
 
-func (ds *DataSource) getHandleCol() *expression.Column {
-	if ds.handleCol != nil {
-		return ds.handleCol
-	}
-
-	if !ds.tableInfo.PKIsHandle {
-		ds.handleCol = ds.newExtraHandleSchemaCol()
-		return ds.handleCol
-	}
-
-	for i, col := range ds.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) {
-			ds.handleCol = ds.schema.Columns[i]
-			break
-		}
-	}
-
-	return ds.handleCol
-}
-
 // deriveIndexPathStats will fulfill the information that the accessPath need.
 // And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.
@@ -504,7 +486,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
-		handleCol := ds.getHandleCol()
+		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
 			path.idxCols = append(path.idxCols, handleCol)
 			path.idxColLens = append(path.idxColLens, types.UnspecifiedLength)
@@ -710,7 +692,8 @@ type LogicalLimit struct {
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock ast.SelectLockType
+	Lock         ast.SelectLockType
+	tblID2Handle map[int64][]*expression.Column
 }
 
 // WindowFrame represents a window function frame.
