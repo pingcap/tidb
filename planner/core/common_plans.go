@@ -75,9 +75,10 @@ type ShowNextRowID struct {
 type CheckTable struct {
 	baseSchemaProducer
 
-	Tables []*ast.TableName
-
-	GenExprs map[model.TableColumnID]expression.Expression
+	DBName             string
+	TblInfo            *model.TableInfo
+	Indices            []table.Index
+	IndexLookUpReaders []*PhysicalIndexLookUpReader
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
@@ -273,8 +274,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 }
 
 func (e *Execute) rebuildRange(p Plan) error {
-	sctx := p.context()
-	sc := p.context().GetSessionVars().StmtCtx
+	sctx := p.SCtx()
+	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
 	case *PhysicalTableReader:
@@ -370,11 +371,11 @@ type Show struct {
 	Table       *ast.TableName  // Used for showing columns.
 	Column      *ast.ColumnName // Used for `desc table column`.
 	IndexName   model.CIStr
-	Flag        int // Some flag parsed from sql, such as FULL.
-	Full        bool
+	Flag        int                  // Some flag parsed from sql, such as FULL.
 	User        *auth.UserIdentity   // Used for show grants.
 	Roles       []*auth.RoleIdentity // Used for show grants.
-	IfNotExists bool                 // Used for `show create database if not exists`
+	Full        bool
+	IfNotExists bool // Used for `show create database if not exists`
 
 	GlobalScope bool // Used by show variables
 }
@@ -454,16 +455,19 @@ type Update struct {
 	OrderedList []*expression.Assignment
 
 	SelectPlan PhysicalPlan
+
+	TblColPosInfos TblColPosInfoSlice
 }
 
 // Delete represents a delete plan.
 type Delete struct {
 	baseSchemaProducer
 
-	Tables       []*ast.TableName
 	IsMultiTable bool
 
 	SelectPlan PhysicalPlan
+
+	TblColPosInfos TblColPosInfoSlice
 }
 
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.

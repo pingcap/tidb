@@ -67,8 +67,8 @@ func (s *testSnapshotSuite) beginTxn(c *C) *tikvTxn {
 
 func (s *testSnapshotSuite) checkAll(keys []kv.Key, c *C) {
 	txn := s.beginTxn(c)
-	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn.StartTS()})
-	m, err := snapshot.BatchGet(keys)
+	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn.StartTS()}, 0)
+	m, err := snapshot.BatchGet(context.Background(), keys)
 	c.Assert(err, IsNil)
 
 	scan, err := txn.Iter(encodeKey(s.prefix, ""), nil)

@@ -36,9 +36,7 @@ import (
 const (
 	MaxLogFileSize    = 4096 // MB
 	MinPessimisticTTL = time.Second * 15
-	MaxPessimisticTTL = time.Second * 60
-	// DefTxnEntryCountLimit is the default value of TxnEntryCountLimit.
-	DefTxnEntryCountLimit = 300 * 1000
+	MaxPessimisticTTL = time.Second * 120
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
@@ -96,6 +94,7 @@ type Config struct {
 	// TODO: remove this after table lock features stable.
 	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
 	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
+	SplitRegionMaxNum   uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
 }
 
 // Log is the log section of config.
@@ -175,11 +174,11 @@ func (s *Security) ToTLSConfig() (*tls.Config, error) {
 
 // Status is the status section of the config.
 type Status struct {
-	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	StatusHost      string `toml:"status-host" json:"status-host"`
-	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
+	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
+	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
 }
 
@@ -187,18 +186,17 @@ type Status struct {
 type Performance struct {
 	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
 	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
-	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
-	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnEntryCountLimit  uint64  `toml:"txn-entry-count-limit" json:"txn-entry-count-limit"`
 	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
+	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
+	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -224,9 +222,9 @@ type PreparedPlanCache struct {
 // OpenTracing is the opentracing section of the config.
 type OpenTracing struct {
 	Enable     bool                `toml:"enable" json:"enable"`
+	RPCMetrics bool                `toml:"rpc-metrics" json:"rpc-metrics"`
 	Sampler    OpenTracingSampler  `toml:"sampler" json:"sampler"`
 	Reporter   OpenTracingReporter `toml:"reporter" json:"reporter"`
-	RPCMetrics bool                `toml:"rpc-metrics" json:"rpc-metrics"`
 }
 
 // OpenTracingSampler is the config for opentracing sampler.
@@ -287,11 +285,11 @@ type TiKVClient struct {
 
 // Binlog is the config for binlog.
 type Binlog struct {
-	Enable       bool   `toml:"enable" json:"enable"`
-	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
+	Enable bool `toml:"enable" json:"enable"`
 	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
-	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
+	IgnoreError  bool   `toml:"ignore-error" json:"ignore-error"`
+	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
 	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 	// The strategy for sending binlog to pump, value can be "range" or "hash" now.
@@ -334,6 +332,7 @@ var defaultConf = Config{
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
+	SplitRegionMaxNum:            1000,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 2048000,
@@ -367,7 +366,6 @@ var defaultConf = Config{
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
 		BindInfoLease:       "3s",
-		TxnEntryCountLimit:  DefTxnEntryCountLimit,
 		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
 	},
 	ProxyProtocol: ProxyProtocol{
@@ -408,7 +406,7 @@ var defaultConf = Config{
 		Enable:        false,
 		Default:       false,
 		MaxRetryCount: 256,
-		TTL:           "30s",
+		TTL:           "40s",
 	},
 }
 

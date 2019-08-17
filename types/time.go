@@ -203,13 +203,13 @@ func FromGoTime(t gotime.Time) MysqlTime {
 // FromDate makes a internal time representation from the given date.
 func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) MysqlTime {
 	return MysqlTime{
-		uint16(year),
-		uint8(month),
-		uint8(day),
-		hour,
-		uint8(minute),
-		uint8(second),
-		uint32(microsecond),
+		year:        uint16(year),
+		month:       uint8(month),
+		day:         uint8(day),
+		hour:        uint32(hour),
+		minute:      uint8(minute),
+		second:      uint8(second),
+		microsecond: uint32(microsecond),
 	}
 }
 
@@ -225,11 +225,11 @@ type Time struct {
 	Type uint8
 	// Fsp is short for Fractional Seconds Precision.
 	// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-	Fsp int
+	Fsp int8
 }
 
 // MaxMySQLTime returns Time with maximum mysql time type.
-func MaxMySQLTime(fsp int) Time {
+func MaxMySQLTime(fsp int8) Time {
 	return Time{Time: FromDate(0, 0, 0, TimeMaxHour, TimeMaxMinute, TimeMaxSecond, 0), Type: mysql.TypeDuration, Fsp: fsp}
 }
 
@@ -309,7 +309,7 @@ func (t Time) ToNumber() *MyDecimal {
 
 	if t.Fsp > 0 {
 		s1 := fmt.Sprintf("%s.%06d", s, t.Time.Microsecond())
-		s = s1[:len(s)+t.Fsp+1]
+		s = s1[:len(s)+int(t.Fsp)+1]
 	}
 
 	// We skip checking error here because time formatted string can be parsed certainly.
@@ -392,19 +392,19 @@ func (t Time) CompareString(sc *stmtctx.StatementContext, str string) (int, erro
 }
 
 // roundTime rounds the time value according to digits count specified by fsp.
-func roundTime(t gotime.Time, fsp int) gotime.Time {
-	d := gotime.Duration(math.Pow10(9 - fsp))
+func roundTime(t gotime.Time, fsp int8) gotime.Time {
+	d := gotime.Duration(math.Pow10(9 - int(fsp)))
 	return t.Round(d)
 }
 
 // RoundFrac rounds the fraction part of a time-type value according to `fsp`.
-func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
+func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int8) (Time, error) {
 	if t.Type == mysql.TypeDate || t.IsZero() {
 		// date type has no fsp
 		return t, nil
 	}
 
-	fsp, err := CheckFsp(fsp)
+	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return t, errors.Trace(err)
 	}
@@ -438,8 +438,9 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 }
 
 // GetFsp gets the fsp of a string.
-func GetFsp(s string) (fsp int) {
+func GetFsp(s string) int8 {
 	index := GetFracIndex(s)
+	var fsp int
 	if index < 0 {
 		fsp = 0
 	} else {
@@ -451,7 +452,7 @@ func GetFsp(s string) (fsp int) {
 	} else if fsp > 6 {
 		fsp = 6
 	}
-	return
+	return int8(fsp)
 }
 
 // GetFracIndex finds the last '.' for get fracStr, index = -1 means fracStr not found.
@@ -474,22 +475,22 @@ func GetFracIndex(s string) (index int) {
 // We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
 // so 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:11
 // and 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
-func RoundFrac(t gotime.Time, fsp int) (gotime.Time, error) {
-	_, err := CheckFsp(fsp)
+func RoundFrac(t gotime.Time, fsp int8) (gotime.Time, error) {
+	_, err := CheckFsp(int(fsp))
 	if err != nil {
 		return t, errors.Trace(err)
 	}
-	return t.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil
+	return t.Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond), nil
 }
 
 // TruncateFrac truncates fractional seconds precision with new fsp and returns a new one.
 // 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:10
 // 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
-func TruncateFrac(t gotime.Time, fsp int) (gotime.Time, error) {
-	if _, err := CheckFsp(fsp); err != nil {
+func TruncateFrac(t gotime.Time, fsp int8) (gotime.Time, error) {
+	if _, err := CheckFsp(int(fsp)); err != nil {
 		return t, err
 	}
-	return t.Truncate(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil
+	return t.Truncate(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond), nil
 }
 
 // ToPackedUint encodes Time to a packed uint64 value.
@@ -683,7 +684,7 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bool) (Time, error) {
+func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
 	// Try to split str with delimiter.
 	// TODO: only punctuation can be the delimiter for date parts or time parts.
 	// But only space and T can be the delimiter between the date and time part.
@@ -896,7 +897,7 @@ type Duration struct {
 	gotime.Duration
 	// Fsp is short for Fractional Seconds Precision.
 	// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-	Fsp int
+	Fsp int8
 }
 
 //Add adds d to d, returns a duration value.
@@ -1002,8 +1003,8 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 // We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
 // so 10:10:10.999999 round 0 -> 10:10:11
 // and 10:10:10.000000 round 0 -> 10:10:10
-func (d Duration) RoundFrac(fsp int) (Duration, error) {
-	fsp, err := CheckFsp(fsp)
+func (d Duration) RoundFrac(fsp int8) (Duration, error) {
+	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -1013,7 +1014,7 @@ func (d Duration) RoundFrac(fsp int) (Duration, error) {
 	}
 
 	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, gotime.Local)
-	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond).Sub(n)
+	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond).Sub(n)
 	return Duration{Duration: nd, Fsp: fsp}, nil
 }
 
@@ -1072,7 +1073,7 @@ func (d Duration) MicroSecond() int {
 // ParseDuration parses the time form a formatted string with a fractional seconds part,
 // returns the duration type Time value.
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration, error) {
+func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration, error) {
 	var (
 		day, hour, minute, second int
 		err                       error
@@ -1081,7 +1082,7 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration,
 		origStr                   = str
 	)
 
-	fsp, err = CheckFsp(fsp)
+	fsp, err = CheckFsp(int(fsp))
 	if err != nil {
 		return ZeroDuration, errors.Trace(err)
 	}
@@ -1336,17 +1337,17 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 // The valid datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.999999'.
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
-func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int) (Time, error) {
+func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Time, error) {
 	return parseTime(sc, str, tp, fsp, false)
 }
 
 // ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
-func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fsp int) (Time, error) {
+func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Time, error) {
 	return parseTime(sc, str, tp, fsp, true)
 }
 
-func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFloat bool) (Time, error) {
-	fsp, err := CheckFsp(fsp)
+func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, isFloat bool) (Time, error) {
+	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
@@ -1381,8 +1382,8 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
-func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int) (Time, error) {
-	fsp, err := CheckFsp(fsp)
+func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
+	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
@@ -1649,6 +1650,7 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 		if unit != "SECOND" {
 			err = ErrTruncatedWrongValue.GenWithStackByArgs(format)
 		}
+		dv *= sign
 	}
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
@@ -1763,7 +1765,7 @@ func parseTimeValue(format string, index, cnt int) (int64, int64, int64, int64, 
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(originalFmt)
 	}
-	microseconds, err := strconv.ParseInt(alignFrac(fields[MicrosecondIndex], MaxFsp), 10, 64)
+	microseconds, err := strconv.ParseInt(alignFrac(fields[MicrosecondIndex], int(MaxFsp)), 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(originalFmt)
 	}
@@ -1987,37 +1989,38 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		}
 		buf.WriteString(MonthNames[m-1])
 	case 'm':
-		fmt.Fprintf(buf, "%02d", t.Time.Month())
+		buf.WriteString(FormatIntWidthN(t.Time.Month(), 2))
 	case 'c':
-		fmt.Fprintf(buf, "%d", t.Time.Month())
+		buf.WriteString(strconv.FormatInt(int64(t.Time.Month()), 10))
 	case 'D':
-		fmt.Fprintf(buf, "%d%s", t.Time.Day(), abbrDayOfMonth(t.Time.Day()))
+		buf.WriteString(strconv.FormatInt(int64(t.Time.Day()), 10))
+		buf.WriteString(abbrDayOfMonth(t.Time.Day()))
 	case 'd':
-		fmt.Fprintf(buf, "%02d", t.Time.Day())
+		buf.WriteString(FormatIntWidthN(t.Time.Day(), 2))
 	case 'e':
-		fmt.Fprintf(buf, "%d", t.Time.Day())
+		buf.WriteString(strconv.FormatInt(int64(t.Time.Day()), 10))
 	case 'j':
 		fmt.Fprintf(buf, "%03d", t.Time.YearDay())
 	case 'H':
-		fmt.Fprintf(buf, "%02d", t.Time.Hour())
+		buf.WriteString(FormatIntWidthN(t.Time.Hour(), 2))
 	case 'k':
-		fmt.Fprintf(buf, "%d", t.Time.Hour())
+		buf.WriteString(strconv.FormatInt(int64(t.Time.Hour()), 10))
 	case 'h', 'I':
 		t := t.Time.Hour()
 		if t%12 == 0 {
-			fmt.Fprintf(buf, "%02d", 12)
+			buf.WriteString("12")
 		} else {
-			fmt.Fprintf(buf, "%02d", t%12)
+			buf.WriteString(FormatIntWidthN(t%12, 2))
 		}
 	case 'l':
 		t := t.Time.Hour()
 		if t%12 == 0 {
-			fmt.Fprintf(buf, "%d", 12)
+			buf.WriteString("12")
 		} else {
-			fmt.Fprintf(buf, "%d", t%12)
+			buf.WriteString(strconv.FormatInt(int64(t%12), 10))
 		}
 	case 'i':
-		fmt.Fprintf(buf, "%02d", t.Time.Minute())
+		buf.WriteString(FormatIntWidthN(t.Time.Minute(), 2))
 	case 'p':
 		hour := t.Time.Hour()
 		if hour/12%2 == 0 {
@@ -2041,52 +2044,65 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'T':
 		fmt.Fprintf(buf, "%02d:%02d:%02d", t.Time.Hour(), t.Time.Minute(), t.Time.Second())
 	case 'S', 's':
-		fmt.Fprintf(buf, "%02d", t.Time.Second())
+		buf.WriteString(FormatIntWidthN(t.Time.Second(), 2))
 	case 'f':
 		fmt.Fprintf(buf, "%06d", t.Time.Microsecond())
 	case 'U':
 		w := t.Time.Week(0)
-		fmt.Fprintf(buf, "%02d", w)
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'u':
 		w := t.Time.Week(1)
-		fmt.Fprintf(buf, "%02d", w)
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'V':
 		w := t.Time.Week(2)
-		fmt.Fprintf(buf, "%02d", w)
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'v':
 		_, w := t.Time.YearWeek(3)
-		fmt.Fprintf(buf, "%02d", w)
+		buf.WriteString(FormatIntWidthN(w, 2))
 	case 'a':
 		weekday := t.Time.Weekday()
 		buf.WriteString(abbrevWeekdayName[weekday])
 	case 'W':
 		buf.WriteString(t.Time.Weekday().String())
 	case 'w':
-		fmt.Fprintf(buf, "%d", t.Time.Weekday())
+		buf.WriteString(strconv.FormatInt(int64(t.Time.Weekday()), 10))
 	case 'X':
 		year, _ := t.Time.YearWeek(2)
 		if year < 0 {
-			fmt.Fprintf(buf, "%v", uint64(math.MaxUint32))
+			buf.WriteString(strconv.FormatUint(uint64(math.MaxUint32), 10))
 		} else {
-			fmt.Fprintf(buf, "%04d", year)
+			buf.WriteString(FormatIntWidthN(year, 4))
 		}
 	case 'x':
 		year, _ := t.Time.YearWeek(3)
 		if year < 0 {
-			fmt.Fprintf(buf, "%v", uint64(math.MaxUint32))
+			buf.WriteString(strconv.FormatUint(uint64(math.MaxUint32), 10))
 		} else {
-			fmt.Fprintf(buf, "%04d", year)
+			buf.WriteString(FormatIntWidthN(year, 4))
 		}
 	case 'Y':
-		fmt.Fprintf(buf, "%04d", t.Time.Year())
+		buf.WriteString(FormatIntWidthN(t.Time.Year(), 4))
 	case 'y':
-		str := fmt.Sprintf("%04d", t.Time.Year())
+		str := FormatIntWidthN(t.Time.Year(), 4)
 		buf.WriteString(str[2:])
 	default:
 		buf.WriteRune(b)
 	}
 
 	return nil
+}
+
+// FormatIntWidthN uses to format int with width. Insufficient digits are filled by 0.
+func FormatIntWidthN(num, n int) string {
+	numString := strconv.FormatInt(int64(num), 10)
+	if len(numString) >= n {
+		return numString
+	}
+	padBytes := make([]byte, n-len(numString))
+	for i := range padBytes {
+		padBytes[i] = '0'
+	}
+	return string(padBytes) + numString
 }
 
 func abbrDayOfMonth(day int) string {
@@ -2338,7 +2354,7 @@ func hour24TwoDigits(t *MysqlTime, input string, ctx map[string]int) (string, bo
 	if !succ || v >= 24 {
 		return input, false
 	}
-	t.hour = v
+	t.hour = uint32(v)
 	return input[2:], true
 }
 
@@ -2391,9 +2407,9 @@ func time12Hour(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	remain := skipWhiteSpace(input[8:])
 	switch {
 	case strings.HasPrefix(remain, "AM"):
-		t.hour = hour
+		t.hour = uint32(hour)
 	case strings.HasPrefix(remain, "PM"):
-		t.hour = hour + 12
+		t.hour = uint32(hour + 12)
 	default:
 		return input, false
 	}
@@ -2426,7 +2442,7 @@ func time24Hour(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 		return input, false
 	}
 
-	t.hour = hour
+	t.hour = uint32(hour)
 	t.minute = uint8(minute)
 	t.second = uint8(second)
 	return input[8:], true
@@ -2507,7 +2523,7 @@ func hour24Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 	if !ok || v > 23 {
 		return input, false
 	}
-	t.hour = v
+	t.hour = uint32(v)
 	ctx["%H"] = v
 	return input[length:], true
 }
@@ -2521,7 +2537,7 @@ func hour12Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 	if !ok || v > 12 || v == 0 {
 		return input, false
 	}
-	t.hour = v
+	t.hour = uint32(v)
 	return input[length:], true
 }
 

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/kv"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -137,6 +138,7 @@ type Request struct {
 	Type CmdType
 	req  interface{}
 	kvrpcpb.Context
+	ReplicaReadSeed uint32
 }
 
 // NewRequest returns new kv rpc request.
@@ -152,6 +154,14 @@ func NewRequest(typ CmdType, pointer interface{}, ctxs ...kvrpcpb.Context) *Requ
 		Type: typ,
 		req:  pointer,
 	}
+}
+
+// NewReplicaReadRequest returns new kv rpc request with replica read.
+func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed uint32, ctxs ...kvrpcpb.Context) *Request {
+	req := NewRequest(typ, pointer, ctxs...)
+	req.ReplicaRead = replicaReadType.IsFollowerRead()
+	req.ReplicaReadSeed = replicaReadSeed
+	return req
 }
 
 // Get returns GetRequest in request.
@@ -746,22 +756,36 @@ func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
 // Close closes the CopStreamResponse object.
 func (resp *CopStreamResponse) Close() {
 	atomic.StoreInt64(&resp.Lease.deadline, 1)
+	// We also call cancel here because CheckStreamTimeoutLoop
+	// is not guaranteed to cancel all items when it exits.
+	if resp.Lease.Cancel != nil {
+		resp.Lease.Cancel()
+	}
 }
 
 // CheckStreamTimeoutLoop runs periodically to check is there any stream request timeouted.
 // Lease is an object to track stream requests, call this function with "go CheckStreamTimeoutLoop()"
-func CheckStreamTimeoutLoop(ch <-chan *Lease) {
+// It is not guaranteed to call every Lease.Cancel() putting into channel when exits.
+// If grpc-go supports SetDeadline(https://github.com/grpc/grpc-go/issues/2917), we can stop using this method.
+func CheckStreamTimeoutLoop(ch <-chan *Lease, done <-chan struct{}) {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	array := make([]*Lease, 0, 1024)
 
 	for {
 		select {
-		case item, ok := <-ch:
-			if !ok {
-				// This channel close means goroutine should return.
-				return
+		case <-done:
+		drainLoop:
+			// Try my best cleaning the channel to make SendRequest which is blocking by it continues.
+			for {
+				select {
+				case <-ch:
+				default:
+					break drainLoop
+				}
 			}
+			return
+		case item := <-ch:
 			array = append(array, item)
 		case now := <-ticker.C:
 			array = keepOnlyActive(array, now.UnixNano())

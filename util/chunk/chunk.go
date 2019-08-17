@@ -468,11 +468,6 @@ func (c *Chunk) TruncateTo(numRows int) {
 			col.data = col.data[:col.offsets[numRows]]
 			col.offsets = col.offsets[:numRows+1]
 		}
-		for i := numRows; i < col.length; i++ {
-			if col.IsNull(i) {
-				col.nullCount--
-			}
-		}
 		col.length = numRows
 		bitmapLen := (col.length + 7) / 8
 		col.nullBitmap = col.nullBitmap[:bitmapLen]
@@ -656,6 +651,6 @@ func readTime(buf []byte) types.Time {
 	return types.Time{
 		Time: types.FromDate(year, month, day, hour, minute, second, microseconds),
 		Type: tp,
-		Fsp:  fsp,
+		Fsp:  int8(fsp),
 	}
 }

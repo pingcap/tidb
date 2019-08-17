@@ -139,7 +139,6 @@ type clientConn struct {
 	server       *Server           // a reference of server instance.
 	capability   uint32            // client capability affects the way server handles client request.
 	connectionID uint32            // atomically allocated by a global variable, unique in process scope.
-	collation    uint8             // collation used by client, may be different from the collation used by database.
 	user         string            // user of the client.
 	dbname       string            // default database name.
 	salt         []byte            // random bytes used for authentication.
@@ -147,10 +146,11 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
-	status       int32             // dispatching/reading/shutdown/waitshutdown
 	peerHost     string            // peer host
 	peerPort     string            // peer port
+	status       int32             // dispatching/reading/shutdown/waitshutdown
 	lastCode     uint16            // last error code
+	collation    uint8             // collation used by client, may be different from the collation used by database.
 }
 
 func (cc *clientConn) String() string {
@@ -632,11 +632,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 					logutil.Logger(ctx).Info("read packet timeout, close this connection",
 						zap.Duration("idle", idleTime),
 						zap.Uint64("waitTimeout", waitTimeout),
+						zap.Error(err),
 					)
 				} else {
 					errStack := errors.ErrorStack(err)
 					if !strings.Contains(errStack, "use of closed network connection") {
-						logutil.Logger(ctx).Error("read packet failed, close this connection", zap.Error(err))
+						logutil.Logger(ctx).Warn("read packet failed, close this connection",
+							zap.Error(errors.SuspendStack(err)))
 					}
 				}
 			}
@@ -1054,7 +1056,7 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-		err := loadDataInfo.CheckAndInsertOneBatch()
+		err := loadDataInfo.CheckAndInsertOneBatch(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -1122,7 +1124,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if err != nil {
 		loadDataInfo.Ctx.StmtRollback()
 	} else {
-		err = loadDataInfo.CheckAndInsertOneBatch()
+		err = loadDataInfo.CheckAndInsertOneBatch(ctx)
 		if err == nil {
 			err = loadDataInfo.Ctx.StmtCommit()
 		}

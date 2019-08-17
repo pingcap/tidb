@@ -14,6 +14,7 @@
 package tablecodec
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 	"time"
@@ -425,7 +426,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
 		t.Type = ft.Tp
-		t.Fsp = ft.Decimal
+		t.Fsp = int8(ft.Decimal)
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
@@ -441,7 +442,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration: //duration should read fsp from column meta data
-		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: ft.Decimal}
+		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: int8(ft.Decimal)}
 		datum.SetValue(dur)
 		return datum, nil
 	case mysql.TypeEnum:
@@ -514,6 +515,57 @@ func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err erro
 		values = append(values, val)
 	}
 	return
+}
+
+// PrimaryKeyStatus is the primary key column status.
+type PrimaryKeyStatus int
+
+const (
+	// PrimaryKeyNotExists means no need to decode primary key column value when DecodeIndexKV.
+	PrimaryKeyNotExists PrimaryKeyStatus = iota
+	// PrimaryKeyIsSigned means decode primary key column value as int64 when DecodeIndexKV.
+	PrimaryKeyIsSigned
+	// PrimaryKeyIsUnsigned means decode primary key column value as uint64 when DecodeIndexKV.
+	PrimaryKeyIsUnsigned
+)
+
+// DecodeIndexKV uses to decode index key values.
+func DecodeIndexKV(key, value []byte, colsLen int, pkStatus PrimaryKeyStatus) ([][]byte, error) {
+	values, b, err := CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		if pkStatus != PrimaryKeyNotExists {
+			values = append(values, b)
+		}
+	} else if pkStatus != PrimaryKeyNotExists {
+		handle, err := DecodeIndexValueAsHandle(value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var handleDatum types.Datum
+		if pkStatus == PrimaryKeyIsUnsigned {
+			handleDatum = types.NewUintDatum(uint64(handle))
+		} else {
+			handleDatum = types.NewIntDatum(handle)
+		}
+		handleBytes := make([]byte, 0, 8)
+		handleBytes, err = codec.EncodeValue(nil, handleBytes, handleDatum)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		values = append(values, handleBytes)
+	}
+	return values, nil
+}
+
+// DecodeIndexValueAsHandle uses to decode index value as handle id.
+func DecodeIndexValueAsHandle(data []byte) (int64, error) {
+	var h int64
+	buf := bytes.NewBuffer(data)
+	err := binary.Read(buf, binary.BigEndian, &h)
+	return h, errors.Trace(err)
 }
 
 // EncodeTableIndexPrefix encodes index prefix with tableID and idxID.

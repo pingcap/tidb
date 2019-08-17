@@ -2373,7 +2373,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max from t group by c",
-			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_3) over(rows between 1 preceding and 1 following))->Projection",
+			result: "TableReader(Table(t))->HashAgg->Window(max(sel_agg_3) over(rows between 1 preceding and 1 following))->Projection",
 		},
 		{
 			sql:    "select nth_value(a, 1.0) over() from t",
@@ -2412,9 +2412,70 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:3593]You cannot use the window function 'sum' in this context.'",
 		},
 		{
+			sql:    "delete from t order by (SUM(a) over())",
+			result: "[planner:3593]You cannot use the window function 'sum' in this context.'",
+		},
+		{
+			sql:    "SELECT * from t having ROW_NUMBER() over()",
+			result: "[planner:3593]You cannot use the window function 'row_number' in this context.'",
+		},
+		{
 			// The best execution order should be (a,c), (a, b, c), (a, b), (), it requires only 2 sort operations.
 			sql:    "select sum(a) over (partition by a order by b), sum(b) over (order by a, b, c), sum(c) over(partition by a order by c), sum(d) over() from t",
 			result: "TableReader(Table(t))->Sort->Window(sum(cast(test.t.c)) over(partition by test.t.a order by test.t.c asc range between unbounded preceding and current row))->Sort->Window(sum(cast(test.t.b)) over(order by test.t.a asc, test.t.b asc, test.t.c asc range between unbounded preceding and current row))->Window(sum(cast(test.t.a)) over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row))->Window(sum(cast(test.t.d)) over())->Projection",
+		},
+		// Test issue 11010.
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between current row and 1 following)",
+			result: "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between current row and unbounded following)",
+			result: "TableReader(Table(t))->Sort->Window(dense_rank() over(partition by test.t.b order by test.t.a desc, test.t.b desc))->Projection",
+		},
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between 1 preceding and 1 following)",
+			result: "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		// Test issue 11001.
+		{
+			sql:    "SELECT PERCENT_RANK() OVER w1 AS 'percent_rank', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) t1 WINDOW w1 AS ( ROWS BETWEEN 0 FOLLOWING AND UNBOUNDED PRECEDING)",
+			result: "[planner:3585]Window 'w1': frame end cannot be UNBOUNDED PRECEDING.",
+		},
+		// Test issue 11002.
+		{
+			sql:    "SELECT PERCENT_RANK() OVER w1 AS 'percent_rank', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as t1 WINDOW w1 AS ( ROWS BETWEEN UNBOUNDED FOLLOWING AND UNBOUNDED FOLLOWING)",
+			result: "[planner:3584]Window 'w1': frame start cannot be UNBOUNDED FOLLOWING.",
+		},
+		// Test issue 11011.
+		{
+			sql:    "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a asc range between 1250951168 following AND 1250951168 preceding)",
+			result: "[planner:3586]Window 'w1': frame start or end is negative, NULL or of non-integral type",
+		},
+		// Test issue 10556.
+		{
+			sql:    "SELECT FIRST_VALUE(a) IGNORE NULLS OVER () FROM t",
+			result: "[planner:1235]This version of TiDB doesn't yet support 'IGNORE NULLS'",
+		},
+		{
+			sql:    "SELECT SUM(DISTINCT a) OVER () FROM t",
+			result: "[planner:1235]This version of TiDB doesn't yet support '<window function>(DISTINCT ..)'",
+		},
+		{
+			sql:    "SELECT NTH_VALUE(a, 1) FROM LAST over (partition by b order by b), a FROM t",
+			result: "[planner:1235]This version of TiDB doesn't yet support 'FROM LAST'",
+		},
+		{
+			sql:    "SELECT NTH_VALUE(a, 1) FROM LAST IGNORE NULLS over (partition by b order by b), a FROM t",
+			result: "[planner:1235]This version of TiDB doesn't yet support 'IGNORE NULLS'",
+		},
+		{
+			sql:    "SELECT NTH_VALUE(fieldA, ATAN(-1)) OVER (w1) AS 'ntile', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as te WINDOW w1 AS ( ORDER BY fieldB ASC, fieldA DESC )",
+			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
+			sql:    "SELECT NTH_VALUE(fieldA, -1) OVER (w1 PARTITION BY fieldB ORDER BY fieldB , fieldA ) AS 'ntile', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as temp WINDOW w1 AS ( ORDER BY fieldB ASC, fieldA DESC )",
+			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
 	}
 

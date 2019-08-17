@@ -62,9 +62,6 @@ type AnalyzeExec struct {
 }
 
 var (
-	// MaxSampleSize is the size of samples for once analyze.
-	// It's public for test.
-	MaxSampleSize = 10000
 	// RandSeed is the seed for randing package.
 	// It's public for test.
 	RandSeed = int64(1)
@@ -335,7 +332,8 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 			}
 		}
 	}
-	return hist, cms, nil
+	err := hist.ExtractTopN(cms, len(e.idxInfo.Columns), uint32(e.opts[ast.AnalyzeOptNumTopN]))
+	return hist, cms, err
 }
 
 func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool) (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
@@ -463,7 +461,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		collectors[i] = &statistics.SampleCollector{
 			IsMerger:      true,
 			FMSketch:      statistics.NewFMSketch(maxSketchSize),
-			MaxSampleSize: int64(MaxSampleSize),
+			MaxSampleSize: int64(e.opts[ast.AnalyzeOptNumSamples]),
 			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
 		}
 	}
@@ -508,6 +506,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		cms = append(cms, nil)
 	}
 	for i, col := range e.colsInfo {
+		collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]))
 		for j, s := range collectors[i].Samples {
 			collectors[i].Samples[j].Ordinal = j
 			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
@@ -624,7 +623,8 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		})
 		var resp *tikvrpc.Response
 		var rpcCtx *tikv.RPCContext
-		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region)
+		// we always use the first follower when follower read is enabled
+		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region, e.ctx.GetSessionVars().ReplicaRead, 0)
 		if *err != nil {
 			return
 		}
@@ -688,7 +688,7 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 		if err != nil {
 			return nil, err
 		}
-		if bytes.Compare(loc.StartKey, e.sampTasks[prefixLen].Location.EndKey) == 0 {
+		if bytes.Equal(loc.StartKey, e.sampTasks[prefixLen].Location.EndKey) {
 			startKey = loc.StartKey
 			break
 		}
@@ -896,17 +896,18 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 		hasPKInfo = 1
 	}
 	rander := rand.New(rand.NewSource(e.randSeed + int64(e.rowCount)))
+	sampleSize := int64(e.opts[ast.AnalyzeOptNumSamples])
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
 		e.rowCount++
 		scanKeysSize++
 		randNum := rander.Int63n(int64(e.rowCount))
-		if randNum > int64(MaxSampleSize) && e.sampCursor == int32(MaxSampleSize) {
+		if randNum > sampleSize && e.sampCursor == int32(sampleSize) {
 			continue
 		}
 
-		p := rander.Int31n(int32(MaxSampleSize))
-		if e.sampCursor < int32(MaxSampleSize) {
+		p := rander.Int31n(int32(sampleSize))
+		if e.sampCursor < int32(sampleSize) {
 			p = e.sampCursor
 			e.sampCursor++
 		}
@@ -923,6 +924,9 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 	snapshot, err := e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
 	if err != nil {
 		return 0, err
+	}
+	if e.ctx.GetSessionVars().ReplicaRead.IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(t.StartKey, t.EndKey)
@@ -942,10 +946,14 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 	defer e.wg.Done()
 	var snapshot kv.Snapshot
 	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
-	rander := rand.New(rand.NewSource(e.randSeed + int64(workID)))
 	if *err != nil {
 		return
 	}
+	if e.ctx.GetSessionVars().ReplicaRead.IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
+	rander := rand.New(rand.NewSource(e.randSeed + int64(workID)))
+
 	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
 		if task.SampSize == 0 {
@@ -1056,8 +1064,8 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	e.collectors = make([]*statistics.SampleCollector, length)
 	for i := range e.collectors {
 		e.collectors[i] = &statistics.SampleCollector{
-			MaxSampleSize: int64(MaxSampleSize),
-			Samples:       make([]*statistics.SampleItem, MaxSampleSize),
+			MaxSampleSize: int64(e.opts[ast.AnalyzeOptNumSamples]),
+			Samples:       make([]*statistics.SampleItem, e.opts[ast.AnalyzeOptNumSamples]),
 		}
 	}
 
@@ -1139,7 +1147,8 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 
 	// If total row count of the table is smaller than 2*MaxSampleSize, we
 	// translate all the sample tasks to scan tasks.
-	if e.rowCount < uint64(MaxSampleSize)*2 {
+	sampleSize := e.opts[ast.AnalyzeOptNumSamples]
+	if e.rowCount < sampleSize*2 {
 		for _, task := range e.sampTasks {
 			e.scanTasks = append(e.scanTasks, task.Location)
 		}
@@ -1148,8 +1157,8 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		return e.runTasks()
 	}
 
-	randPos := make([]uint64, 0, MaxSampleSize+1)
-	for i := 0; i < MaxSampleSize; i++ {
+	randPos := make([]uint64, 0, sampleSize+1)
+	for i := 0; i < int(sampleSize); i++ {
 		randPos = append(randPos, uint64(rander.Int63n(int64(e.rowCount))))
 	}
 	sort.Slice(randPos, func(i, j int) bool { return randPos[i] < randPos[j] })
@@ -1173,6 +1182,7 @@ type AnalyzeTestFastExec struct {
 	Concurrency     int
 	Collectors      []*statistics.SampleCollector
 	TblInfo         *model.TableInfo
+	Opts            map[ast.AnalyzeOptionType]uint64
 }
 
 // TestFastSample only test the fast sample in unit test.
@@ -1186,6 +1196,7 @@ func (e *AnalyzeTestFastExec) TestFastSample() error {
 	e.wg = &sync.WaitGroup{}
 	e.job = &statistics.AnalyzeJob{}
 	e.tblInfo = e.TblInfo
+	e.opts = e.Opts
 	_, _, err := e.buildStats()
 	e.Collectors = e.collectors
 	return err
@@ -1213,7 +1224,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
 	if idxExec.oldCMS != nil && cms != nil {
-		err = cms.MergeCMSketch4IncrementalAnalyze(idxExec.oldCMS)
+		err = cms.MergeCMSketch4IncrementalAnalyze(idxExec.oldCMS, uint32(idxExec.opts[ast.AnalyzeOptNumTopN]))
 		if err != nil {
 			return analyzeResult{Err: err, job: idxExec.job}
 		}
