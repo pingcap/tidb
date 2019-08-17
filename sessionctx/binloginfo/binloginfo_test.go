@@ -439,20 +439,24 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 	}{
 		{
 			"create table t1 (id int ) shard_row_id_bits=2;",
-			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 */;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 */ ;",
 		},
 		{
 			"create table t1 (id int ) shard_row_id_bits=2 pre_split_regions=2;",
-			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ ;",
 		},
 		{
 			"create table t1 (id int ) shard_row_id_bits=2     pre_split_regions=2;",
-			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2     pre_split_regions=2 */ ;",
 		},
 
 		{
 			"create table t1 (id int ) shard_row_id_bits=2 engine=innodb pre_split_regions=2;",
-			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 */ engine=innodb /*!90000 pre_split_regions=2 */;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ engine=innodb ;",
+		},
+		{
+			"create table t1 (id int ) pre_split_regions=2 shard_row_id_bits=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ ;",
 		},
 	}
 	for _, ca := range testCase {

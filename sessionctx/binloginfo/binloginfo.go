@@ -14,6 +14,7 @@
 package binloginfo
 
 import (
+	"math"
 	"regexp"
 	"strings"
 	"sync"
@@ -41,8 +42,8 @@ func init() {
 // shared by all sessions.
 var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
-var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+`)
-var preSplitPat = regexp.MustCompile(`PRE_SPLIT_REGIONS\s*=\s*\d+`)
+var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+\s*`)
+var preSplitPat = regexp.MustCompile(`PRE_SPLIT_REGIONS\s*=\s*\d+\s*`)
 var redundantCommentPat = regexp.MustCompile(` \*\/\s*\/\*!90000`)
 
 // BinlogInfo contains binlog data and binlog client.
@@ -159,19 +160,32 @@ func AddSpecialComment(ddlQuery string) string {
 	if strings.Contains(ddlQuery, specialPrefix) {
 		return ddlQuery
 	}
-	ddlQuery = addSpecialCommentByRegexp(ddlQuery, shardPat)
-	ddlQuery = addSpecialCommentByRegexp(ddlQuery, preSplitPat)
-	ddlQuery = removeRedundantComment(ddlQuery)
-	return ddlQuery
+	return addSpecialCommentByRegexps(ddlQuery, shardPat, preSplitPat)
 }
 
-func addSpecialCommentByRegexp(ddlQuery string, reg *regexp.Regexp) string {
+func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string {
 	upperQuery := strings.ToUpper(ddlQuery)
-	loc := reg.FindStringIndex(upperQuery)
-	if len(loc) < 2 {
-		return ddlQuery
+	specialComment := specialPrefix
+	minIdx := math.MaxInt64
+	for _, reg := range regs {
+		loc := reg.FindStringIndex(upperQuery)
+		if len(loc) < 2 {
+			continue
+		}
+		specialComment += ddlQuery[loc[0]:loc[1]]
+		if specialComment[len(specialComment)-1] != ' ' {
+			specialComment += " "
+		}
+		if loc[0] < minIdx {
+			minIdx = loc[0]
+		}
+		ddlQuery = ddlQuery[:loc[0]] + ddlQuery[loc[1]:]
+		upperQuery = upperQuery[:loc[0]] + upperQuery[loc[1]:]
 	}
-	return ddlQuery[:loc[0]] + specialPrefix + ddlQuery[loc[0]:loc[1]] + ` */` + ddlQuery[loc[1]:]
+	if minIdx != math.MaxInt64 {
+		return ddlQuery[:minIdx] + specialComment + "*/ " + ddlQuery[minIdx:]
+	}
+	return ddlQuery
 }
 
 // removeRedundantComment uses to remove redundant comment.
