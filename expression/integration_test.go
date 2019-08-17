@@ -4253,6 +4253,11 @@ func (s *testIntegrationSuite) TestFuncValidatePasswordStrength(c *C) {
 	result = tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH('fooHoHo%1') <> 0;")
 	result.Check(testkit.Rows("1"))
 
+	err = tk.ExecToErr("SELECT VALIDATE_PASSWORD_STRENGTH('password', 0);")
+	c.Check(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'validate_password_strength'")
+	err = tk.ExecToErr("SELECT VALIDATE_PASSWORD_STRENGTH();")
+	c.Check(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'validate_password_strength'")
+
 	tk.MustExec("set global validate_password_length = 10;")
 	tk.MustExec("set global validate_password_mixed_case_count = 3;")
 	tk.MustExec("set global validate_password_number_count = 3;")
