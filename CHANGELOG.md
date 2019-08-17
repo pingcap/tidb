@@ -1,6 +1,37 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.1.16] 2019-08-15
+## SQL Optimizer
+* Fix the issue that row count is estimated inaccurately for the equal condition on the time column [#11526](https://github.com/pingcap/tidb/pull/11526)
+* Fix the issue that `TIDB_INLJ` Hint does not take effect or take effect on the specified table [#11361](https://github.com/pingcap/tidb/pull/11361)
+* Change the implementation of `NOT EXISTS` in a query from OUTER JOIN to ANTI JOIN to find a more optimized execution plan [#11291](https://github.com/pingcap/tidb/pull/11291)
+* Support subqueries within `SHOW` statements, allowing syntaxes such as `SHOW COLUMNS FROM tbl WHERE FIELDS IN (SELECT 'a')` [#11461](https://github.com/pingcap/tidb/pull/11461)
+* Fix the issue that the `SELECT … CASE WHEN … ELSE NULL ...` query gets an incorrect result caused by the constant folding optimization [#11441](https://github.com/pingcap/tidb/pull/11441)
+## SQL Execution Engine
+* Fix the issue that the `DATE_ADD` function gets a wrong result when `INTERVAL` is negative [#11616](https://github.com/pingcap/tidb/pull/11616)
+* Fix the issue that the `DATE_ADD` function might get an incorrect result because it performs type conversion wrongly when it accepts an argument of the `FLOAT`, `DOUBLE`, or `DECIMAL` type [#11628](https://github.com/pingcap/tidb/pull/11628)
+* Fix the issue that the error message is inaccurate when CAST(JSON AS SIGNED) overflows [#11562](https://github.com/pingcap/tidb/pull/11562)
+* Fix the issue that other child nodes are not closed when one child node fails to be closed and returns an error during the process of closing Executor [#11598](https://github.com/pingcap/tidb/pull/11598)
+* Support `SPLIT TABLE` statements that return the number of Regions that are successfully split and a finished percentage rather than an error when the scheduling is not finished for Region scatter before the timeout [#11487](https://github.com/pingcap/tidb/pull/11487)
+* Make `REGEXP BINARY` function case sensitive to be compatible with MySQL [#11505](https://github.com/pingcap/tidb/pull/11505)
+* Fix the issue that `NULL` is not returned correctly because the value of `YEAR` in the `DATE_ADD`/`DATE_SUB` result overflows when it is smaller than 0 or larger than 65535 [#11477](https://github.com/pingcap/tidb/pull/11477)
+* Add in the slow query table a `Succ` field that indicates whether the execution succeeds [#11412](https://github.com/pingcap/tidb/pull/11421)
+* Fix the MySQL incompatibility issue caused by fetching the current timestamp multiple times when a SQL statement involves calculations of the current time (such as `CURRENT_TIMESTAMP` or `NOW`) [#11392](https://github.com/pingcap/tidb/pull/11392)
+* Fix the issue that the auto_increment columns do not handle the FLOAT or DOUBLE type [#11389](https://github.com/pingcap/tidb/pull/11389)
+* Fix the issue that `NULL` is not returned correctly when the `CONVERT_TZ` function accepts an invalid argument [#11357](https://github.com/pingcap/tidb/pull/11357)
+* Fix the issue that an error is reported by the `PARTITION BY LIST` statement. (Currently only the syntax is supported; when TiDB executes the statement, a regular table is created and a prompting message is provided) [#11236](https://github.com/pingcap/tidb/pull/11236)
+* Fix the issue that `Mod(%)`, `Multiple(*)`, and `Minus(-)` operations return an inconsistent `0` result with that in MySQL when there are many decimal digits (such as `select 0.000 % 0.11234500000000000000`) [11353](https://github.com/pingcap/tidb/pull/11353)
+## Server
+* Fix the issue that the plugin gets a `NULL` domain when `OnInit` is called back [#11426](https://github.com/pingcap/tidb/pull/11426)
+* Fix the issue that the table information in a schema can still be obtained through the HTTP interface after the schema has been deleted [#11586](https://github.com/pingcap/tidb/pull/11586)
+## DDL
+* Disallow dropping indexes on auto-increment columns to avoid incorrect results of the auto-increment columns caused by this operation [#11402](https://github.com/pingcap/tidb/pull/11402)
+* Fix the issue that the character set of the column is not correct when creating and modifying the table with different character sets and collations [#11423](https://github.com/pingcap/tidb/pull/11423)
+* Fix the issue that the column schema might get wrong when `alter table ... set default...` and another DDL statement that modifies this column are executed in parallel [#11374](https://github.com/pingcap/tidb/pull/11374)
+* Fix the issue that data fails to be backfilled when Generated Column A depends on Generated Column B and A is used to create an index [#11538](https://github.com/pingcap/tidb/pull/11538)
+* Speed up `ADMIN CHECK TABLE` operations [#11538](https://github.com/pingcap/tidb/pull/11676)
+
 ## [2.1.15] 2019-07-18
 * Fix the issue that the `DATE_ADD` function returns wrong results due to incorrect alignment when dealing with microseconds
 [#11289](https://github.com/pingcap/tidb/pull/11289)
