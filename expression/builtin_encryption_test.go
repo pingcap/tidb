@@ -507,10 +507,14 @@ func (s *testEvaluatorSuite) TestValidatePasswordStrength(c *C) {
 		{"user123", 25},
 		{"你好世界", 25},
 		{"password", 50},
+		{"password0000", 50},
 		{"auth_user", 50},
 		{"你好世界你好世界", 50},
 		{"Pingcap123", 50},
 		{"Pingcap123_", 100},
+		{"password1A#", 100},
+		{"PA12wrd!#", 100},
+		{"PA00wrd!#", 100},
 	}
 
 	for _, t := range tests {
