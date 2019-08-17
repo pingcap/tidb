@@ -195,16 +195,6 @@ func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string 
 	return ddlQuery
 }
 
-// removeRedundantComment uses to remove redundant comment.
-// eg: /*!90000 a=1 */ /*!90000 b=1 */ => /*!90000 a=1 b=1 */
-func removeRedundantComment(ddlQuery string) string {
-	loc := redundantCommentPat.FindStringIndex(ddlQuery)
-	if len(loc) < 2 {
-		return ddlQuery
-	}
-	return ddlQuery[:loc[0]] + ddlQuery[loc[1]:]
-}
-
 // MockPumpsClient creates a PumpsClient, used for test.
 func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 	nodeID := "pump-1"
