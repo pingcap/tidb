@@ -4230,12 +4230,35 @@ func (s *testIntegrationSuite) TestIssue9325(c *C) {
 func (s *testIntegrationSuite) TestFuncValidatePasswordStrength(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set global validate_password_check_user_name = 'ON';")
+	tk.MustQuery("SELECT @@global.validate_password_check_user_name;").Check(testkit.Rows("1"))
+	err := tk.ExecToErr("SET @@session.validate_password_check_user_name= ON;")
+	c.Assert(err, ErrorMatches, "*Variable 'validate_password_check_user_name' is a GLOBAL variable and should be set with SET GLOBAL")
+	err = tk.ExecToErr("SET validate_password_check_user_name= ON;")
+	c.Assert(err, ErrorMatches, "*Variable 'validate_password_check_user_name' is a GLOBAL variable and should be set with SET GLOBAL")
+	tk.MustExec("SET @@global.validate_password_policy=LOW;")
+	tk.MustExec("SET @@global.validate_password_mixed_case_count=0;")
+	tk.MustExec("SET @@global.validate_password_number_count=0;")
+	tk.MustExec("SET @@global.validate_password_special_char_count=0;")
+	tk.MustExec("SET @@global.validate_password_length=0;")
+	tk.MustExec("SET @@global.validate_password_check_user_name= ON;")
+	tk.Se.GetSessionVars().User = &auth.UserIdentity{Username: "root", AuthUsername: "root"}
+	result := tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH('root') = 0;")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH('toor') = 0;")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH('Root') <> 0;")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH('Toor') <> 0;")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH('fooHoHo%1') <> 0;")
+	result.Check(testkit.Rows("1"))
+
 	tk.MustExec("set global validate_password_length = 10;")
 	tk.MustExec("set global validate_password_mixed_case_count = 3;")
 	tk.MustExec("set global validate_password_number_count = 3;")
 	tk.MustExec("set global validate_password_special_char_count = 3;")
 	tk.Se.GetSessionVars().User = &auth.UserIdentity{Username: "user123", AuthUsername: "auth_user"}
-	result := tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('user123')")
+	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('user123')")
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('321resu')")
 	result.Check(testkit.Rows("0"))
@@ -4255,6 +4278,7 @@ func (s *testIntegrationSuite) TestFuncValidatePasswordStrength(c *C) {
 	result.Check(testkit.Rows("50"))
 	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('Pingcap_PP_123!')")
 	result.Check(testkit.Rows("100"))
+
 }
 
 func (s *testIntegrationSuite) TestIssue9710(c *C) {
