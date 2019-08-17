@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -132,11 +132,12 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
 func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, ddlQuery string) {
+	ddlQuery = AddSpecialComment(ddlQuery)
 	if client == nil {
 		return
 	}
 
-	ddlQuery = addSpecialComment(ddlQuery)
+	ddlQuery = AddSpecialComment(ddlQuery)
 	info := &BinlogInfo{
 		Data: &binlog.Binlog{
 			Tp:       binlog.BinlogType_Prewrite,
@@ -150,15 +151,39 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 
 const specialPrefix = `/*!90000 `
 
-func addSpecialComment(ddlQuery string) string {
+// AddSpecialComment uses to add comment for table option in DDL query.
+// Export for testing.
+func AddSpecialComment(ddlQuery string) string {
 	if strings.Contains(ddlQuery, specialPrefix) {
 		return ddlQuery
 	}
-	loc := shardPat.FindStringIndex(strings.ToUpper(ddlQuery))
-	if loc == nil {
+	ddlQuery = addSpecialCommentByRegexp(ddlQuery, `SHARD_ROW_ID_BITS\s*=\s*\d+`)
+	ddlQuery = addSpecialCommentByRegexp(ddlQuery, `PRE_SPLIT_REGIONS\s*=\s*\d+`)
+	ddlQuery = removeRedundantComment(ddlQuery)
+	return ddlQuery
+}
+
+func addSpecialCommentByRegexp(ddlQuery, regStr string) string {
+	upperQuery := strings.ToUpper(ddlQuery)
+	reg, err := regexp.Compile(regStr)
+	terror.Log(err)
+	loc := reg.FindStringIndex(upperQuery)
+	if len(loc) < 2 {
 		return ddlQuery
 	}
 	return ddlQuery[:loc[0]] + specialPrefix + ddlQuery[loc[0]:loc[1]] + ` */` + ddlQuery[loc[1]:]
+}
+
+// removeRedundantComment uses to remove redundant comment.
+// eg: /*!90000 a=1 */ /*!90000 b=1 */ => /*!90000 a=1 b=1 */
+func removeRedundantComment(ddlQuery string) string {
+	reg, err := regexp.Compile(` \*\/\s*\/\*!90000`)
+	terror.Log(err)
+	loc := reg.FindStringIndex(ddlQuery)
+	if len(loc) < 2 {
+		return ddlQuery
+	}
+	return ddlQuery[:loc[0]] + ddlQuery[loc[1]:]
 }
 
 // MockPumpsClient creates a PumpsClient, used for test.
