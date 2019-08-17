@@ -190,7 +190,11 @@ func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string 
 		if query[len(query)-1] != ' ' {
 			query += " "
 		}
-		return query + "*/ " + ddlQuery[minIdx:]
+		query += "*/"
+		if len(ddlQuery[minIdx:]) > 0 {
+			return query + " " + ddlQuery[minIdx:]
+		}
+		return query
 	}
 	return ddlQuery
 }
