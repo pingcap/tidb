@@ -135,7 +135,6 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
 func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, ddlQuery string) {
-	ddlQuery = AddSpecialComment(ddlQuery)
 	if client == nil {
 		return
 	}
@@ -167,9 +166,11 @@ func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string 
 	upperQuery := strings.ToUpper(ddlQuery)
 	var specialComments []string
 	minIdx := math.MaxInt64
-	for _, reg := range regs {
+	for i := 0; i < len(regs); {
+		reg := regs[i]
 		loc := reg.FindStringIndex(upperQuery)
 		if len(loc) < 2 {
+			i++
 			continue
 		}
 		specialComments = append(specialComments, ddlQuery[loc[0]:loc[1]])
