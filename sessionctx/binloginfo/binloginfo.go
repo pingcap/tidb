@@ -165,17 +165,14 @@ func AddSpecialComment(ddlQuery string) string {
 
 func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string {
 	upperQuery := strings.ToUpper(ddlQuery)
-	specialComment := specialPrefix
+	var specialComments []string
 	minIdx := math.MaxInt64
 	for _, reg := range regs {
 		loc := reg.FindStringIndex(upperQuery)
 		if len(loc) < 2 {
 			continue
 		}
-		specialComment += ddlQuery[loc[0]:loc[1]]
-		if specialComment[len(specialComment)-1] != ' ' {
-			specialComment += " "
-		}
+		specialComments = append(specialComments, ddlQuery[loc[0]:loc[1]])
 		if loc[0] < minIdx {
 			minIdx = loc[0]
 		}
@@ -183,7 +180,17 @@ func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string 
 		upperQuery = upperQuery[:loc[0]] + upperQuery[loc[1]:]
 	}
 	if minIdx != math.MaxInt64 {
-		return ddlQuery[:minIdx] + specialComment + "*/ " + ddlQuery[minIdx:]
+		query := ddlQuery[:minIdx] + specialPrefix
+		for _, comment := range specialComments {
+			if query[len(query)-1] != ' ' {
+				query += " "
+			}
+			query += comment
+		}
+		if query[len(query)-1] != ' ' {
+			query += " "
+		}
+		return query + "*/ " + ddlQuery[minIdx:]
 	}
 	return ddlQuery
 }
