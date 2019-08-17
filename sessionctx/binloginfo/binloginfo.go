@@ -42,6 +42,8 @@ func init() {
 var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
 var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+`)
+var preSplitPat = regexp.MustCompile(`PRE_SPLIT_REGIONS\s*=\s*\d+`)
+var redundantCommentPat = regexp.MustCompile(` \*\/\s*\/\*!90000`)
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {
@@ -157,16 +159,14 @@ func AddSpecialComment(ddlQuery string) string {
 	if strings.Contains(ddlQuery, specialPrefix) {
 		return ddlQuery
 	}
-	ddlQuery = addSpecialCommentByRegexp(ddlQuery, `SHARD_ROW_ID_BITS\s*=\s*\d+`)
-	ddlQuery = addSpecialCommentByRegexp(ddlQuery, `PRE_SPLIT_REGIONS\s*=\s*\d+`)
+	ddlQuery = addSpecialCommentByRegexp(ddlQuery, shardPat)
+	ddlQuery = addSpecialCommentByRegexp(ddlQuery, preSplitPat)
 	ddlQuery = removeRedundantComment(ddlQuery)
 	return ddlQuery
 }
 
-func addSpecialCommentByRegexp(ddlQuery, regStr string) string {
+func addSpecialCommentByRegexp(ddlQuery string, reg *regexp.Regexp) string {
 	upperQuery := strings.ToUpper(ddlQuery)
-	reg, err := regexp.Compile(regStr)
-	terror.Log(err)
 	loc := reg.FindStringIndex(upperQuery)
 	if len(loc) < 2 {
 		return ddlQuery
@@ -177,9 +177,7 @@ func addSpecialCommentByRegexp(ddlQuery, regStr string) string {
 // removeRedundantComment uses to remove redundant comment.
 // eg: /*!90000 a=1 */ /*!90000 b=1 */ => /*!90000 a=1 b=1 */
 func removeRedundantComment(ddlQuery string) string {
-	reg, err := regexp.Compile(` \*\/\s*\/\*!90000`)
-	terror.Log(err)
-	loc := reg.FindStringIndex(ddlQuery)
+	loc := redundantCommentPat.FindStringIndex(ddlQuery)
 	if len(loc) < 2 {
 		return ddlQuery
 	}
