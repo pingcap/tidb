@@ -14,12 +14,92 @@
 package expression
 
 import (
+	"sync"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
+
+// columnBufferAllocator is used to allocate and release column buffer in vectorized evaluation.
+type columnBufferAllocator interface {
+	// get allocates a column buffer with the specific eval type and capacity.
+	// the allocator is not responsible for initializing the column, so please initialize it before using.
+	get(evalType types.EvalType, capacity int) (*chunk.Column, error)
+	// put releases a column buffer.
+	put(buf *chunk.Column)
+}
+
+// localSliceBuffer implements columnBufferAllocator interface.
+// It works like a concurrency-safe deque which is implemented by a lock + slice.
+type localSliceBuffer struct {
+	sync.Mutex
+	buffers []*chunk.Column
+	head    int
+	tail    int
+	size    int
+}
+
+func newLocalSliceBuffer(initCap int) *localSliceBuffer {
+	return &localSliceBuffer{buffers: make([]*chunk.Column, initCap)}
+}
+
+func (r *localSliceBuffer) newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+	switch evalType {
+	case types.ETInt:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), capacity), nil
+	case types.ETReal:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeDouble), capacity), nil
+	case types.ETDecimal:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), capacity), nil
+	case types.ETDuration:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeDuration), capacity), nil
+	case types.ETDatetime, types.ETTimestamp:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeDatetime), capacity), nil
+	case types.ETString:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeString), capacity), nil
+	case types.ETJson:
+		return chunk.NewColumn(types.NewFieldType(mysql.TypeJSON), capacity), nil
+	}
+	return nil, errors.Errorf("get column buffer for unsupported EvalType=%v", evalType)
+}
+
+func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+	r.Lock()
+	defer r.Unlock()
+	if r.size > 0 {
+		buf := r.buffers[r.head]
+		r.head++
+		if r.head == len(r.buffers) {
+			r.head = 0
+		}
+		r.size--
+		return buf, nil
+	}
+	return r.newBuffer(evalType, capacity)
+}
+
+func (r *localSliceBuffer) put(buf *chunk.Column) {
+	r.Lock()
+	defer r.Unlock()
+	if r.size == len(r.buffers) {
+		buffers := make([]*chunk.Column, len(r.buffers)*2)
+		copy(buffers, r.buffers[r.head:])
+		copy(buffers[r.size-r.head:], r.buffers[:r.tail])
+		r.head = 0
+		r.tail = len(r.buffers)
+		r.buffers = buffers
+	}
+	r.buffers[r.tail] = buf
+	r.tail++
+	if r.tail == len(r.buffers) {
+		r.tail = 0
+	}
+	r.size++
+}
 
 type vecRowConverter struct {
 	builtinFunc
@@ -85,6 +165,18 @@ func (c *vecRowConverter) vecEval(input *chunk.Chunk, result *chunk.Column) erro
 			result.SetNull(i, isNull)
 			row = it.Next()
 		}
+	case types.ETDatetime, types.ETTimestamp:
+		result.ResizeTime(input.NumRows())
+		ds := result.Times()
+		var v types.Time
+		for i := range ds {
+			if v, isNull, err = c.builtinFunc.evalTime(row); err != nil {
+				return err
+			}
+			ds[i] = v
+			result.SetNull(i, isNull)
+			row = it.Next()
+		}
 	case types.ETJson:
 		result.ReserveJSON(input.NumRows())
 		var v json.BinaryJSON
@@ -109,19 +201,6 @@ func (c *vecRowConverter) vecEval(input *chunk.Chunk, result *chunk.Column) erro
 				result.AppendNull()
 			} else {
 				result.AppendString(v)
-			}
-		}
-	case types.ETDatetime, types.ETTimestamp:
-		result.Reset()
-		var v types.Time
-		for ; row != it.End(); row = it.Next() {
-			if v, isNull, err = c.builtinFunc.evalTime(row); err != nil {
-				return err
-			}
-			if isNull {
-				result.AppendNull()
-			} else {
-				result.AppendTime(v)
 			}
 		}
 	default:
