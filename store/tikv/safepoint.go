@@ -124,7 +124,7 @@ func saveSafePoint(kv SafePointKV, key string, t uint64) error {
 }
 
 func loadSafePoint(kv SafePointKV, key string) (uint64, error) {
-	str, err := kv.Get(GcSavedSafePoint)
+	str, err := kv.Get(key)
 
 	if err != nil {
 		return 0, errors.Trace(err)
