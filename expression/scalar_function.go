@@ -85,12 +85,12 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
-		dbFuncName := ctx.GetSessionVars().CurrentDB
-		if dbFuncName != "" {
-			dbFuncName += "."
+		db := ctx.GetSessionVars().CurrentDB
+		if db == "" {
+			return nil, terror.ClassOptimizer.New(mysql.ErrNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
 		}
-		dbFuncName += funcName
-		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", dbFuncName)
+
+		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
 	if !ctx.GetSessionVars().EnableNoopFuncs {
 		if _, ok := noopFuncs[funcName]; ok {

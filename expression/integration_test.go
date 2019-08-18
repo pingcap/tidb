@@ -4891,7 +4891,7 @@ func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("SELECT xxx(1)")
-	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION xxx does not exist")
+	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
 
 	tk.MustExec("use test")
 	_, err = tk.Exec("SELECT xxx(1)")
