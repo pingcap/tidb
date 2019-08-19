@@ -14,6 +14,7 @@
 package structure
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -32,7 +33,7 @@ func (t *TxStructure) Set(key []byte, value []byte) error {
 // Get gets the string value of a key.
 func (t *TxStructure) Get(key []byte) ([]byte, error) {
 	ek := t.encodeStringDataKey(key)
-	value, err := t.reader.Get(ek)
+	value, err := t.reader.Get(context.TODO(), ek)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}

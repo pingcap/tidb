@@ -205,10 +205,10 @@ type ExecuteExec struct {
 	is            infoschema.InfoSchema
 	name          string
 	usingVars     []expression.Expression
-	id            uint32
 	stmtExec      Executor
 	stmt          ast.StmtNode
 	plan          plannercore.Plan
+	id            uint32
 	lowerPriority bool
 }
 

@@ -98,6 +98,7 @@ func IntergerSignedLowerBound(intType byte) int64 {
 }
 
 // ConvertFloatToInt converts a float64 value to a int value.
+// `tp` is used in err msg, if there is overflow, this func will report err according to `tp`
 func ConvertFloatToInt(fval float64, lowerBound, upperBound int64, tp byte) (int64, error) {
 	val := RoundFloat(fval)
 	if val < float64(lowerBound) {
@@ -292,7 +293,7 @@ func StrToUint(sc *stmtctx.StatementContext, str string) (uint64, error) {
 }
 
 // StrToDateTime converts str to MySQL DateTime.
-func StrToDateTime(sc *stmtctx.StatementContext, str string, fsp int) (Time, error) {
+func StrToDateTime(sc *stmtctx.StatementContext, str string, fsp int8) (Time, error) {
 	return ParseTime(sc, str, mysql.TypeDatetime, fsp)
 }
 
@@ -300,7 +301,7 @@ func StrToDateTime(sc *stmtctx.StatementContext, str string, fsp int) (Time, err
 // and returns Time when str is in datetime format.
 // when isDuration is true, the d is returned, when it is false, the t is returned.
 // See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-literals.html.
-func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duration, t Time, isDuration bool, err error) {
+func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int8) (d Duration, t Time, isDuration bool, err error) {
 	str = strings.TrimSpace(str)
 	length := len(str)
 	if length > 0 && str[0] == '-' {
@@ -323,7 +324,7 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duratio
 }
 
 // NumberToDuration converts number to Duration.
-func NumberToDuration(number int64, fsp int) (Duration, error) {
+func NumberToDuration(number int64, fsp int8) (Duration, error) {
 	if number > TimeMaxValue {
 		// Try to parse DATETIME.
 		if number >= 10000000000 { // '2001-00-00 00-00-00'

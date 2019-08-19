@@ -65,7 +65,7 @@ func exploreGroup(g *memo.Group) error {
 	}
 
 	g.Explored = true
-	for elem := g.Equivalents.Front(); elem != nil; elem.Next() {
+	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		curExpr := elem.Value.(*memo.GroupExpr)
 		if curExpr.Explored {
 			continue
