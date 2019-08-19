@@ -683,7 +683,6 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 		groupByItems = append(groupByItems, gbyCol)
 	}
 
-	// Optimize
 	// Remove unnecessary schema column.
 	// When the select column is same with the group by key, the column can be removed and gets value from the group by key.
 	// e.g
@@ -691,8 +690,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	// The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
 	// Can optimize the schema to [count(b), a] , and change the index to get value.
 	partialCursor = 0
-	partialAggNum := 0
-	partialAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
+	partialAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(p.AggFuncs))
 	partialOptimizeSchema := expression.NewSchema()
 	for i, aggFunc := range p.AggFuncs {
 		if aggFunc.Name == ast.AggFuncFirstRow {
@@ -717,13 +715,11 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 			partialOptimizeSchema.Append(partialSchema.Columns[partialCursor])
 			partialCursor++
 		}
-		partialAggFuncs[partialAggNum] = aggFunc
-		partialAggNum++
+		partialAggFuncs = append(partialAggFuncs, aggFunc)
 	}
 	for i := range p.GroupByItems {
 		partialOptimizeSchema.Append(partialSchema.Columns[partialCursor+i])
 	}
-	partialAggFuncs = partialAggFuncs[:partialAggNum]
 	p.AggFuncs = partialAggFuncs
 	p.schema = partialOptimizeSchema
 	for i, col := range p.schema.Columns {
