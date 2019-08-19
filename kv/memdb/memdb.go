@@ -1,0 +1,398 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package memdb
+
+import (
+	"bytes"
+	"math"
+	"unsafe"
+)
+
+const (
+	maxHeight      = 16
+	nodeHeaderSize = int(unsafe.Sizeof(nodeHeader{}))
+)
+
+// DB is an in-memory key/value database.
+type DB struct {
+	height int
+	head   nodeWithAddr
+	arena  *arena
+
+	length int
+	size   int
+}
+
+// New creates a new initialized in-memory key/value DB.
+// The initBlockSize is the size of first block.
+// This DB is append-only, deleting an entry would remove entry node but not
+// reclaim KV buffer.
+func New(initBlockSize int) *DB {
+	return &DB{
+		height: 1,
+		head:   nodeWithAddr{node: new(node)},
+		arena:  newArenaLocator(initBlockSize),
+	}
+}
+
+// Reset resets the DB to initial empty state.
+// Release all blocks except the init one.
+func (db *DB) Reset() {
+	db.height = 1
+	db.head.node = new(node)
+	db.length = 0
+	db.size = 0
+	db.arena.reset()
+}
+
+// Get gets the value for the given key. It returns nil if the
+// DB does not contain the key.
+func (db *DB) Get(key []byte) []byte {
+	node, data, match := db.findGreater(key, true)
+	if !match {
+		return nil
+	}
+	return node.getValue(data)
+}
+
+// Put sets the value for the given key.
+// It overwrites any previous value for that key.
+func (db *DB) Put(key []byte, v []byte) bool {
+	arena := db.getArena()
+	lsHeight := db.getHeight()
+	var prev [maxHeight + 1]nodeWithAddr
+	var next [maxHeight + 1]nodeWithAddr
+	prev[lsHeight] = db.head
+
+	var exists bool
+	for i := lsHeight - 1; i >= 0; i-- {
+		// Use higher level to speed up for current level.
+		prev[i], next[i], exists = db.findSpliceForLevel(db.getArena(), key, prev[i+1], i)
+	}
+
+	var height int
+	if !exists {
+		height = db.randomHeight()
+	} else {
+		height = db.prepareOverwrite(next[:])
+	}
+
+	x, addr := db.newNode(arena, key, v, height)
+	if height > lsHeight {
+		db.setHeight(height)
+	}
+
+	// We always insert from the base level and up. After you add a node in base level, we cannot
+	// create a node in the level above because it would have discovered the node in the base level.
+	for i := 0; i < height; i++ {
+		x.nexts[i] = uint64(next[i].addr)
+		if prev[i].node == nil {
+			prev[i] = db.head
+		}
+		prev[i].setNextAddr(i, addr)
+	}
+
+	x.prev = uint64(prev[0].addr)
+	if next[0].node != nil {
+		next[0].prev = uint64(addr)
+	}
+
+	db.length++
+	db.size += len(key) + len(v)
+	return true
+}
+
+func (db *DB) prepareOverwrite(next []nodeWithAddr) int {
+	old := next[0]
+	height := int(old.height)
+	db.size -= int(old.valLen) + int(old.keyLen)
+	for i := 0; i < height; i++ {
+		if next[i].addr == old.addr {
+			next[i].addr = old.getNextAddr(i)
+			if next[i].addr != nullArenaAddr {
+				data := db.getArena().getFrom(next[i].addr)
+				next[i].node = (*node)(unsafe.Pointer(&data[0]))
+			}
+		}
+	}
+	return height
+}
+
+// Delete deletes the value for the given key.
+// It returns false if the DB does not contain the key.
+func (db *DB) Delete(key []byte) bool {
+	listHeight := db.getHeight()
+	var prev [maxHeight + 1]nodeWithAddr
+	prev[listHeight] = db.head
+
+	var keyNode nodeWithAddr
+	var match bool
+	for i := listHeight - 1; i >= 0; i-- {
+		prev[i], keyNode, match = db.findSpliceForLevel(db.getArena(), key, prev[i+1], i)
+	}
+	if !match {
+		return false
+	}
+
+	for i := int(keyNode.height) - 1; i >= 0; i-- {
+		prev[i].setNextAddr(i, keyNode.getNextAddr(i))
+	}
+	nextAddr := keyNode.getNextAddr(0)
+	if nextAddr != nullArenaAddr {
+		nextData := db.getArena().getFrom(nextAddr)
+		next := (*node)(unsafe.Pointer(&nextData[0]))
+		next.prev = uint64(prev[0].addr)
+	}
+
+	db.length--
+	db.size -= int(keyNode.keyLen) + int(keyNode.valLen)
+	return true
+}
+
+// Len returns the number of entries in the DB.
+func (db *DB) Len() int {
+	return db.length
+}
+
+// Size returns sum of keys and values length. Note that deleted
+// key/value will not be accounted for, but it will still consume
+// the buffer, since the buffer is append only.
+func (db *DB) Size() int {
+	return db.size
+}
+
+type nodeHeader struct {
+	height uint16
+	keyLen uint16
+	valLen uint32
+}
+
+type node struct {
+	nodeHeader
+
+	// Addr of previous node at base level.
+	prev uint64
+	// Height of the nexts.
+	nexts [maxHeight]uint64
+}
+
+type nodeWithAddr struct {
+	*node
+	addr arenaAddr
+}
+
+func (n *node) getPrevAddr() arenaAddr {
+	return arenaAddr(n.prev)
+}
+
+func (n *node) getNextAddr(level int) arenaAddr {
+	return arenaAddr(n.nexts[level])
+}
+
+func (n *node) setNextAddr(level int, addr arenaAddr) {
+	n.nexts[level] = uint64(addr)
+}
+
+func (n *node) entryLen() int {
+	return n.nodeLen() + int(n.keyLen) + int(n.valLen)
+}
+
+func (n *node) nodeLen() int {
+	return int(n.height)*8 + 8 + nodeHeaderSize
+}
+
+func (n *node) getKey(buf []byte) []byte {
+	nodeLen := n.nodeLen()
+	return buf[nodeLen : nodeLen+int(n.keyLen)]
+}
+
+func (n *node) getValue(buf []byte) []byte {
+	nodeLenKeyLen := n.nodeLen() + int(n.keyLen)
+	return buf[nodeLenKeyLen : nodeLenKeyLen+int(n.valLen)]
+}
+
+func (db *DB) getHeight() int {
+	return db.height
+}
+
+func (db *DB) setHeight(height int) {
+	db.height = height
+}
+
+func (db *DB) getNext(n *node, level int) (*node, []byte) {
+	addr := n.getNextAddr(level)
+	if addr == nullArenaAddr {
+		return nil, nil
+	}
+	arena := db.getArena()
+	data := arena.getFrom(addr)
+	node := (*node)(unsafe.Pointer(&data[0]))
+	return node, data
+}
+
+// findSpliceForLevel returns (outBefore, outAfter) with outBefore.key < key <= outAfter.key.
+// The input "before" tells us where to start looking.
+// If we found a node with the same key, then we return true.
+func (db *DB) findSpliceForLevel(arena *arena, key []byte, before nodeWithAddr, level int) (nodeWithAddr, nodeWithAddr, bool) {
+	for {
+		// Assume before.key < key.
+		nextAddr := before.getNextAddr(level)
+		if nextAddr == nullArenaAddr {
+			return before, nodeWithAddr{}, false
+		}
+		data := arena.getFrom(nextAddr)
+		next := nodeWithAddr{(*node)(unsafe.Pointer(&data[0])), nextAddr}
+		nextKey := next.getKey(data)
+		cmp := bytes.Compare(nextKey, key)
+		if cmp >= 0 {
+			// before.key < key < next.key. We are done for this level.
+			return before, next, cmp == 0
+		}
+		before = next // Keep moving right on this level.
+	}
+}
+
+func (db *DB) findGreater(key []byte, allowEqual bool) (*node, []byte, bool) {
+	var prev *node
+	prev = db.head.node
+	level := db.getHeight() - 1
+
+	for {
+		var nextData []byte
+		var next *node
+		addr := prev.getNextAddr(level)
+		if addr != nullArenaAddr {
+			arena := db.getArena()
+			nextData = arena.getFrom(addr)
+			next = (*node)(unsafe.Pointer(&nextData[0]))
+
+			nextKey := next.getKey(nextData)
+			cmp := bytes.Compare(nextKey, key)
+			if cmp < 0 {
+				// next key is still smaller, keep moving.
+				prev = next
+				continue
+			}
+			if cmp == 0 {
+				// prev.key < key == next.key.
+				if allowEqual {
+					return next, nextData, true
+				}
+				level = 0
+				prev = next
+				continue
+			}
+		}
+		// next is greater than key or next is nil. go to the lower level.
+		if level > 0 {
+			level--
+			continue
+		}
+		return next, nextData, false
+	}
+}
+
+func (db *DB) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
+	var prev *node
+	var prevData []byte
+	prev = db.head.node
+	level := db.getHeight() - 1
+
+	for {
+		next, nextData := db.getNext(prev, level)
+		if next != nil {
+			cmp := bytes.Compare(key, next.getKey(nextData))
+			if cmp > 0 {
+				// prev.key < next.key < key. We can continue to move right.
+				prev = next
+				prevData = nextData
+				continue
+			}
+			if cmp == 0 && allowEqual {
+				// prev.key < key == next.key.
+				return next, nextData, true
+			}
+		}
+		// get closer to the key in the lower level.
+		if level > 0 {
+			level--
+			continue
+		}
+		break
+	}
+
+	// We are not going to return head.
+	if prev == db.head.node {
+		return nil, nil, false
+	}
+	return prev, prevData, false
+}
+
+// findLast returns the last element. If head (empty db), we return nil. All the find functions
+// will NEVER return the head nodes.
+func (db *DB) findLast() (*node, []byte) {
+	var node *node
+	var nodeData []byte
+	node = db.head.node
+	level := db.getHeight() - 1
+
+	for {
+		next, nextData := db.getNext(node, level)
+		if next != nil {
+			node = next
+			nodeData = nextData
+			continue
+		}
+		if level == 0 {
+			if node == db.head.node {
+				return nil, nil
+			}
+			return node, nodeData
+		}
+		level--
+	}
+}
+
+func (db *DB) newNode(arena *arena, key []byte, v []byte, height int) (*node, arenaAddr) {
+	// The base level is already allocated in the node struct.
+	nodeSize := nodeHeaderSize + height*8 + 8 + len(key) + len(v)
+	addr, data := arena.alloc(nodeSize)
+	node := (*node)(unsafe.Pointer(&data[0]))
+	node.keyLen = uint16(len(key))
+	node.height = uint16(height)
+	node.valLen = uint32(len(v))
+	copy(data[node.nodeLen():], key)
+	copy(data[node.nodeLen()+int(node.keyLen):], v)
+	return node, addr
+}
+
+func (db *DB) getArena() *arena {
+	return db.arena
+}
+
+func (db *DB) setArena(al *arena) {
+	db.arena = al
+}
+
+func (db *DB) randomHeight() int {
+	h := 1
+	for h < maxHeight && fastRand() < uint32(math.MaxUint32)/4 {
+		h++
+	}
+	return h
+}
+
+// fastRand is a fast thread local random function.
+//go:linkname fastRand runtime.fastrand
+func fastRand() uint32
