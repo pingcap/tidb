@@ -301,6 +301,7 @@ import (
 	client		"CLIENT"
 	coalesce	"COALESCE"
 	collation	"COLLATION"
+	columnFormat	"COLUMN_FORMAT"
 	columns		"COLUMNS"
 	comment 	"COMMENT"
 	commit		"COMMIT"
@@ -754,6 +755,7 @@ import (
 	CollationName			"Collation name"
 	ColumnDef			"table column definition"
 	ColumnDefList			"table column definition list"
+	ColumnFormat			"Column format"
 	ColumnName			"column name"
 	ColumnNameOrUserVariable	"column name or user variable"
 	ColumnNameList			"column name list"
@@ -2217,6 +2219,24 @@ ColumnOption:
 |	"COLLATE" CollationName
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionCollate, StrValue: $2.(string)}
+	}
+|	"COLUMN_FORMAT" ColumnFormat
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionColumnFormat, StrValue: $2.(string)}
+	}
+
+ColumnFormat: 
+	"DEFAULT"
+	{
+		$$ = "DEFAULT"
+	}
+|	"FIXED"
+	{
+		$$ = "FIXED"
+	}
+|	"DYNAMIC"
+	{
+		$$ = "DYNAMIC"
 	}
 
 GeneratedAlways: | "GENERATED" "ALWAYS"
@@ -4075,7 +4095,7 @@ UnReservedKeyword:
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 | "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT" | "INCREMENTAL" | "CPU" | "MEMORY" | "BLOCK" | "IO" | "CONTEXT" | "SWITCHES" | "PAGE" | "FAULTS" | "IPC" | "SWAPS" | "SOURCE"
 | "TRADITIONAL" | "SQL_BUFFER_RESULT" | "DIRECTORY" | "HISTORY" | "LIST" | "NODEGROUP" | "SYSTEM_TIME" | "PARTIAL" | "SIMPLE" | "REMOVE" | "PARTITIONING" | "STORAGE" | "DISK" | "STATS_SAMPLE_PAGES" | "SECONDARY_ENGINE" | "VALIDATION"
-| "WITHOUT" | "RTREE" | "EXCHANGE" | "REPAIR" | "IMPORT" | "DISCARD" | "TABLE_CHECKSUM"
+| "WITHOUT" | "RTREE" | "EXCHANGE" | "COLUMN_FORMAT" | "REPAIR" | "IMPORT" | "DISCARD" | "TABLE_CHECKSUM"
 | "SQL_TSI_DAY" | "SQL_TSI_HOUR" | "SQL_TSI_MINUTE" | "SQL_TSI_MONTH" | "SQL_TSI_QUARTER" | "SQL_TSI_SECOND" | "SQL_TSI_WEEK" | "SQL_TSI_YEAR"
 
 TiDBKeyword:

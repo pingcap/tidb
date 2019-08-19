@@ -427,6 +427,7 @@ const (
 	ColumnOptionReference
 	ColumnOptionCollate
 	ColumnOptionCheck
+	ColumnOptionColumnFormat
 )
 
 var (
@@ -521,6 +522,9 @@ func (n *ColumnOption) Restore(ctx *RestoreCtx) error {
 		} else {
 			ctx.WriteKeyWord(" NOT ENFORCED")
 		}
+	case ColumnOptionColumnFormat:
+		ctx.WriteKeyWord("COLUMN_FORMAT ")
+		ctx.WriteKeyWord(n.StrValue)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
