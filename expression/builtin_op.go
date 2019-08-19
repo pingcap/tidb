@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
@@ -408,7 +409,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 			sig = &builtinIntIsTrueSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
 		default:
-			panic("unexpected types.EvalType")
+			return nil, errors.New(fmt.Sprintf("unexpected types.EvalType %v", argTp))
 		}
 	case opcode.IsFalsity:
 		switch argTp {
@@ -422,7 +423,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 			sig = &builtinIntIsFalseSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
 		default:
-			panic("unexpected types.EvalType")
+			return nil, errors.New(fmt.Sprintf("unexpected types.EvalType %v", argTp))
 		}
 	}
 	return sig, nil
@@ -618,7 +619,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinUnaryNotIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryNotInt)
 	default:
-		panic("unexpected types.EvalType")
+		return nil, errors.New(fmt.Sprintf("unexpected types.EvalType %v", argTp))
 	}
 	return sig, nil
 }
@@ -636,7 +637,7 @@ func (b *builtinUnaryNotRealSig) Clone() builtinFunc {
 func (b *builtinUnaryNotRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, err
+		return 0, true, err
 	}
 	if arg == 0 {
 		return 1, false, nil
@@ -657,7 +658,7 @@ func (b *builtinUnaryNotDecimalSig) Clone() builtinFunc {
 func (b *builtinUnaryNotDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, err
+		return 0, true, err
 	}
 	if arg.IsZero() {
 		return 1, false, nil
@@ -678,7 +679,7 @@ func (b *builtinUnaryNotIntSig) Clone() builtinFunc {
 func (b *builtinUnaryNotIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, err
+		return 0, true, err
 	}
 	if arg == 0 {
 		return 1, false, nil
