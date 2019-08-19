@@ -76,7 +76,7 @@ func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind 
 		return nil, err
 	}
 
-	finalPlan, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +91,7 @@ func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind 
 		Text:          stmtNode.Text(),
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
+		outputNames:   names,
 	}, nil
 }
 

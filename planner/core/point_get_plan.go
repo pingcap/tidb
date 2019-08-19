@@ -39,7 +39,6 @@ import (
 type PointGetPlan struct {
 	basePlan
 	schema           *expression.Schema
-	DBName           model.CIStr
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
 	Handle           int64
@@ -52,6 +51,7 @@ type PointGetPlan struct {
 	IsTableDual      bool
 	Lock             bool
 	IsForUpdate      bool
+	outputNames      []*expression.NamingForMySQLProtocol
 }
 
 type nameValuePair struct {
@@ -138,18 +138,18 @@ func (p *PointGetPlan) ResolveIndices() error {
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
-func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
+func TryFastPlan(ctx sessionctx.Context, node ast.Node) (Plan, []*expression.NamingForMySQLProtocol) {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		fp := tryPointGetPlan(ctx, x)
 		if fp != nil {
 			if checkFastPlanPrivilege(ctx, fp, mysql.SelectPriv) != nil {
-				return nil
+				return nil, nil
 			}
 			if fp.IsTableDual {
 				tableDual := PhysicalTableDual{}
 				tableDual.SetSchema(fp.Schema())
-				return tableDual.Init(ctx, &property.StatsInfo{})
+				return tableDual.Init(ctx, &property.StatsInfo{}), fp.outputNames
 			}
 			if x.LockTp == ast.SelectLockForUpdate {
 				// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
@@ -161,14 +161,14 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 					fp.IsForUpdate = true
 				}
 			}
-			return fp
+			return fp, fp.outputNames
 		}
 	case *ast.UpdateStmt:
-		return tryUpdatePointPlan(ctx, x)
+		return tryUpdatePointPlan(ctx, x), nil
 	case *ast.DeleteStmt:
-		return tryDeletePointPlan(ctx, x)
+		return tryDeletePointPlan(ctx, x), nil
 	}
-	return nil
+	return nil, nil
 }
 
 // tryPointGetPlan determine if the SelectStmt can use a PointGetPlan.
@@ -223,11 +223,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	}
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
-		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
+		schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
 		if schema == nil {
 			return nil
 		}
-		p := newPointGetPlan(ctx, schema, dbName, tbl)
+		p := newPointGetPlan(ctx, schema, tbl, names)
 		intDatum, err := handlePair.value.ConvertTo(ctx.GetSessionVars().StmtCtx, fieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
@@ -263,11 +263,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if idxValues == nil {
 			continue
 		}
-		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
+		schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
 		if schema == nil {
 			return nil
 		}
-		p := newPointGetPlan(ctx, schema, dbName, tbl)
+		p := newPointGetPlan(ctx, schema, tbl, names)
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
@@ -276,12 +276,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	return nil
 }
 
-func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, dbName model.CIStr, tbl *model.TableInfo) *PointGetPlan {
+func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo, names []*expression.NamingForMySQLProtocol) *PointGetPlan {
 	p := &PointGetPlan{
-		basePlan: newBasePlan(ctx, "Point_Get"),
-		schema:   schema,
-		DBName:   dbName,
-		TblInfo:  tbl,
+		basePlan:    newBasePlan(ctx, "Point_Get"),
+		schema:      schema,
+		TblInfo:     tbl,
+		outputNames: names,
 	}
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
 	return p
@@ -301,48 +301,64 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointGetPlan, chec
 	return nil
 }
 
-func buildSchemaFromFields(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo, tblName model.CIStr, fields []*ast.SelectField) *expression.Schema {
-	if dbName.L == "" {
-		dbName = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	}
+func buildSchemaFromFields(dbName model.CIStr, tbl *model.TableInfo, tblName model.CIStr, fields []*ast.SelectField) (*expression.Schema, []*expression.NamingForMySQLProtocol) {
 	columns := make([]*expression.Column, 0, len(tbl.Columns)+1)
+	names := make([]*expression.NamingForMySQLProtocol, 0, len(tbl.Columns)+1)
 	if len(fields) > 0 {
 		for _, field := range fields {
 			if field.WildCard != nil {
 				if field.WildCard.Table.L != "" && field.WildCard.Table.L != tblName.L {
-					return nil
+					return nil, nil
 				}
 				for _, col := range tbl.Columns {
-					columns = append(columns, colInfoToColumn(dbName, tbl.Name, tblName, col.Name, col, len(columns)))
+					names = append(names, &expression.NamingForMySQLProtocol{
+						DBName:      dbName,
+						OrigTblName: tbl.Name,
+						TblName:     tblName,
+						ColName:     col.Name,
+					})
+					columns = append(columns, colInfoToColumn(col, len(columns)))
 				}
 				continue
 			}
 			colNameExpr, ok := field.Expr.(*ast.ColumnNameExpr)
 			if !ok {
-				return nil
+				return nil, nil
 			}
 			if colNameExpr.Name.Table.L != "" && colNameExpr.Name.Table.L != tblName.L {
-				return nil
+				return nil, nil
 			}
 			col := findCol(tbl, colNameExpr.Name)
 			if col == nil {
-				return nil
+				return nil, nil
 			}
 			asName := col.Name
 			if field.AsName.L != "" {
 				asName = field.AsName
 			}
-			columns = append(columns, colInfoToColumn(dbName, tbl.Name, tblName, asName, col, len(columns)))
+			names = append(names, &expression.NamingForMySQLProtocol{
+				DBName:      dbName,
+				OrigTblName: tbl.Name,
+				TblName:     tblName,
+				ColName:     asName,
+			})
+			columns = append(columns, colInfoToColumn(col, len(columns)))
 		}
-		return expression.NewSchema(columns...)
+		return expression.NewSchema(columns...), names
 	}
 	// fields len is 0 for update and delete.
 	for _, col := range tbl.Columns {
-		column := colInfoToColumn(dbName, tbl.Name, tblName, col.Name, col, len(columns))
+		names = append(names, &expression.NamingForMySQLProtocol{
+			DBName:      dbName,
+			OrigTblName: tbl.Name,
+			TblName:     tblName,
+			ColName:     col.Name,
+		})
+		column := colInfoToColumn(col, len(columns))
 		columns = append(columns, column)
 	}
 	schema := expression.NewSchema(columns...)
-	return schema
+	return schema, names
 }
 
 // getSingleTableNameAndAlias return the ast node of queried table name and the alias string.
@@ -510,17 +526,15 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*ast.Assignment) []*expression.Assignment {
 	orderedList := make([]*expression.Assignment, 0, len(list))
 	for _, assign := range list {
-		col, err := fastSelect.schema.FindColumn(assign.Column)
-		if err != nil {
+		idx, err := expression.FindColName(fastSelect.outputNames, assign.Column)
+		if idx == -1 || err != nil {
 			return nil
 		}
-		if col == nil {
-			return nil
-		}
+		col := fastSelect.schema.Columns[idx]
 		newAssign := &expression.Assignment{
 			Col: col,
 		}
-		expr, err := expression.RewriteSimpleExprWithSchema(ctx, assign.Expr, fastSelect.schema)
+		expr, err := expression.RewriteSimpleExprWithNames(ctx, assign.Expr, fastSelect.schema, fastSelect.outputNames)
 		if err != nil {
 			return nil
 		}
@@ -582,16 +596,12 @@ func findCol(tbl *model.TableInfo, colName *ast.ColumnName) *model.ColumnInfo {
 	return nil
 }
 
-func colInfoToColumn(db model.CIStr, origTblName model.CIStr, tblName model.CIStr, asName model.CIStr, col *model.ColumnInfo, idx int) *expression.Column {
+func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	return &expression.Column{
-		ColName:     asName,
-		OrigTblName: origTblName,
-		DBName:      db,
-		TblName:     tblName,
-		RetType:     &col.FieldType,
-		ID:          col.ID,
-		UniqueID:    int64(col.Offset),
-		Index:       idx,
+		RetType:  &col.FieldType,
+		ID:       col.ID,
+		UniqueID: int64(col.Offset),
+		Index:    idx,
 	}
 }
 
@@ -607,8 +617,7 @@ func (p *PointGetPlan) findHandleCol() *expression.Column {
 		}
 	}
 	if handleCol == nil {
-		oneCol := p.schema.Columns[0]
-		handleCol = colInfoToColumn(oneCol.DBName, oneCol.OrigTblName, oneCol.TblName, model.ExtraHandleName, model.NewExtraHandleColInfo(), p.schema.Len())
+		handleCol = colInfoToColumn(model.NewExtraHandleColInfo(), p.schema.Len())
 		p.schema.Append(handleCol)
 	}
 	return handleCol

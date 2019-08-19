@@ -2630,7 +2630,7 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 		c.Assert(err, IsNil)
 		Preprocess(s.ctx, stmt, s.is)
 		s.ctx.GetSessionVars().StmtCtx.Tables = nil
-		p := TryFastPlan(s.ctx, stmt)
+		p, _ := TryFastPlan(s.ctx, stmt)
 		if tt.fastPlan {
 			c.Assert(p, NotNil)
 			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 1)

@@ -64,9 +64,45 @@ type recordSet struct {
 
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
-		a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
+		if len(a.stmt.outputNames) > 0 {
+			a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.outputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
+		} else {
+			a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
+		}
 	}
 	return a.fields
+}
+
+func colNames2ResultFields(schema *expression.Schema, names []*expression.NamingForMySQLProtocol, defaultDB string) []*ast.ResultField {
+	rfs := make([]*ast.ResultField, 0, schema.Len())
+	for i := 0; i < schema.Len(); i++ {
+		dbName := names[i].DBName
+		if dbName.L == "" && names[i].TblName.L != "" {
+			dbName = model.NewCIStr(defaultDB)
+		}
+		origColName := names[i].OrigColName
+		if origColName.L == "" {
+			origColName = names[i].ColName
+		}
+		rf := &ast.ResultField{
+			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
+			ColumnAsName: names[i].ColName,
+			Table:        &model.TableInfo{Name: names[i].OrigTblName},
+			TableAsName:  names[i].TblName,
+			DBName:       dbName,
+		}
+		// This is for compatibility.
+		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
+		}
+		// Usually the length of O equals the length of L.
+		// Add this len judgement to avoid panic.
+		if len(rf.ColumnAsName.L) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.L = rf.ColumnAsName.L[:mysql.MaxAliasIdentifierLen]
+		}
+		rfs = append(rfs, rf)
+	}
+	return rfs
 }
 
 func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*ast.ResultField) {
@@ -161,6 +197,8 @@ type ExecStmt struct {
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
+
+	outputNames []*expression.NamingForMySQLProtocol
 }
 
 // OriginText returns original statement as a string.
@@ -196,10 +234,11 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
 	}
-	p, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
+	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
 	if err != nil {
 		return 0, err
 	}
+	a.outputNames = names
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
 }

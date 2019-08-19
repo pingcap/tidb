@@ -32,6 +32,7 @@ type simpleRewriter struct {
 	schema *Schema
 	err    error
 	ctx    sessionctx.Context
+	names  []*NamingForMySQLProtocol
 }
 
 // ParseSimpleExprWithTableInfo parses simple expression string to Expression.
@@ -95,6 +96,15 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 	return exprs, nil
 }
 
+func RewriteSimpleExprWithNames(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names []*NamingForMySQLProtocol) (Expression, error) {
+	rewriter := &simpleRewriter{ctx: ctx, schema: schema, names: names}
+	expr.Accept(rewriter)
+	if rewriter.err != nil {
+		return nil, rewriter.err
+	}
+	return rewriter.pop(), nil
+}
+
 // RewriteSimpleExprWithSchema rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema) (Expression, error) {
 	rewriter := &simpleRewriter{ctx: ctx, schema: schema}
@@ -105,7 +115,31 @@ func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, sche
 	return rewriter.pop(), nil
 }
 
+func FindColName(names []*NamingForMySQLProtocol, astCol *ast.ColumnName) (int, error) {
+	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
+	idx := -1
+	for i, name := range names {
+		if (dbName.L == "" || dbName.L == name.DBName.L) &&
+			(tblName.L == "" || tblName.L == name.TblName.L) &&
+			(colName.L == name.ColName.L) {
+			if idx == -1 {
+				idx = i
+			} else {
+				return -1, errors.Errorf("Column %s is ambiguous", name.String())
+			}
+		}
+	}
+	return idx, nil
+}
+
 func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
+	if sr.names != nil {
+		idx, _ := FindColName(sr.names, nodeColName.Name)
+		if idx >= 0 {
+			return sr.schema.Columns[idx], nil
+		}
+		return nil, errBadField.GenWithStackByArgs(nodeColName.Name.Name.O, "expression")
+	}
 	col, err := sr.schema.FindColumn(nodeColName.Name)
 	if col != nil && err == nil {
 		return col, nil

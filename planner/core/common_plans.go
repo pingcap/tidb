@@ -262,7 +262,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			return plan, nil
 		}
 	}
-	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+	p, _, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return nil, err
 	}
