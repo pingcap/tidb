@@ -113,7 +113,7 @@ func (w *EtcdSafePointKV) Get(k string) (string, error) {
 	return "", nil
 }
 
-func saveSafePoint(kv SafePointKV, key string, t uint64) error {
+func saveSafePoint(kv SafePointKV, t uint64) error {
 	s := strconv.FormatUint(t, 10)
 	err := kv.Put(GcSavedSafePoint, s)
 	if err != nil {
@@ -123,7 +123,7 @@ func saveSafePoint(kv SafePointKV, key string, t uint64) error {
 	return nil
 }
 
-func loadSafePoint(kv SafePointKV, key string) (uint64, error) {
+func loadSafePoint(kv SafePointKV) (uint64, error) {
 	str, err := kv.Get(GcSavedSafePoint)
 
 	if err != nil {

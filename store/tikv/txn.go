@@ -58,11 +58,9 @@ type tikvTxn struct {
 	startTS   uint64
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
-	valid     bool
 	lockKeys  [][]byte
 	lockedMap map[string]struct{}
 	mu        sync.Mutex // For thread-safe LockKeys function.
-	dirty     bool
 	setCnt    int64
 	vars      *kv.Variables
 	committer *twoPhaseCommitter
@@ -73,6 +71,9 @@ type tikvTxn struct {
 	// StmtCommit/StmtRollback may change the confirmed position.
 	assertions []assertionPair
 	confirmed  int
+
+	valid bool
+	dirty bool
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -81,13 +82,13 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return newTikvTxnWithStartTS(store, startTS)
+	return newTikvTxnWithStartTS(store, startTS, store.nextReplicaReadSeed())
 }
 
 // newTikvTxnWithStartTS creates a txn with startTS.
-func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
+func newTikvTxnWithStartTS(store *tikvStore, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
-	snapshot := newTiKVSnapshot(store, ver)
+	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
 	return &tikvTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),

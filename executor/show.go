@@ -58,24 +58,23 @@ var etcdDialTimeout = 5 * time.Second
 type ShowExec struct {
 	baseExecutor
 
-	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName      model.CIStr
-	Table       *ast.TableName  // Used for showing columns.
-	Column      *ast.ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr     // Used for show table regions.
-	Flag        int             // Some flag parsed from sql, such as FULL.
-	Full        bool
-	User        *auth.UserIdentity   // Used by show grants, show create user.
-	Roles       []*auth.RoleIdentity // Used for show grants.
-	IfNotExists bool                 // Used for `show create database if not exists`
-
-	// GlobalScope is used by show variables
-	GlobalScope bool
+	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName    model.CIStr
+	Table     *ast.TableName       // Used for showing columns.
+	Column    *ast.ColumnName      // Used for `desc table column`.
+	IndexName model.CIStr          // Used for show table regions.
+	Flag      int                  // Some flag parsed from sql, such as FULL.
+	Roles     []*auth.RoleIdentity // Used for show grants.
+	User      *auth.UserIdentity   // Used by show grants, show create user.
 
 	is infoschema.InfoSchema
 
 	result *chunk.Chunk
 	cursor int
+
+	Full        bool
+	IfNotExists bool // Used for `show create database if not exists`
+	GlobalScope bool // GlobalScope is used by show variables
 }
 
 // Next implements the Executor Next interface.

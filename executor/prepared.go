@@ -168,6 +168,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	prepared := &ast.Prepared{
 		Stmt:          stmt,
+		StmtType:      GetStmtLabel(stmt),
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
@@ -205,10 +206,10 @@ type ExecuteExec struct {
 	is            infoschema.InfoSchema
 	name          string
 	usingVars     []expression.Expression
-	id            uint32
 	stmtExec      Executor
 	stmt          ast.StmtNode
 	plan          plannercore.Plan
+	id            uint32
 	lowerPriority bool
 }
 

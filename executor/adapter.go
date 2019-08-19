@@ -146,10 +146,6 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan plannercore.Plan
-	// LowerPriority represents whether to lower the execution priority of a query.
-	LowerPriority bool
-	// Cacheable represents whether the physical plan can be cached.
-	Cacheable bool
 	// Text represents the origin query text.
 	Text string
 
@@ -157,7 +153,11 @@ type ExecStmt struct {
 
 	Ctx sessionctx.Context
 	// StartTime stands for the starting time when executing the statement.
-	StartTime         time.Time
+	StartTime time.Time
+	// LowerPriority represents whether to lower the execution priority of a query.
+	LowerPriority bool
+	// Cacheable represents whether the physical plan can be cached.
+	Cacheable         bool
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
@@ -252,7 +252,9 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		maxExecutionTime := getMaxExecutionTime(sctx, a.StmtNode)
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
-		a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		}
 	}
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
