@@ -135,7 +135,7 @@ func makeMutRowColumn(in interface{}) *Column {
 		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *x
 		return col
 	case types.Time:
-		col := newMutRowFixedLenColumn(16)
+		col := newMutRowFixedLenColumn(sizeTime)
 		writeTime(col.data, x)
 		return col
 	case json.BinaryJSON:

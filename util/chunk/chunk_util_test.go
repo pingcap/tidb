@@ -22,7 +22,7 @@ import (
 
 func getChk() (*Chunk, *Chunk, []bool) {
 	numRows := 1024
-	srcChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, 16, 0)
+	srcChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
 	selected := make([]bool, numRows)
 	var row Row
 	for j := 0; j < numRows; j++ {
@@ -34,7 +34,7 @@ func getChk() (*Chunk, *Chunk, []bool) {
 		}
 		srcChk.AppendPartialRow(0, row)
 	}
-	dstChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, 16, 0)
+	dstChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
 	return srcChk, dstChk, selected
 }
 
@@ -48,7 +48,7 @@ func TestCopySelectedJoinRows(t *testing.T) {
 		dstChk.AppendRow(srcChk.GetRow(i))
 	}
 	// batch copy
-	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, 16, 0)
+	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
 	CopySelectedJoinRows(srcChk, 0, 3, selected, dstChk2)
 
 	if !reflect.DeepEqual(dstChk, dstChk2) {
