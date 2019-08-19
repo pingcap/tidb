@@ -182,7 +182,7 @@ func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
 	selectLock := strings.Contains(fmt.Sprintf("%s", opInfo), "lock")
 	c.Assert(selectLock, IsFalse)
 
-	checkUseForUpdate := func() {
+	checkUseForUpdate := func(tk *testkit.TestKit, c *C) {
 		res = tk.MustQuery("explain select * from fu where id = 6 for update")
 		// Point_Get_1	1.00	root	table:fu, handle:6
 		opInfo = res.Rows()[0][3]
@@ -193,10 +193,10 @@ func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
 	}
 
 	tk.MustExec("begin")
-	checkUseForUpdate()
+	checkUseForUpdate(tk, c)
 	tk.MustExec("rollback")
 
 	tk.MustExec("set @@session.autocommit = 0")
-	checkUseForUpdate()
+	checkUseForUpdate(tk, c)
 	tk.MustExec("rollback")
 }
