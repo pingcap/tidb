@@ -174,16 +174,6 @@ func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
 	tk.MustExec("create table fu (id int primary key, val int)")
 	tk.MustExec("insert into fu values (6, 6)")
 
-	checkUseForUpdate := func(tk *testkit.TestKit, c *C, expectLock bool) {
-		res := tk.MustQuery("explain select * from fu where id = 6 for update")
-		// Point_Get_1	1.00	root	table:fu, handle:6
-		opInfo := res.Rows()[0][3]
-		selectLock := strings.Contains(fmt.Sprintf("%s", opInfo), "lock")
-		c.Assert(selectLock, Equals, expectLock)
-
-		tk.MustQuery("select * from fu where id = 6 for update").Check(testkit.Rows("6 6"))
-	}
-
 	// In autocommit mode, outside a transaction, "for update" doesn't take effect.
 	checkUseForUpdate(tk, c, false)
 
@@ -194,4 +184,14 @@ func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
 	tk.MustExec("set @@session.autocommit = 0")
 	checkUseForUpdate(tk, c, true)
 	tk.MustExec("rollback")
+}
+
+func checkUseForUpdate(tk *testkit.TestKit, c *C, expectLock bool) {
+	res := tk.MustQuery("explain select * from fu where id = 6 for update")
+	// Point_Get_1	1.00	root	table:fu, handle:6
+	opInfo := res.Rows()[0][3]
+	selectLock := strings.Contains(fmt.Sprintf("%s", opInfo), "lock")
+	c.Assert(selectLock, Equals, expectLock)
+
+	tk.MustQuery("select * from fu where id = 6 for update").Check(testkit.Rows("6 6"))
 }
