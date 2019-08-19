@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +28,8 @@ import (
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
@@ -98,6 +101,9 @@ func (r *RegionStore) follower(seed uint32) int32 {
 		followerIdx := int32(seed % (l - 1))
 		if followerIdx >= r.workStoreIdx {
 			followerIdx++
+		}
+		if r.stores[followerIdx].sType != TiKV {
+			continue
 		}
 		if r.storeFails[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].fail) {
 			return followerIdx
@@ -327,6 +333,85 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID, replicaRead k
 		Store:   store,
 		Addr:    addr,
 	}, nil
+}
+
+// GetFlashRPCContext returns RPCContext for a region must access flash store. If it returns nil, the region
+// must be out of date and already dropped from cache or no flash store found.
+func (c *RegionCache) GetFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
+	ts := time.Now().Unix()
+
+	cachedRegion := c.getCachedRegionWithRLock(id)
+	if cachedRegion == nil {
+		return nil, nil
+	}
+	if !cachedRegion.checkRegionCacheTTL(ts) {
+		return nil, nil
+	}
+
+	regionStore := cachedRegion.getStore()
+
+	notFlashCnt := 0
+	for i, store := range regionStore.stores {
+		state := store.getResolveState()
+		switch state {
+		case unresolved:
+			_, err := store.initResolve(bo, c)
+			if err != nil {
+				return nil, err
+			}
+		case needCheck:
+			store.reResolve(c)
+		case deleted:
+			c.changeToActiveStore(cachedRegion, store, i)
+		}
+
+		if store.sType != TiFlash {
+			notFlashCnt++
+			continue
+		}
+		if regionStore.storeFails[i] != atomic.LoadUint32(&store.fail) {
+			continue
+		}
+		peer, storeIdx := cachedRegion.meta.Peers[i], i
+		addr := store.addr
+		if store == nil || len(addr) == 0 {
+			cachedRegion.invalidate()
+			return nil, nil
+		}
+		ipAndPort := strings.Split(addr, ":")
+		if len(ipAndPort) != 2 {
+			return nil, nil
+		}
+		port, err := strconv.ParseInt(ipAndPort[1], 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		// Flash storage's port is r_egine's port plus one.
+		// This one will be changed in future.
+		addr = ipAndPort[0] + ":" + strconv.FormatInt(port+1, 10)
+
+		storeFailEpoch := atomic.LoadUint32(&store.fail)
+		if storeFailEpoch != regionStore.storeFails[storeIdx] {
+			cachedRegion.invalidate()
+			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
+				zap.Uint64("region", id.GetID()),
+				zap.String("store", store.addr))
+			return nil, nil
+		}
+		return &RPCContext{
+			Region:  id,
+			Meta:    cachedRegion.meta,
+			Peer:    peer,
+			PeerIdx: storeIdx,
+			Store:   store,
+			Addr:    addr,
+		}, nil
+	}
+
+	if notFlashCnt == len(regionStore.stores) && notFlashCnt != 0 {
+		return nil, errors.Errorf("None of TiFlash store found.")
+	}
+	return nil, nil
 }
 
 // KeyLocation is the region and range that a key is located.
@@ -949,12 +1034,12 @@ func (r *Region) getStorePeer(rs *RegionStore, pidx int32) (store *Store, peer *
 }
 
 // WorkStorePeer returns current work store with work peer.
-func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer, idx int) {
+func (r *Region) WorkStorePeer(rs *RegionStore) (*Store, *metapb.Peer, int) {
 	return r.getStorePeer(rs, rs.workStoreIdx)
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
-func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, idx int) {
+func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (*Store, *metapb.Peer, int) {
 	return r.getStorePeer(rs, rs.follower(followerStoreSeed))
 }
 
@@ -1063,6 +1148,17 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 		(bytes.Compare(key, r.meta.GetEndKey()) <= 0 || len(r.meta.GetEndKey()) == 0)
 }
 
+// StoreType reperents the type of one storage.
+type StoreType int8
+
+// Store types.
+const (
+	// TiKV means the storage is tikv.
+	TiKV StoreType = iota
+	// TiFlash means the storage is tiflash.
+	TiFlash
+)
+
 // Store contains a kv process's address.
 type Store struct {
 	addr         string     // loaded store address
@@ -1070,6 +1166,7 @@ type Store struct {
 	state        uint64     // unsafe store storeState
 	resolveMutex sync.Mutex // protect pd from concurrent init requests
 	fail         uint32     // store fail count, see RegionStore.storeFails
+	sType        StoreType  // type of the store
 }
 
 type resolveState uint64
@@ -1091,6 +1188,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		return
 	}
 	var store *metapb.Store
+	confTiFlash := config.GetGlobalConfig().TiFlash
 	for {
 		store, err = c.pdClient.GetStore(bo.ctx, s.storeID)
 		if err != nil {
@@ -1114,6 +1212,12 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		addr = store.GetAddress()
 		s.addr = addr
+		for _, label := range store.Labels {
+			if label.Key == confTiFlash.LabelKey && label.Value == confTiFlash.LabelValue {
+				s.sType = TiFlash
+				break
+			}
+		}
 	retry:
 		state = s.getResolveState()
 		if state != unresolved {
@@ -1150,10 +1254,18 @@ func (s *Store) reResolve(c *RegionCache) {
 		return
 	}
 
+	confTiFlash := config.GetGlobalConfig().TiFlash
+	storeType := TiKV
+	for _, label := range store.Labels {
+		if label.Key == confTiFlash.LabelKey && label.Value == confTiFlash.LabelValue {
+			storeType = TiFlash
+			break
+		}
+	}
 	addr = store.GetAddress()
 	if s.addr != addr {
 		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr}
+		newStore := &Store{storeID: s.storeID, addr: addr, sType: storeType}
 		newStore.state = *(*uint64)(unsafe.Pointer(&state))
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore
