@@ -224,7 +224,7 @@ func (c *Column) AppendBytes(b []byte) {
 
 // AppendTime appends a time value into this Column.
 func (c *Column) AppendTime(t types.Time) {
-	writeTime(c.elemBuf, t)
+	*(*types.Time)(unsafe.Pointer(&c.elemBuf[0])) = t
 	c.finishAppendFixed()
 }
 
@@ -509,7 +509,7 @@ func (c *Column) GetSet(rowID int) types.Set {
 
 // GetTime returns the Time in the specific row.
 func (c *Column) GetTime(rowID int) types.Time {
-	return readTime(c.data[rowID*16:])
+	return *(*types.Time)(unsafe.Pointer(&c.data[rowID*sizeTime]))
 }
 
 // GetDuration returns the Duration in the specific row.
