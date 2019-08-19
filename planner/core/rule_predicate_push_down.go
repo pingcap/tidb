@@ -237,10 +237,10 @@ func (p *LogicalJoin) updateEQCond() {
 		for i := range lKeys {
 			lKey, rKey := lKeys[i], rKeys[i]
 			if lProj != nil {
-				lKey = lProj.appendExpr(lKeys[i])
+				lKey = lProj.appendExpr(lKey)
 			}
 			if rProj != nil {
-				rKey = rProj.appendExpr(rKeys[i])
+				rKey = rProj.appendExpr(rKey)
 			}
 			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 			p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
