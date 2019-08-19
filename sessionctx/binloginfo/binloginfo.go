@@ -44,7 +44,6 @@ var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
 var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+\s*`)
 var preSplitPat = regexp.MustCompile(`PRE_SPLIT_REGIONS\s*=\s*\d+\s*`)
-var redundantCommentPat = regexp.MustCompile(` \*\/\s*\/\*!90000`)
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {
