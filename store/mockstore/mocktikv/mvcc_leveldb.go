@@ -634,7 +634,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	anyError := false
 	batch := &leveldb.Batch{}
 	errs := make([]error, 0, len(mutations))
-	txnSize := len(mutations)
+	txnSize := req.TxnSize
 	for i, m := range mutations {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
@@ -655,7 +655,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 			}
 		}
 		isPessimisticLock := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i]
-		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl, uint64(txnSize), isPessimisticLock)
+		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl, txnSize, isPessimisticLock)
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
