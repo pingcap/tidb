@@ -105,7 +105,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		e.handles = make([]int64, 0, len(keys))
-		dedupHandles := make(map[int64]struct{}, len(keys))
 		for _, key := range keys {
 			handleVal := handleVals[string(key)]
 			if len(handleVal) == 0 {
@@ -115,11 +114,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if err1 != nil {
 				return err1
 			}
-			if _, found := dedupHandles[handle]; found {
-				return kv.ErrNotExist.GenWithStack("inconsistent unique index: multiple unique index %s point the handle %d",
-					e.idxInfo.Name.O, handle)
-			}
-			dedupHandles[handle] = struct{}{}
 			e.handles = append(e.handles, handle)
 		}
 
