@@ -69,7 +69,6 @@ func (r *localSliceBuffer) newBuffer(evalType types.EvalType, capacity int) (*ch
 
 func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	r.Lock()
-	defer r.Unlock()
 	if r.size > 0 {
 		buf := r.buffers[r.head]
 		r.head++
@@ -77,14 +76,15 @@ func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Co
 			r.head = 0
 		}
 		r.size--
+		r.Unlock()
 		return buf, nil
 	}
+	r.Unlock()
 	return r.newBuffer(evalType, capacity)
 }
 
 func (r *localSliceBuffer) put(buf *chunk.Column) {
 	r.Lock()
-	defer r.Unlock()
 	if r.size == len(r.buffers) {
 		buffers := make([]*chunk.Column, len(r.buffers)*2)
 		copy(buffers, r.buffers[r.head:])
@@ -99,6 +99,7 @@ func (r *localSliceBuffer) put(buf *chunk.Column) {
 		r.tail = 0
 	}
 	r.size++
+	r.Unlock()
 }
 
 type vecRowConverter struct {

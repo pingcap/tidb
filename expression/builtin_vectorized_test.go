@@ -535,6 +535,116 @@ func (s *testEvaluatorSuite) TestDoubleVec2Row(c *C) {
 	}
 }
 
+func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, result *chunk.Column, rowDouble builtinFunc) {
+	switch eType {
+	case types.ETInt:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalInt(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendInt64(v)
+				}
+			}
+		}
+	case types.ETReal:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalReal(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendFloat64(v)
+				}
+			}
+		}
+	case types.ETDecimal:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalDecimal(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendMyDecimal(v)
+				}
+			}
+		}
+	case types.ETDuration:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalDuration(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendDuration(v)
+				}
+			}
+		}
+	case types.ETString:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalString(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendString(v)
+				}
+			}
+		}
+	case types.ETDatetime:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalTime(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendTime(v)
+				}
+			}
+		}
+	case types.ETJson:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalJSON(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendJSON(v)
+				}
+			}
+		}
+	}
+}
+
 func BenchmarkMockDoubleRow(b *testing.B) {
 	typeNames := []string{"Int", "Real", "Decimal", "Duration", "String", "Datetime", "JSON"}
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
@@ -543,113 +653,7 @@ func BenchmarkMockDoubleRow(b *testing.B) {
 			rowDouble, input, result, _ := genMockRowDouble(eType, false)
 			it := chunk.NewIterator4Chunk(input)
 			b.ResetTimer()
-			switch eType {
-			case types.ETInt:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalInt(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendInt64(v)
-						}
-					}
-				}
-			case types.ETReal:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalReal(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendFloat64(v)
-						}
-					}
-				}
-			case types.ETDecimal:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalDecimal(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendMyDecimal(v)
-						}
-					}
-				}
-			case types.ETDuration:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalDuration(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendDuration(v)
-						}
-					}
-				}
-			case types.ETString:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalString(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendString(v)
-						}
-					}
-				}
-			case types.ETDatetime:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalTime(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendTime(v)
-						}
-					}
-				}
-			case types.ETJson:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalJSON(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendJSON(v)
-						}
-					}
-				}
-			}
+			evalRows(b, it, eType, result, rowDouble)
 		})
 	}
 }
@@ -679,15 +683,7 @@ func BenchmarkMockDoubleVec2Row(b *testing.B) {
 			rowDouble, input, result, _ := genMockRowDouble(eType, true)
 			it := chunk.NewIterator4Chunk(input)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				result.Reset()
-				for r := it.Begin(); r != it.End(); r = it.Next() {
-					_, _, err := rowDouble.evalInt(r)
-					if err != nil {
-						b.Fatal(err)
-					}
-				}
-			}
+			evalRows(b, it, eType, result, rowDouble)
 		})
 	}
 }
