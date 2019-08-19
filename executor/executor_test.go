@@ -199,6 +199,16 @@ func (s *testSuiteP1) TestChange(c *C) {
 	c.Assert(tk.ExecToErr("alter table t change c d varchar(100)"), NotNil)
 }
 
+func (s *testSuiteP1) TestChangePumpAndDrainer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// change pump or drainer's state need connect to etcd
+	// so will meet error "URL scheme must be http, https, unix, or unixs: /tmp/tidb"
+	err := tk.ExecToErr("change pump to node_state ='paused' for node_id 'pump1'")
+	c.Assert(err, ErrorMatches, "URL scheme must be http, https, unix, or unixs.*")
+	err = tk.ExecToErr("change drainer to node_state ='paused' for node_id 'drainer1'")
+	c.Assert(err, ErrorMatches, "URL scheme must be http, https, unix, or unixs.*")
+}
+
 func (s *testSuiteP1) TestLoadStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
