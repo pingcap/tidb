@@ -96,6 +96,7 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 	return exprs, nil
 }
 
+// RewriteSimpleExprWithNames rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithNames(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names []*NamingForMySQLProtocol) (Expression, error) {
 	rewriter := &simpleRewriter{ctx: ctx, schema: schema, names: names}
 	expr.Accept(rewriter)
@@ -115,6 +116,7 @@ func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, sche
 	return rewriter.pop(), nil
 }
 
+// FindColName finds the column name from []*namingForMySQLProtocol.
 func FindColName(names []*NamingForMySQLProtocol, astCol *ast.ColumnName) (int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
@@ -134,8 +136,8 @@ func FindColName(names []*NamingForMySQLProtocol, astCol *ast.ColumnName) (int, 
 
 func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
 	if sr.names != nil {
-		idx, _ := FindColName(sr.names, nodeColName.Name)
-		if idx >= 0 {
+		idx, err := FindColName(sr.names, nodeColName.Name)
+		if idx >= 0 && err == nil {
 			return sr.schema.Columns[idx], nil
 		}
 		return nil, errBadField.GenWithStackByArgs(nodeColName.Name.Name.O, "expression")

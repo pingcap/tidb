@@ -235,6 +235,7 @@ func NewSchema(cols ...*Column) *Schema {
 	return &Schema{Columns: cols}
 }
 
+// NamingForMySQLProtocol records the names used for mysql protocol.
 type NamingForMySQLProtocol struct {
 	OrigTblName model.CIStr
 	OrigColName model.CIStr
