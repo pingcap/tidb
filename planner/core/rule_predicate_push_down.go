@@ -35,14 +35,14 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 		p.Children()[chIdx] = child
 		return
 	}
-	conditions = expression.PropagateConstant(p.context(), conditions)
+	conditions = expression.PropagateConstant(p.SCtx(), conditions)
 	// Return table dual when filter is constant false or null.
 	dual := conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
 		return
 	}
-	selection := LogicalSelection{Conditions: conditions}.Init(p.context())
+	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx())
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
 }
@@ -219,11 +219,29 @@ func (p *LogicalJoin) updateEQCond() {
 		}
 	}
 	if len(lKeys) > 0 {
-		lProj := p.getProj(0)
-		rProj := p.getProj(1)
+		needLProj, needRProj := false, false
 		for i := range lKeys {
-			lKey := lProj.appendExpr(lKeys[i])
-			rKey := rProj.appendExpr(rKeys[i])
+			_, lOk := lKeys[i].(*expression.Column)
+			_, rOk := rKeys[i].(*expression.Column)
+			needLProj = needLProj || !lOk
+			needRProj = needRProj || !rOk
+		}
+
+		var lProj, rProj *LogicalProjection
+		if needLProj {
+			lProj = p.getProj(0)
+		}
+		if needRProj {
+			rProj = p.getProj(1)
+		}
+		for i := range lKeys {
+			lKey, rKey := lKeys[i], rKeys[i]
+			if lProj != nil {
+				lKey = lProj.appendExpr(lKey)
+			}
+			if rProj != nil {
+				rKey = rProj.appendExpr(rKey)
+			}
 			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 			p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
 		}
@@ -480,9 +498,9 @@ func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	if !ok {
 		return nil
 	}
-	sc := p.context().GetSessionVars().StmtCtx
+	sc := p.SCtx().GetSessionVars().StmtCtx
 	if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.context())
+		dual := LogicalTableDual{}.Init(p.SCtx())
 		dual.SetSchema(p.Schema())
 		return dual
 	}

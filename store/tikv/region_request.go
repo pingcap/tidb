@@ -94,8 +94,14 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		}
 	})
 
+	var replicaRead kv.ReplicaReadType
+	if req.ReplicaRead {
+		replicaRead = kv.ReplicaReadFollower
+	} else {
+		replicaRead = kv.ReplicaReadLeader
+	}
 	for {
-		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
+		ctx, err := s.regionCache.GetRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -110,6 +116,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 			return resp, nil, err
 		}
 
+		logutil.Eventf(bo.ctx, "send %s request to region %d at %s", req.Type, regionID.id, ctx.Addr)
 		s.storeAddr = ctx.Addr
 		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {

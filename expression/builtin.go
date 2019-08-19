@@ -32,6 +32,7 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
+	columnBufferAllocator
 	args   []Expression
 	ctx    sessionctx.Context
 	tp     *types.FieldType
@@ -60,6 +61,8 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 		panic("ctx should not be nil")
 	}
 	return baseBuiltinFunc{
+		columnBufferAllocator: newLocalSliceBuffer(len(args)),
+
 		args: args,
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
@@ -129,21 +132,21 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDatetime,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
-			Decimal: types.MaxFsp,
+			Decimal: int(types.MaxFsp),
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETTimestamp:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeTimestamp,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
-			Decimal: types.MaxFsp,
+			Decimal: int(types.MaxFsp),
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETDuration:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDuration,
 			Flen:    mysql.MaxDurationWidthWithFsp,
-			Decimal: types.MaxFsp,
+			Decimal: int(types.MaxFsp),
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETJson:
@@ -162,6 +165,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 	return baseBuiltinFunc{
+		columnBufferAllocator: newLocalSliceBuffer(len(args)),
+
 		args: args,
 		ctx:  ctx,
 		tp:   fieldType,
@@ -202,6 +207,10 @@ func (b *baseBuiltinFunc) evalDuration(row chunk.Row) (types.Duration, bool, err
 
 func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
 	return json.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) vectorized() bool {
+	return false
 }
 
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
@@ -283,8 +292,12 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 
 // vecBuiltinFunc contains all vectorized methods for a builtin function.
 type vecBuiltinFunc interface {
+	columnBufferAllocator
+
 	// vecEval evaluates this builtin function in a vectorized manner.
 	vecEval(input *chunk.Chunk, result *chunk.Column) error
+	// vectorized returns if this builtin function supports vectorized evaluation.
+	vectorized() bool
 }
 
 // builtinFunc stands for a particular function signature.
@@ -344,6 +357,12 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
+}
+
+func init() {
+	for k, v := range funcs {
+		funcs[k] = &vecRowConvertFuncClass{v}
+	}
 }
 
 // funcs holds all registered builtin functions. When new function is added,

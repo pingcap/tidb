@@ -91,13 +91,16 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	if e.ctx.GetSessionVars().ReplicaRead.IsFollowerRead() {
+		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
 	if e.idxInfo != nil {
 		idxKey, err1 := e.encodeIndexKey()
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
 		}
 
-		handleVal, err1 := e.get(idxKey)
+		handleVal, err1 := e.get(ctx, idxKey)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
 		}
@@ -125,7 +128,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
-	val, err := e.get(key)
+	val, err := e.get(ctx, key)
 	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
 	}
@@ -145,11 +148,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
 	if e.lock {
-		txn, err := e.ctx.Txn(true)
-		if err != nil {
-			return err
-		}
-		return txn.LockKeys(ctx, e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS(), kv.Key(key))
+		return doLockKeys(ctx, e.ctx, key)
 	}
 	return nil
 }
@@ -175,7 +174,7 @@ func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
 	return tablecodec.EncodeIndexSeekKey(e.tblInfo.ID, e.idxInfo.ID, encodedIdxVals), nil
 }
 
-func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
+func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return nil, err
@@ -183,7 +182,7 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = txn.GetMemBuffer().Get(key)
+		val, err = txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
@@ -192,7 +191,7 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 		}
 		// fallthrough to snapshot get.
 	}
-	return e.snapshot.Get(key)
+	return e.snapshot.Get(ctx, key)
 }
 
 func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {
