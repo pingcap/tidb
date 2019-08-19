@@ -1,6 +1,95 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+
+## [3.0.2] 2019-08-06
+### SQL Optimizer
+* Fix the issue that the "Can't find column in schema" message is reported when the same table occurs multiple times in a query and logically the query result is always empty [#11247](https://github.com/pingcap/tidb/pull/11247)
+* Fix the issue that the query plan does not meet the expectation caused by the `TIDB_INLJ` hint not working correctly in some cases (like `explain select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a`)  [#11362](https://github.com/pingcap/tidb/pull/11362)
+* Fix the issue that the column name in the query result is wrong in some cases (like `SELECT IF(1,c,c) FROM t`) [#11379](https://github.com/pingcap/tidb/pull/11379)
+* Fix the issue that some queries like `SELECT 0 LIKE 'a string'` return `TRUE` becausethe `LIKE` expression is implicitly converted to 0 in some cases [#11411](https://github.com/pingcap/tidb/pull/11411)
+* Support sub-queries in the `SHOW` statement, like `SHOW COLUMNS FROM tbl WHERE FIELDS IN (SELECT 'a')` [#11459](https://github.com/pingcap/tidb/pull/11459)
+* Fix the issue that the related column of the aggregate function cannot be found and an error is reported caused by the `outerJoinElimination` optimizing rule not correctly handling the column alias; improve alias parsing in the optimizing process to make optimization cover more query types [#11377](https://github.com/pingcap/tidb/pull/11377)
+* Fix the issue that no error is reported when the syntax restriction is violated in the Window function (for example, `UNBOUNDED PRECEDING` is not allowed to appear at the end of the Frame definition) [#11543](https://github.com/pingcap/tidb/pull/11543)
+* Fix the issue that `FUNCTION_NAME` is in uppercase in the `ERROR 3593 (HY000): You cannot use the window function FUNCTION_NAME in this context` error message, which causes incompatibility with MySQL [#11535](https://github.com/pingcap/tidb/pull/11535)
+* Fix the issue that the unimplemented `IGNORE NULLS` syntax in the Window function is used but no error is reported [#11593](https://github.com/pingcap/tidb/pull/11593)
+* Fix the issue that the Optimizer does not correctly estimate time equal conditions [#11512](https://github.com/pingcap/tidb/pull/11512)
+* Support updating the Top-N statistics based on the feedback information [#11507](https://github.com/pingcap/tidb/pull/11507)
+
+### SQL Execution Engine
+* Fix the issue that the returned value is not `NULL` when the `INSERT` function contains `NULL` in parameters [#11248](https://github.com/pingcap/tidb/pull/11248)
+* Fix the issue that the computing result might be wrong when the  partitioned table is checked by the `ADMIN CHECKSUM` operation [#11266](https://github.com/pingcap/tidb/pull/11266)
+* Fix the issue that the result might be wrong when INDEX JOIN uses the prefix index [#11246](https://github.com/pingcap/tidb/pull/11246)
+* Fix the issue that result might be wrong caused by incorrectly aligning fractions when the `DATE_ADD` function does subtraction on date numbers involving microseconds [#11288](https://github.com/pingcap/tidb/pull/11288)
+* Fix the wrong result caused by the `DATE_ADD` function incorrectly processing the negative numbers in `INTERVAL` [#11325](https://github.com/pingcap/tidb/pull/11325)
+* Fix the issue that the number of fractional digits returned by `Mod`(`%`), `Multiple`(`*`) or `Minus`(`-`) is different from that in MySQL when `Mod`, `Multiple` or `Minus` returns 0 and the number of fractional digits is large (like 
+`select 0.000 % 0.11234500000000000000`) [#11251](https://github.com/pingcap/tidb/pull/11251)
+* Fix the issue that `NULL` with a warning is incorrectly returned when the length of the result returned by `CONCAT` and `CONCAT_WS` functions exceeds `max_allowed_packet` [#11275](https://github.com/pingcap/tidb/pull/11275)
+* Fix the issue that `NULL` with a warning is incorrectly returned when parameters in the `SUBTIME` and `ADDTIME` functions are invalid [#11337](https://github.com/pingcap/tidb/pull/11337)
+* Fix the issue that `NULL` is incorrectly returned when parameters in the `CONVERT_TZ` function are invalid [#11359](https://github.com/pingcap/tidb/pull/11359)
+* Add the `MEMORY` column to the result returned by `EXPLAIN ANALYZE` to show the memory usage of this query [#11418](https://github.com/pingcap/tidb/pull/11418)
+* Add `CARTESIAN JOIN` to the result of `EXPLAIN` [#11429](https://github.com/pingcap/tidb/pull/11429)
+* Fix the incorrect data of auto-increment columns of the float and double types [#11385](https://github.com/pingcap/tidb/pull/11385)
+* Fix the panic issue caused by some `nil` information when pseudo statistics are dumped [#11460](https://github.com/pingcap/tidb/pull/11460)
+* Fix the incorrect query result of `SELECT … CASE WHEN … ELSE NULL ...` caused by constant folding optimization [#11441](https://github.com/pingcap/tidb/pull/11441)
+* Fix the issue that `floatStrToIntStr` does not correctly parse the input such as `+999.9999e2` [#11473](https://github.com/pingcap/tidb/pull/11473)
+* Fix the issue that `NULL` is not returned in some cases when the result of the `DATE_ADD` and `DATE_SUB` function overflows [#11476](https://github.com/pingcap/tidb/pull/11476)
+* Fix the issue that the conversion result is different from that in MySQL if the string contains an invalid character when a long string is converted to an integer [#11469](https://github.com/pingcap/tidb/pull/11469)
+* Fix the issue that the result of the `REGEXP BINARY` function is incompatible with MySQL caused by case sensitiveness of this function [#11504](https://github.com/pingcap/tidb/pull/11504)
+* Fix the issue that an error is reported when the `GRANT ROLE` statement receives `CURRENT_ROLE`; fix the issue that the `REVOKE ROLE` statement does not correctly revoke the `mysql.default_role` privilege [#11356](https://github.com/pingcap/tidb/pull/11356)
+* Fix the display format issue of the `Incorrect datetime value` warning information when executing statements like `SELECT ADDDATE('2008-01-34', -1)` [#11447](https://github.com/pingcap/tidb/pull/11447)
+* Fix the issue that the error message reports `constant … overflows float` rather than `constant … overflows bigint` if the result overflows when a float field of the JSON data is converted to an integer [#11534](https://github.com/pingcap/tidb/pull/11534)
+* Fix the issue that the result might be wrong caused by incorrect type conversion when the `DATE_ADD` function receives `FLOAT`, `DOUBLE` and `DECIMAL` column parameters [#11527](https://github.com/pingcap/tidb/pull/11527)
+* Fix the wrong result caused by incorrectly processing the sign of the INTERVAL fraction in the `DATE_ADD` function [#11615](https://github.com/pingcap/tidb/pull/11615)
+* Fix the incorrect query result when Index Lookup Join contains the prefix index caused by `Ranger` not correctly handling the prefix index [#11565](https://github.com/pingcap/tidb/pull/11565)
+* Fix the issue that the "Incorrect arguments to NAME_CONST" message is reported if the `NAME_CONST` function is executed when the second parameter of `NAME_CONST` is a negative number [#11268](https://github.com/pingcap/tidb/pull/11268)
+* Fix the issue that the result is incompatible with MySQL when an SQL statement involves computing the current time and the value is fetched multiple times; use the same value when fetching the current time for the same SQL statement [#11394](https://github.com/pingcap/tidb/pull/11394)
+* Fix the issue that `Close` is not called for ChildExecutor when the `Close` of baseExecutor reports an error. This issue might lead to Goroutine leaks when the `KILL` statements do not take effect and ChildExecutor is not closed [#11576](https://github.com/pingcap/tidb/pull/11576)
+
+### Server
+* Fix the issue that the auto-added value is 0 instead of the current timestamp when `LOAD DATA` processes the missing `TIMESTAMP` field in the CSV file [#11250](https://github.com/pingcap/tidb/pull/11250)
+* Fix issues that the `SHOW CREATE USER` statement does not correctly check related privileges, and `USER` and `HOST` returned by `SHOW CREATE USER CURRENT_USER()` might be wrong [#11229](https://github.com/pingcap/tidb/pull/11229)
+* Fix the issue that the returned result might be wrong when `executeBatch` is used in JDBC [#11290](https://github.com/pingcap/tidb/pull/11290)
+* Reduce printing the log information of the streaming client when changing the TiKV server's port [#11370](https://github.com/pingcap/tidb/pull/11370)
+* Optimize the logic of reconnecting the streaming client to the TiKV server so that the streaming client will not be blocked for a long time [#11372](https://github.com/pingcap/tidb/pull/11372)
+* Add `REGION_ID` in `INFORMATION_SCHEMA.TIDB_HOT_REGIONS` [#11350](https://github.com/pingcap/tidb/pull/11350)
+* Cancel the timeout duration of obtaining Region information from the PD API to ensure that obtaining Region information will not end in a failure when TiDB API http://{TiDBIP}:10080/regions/hot is called due to PD timeout when the number of Regions is large [#11383](https://github.com/pingcap/tidb/pull/11383)
+* Fix the issue that Region related requests do not return partitioned table-related Regions in the HTTP API [#11466](https://github.com/pingcap/tidb/pull/11466)
+* Modify some default parameters related to pessimistic locks, these modifications reduce the probability of locking timeout caused by slow operations when the user manually validates pessimistic locking [#11521](https://github.com/pingcap/tidb/pull/11521)
+  * Increase the default TTL of pessimistic locking from 30 seconds to 40 seconds
+  * Increase the maximum TTL from 60 seconds to 120 seconds
+  * Calculate the pessimistic locking duration from the first `LockKeys` request
+* Change the `SendRequest` function logic in the TiKV client: try to immediately connect to another peer instead of keeping waiting when the connect cannot be built [#11531](https://github.com/pingcap/tidb/pull/11531)
+* Optimize the Region cache: label the removed store as invalid when a store is moved while another store goes online with a same address, to update the store information in the cache as soon as possible [#11567](https://github.com/pingcap/tidb/pull/11567) 
+* Add the Region ID to the result returned by the `http://{TiDB_ADDRESS:TIDB_IP}/mvcc/key/{db}/{table}/{handle}` API [#11557](https://github.com/pingcap/tidb/pull/11557)
+* Fix the issue that Scatter Table does not work caused by the Scatter Table API not escaping the Range key [#11298](https://github.com/pingcap/tidb/pull/11298)
+* Optimize the Region cache: label the store where the Region exists as invalid when the correspondent store is inaccessible to avoid reduced query performance caused by accessing this store [#11498](https://github.com/pingcap/tidb/pull/11498)
+* Fix the error that the table schema can still be obtained through the HTTP API after dropping the database with the same name multiple times [#11585](https://github.com/pingcap/tidb/pull/11585)
+
+### DDL
+* Fix the issue that an error occurs when a non-string column with a zero length is being indexed [#11214](https://github.com/pingcap/tidb/pull/11214)
+* Disallow modifying the columns with foreign key constraints and full-text indexes (Note: TiDB still supports foreign key constraints and full-text indexes in syntax only) [#11274](https://github.com/pingcap/tidb/pull/11274)
+* Fix the issue that the index offset of the column might be wrong because the position changed by the `ALTER TABLE` statement and the default value of the column are used concurrently [#11346](https://github.com/pingcap/tidb/pull/11346)
+* Fix two issues that occur when parsing JSON files: 
+  * `int64` is used as the intermediate parsing result of `uint64` in `ConvertJSONToFloat`, which leads to the precision overflow error [#11433](https://github.com/pingcap/tidb/pull/11433)
+  * `int64` is used as the intermediate parsing result of `uint64` in `ConvertJSONToInt`, which leads to the precision overflow error [#11551](https://github.com/pingcap/tidb/pull/11551)
+* Disallow dropping indexes on the auto-increment column to avoid that the auto-increment column might get an incorrect result [#11399](https://github.com/pingcap/tidb/pull/11399)
+* Fix the following issues [#11492](https://github.com/pingcap/tidb/pull/11492):
+  * The character set and the collation of the column are not consistent when explicitly specifying the collation but not the character set
+  * The error is not correctly reported when there is a conflict between the character set and the collation that are specified by `ALTER TABLE … MODIFY COLUMN`
+  * Incompatibility with MySQL when using `ALTER TABLE … MODIFY COLUMN` to specify character sets and collations multiple times 
+* Add the trace details of the subquery to the result of the `TRACE` query [#11458](https://github.com/pingcap/tidb/pull/11458)
+* Optimize the performance of executing `ADMIN CHECK TABLE` and greatly reduce its execution time [#11547](https://github.com/pingcap/tidb/pull/11547)
+* Add the result returned by `SPLIT TABLE … REGIONS/INDEX` and make `TOTAL_SPLIT_REGION` and `SCATTER_FINISH_RATIO` display the number of Regions that have been split successfully before timeout in the result [#11484](https://github.com/pingcap/tidb/pull/11484)
+* Fix the issue that the precision displayed by statements like `SHOW CREATE TABLE` is incomplete when `ON UPDATE CURRENT_TIMESTAMP` is the column attribute and the float precision is specified [#11591](https://github.com/pingcap/tidb/pull/11591)
+* Fix the issue that the index result of the column cannot be correctly calculated when the expression of a virtual generated column contains another virtual generated column [#11475](https://github.com/pingcap/tidb/pull/11475)
+* Fix the issue that the minus sign cannot be added after `VALUE LESS THAN` in the `ALTER TABLE … ADD PARTITION … ` statement [#11581](https://github.com/pingcap/tidb/pull/11581)
+
+### Monitor
+* Fix the issue that data is not collected and reported because the `TiKVTxnCmdCounter` monitoring metric is not registered [#11316](https://github.com/pingcap/tidb/pull/11316)
+* Add the `BindUsageCounter`, `BindTotalGauge` and `BindMemoryUsage` monitoring metrics for the Bind Info [#11467](https://github.com/pingcap/tidb/pull/11467)<Paste>
+
+
 ## [3.0.1] 2019-07-16
 * Add the `tidb_wait_split_region_finish_backoff` session variable to control the backoff time of splitting Regions [#11166](https://github.com/pingcap/tidb/pull/11166)
 * Support automatically adjusting the auto-incremental ID allocation step based on the load, and the auto-adjustment scope of the step is 1000~2000000 [#11006](https://github.com/pingcap/tidb/pull/11006)
@@ -27,7 +116,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Fix the issue that the `DB` and `INFO` columns shown by the `SHOW PROCESSLIST` command are incompatible with MySQL [#11003](https://github.com/pingcap/tidb/pull/11003)
 * Fix the system panic issue caused by the `FLUSH PRIVILEGES` statement when `skip-grant-table=true` is configured [#11027](https://github.com/pingcap/tidb/pull/11027)
 * Fix the issue that the primary key statistics collected by `FAST ANALYZE` are not correct when the table primary key is an `UNSIGNED` integer [#11099](https://github.com/pingcap/tidb/pull/11099)
-* Fix the issue that the “invalid key” error is reported by the `FAST ANALYZE` statement in some cases [#11098](https://github.com/pingcap/tidb/pull/11098)
+* Fix the issue that the "invalid key" error is reported by the `FAST ANALYZE` statement in some cases [#11098](https://github.com/pingcap/tidb/pull/11098)
 * Fix the issue that the precision shown by the `SHOW CREATE TABLE` statement is incomplete when `CURRENT_TIMESTAMP` is used as the default value of the column and the decimal precision is specified [#11088](https://github.com/pingcap/tidb/pull/11088)
 * Fix the issue that the function name is not in lowercase when window functions report an error to make it compatible with MySQL [#11118](https://github.com/pingcap/tidb/pull/11118)
 * Fix the issue that TiDB fails to connect to TiKV and thus cannot provide service after the background thread of TiKV Client Batch gRPC panics [#11101](https://github.com/pingcap/tidb/pull/11101)
@@ -154,7 +243,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Support manifesting unsigned BIGINT columns as auto-increment columns  
 * Support the `SHOW CREATE DATABASE IF NOT EXISTS` syntax
 * Optimize the fault tolerance of `load data` for CSV files
-* Abandon the predicate pushdown operation when the filtering condition contains a user variable to improve the compatibility with MySQL’s behavior of using user variables to simulate Window Functions 
+* Abandon the predicate pushdown operation when the filtering condition contains a user variable to improve the compatibility with MySQL's behavior of using user variables to simulate Window Functions 
 
 
 ## [3.0.0-rc.3] 2019-06-21
@@ -464,7 +553,7 @@ Enable hash partition by default; and enable range columns partition when there 
 * Support the `show pump status` and `show drainer status` SQL statements to check the Pump or Drainer status [9456](https://github.com/pingcap/tidb/pull/9456)
 * Support modifying the Pump or Drainer status by using SQL statements [#9789](https://github.com/pingcap/tidb/pull/9789)
 * Support adding HASH fingerprints to SQL text for easy tracking of slow SQL statements [#9662](https://github.com/pingcap/tidb/pull/9662)
-* Add the `log_bin` system variable (“0” by default) to control the enabling state of binlog; only support checking the state currently [#9343](https://github.com/pingcap/tidb/pull/9343)
+* Add the `log_bin` system variable ("0" by default) to control the enabling state of binlog; only support checking the state currently [#9343](https://github.com/pingcap/tidb/pull/9343)
 * Support managing the sending binlog strategy by using the configuration file [#9864](https://github.com/pingcap/tidb/pull/9864)
 * Support querying the slow log by using the `INFORMATION_SCHEMA.SLOW_QUERY` memory table [#9290](https://github.com/pingcap/tidb/pull/9290)
 * Change the MySQL version displayed in TiDB from 5.7.10 to 5.7.25 [#9553](https://github.com/pingcap/tidb/pull/9553) 
@@ -472,7 +561,7 @@ Enable hash partition by default; and enable range columns partition when there 
 * Add the `high_error_rate_feedback_total` monitoring item to record the difference between the actual data volume and the estimated data volume based on statistics [#9209](https://github.com/pingcap/tidb/pull/9209)
 * Add the QPS monitoring item in the database dimension, which can be enabled by using a configuration item [#9151](https://github.com/pingcap/tidb/pull/9151)
 ### DDL
-* Add the `ddl_error_count_limit` global variable (“512” by default) to limit the number of DDL task retries (If this number exceeds the limit, the DDL task is canceled) [#9295](https://github.com/pingcap/tidb/pull/9295)
+* Add the `ddl_error_count_limit` global variable ("512" by default) to limit the number of DDL task retries (If this number exceeds the limit, the DDL task is canceled) [#9295](https://github.com/pingcap/tidb/pull/9295)
 * Support ALTER ALGORITHM `INPLACE`/`INSTANT` [#8811](https://github.com/pingcap/tidb/pull/8811)
 * Support the `SHOW CREATE VIEW` statement [#9309](https://github.com/pingcap/tidb/pull/9309)
 * Support the `SHOW CREATE USER` statement [#9240](https://github.com/pingcap/tidb/pull/9240)
@@ -653,7 +742,7 @@ Enable hash partition by default; and enable range columns partition when there 
 * Support the MySQL 320 handshake protocol [#8812](https://github.com/pingcap/tidb/pull/8812)
 * Support using the unsigned bigint column as the auto-increment column [#8181](https://github.com/pingcap/tidb/pull/8181)
 * Support the `SHOW CREATE DATABASE IF NOT EXISTS` syntax [#8926](https://github.com/pingcap/tidb/pull/8926)
-* Abandon the predicate pushdown operation when the filtering condition contains a user variable to improve the compatibility with MySQL’s behavior of using user variables to mock the Window Function behavior [#8412](https://github.com/pingcap/tidb/pull/8412)
+* Abandon the predicate pushdown operation when the filtering condition contains a user variable to improve the compatibility with MySQL's behavior of using user variables to mock the Window Function behavior [#8412](https://github.com/pingcap/tidb/pull/8412)
 
 ### DDL
 
@@ -829,7 +918,7 @@ Enable hash partition by default; and enable range columns partition when there 
 * Refactor Latch to avoid misjudgment of transaction conflicts and improve the execution performance of concurrent transactions [#7711](https://github.com/pingcap/tidb/pull/7711)
 * Fix the panic issue caused by collecting slow queries in some cases [#7874](https://github.com/pingcap/tidb/pull/7847)
 * Fix the panic issue when `ESCAPED BY` is an empty string in the `LOAD DATA` statement [#8005](https://github.com/pingcap/tidb/pull/8005)
-* Complete the “coprocessor error” log information [#8006](https://github.com/pingcap/tidb/pull/8006)
+* Complete the "coprocessor error" log information [#8006](https://github.com/pingcap/tidb/pull/8006)
 ### Compatibility
 * Set the `Command` field of the `SHOW PROCESSLIST` result to `Sleep` when the query is empty [#7839](https://github.com/pingcap/tidb/pull/7839)
 ### Expressions
@@ -854,7 +943,7 @@ Enable hash partition by default; and enable range columns partition when there 
 * Optimize the performance of Hash aggregate operators [#7541](https://github.com/pingcap/tidb/pull/7541)
 * Optimize the performance of Join operators [#7493](https://github.com/pingcap/tidb/pull/7493), [#7433](https://github.com/pingcap/tidb/pull/7433)
 * Fix the issue that the result of `UPDATE JOIN` is incorrect when the Join order is changed [#7571](https://github.com/pingcap/tidb/pull/7571)
-* Improve the performance of Chunk’s iterator [#7585](https://github.com/pingcap/tidb/pull/7585)
+* Improve the performance of Chunk's iterator [#7585](https://github.com/pingcap/tidb/pull/7585)
 ### Statistics
 * Fix the issue that the auto Analyze work repeatedly analyzes the statistics [#7550](https://github.com/pingcap/tidb/pull/7550)
 * Fix the statistics update error that occurs when there is no statistics change [#7530](https://github.com/pingcap/tidb/pull/7530)
@@ -877,7 +966,7 @@ Enable hash partition by default; and enable range columns partition when there 
 * Use different labels to filter internal SQL and user SQL in monitoring metrics [#7631](https://github.com/pingcap/tidb/pull/7631)
 * Store the top 30 slow queries in the last week to the TiDB server [#7646](https://github.com/pingcap/tidb/pull/7646)
 * Put forward a proposal of setting the global system time zone for the TiDB cluster [#7656](https://github.com/pingcap/tidb/pull/7656)
-* Enrich the error message of “GC life time is shorter than transaction duration” [#7658](https://github.com/pingcap/tidb/pull/7658)
+* Enrich the error message of "GC life time is shorter than transaction duration" [#7658](https://github.com/pingcap/tidb/pull/7658)
 * Set the global system time zone when starting the TiDB cluster [#7638](https://github.com/pingcap/tidb/pull/7638)
 ### Compatibility
 * Add the unsigned flag for the `Year` type [#7542](https://github.com/pingcap/tidb/pull/7542)
