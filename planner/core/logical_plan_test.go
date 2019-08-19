@@ -1712,6 +1712,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+<<<<<<< HEAD
 			sql: `create user 'test'@'%' identified by '123456'`,
 			ans: []visitInfo{
 				{mysql.CreateUserPriv, "", "", ""},
@@ -1724,6 +1725,8 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+=======
+>>>>>>> 8a4b60c... executor, privileges: fix privilege check fail for `CREATE USER` and `DROP USER` (#11589)
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "", ""},

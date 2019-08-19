@@ -1177,8 +1177,14 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
+<<<<<<< HEAD
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
+=======
+	case *ast.AlterUserStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
+>>>>>>> 8a4b60c... executor, privileges: fix privilege check fail for `CREATE USER` and `DROP USER` (#11589)
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.RevokeStmt:

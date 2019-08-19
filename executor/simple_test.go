@@ -353,3 +353,39 @@ func (s *testSuite3) TestStmtAutoNewTxn(c *C) {
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from auto_new").Check(testkit.Rows("1", "2"))
 }
+
+func (s *testSuite3) TestIssue9111(c *C) {
+	// CREATE USER / DROP USER fails if admin doesn't have insert privilege on `mysql.user` table.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user 'user_admin'@'localhost';")
+	tk.MustExec("grant create user on *.* to 'user_admin'@'localhost';")
+
+	// Create a new session.
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "user_admin", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, `create user test_create_user`)
+	c.Check(err, IsNil)
+	_, err = se.Execute(ctx, `drop user test_create_user`)
+	c.Check(err, IsNil)
+
+	tk.MustExec("revoke create user on *.* from 'user_admin'@'localhost';")
+	tk.MustExec("grant insert, delete on mysql.User to 'user_admin'@'localhost';")
+
+	_, err = se.Execute(ctx, `flush privileges`)
+	c.Check(err, IsNil)
+	_, err = se.Execute(ctx, `create user test_create_user`)
+	c.Check(err, IsNil)
+	_, err = se.Execute(ctx, `drop user test_create_user`)
+	c.Check(err, IsNil)
+
+	_, err = se.Execute(ctx, `create role test_create_user`)
+	c.Check(err, IsNil)
+	_, err = se.Execute(ctx, `drop role test_create_user`)
+	c.Check(err, IsNil)
+
+	tk.MustExec("drop user 'user_admin'@'localhost';")
+}
