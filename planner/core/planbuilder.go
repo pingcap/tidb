@@ -1325,7 +1325,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 		}
-	case *ast.AlterUserStmt, *ast.SetDefaultRoleStmt:
+	case *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
