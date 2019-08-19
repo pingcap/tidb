@@ -624,7 +624,3 @@ func (c *Chunk) Reconstruct() {
 	c.numVirtualRows = len(c.sel)
 	c.sel = nil
 }
-
-func writeTime(buf []byte, t types.Time) {
-	*(*types.Time)(unsafe.Pointer(&buf[0])) = t
-}

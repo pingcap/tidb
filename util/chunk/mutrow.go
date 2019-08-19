@@ -136,7 +136,7 @@ func makeMutRowColumn(in interface{}) *Column {
 		return col
 	case types.Time:
 		col := newMutRowFixedLenColumn(sizeTime)
-		writeTime(col.data, x)
+		*(*types.Time)(unsafe.Pointer(&col.data[0])) = x
 		return col
 	case json.BinaryJSON:
 		col := newMutRowVarLenColumn(len(x.Value) + 1)
@@ -253,7 +253,7 @@ func (mr MutRow) SetValue(colIdx int, val interface{}) {
 	case *types.MyDecimal:
 		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *x
 	case types.Time:
-		writeTime(col.data, x)
+		*(*types.Time)(unsafe.Pointer(&col.data[0])) = x
 	case types.Enum:
 		setMutRowNameValue(col, x.Name, x.Value)
 	case types.Set:
@@ -286,7 +286,7 @@ func (mr MutRow) SetDatum(colIdx int, d types.Datum) {
 	case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 		setMutRowBytes(col, d.GetBytes())
 	case types.KindMysqlTime:
-		writeTime(col.data, d.GetMysqlTime())
+		*(*types.Time)(unsafe.Pointer(&col.data[0])) = d.GetMysqlTime()
 	case types.KindMysqlDuration:
 		*(*int64)(unsafe.Pointer(&col.data[0])) = int64(d.GetMysqlDuration().Duration)
 	case types.KindMysqlDecimal:
