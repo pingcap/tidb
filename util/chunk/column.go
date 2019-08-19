@@ -240,6 +240,7 @@ const (
 	sizeFloat64    = int(unsafe.Sizeof(float64(0)))
 	sizeMyDecimal  = int(unsafe.Sizeof(types.MyDecimal{}))
 	sizeGoDuration = int(unsafe.Sizeof(time.Duration(0)))
+	sizeTime       = int(unsafe.Sizeof(types.Time{}))
 )
 
 // resize resizes the column so that it contains n elements, only valid for fixed-length types.
@@ -367,6 +368,11 @@ func (c *Column) ResizeDuration(n int) {
 	c.resize(n, sizeGoDuration)
 }
 
+// ResizeTime resizes the column so that it contains n Time elements.
+func (c *Column) ResizeTime(n int) {
+	c.resize(n, sizeTime)
+}
+
 // ReserveString changes the column capacity to store n string elements and set the length to zero.
 func (c *Column) ReserveString(n int) {
 	c.reserve(n, 8)
@@ -441,6 +447,13 @@ func (c *Column) Decimals() []types.MyDecimal {
 	return res
 }
 
+// Times returns a Time slice stored in this Column.
+func (c *Column) Times() []types.Time {
+	var res []types.Time
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeTime)
+	return res
+}
+
 // GetInt64 returns the int64 in the specific row.
 func (c *Column) GetInt64(rowID int) int64 {
 	return *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
@@ -502,7 +515,7 @@ func (c *Column) GetTime(rowID int) types.Time {
 // GetDuration returns the Duration in the specific row.
 func (c *Column) GetDuration(rowID int, fillFsp int) types.Duration {
 	dur := *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
-	return types.Duration{Duration: time.Duration(dur), Fsp: fillFsp}
+	return types.Duration{Duration: time.Duration(dur), Fsp: int8(fillFsp)}
 }
 
 func (c *Column) getNameValue(rowID int) (string, uint64) {
