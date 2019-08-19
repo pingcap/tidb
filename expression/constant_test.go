@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -346,6 +347,46 @@ func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
 		c.Assert(ok, IsTrue, comment)
 		c.Assert(newConst.DeferredExpr.String(), Equals, tt.deferred, comment)
 	}
+}
+
+func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := mock.NewContext()
+	testTime := time.Now()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{
+		types.NewIntDatum(1),
+		types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
+		types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+		types.NewDurationDatum(types.ZeroDuration),
+		types.NewStringDatum("{}"),
+	}
+	cstInt := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newIntFieldType()}
+	cstDec := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 1}, RetType: newDecimalFieldType()}
+	cstTime := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 2}, RetType: newDateFieldType()}
+	cstDuration := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 3}, RetType: newDurFieldType()}
+	cstJSON := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 4}, RetType: newJSONFieldType()}
+
+	d, _, err := cstInt.EvalInt(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(d, Equals, int64(1))
+	r, _, err := cstInt.EvalReal(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(r, Equals, float64(1))
+	de, _, err := cstDec.EvalDecimal(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(de.String(), Equals, "20170118123950.123")
+	s, _, err := cstInt.EvalString(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(s, Equals, "1")
+	t, _, err := cstTime.EvalTime(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(t.Compare(ctx.GetSessionVars().PreparedParams[2].GetMysqlTime()), Equals, 0)
+	dur, _, err := cstDuration.EvalDuration(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(dur.Duration, Equals, types.ZeroDuration.Duration)
+	json, _, err := cstJSON.EvalJSON(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(json, NotNil)
 }
 
 func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {
