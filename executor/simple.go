@@ -290,7 +290,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 
 	deleteSQL := fmt.Sprintf("DELETE IGNORE FROM mysql.default_roles WHERE USER='%s' AND HOST='%s';", user.Username, user.Hostname)
 	if _, err := sqlExecutor.Execute(context.Background(), deleteSQL); err != nil {
-		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		logutil.Logger(context.Background()).Error(fmt.Sprintf("Error occur when executing %s", sql))
 		if _, rollbackErr := sqlExecutor.Execute(context.Background(), "rollback"); rollbackErr != nil {
 			return rollbackErr
 		}
@@ -298,7 +298,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	}
 
 	if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
-		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		logutil.Logger(context.Background()).Error(fmt.Sprintf("Error occur when executing %s", sql))
 		if _, rollbackErr := sqlExecutor.Execute(context.Background(), "rollback"); rollbackErr != nil {
 			return rollbackErr
 		}
