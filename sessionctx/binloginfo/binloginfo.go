@@ -161,6 +161,7 @@ func AddSpecialComment(ddlQuery string) string {
 	return addSpecialCommentByRegexps(ddlQuery, shardPat, preSplitPat)
 }
 
+// addSpecialCommentByRegexps uses to add special comment for the worlds in the ddlQuery with match the regexps.
 func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string {
 	upperQuery := strings.ToUpper(ddlQuery)
 	var specialComments []string
