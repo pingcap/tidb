@@ -280,7 +280,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID
 		return nil, false, err
 	}
 
-	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, execPlan)
+	useFastExec, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, execPlan.(*plannercore.Execute).Plan)
 	if err != nil {
 		return nil, false, err
 	}
@@ -295,7 +295,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID
 		stmt.Text = prepared.Stmt.Text()
 		sctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
 	}
-	return stmt, ok, nil
+	return stmt, useFastExec, nil
 }
 
 func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
