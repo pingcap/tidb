@@ -397,11 +397,14 @@ func (s *testChunkSuite) TestTimeColumn(c *check.C) {
 	}
 
 	it := NewIterator4Chunk(chk)
+	ts := col.Times()
 	var i int
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		j1 := col.GetTime(i)
 		j2 := row.GetTime(0)
+		j3 := ts[i]
 		c.Assert(j1.Compare(j2), check.Equals, 0)
+		c.Assert(j1.Compare(j3), check.Equals, 0)
 		i++
 	}
 }

@@ -541,7 +541,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	colUsage[0] = initCap>>3 + 0 + initCap*4 + 4
 	colUsage[1] = initCap>>3 + (initCap+1)*4 + initCap*8 + 0
 	colUsage[2] = initCap>>3 + (initCap+1)*4 + initCap*8 + 0
-	colUsage[3] = initCap>>3 + 0 + initCap*16 + 16
+	colUsage[3] = initCap>>3 + 0 + initCap*sizeTime + sizeTime
 	colUsage[4] = initCap>>3 + 0 + initCap*8 + 8
 
 	expectedUsage := 0

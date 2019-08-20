@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
@@ -477,7 +477,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		return errors.Trace(err)
 	}
 	// Save safe point to pd.
-	err = w.saveSafePoint(w.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
+	err = w.saveSafePoint(w.store.GetSafePointKV(), safePoint)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] failed to save safe point to PD",
 			zap.String("uuid", w.uuid),
@@ -1107,7 +1107,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	return false, nil
 }
 
-func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, key string, t uint64) error {
+func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, t uint64) error {
 	s := strconv.FormatUint(t, 10)
 	err := kv.Put(tikv.GcSavedSafePoint, s)
 	if err != nil {
@@ -1231,7 +1231,7 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 		return errors.Errorf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
 	}
 
-	err = gcWorker.saveSafePoint(gcWorker.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
+	err = gcWorker.saveSafePoint(gcWorker.store.GetSafePointKV(), safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1261,7 +1261,7 @@ func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safe
 	}
 
 	// Save safe point to pd.
-	err = gcWorker.saveSafePoint(gcWorker.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
+	err = gcWorker.saveSafePoint(gcWorker.store.GetSafePointKV(), safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
