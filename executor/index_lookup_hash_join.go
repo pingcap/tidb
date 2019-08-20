@@ -16,7 +16,7 @@ import (
 //IndexLookUpHashJoin is the hash join executor
 type IndexLookUpHashJoin struct {
 	IndexLookUpJoin
-	joinResultCh      chan *indexLookUpResult
+	resultCh          chan *indexLookUpResult
 	joinChkResourceCh []chan *chunk.Chunk
 }
 
@@ -24,22 +24,12 @@ type indexHashJoinOuterWorker struct {
 	outerWorker
 }
 
-type innerHashWorker struct {
+type innerHashJoinInnerWorker struct {
 	innerWorker
-	matchPtrBytes [][]byte
-	joinResult    *indexLookUpResult
-}
-
-func (e *IndexLookUpHashJoin) finishInnerWorker(r interface{}) {
-	if r != nil {
-		e.joinResultCh <- &indexLookUpResult{err: errors.Errorf("%v", r)}
-	}
-	e.workerWg.Done()
-}
-
-func (e *IndexLookUpHashJoin) waitInnerHashWorkersAndCloseResultChan() {
-	e.workerWg.Wait()
-	close(e.joinResultCh)
+	matchPtrBytes     [][]byte
+	joiner            joiner
+	joinChkResourceCh chan *chunk.Chunk
+	resultCh          chan *indexLookUpResult
 }
 
 // Open implements the IndexLookUpHashJoin Executor interface.
@@ -79,20 +69,14 @@ func (e *IndexLookUpHashJoin) Open(ctx context.Context) error {
 
 func (e *IndexLookUpHashJoin) startWorkers(ctx context.Context) {
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
-	resultCh := make(chan *lookUpJoinTask, concurrency)
-	e.resultCh = resultCh
 	workerCtx, cancelFunc := context.WithCancel(ctx)
 	e.cancelFunc = cancelFunc
 	innerCh := make(chan *lookUpJoinTask, concurrency)
 	e.workerWg.Add(1)
-	ow := e.newOuterWorker(resultCh, innerCh)
-	go util.WithRecovery(func() {
-		defer close(ow.innerCh)
-		defer e.workerWg.Done()
-		ow.run(workerCtx)
-	}, nil)
+	ow := e.newOuterWorker(innerCh)
+	go util.WithRecovery(func() { ow.run(workerCtx) }, e.finishJoinWorkers)
 
-	e.joinResultCh = make(chan *indexLookUpResult, concurrency+1)
+	e.resultCh = make(chan *indexLookUpResult, concurrency+1)
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := int(0); i < concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
@@ -101,10 +85,23 @@ func (e *IndexLookUpHashJoin) startWorkers(ctx context.Context) {
 	e.workerWg.Add(concurrency)
 	for i := int(0); i < concurrency; i++ {
 		workerID := i
-		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx) }, e.finishInnerWorker)
-
+		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx) }, e.finishJoinWorkers)
 	}
-	go util.WithRecovery(e.waitInnerHashWorkersAndCloseResultChan, nil)
+	go util.WithRecovery(func() { e.workerWg.Wait() }, e.finishWaiter)
+}
+
+func (e *IndexLookUpHashJoin) finishJoinWorkers(r interface{}) {
+	if r != nil {
+		e.resultCh <- &indexLookUpResult{err: errors.Errorf("%v", r)}
+	}
+	e.workerWg.Done()
+}
+
+func (e *IndexLookUpHashJoin) finishWaiter(r interface{}) {
+	if r != nil {
+		e.resultCh <- &indexLookUpResult{err: errors.Errorf("%v", r)}
+	}
+	close(e.resultCh)
 }
 
 // Next implements the IndexLookUpHashJoin Executor interface.
@@ -114,11 +111,10 @@ func (e *IndexLookUpHashJoin) Next(ctx context.Context, req *chunk.Chunk) error 
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
 	}
 	req.Reset()
-	result, ok := <-e.joinResultCh
+	result, ok := <-e.resultCh
 	if !ok {
 		return nil
 	}
-
 	if result.err != nil {
 		return result.err
 	}
@@ -133,10 +129,10 @@ func (e *IndexLookUpHashJoin) Close() error {
 		e.cancelFunc()
 		e.cancelFunc = nil
 	}
-	if e.joinResultCh != nil {
-		for range e.joinResultCh {
+	if e.resultCh != nil {
+		for range e.resultCh {
 		}
-		e.joinResultCh = nil
+		e.resultCh = nil
 	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
@@ -151,30 +147,26 @@ func (e *IndexLookUpHashJoin) Close() error {
 }
 
 func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
+	defer close(ow.innerCh)
 	for {
 		task, err := ow.buildTask(ctx)
 		if task == nil {
 			return
 		}
-
-		if err != nil {
-			task.buildError = err
-		}
-
+		task.buildError = err
 		if finished := ow.pushToChan(ctx, task, ow.innerCh); finished {
 			return
 		}
 	}
 }
 
-func (e *IndexLookUpHashJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask) *indexHashJoinOuterWorker {
+func (e *IndexLookUpHashJoin) newOuterWorker(innerCh chan *lookUpJoinTask) *indexHashJoinOuterWorker {
 	ow := &indexHashJoinOuterWorker{
 		outerWorker: outerWorker{
 			outerCtx:         e.outerCtx,
 			ctx:              e.ctx,
 			executor:         e.children[0],
 			executorChk:      chunk.NewChunkWithCapacity(e.outerCtx.rowTypes, e.maxChunkSize),
-			resultCh:         resultCh,
 			innerCh:          innerCh,
 			batchSize:        32,
 			maxBatchSize:     e.ctx.GetSessionVars().IndexJoinBatchSize,
@@ -185,42 +177,33 @@ func (e *IndexLookUpHashJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinT
 	return ow
 }
 
-func (e *IndexLookUpHashJoin) newInnerWorker(taskCh chan *lookUpJoinTask, workerID int) *innerHashWorker {
+func (e *IndexLookUpHashJoin) newInnerWorker(taskCh chan *lookUpJoinTask, workerID int) *innerHashJoinInnerWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
 	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges))
 	for _, ran := range e.indexRanges {
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
-	iw := &innerHashWorker{
+	iw := &innerHashJoinInnerWorker{
 		innerWorker: innerWorker{
-			innerCtx:          e.innerCtx,
-			outerCtx:          e.outerCtx,
-			taskCh:            taskCh,
-			ctx:               e.ctx,
-			executorChk:       chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
-			indexRanges:       copiedRanges,
-			keyOff2IdxOff:     e.keyOff2IdxOff,
-			joiner:            e.joiner,
-			maxChunkSize:      e.maxChunkSize,
-			workerID:          workerID,
-			joinChkResourceCh: e.joinChkResourceCh,
-			joinResultCh:      e.joinResultCh,
+			innerCtx:      e.innerCtx,
+			outerCtx:      e.outerCtx,
+			taskCh:        taskCh,
+			ctx:           e.ctx,
+			executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
+			indexRanges:   copiedRanges,
+			keyOff2IdxOff: e.keyOff2IdxOff,
 		},
-		matchPtrBytes: make([][]byte, 0, 8),
-		joinResult: &indexLookUpResult{
-			src: e.joinChkResourceCh[workerID],
-		},
+		joiner:            e.joiner,
+		joinChkResourceCh: e.joinChkResourceCh[workerID],
+		resultCh:          e.resultCh,
+		matchPtrBytes:     make([][]byte, 0, 8),
 	}
 
 	return iw
 }
 
-func (iw *innerHashWorker) run(ctx context.Context) {
+func (iw *innerHashJoinInnerWorker) run(ctx context.Context) {
 	var task *lookUpJoinTask
-	//var ok bool
-	//joinResult := &indexLookUpResult{
-	//	src: iw.joinChkResourceCh[iw.workerID],
-	//}
 	ok, joinResult := iw.getNewJoinResult()
 	if !ok {
 		return
@@ -245,26 +228,27 @@ func (iw *innerHashWorker) run(ctx context.Context) {
 		}
 	}
 	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		iw.joinResultCh <- joinResult
+		iw.resultCh <- joinResult
 	}
 }
 
-func (iw *innerHashWorker) getNewJoinResult() (bool, *indexLookUpResult) {
+func (iw *innerHashJoinInnerWorker) getNewJoinResult() (bool, *indexLookUpResult) {
 	joinResult := &indexLookUpResult{
-		src: iw.joinChkResourceCh[iw.workerID],
+		src: iw.joinChkResourceCh,
 	}
 	ok := true
 	select {
-	case joinResult.chk, ok = <-iw.joinChkResourceCh[iw.workerID]:
+	case joinResult.chk, ok = <-iw.joinChkResourceCh:
 	}
 	return ok, joinResult
 }
-func (iw *innerHashWorker) handleTask(ctx context.Context, task *lookUpJoinTask, joinResult *indexLookUpResult) error {
+
+func (iw *innerHashJoinInnerWorker) handleTask(ctx context.Context, task *lookUpJoinTask, joinResult *indexLookUpResult) error {
 	lookUpContents, err := iw.constructLookupContent(task)
 	if err != nil {
 		return err
 	}
-
+	lookUpContents = iw.sortAndDedupLookUpContents(lookUpContents)
 	err = iw.fetchInnerResults(ctx, task, lookUpContents)
 	if err != nil {
 		return err
@@ -272,7 +256,7 @@ func (iw *innerHashWorker) handleTask(ctx context.Context, task *lookUpJoinTask,
 	var ok bool
 	ok, joinResult = iw.join2Chunk(joinResult, task)
 	if !ok {
-		return errors.New("join2Chunk failed")
+		return errors.New("innerHashJoinInnerWorker.handleTask failed")
 	}
 	it := task.lookupMap.NewIterator()
 	for key, rowPtr := it.Next(); key != nil; key, rowPtr = it.Next() {
@@ -283,11 +267,11 @@ func (iw *innerHashWorker) handleTask(ctx context.Context, task *lookUpJoinTask,
 			isNull, _ := task.nullMap[string(key)]
 			iw.joiner.onMissMatch(isNull, misMatchedRow, joinResult.chk)
 		}
-		if joinResult.chk.NumRows() == iw.maxChunkSize {
-			iw.joinResultCh <- joinResult
+		if joinResult.chk.IsFull() {
+			iw.resultCh <- joinResult
 			ok, joinResult = iw.getNewJoinResult()
 			if !ok {
-				return nil
+				return errors.New("innerHashJoinInnerWorker.handleTask failed")
 			}
 		}
 	}
@@ -295,8 +279,7 @@ func (iw *innerHashWorker) handleTask(ctx context.Context, task *lookUpJoinTask,
 	return nil
 
 }
-func (iw *innerHashWorker) join2Chunk(joinResult *indexLookUpResult, task *lookUpJoinTask) (ok bool, _ *indexLookUpResult) {
-
+func (iw *innerHashJoinInnerWorker) join2Chunk(joinResult *indexLookUpResult, task *lookUpJoinTask) (ok bool, _ *indexLookUpResult) {
 	for i := 0; i < task.innerResult.NumChunks(); i++ {
 		curChk := task.innerResult.GetChunk(i)
 		iter := chunk.NewIterator4Chunk(curChk)
@@ -311,7 +294,7 @@ func (iw *innerHashWorker) join2Chunk(joinResult *indexLookUpResult, task *lookU
 	return true, joinResult
 }
 
-func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *lookUpJoinTask,
+func (iw *innerHashJoinInnerWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *lookUpJoinTask,
 	joinResult *indexLookUpResult) (bool, *indexLookUpResult) {
 	keyBuf := make([]byte, 0, 64)
 	for _, keyCol := range iw.keyCols {
@@ -346,8 +329,8 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *loo
 		}
 		hasMatch = hasMatch || matched
 		hasNull = hasNull || isNull
-		if joinResult.chk.NumRows() == iw.maxChunkSize {
-			iw.joinResultCh <- joinResult
+		if joinResult.chk.IsFull() {
+			iw.resultCh <- joinResult
 			ok, joinResult = iw.getNewJoinResult()
 			if !ok {
 				return false, joinResult

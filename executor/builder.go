@@ -1761,12 +1761,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = newFirstChunk(e)
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
-	if !v.KeepOuterOrder {
-		return &IndexLookUpHashJoin{IndexLookUpJoin: *e}
-	}
-	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
-	return e
+	return &IndexLookUpHashJoin{IndexLookUpJoin: *e}
 }
 
 // containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,

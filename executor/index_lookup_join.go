@@ -47,7 +47,7 @@ var _ Executor = &IndexLookUpJoin{}
 //
 // The execution flow is very similar to IndexLookUpReader:
 // 1. outerWorker read N outer rows, build a task and send it to result channel and inner worker channel.
-// 2. The innerWorker receives the task, builds key ranges from outer rows and fetch inner rows, builds inner row hash map.
+// 2. The innerWorker receives the task, bue.ilds key ranges from outer rows and fetch inner rows, builds inner row hash map.
 // 3. main thread receives the task, waits for inner worker finish handling the task.
 // 4. main thread join each outer row by look up the inner rows hash map in the task.
 type IndexLookUpJoin struct {
@@ -142,12 +142,6 @@ type innerWorker struct {
 	indexRanges           []*ranger.Range
 	nextColCompareFilters *plannercore.ColWithCmpFuncManager
 	keyOff2IdxOff         []int
-
-	joiner            joiner
-	maxChunkSize      int
-	workerID          int
-	joinChkResourceCh []chan *chunk.Chunk
-	joinResultCh      chan *indexLookUpResult
 }
 
 type indexLookUpResult struct {
@@ -376,8 +370,6 @@ func (ow *outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst
 // buildTask builds a lookUpJoinTask and read outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
-	newFirstChunk(ow.executor)
-
 	task := &lookUpJoinTask{
 		doneCh:            make(chan error, 1),
 		outerResult:       newFirstChunk(ow.executor),
