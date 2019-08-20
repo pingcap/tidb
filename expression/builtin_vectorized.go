@@ -102,6 +102,7 @@ func (r *localSliceBuffer) put(buf *chunk.Column) {
 	r.Unlock()
 }
 
+// vecRowConverter is used to convert the underlying builtin function between row-based evaluation and vectorized evaluation.
 type vecRowConverter struct {
 	builtinFunc
 
@@ -114,6 +115,7 @@ func newVecRowConverter(underlying builtinFunc) *vecRowConverter {
 	return &vecRowConverter{underlying, nil, nil}
 }
 
+// vecEvalRow evaluates this single row in a vectorized manner.
 func (c *vecRowConverter) vecEvalRow(evalType types.EvalType, row chunk.Row) (err error) {
 	if c.sel == nil {
 		c.sel = make([]int, 1)
@@ -203,6 +205,8 @@ func (c *vecRowConverter) evalJSON(row chunk.Row) (val json.BinaryJSON, isNull b
 	return c.buf.GetJSON(0), c.buf.IsNull(0), nil
 }
 
+// vecEval evaluates this builtin function in a vectorized manner.
+// If the underlying builtin function is row-based, it will be converted to vectorized.
 func (c *vecRowConverter) vecEval(input *chunk.Chunk, result *chunk.Column) error {
 	if c.builtinFunc.vectorized() {
 		return c.builtinFunc.vecEval(input, result)
