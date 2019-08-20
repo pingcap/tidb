@@ -635,6 +635,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 
 	finalSchema := p.schema
 	partialSchema := expression.NewSchema()
+	p.schema = partialSchema
 	partialAgg := p.self
 
 	// TODO: Refactor the way of constructing aggregation functions.
@@ -689,9 +690,10 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	// The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
 	// Can optimize the schema to [count(b), a] , and change the index to get value.
 	partialCursor = 0
-	partialAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(p.AggFuncs))
-	partialOptimizeSchema := expression.NewSchema()
-	for i, aggFunc := range p.AggFuncs {
+	numAggFunc := len(p.AggFuncs)
+	numRemoveAggFunc := 0
+	for i := 0; i < numAggFunc; i++ {
+		aggFunc := p.AggFuncs[i-numRemoveAggFunc]
 		if aggFunc.Name == ast.AggFuncFirstRow {
 			canOptimize := false
 			for j, gbyExpr := range p.GroupByItems {
@@ -702,27 +704,18 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 				}
 			}
 			if canOptimize {
-				partialCursor++
+				partialSchema.Columns = append(partialSchema.Columns[:partialCursor], partialSchema.Columns[partialCursor+1:]...)
+				p.AggFuncs = append(p.AggFuncs[:i-numRemoveAggFunc], p.AggFuncs[i-numRemoveAggFunc+1:]...)
+				numRemoveAggFunc++
 				continue
 			}
 		}
 		if aggregation.NeedCount(aggFunc.Name) {
-			partialOptimizeSchema.Append(partialSchema.Columns[partialCursor])
 			partialCursor++
 		}
 		if aggregation.NeedValue(aggFunc.Name) {
-			partialOptimizeSchema.Append(partialSchema.Columns[partialCursor])
 			partialCursor++
 		}
-		partialAggFuncs = append(partialAggFuncs, aggFunc)
-	}
-	for i := range p.GroupByItems {
-		partialOptimizeSchema.Append(partialSchema.Columns[partialCursor+i])
-	}
-	p.AggFuncs = partialAggFuncs
-	p.schema = partialOptimizeSchema
-	for i, col := range p.schema.Columns {
-		col.ColName = model.NewCIStr(fmt.Sprintf("col_%d", i))
 	}
 
 	// Create physical "final" aggregation.

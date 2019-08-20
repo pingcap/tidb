@@ -64,7 +64,7 @@ Projection_11	9990.00	root	cast(join_agg_0)
 └─HashLeftJoin_15	9990.00	root	inner join, inner:HashAgg_22, equal:[eq(test.a.c1, test.b.c2)]
   ├─TableReader_28	10000.00	root	data:TableScan_27
   │ └─TableScan_27	10000.00	cop	table:a, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─HashAgg_22	7992.00	root	group by:col_1, funcs:count(col_0), firstrow(col_1)
+  └─HashAgg_22	7992.00	root	group by:col_2, funcs:count(col_0), firstrow(col_2)
     └─TableReader_23	7992.00	root	data:HashAgg_17
       └─HashAgg_17	7992.00	cop	group by:test.b.c2, funcs:count(test.b.c2)
         └─Selection_21	9990.00	cop	not(isnull(test.b.c2))
@@ -101,7 +101,7 @@ Projection_9	9990.00	root	test.t1.c1
 └─HashLeftJoin_13	9990.00	root	inner join, inner:HashAgg_20, equal:[eq(test.t1.c1, test.t2.c2)]
   ├─TableReader_26	10000.00	root	data:TableScan_25
   │ └─TableScan_25	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─HashAgg_20	7992.00	root	group by:col_0, funcs:firstrow(col_0)
+  └─HashAgg_20	7992.00	root	group by:col_1, funcs:firstrow(col_1)
     └─TableReader_21	7992.00	root	data:HashAgg_15
       └─HashAgg_15	7992.00	cop	group by:test.t2.c2, 
         └─Selection_19	9990.00	cop	not(isnull(test.t2.c2))
@@ -166,11 +166,11 @@ id	count	task	operator info
 Union_17	26000.00	root	
 ├─HashAgg_21	16000.00	root	group by:c1, funcs:firstrow(join_agg_0)
 │ └─Union_22	16000.00	root	
-│   ├─StreamAgg_34	8000.00	root	group by:col_0, funcs:firstrow(col_0), firstrow(col_0)
+│   ├─StreamAgg_34	8000.00	root	group by:col_2, funcs:firstrow(col_2), firstrow(col_2)
 │   │ └─IndexReader_35	8000.00	root	index:StreamAgg_26
 │   │   └─StreamAgg_26	8000.00	cop	group by:test.t2.c1, 
 │   │     └─IndexScan_33	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
-│   └─StreamAgg_49	8000.00	root	group by:col_0, funcs:firstrow(col_0), firstrow(col_0)
+│   └─StreamAgg_49	8000.00	root	group by:col_2, funcs:firstrow(col_2), firstrow(col_2)
 │     └─IndexReader_50	8000.00	root	index:StreamAgg_41
 │       └─StreamAgg_41	8000.00	cop	group by:test.t2.c1, 
 │         └─IndexScan_48	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
@@ -180,15 +180,15 @@ explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
 id	count	task	operator info
 HashAgg_18	24000.00	root	group by:c1, funcs:firstrow(join_agg_0)
 └─Union_19	24000.00	root	
-  ├─StreamAgg_31	8000.00	root	group by:col_0, funcs:firstrow(col_0), firstrow(col_0)
+  ├─StreamAgg_31	8000.00	root	group by:col_2, funcs:firstrow(col_2), firstrow(col_2)
   │ └─IndexReader_32	8000.00	root	index:StreamAgg_23
   │   └─StreamAgg_23	8000.00	cop	group by:test.t2.c1, 
   │     └─IndexScan_30	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
-  ├─StreamAgg_46	8000.00	root	group by:col_0, funcs:firstrow(col_0), firstrow(col_0)
+  ├─StreamAgg_46	8000.00	root	group by:col_2, funcs:firstrow(col_2), firstrow(col_2)
   │ └─IndexReader_47	8000.00	root	index:StreamAgg_38
   │   └─StreamAgg_38	8000.00	cop	group by:test.t2.c1, 
   │     └─IndexScan_45	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
-  └─StreamAgg_61	8000.00	root	group by:col_0, funcs:firstrow(col_0), firstrow(col_0)
+  └─StreamAgg_61	8000.00	root	group by:col_2, funcs:firstrow(col_2), firstrow(col_2)
     └─IndexReader_62	8000.00	root	index:StreamAgg_53
       └─StreamAgg_53	8000.00	cop	group by:test.t2.c1, 
         └─IndexScan_60	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
@@ -567,7 +567,7 @@ Projection_12	10000.00	root	9_aux_0
       ├─TableReader_24	9.99	root	data:Selection_23
       │ └─Selection_23	9.99	cop	eq(test.s.a, test.t.a), not(isnull(test.s.a))
       │   └─TableScan_22	10000.00	cop	table:s, range:[-inf,+inf], keep order:false, stats:pseudo
-      └─HashAgg_30	7.99	root	group by:col_1, funcs:count(col_0), firstrow(col_1)
+      └─HashAgg_30	7.99	root	group by:col_2, funcs:count(col_0), firstrow(col_2)
         └─TableReader_31	7.99	root	data:HashAgg_25
           └─HashAgg_25	7.99	cop	group by:test.t1.a, funcs:count(1)
             └─Selection_29	9.99	cop	eq(test.t1.a, test.t.a), not(isnull(test.t1.a))
@@ -600,7 +600,7 @@ Projection_12	10000.00	root	9_aux_0
       ├─TableReader_24	9.99	root	data:Selection_23
       │ └─Selection_23	9.99	cop	eq(test.s.a, test.t.a), not(isnull(test.s.a))
       │   └─TableScan_22	10000.00	cop	table:s, range:[-inf,+inf], keep order:false, stats:pseudo
-      └─HashAgg_30	7.99	root	group by:col_1, funcs:count(col_0), firstrow(col_1)
+      └─HashAgg_30	7.99	root	group by:col_2, funcs:count(col_0), firstrow(col_2)
         └─TableReader_31	7.99	root	data:HashAgg_25
           └─HashAgg_25	7.99	cop	group by:test.t1.a, funcs:count(1)
             └─Selection_29	9.99	cop	eq(test.t1.a, test.t.a), not(isnull(test.t1.a))
