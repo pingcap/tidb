@@ -918,9 +918,20 @@ func init() {
 		}
 
 		e := &executorBuilder{is: is, ctx: sctx}
+		startTS, err := e.getStartTS()
+		if err == nil {
+			e.startTS = startTS
+		} else if ErrGetStartTS.Equal(err) {
+			err = sctx.NewTxn(ctx)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
 		exec := e.build(p)
 		if e.err != nil {
-			return rows, err
+			return rows, e.err
 		}
 		err = exec.Open(ctx)
 		defer terror.Call(exec.Close)
