@@ -286,6 +286,19 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	default:
 	}
 
+	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
+		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
+		for i, err := range b.errors {
+			// Print only last 3 errors for non-DEBUG log levels.
+			if log.GetLevel() == zapcore.DebugLevel || i >= len(b.errors)-3 {
+				errMsg += "\n" + err.Error()
+			}
+		}
+		logutil.BgLogger().Warn(errMsg)
+		// Use the first backoff type to generate a MySQL error.
+		return b.types[0].TError()
+	}
+
 	backoffCounter, backoffDuration := typ.metric()
 	backoffCounter.Inc()
 	// Lazy initialize.
@@ -315,18 +328,6 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		zap.Reflect("txnStartTS", startTs))
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
-	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
-		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
-		for i, err := range b.errors {
-			// Print only last 3 errors for non-DEBUG log levels.
-			if log.GetLevel() == zapcore.DebugLevel || i >= len(b.errors)-3 {
-				errMsg += "\n" + err.Error()
-			}
-		}
-		logutil.BgLogger().Warn(errMsg)
-		// Use the first backoff type to generate a MySQL error.
-		return b.types[0].TError()
-	}
 	return nil
 }
 
