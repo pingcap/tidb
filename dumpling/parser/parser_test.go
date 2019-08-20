@@ -2400,6 +2400,13 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD UNIQUE INDEX ()", false, ""},
 		{"ALTER TABLE t ADD UNIQUE KEY ()", false, ""},
 
+		// for keyword `SECONDARY_LOAD`, `SECONDARY_UNLOAD`
+		{"ALTER TABLE d_n.t_n SECONDARY_LOAD", true, "ALTER TABLE `d_n`.`t_n` SECONDARY_LOAD"},
+		{"ALTER TABLE d_n.t_n SECONDARY_UNLOAD", true, "ALTER TABLE `d_n`.`t_n` SECONDARY_UNLOAD"},
+		{"ALTER TABLE t_n LOCK = DEFAULT , SECONDARY_LOAD", true, "ALTER TABLE `t_n` LOCK = DEFAULT, SECONDARY_LOAD"},
+		{"ALTER TABLE d_n.t_n ALGORITHM = DEFAULT , SECONDARY_LOAD", true, "ALTER TABLE `d_n`.`t_n` ALGORITHM = DEFAULT, SECONDARY_LOAD"},
+		{"ALTER TABLE d_n.t_n ALGORITHM = DEFAULT , SECONDARY_UNLOAD", true, "ALTER TABLE `d_n`.`t_n` ALGORITHM = DEFAULT, SECONDARY_UNLOAD"},
+
 		// for issue 4538
 		{"create table a (process double)", true, "CREATE TABLE `a` (`process` DOUBLE)"},
 
