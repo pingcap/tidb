@@ -112,7 +112,8 @@ func (c *Constant) GetType() *types.FieldType {
 	if c.ParamMarker != nil {
 		tp := &c.ParamMarker.tp
 		*tp = *unspecifiedTp
-		types.DefaultParamTypeForValue(c.ParamMarker.GetUserVar(), tp)
+		dt := c.ParamMarker.GetUserVar()
+		types.DefaultParamTypeForValue(dt.GetValue(), tp)
 		return tp
 	}
 	return c.RetType
