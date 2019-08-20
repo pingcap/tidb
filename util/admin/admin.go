@@ -703,8 +703,8 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	}
 
 	logutil.BgLogger().Debug("record",
-		zap.Binary("startKey", startKey),
-		zap.Binary("key", it.Key()),
+		zap.Stringer("startKey", startKey),
+		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
 	rowDecoder := makeRowDecoder(t, cols, genExprs)
 	for it.Valid() && it.Key().HasPrefix(prefix) {

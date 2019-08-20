@@ -164,7 +164,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		case *ast.UnionStmt:
 			p, err = b.buildUnion(ctx, v)
 		case *ast.TableName:
-			p, err = b.buildDataSource(ctx, v)
+			p, err = b.buildDataSource(ctx, v, &x.AsName)
 		default:
 			err = ErrUnsupportedType.GenWithStackByArgs(v)
 		}
@@ -172,9 +172,6 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
-		if v, ok := p.(*DataSource); ok {
-			v.TableAsName = &x.AsName
-		}
 		for _, col := range p.Schema().Columns {
 			col.OrigTblName = col.TblName
 			if x.AsName.L != "" {
@@ -2228,7 +2225,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
-func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (LogicalPlan, error) {
+func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	dbName := tn.Schema
 	if dbName.L == "" {
 		dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -2288,6 +2285,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 
 	ds := DataSource{
 		DBName:              dbName,
+		TableAsName:         asName,
 		table:               tbl,
 		tableInfo:           tableInfo,
 		statisticTable:      statisticTable,

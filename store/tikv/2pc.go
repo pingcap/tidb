@@ -539,7 +539,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				}
 				logutil.BgLogger().Debug("key already exists",
 					zap.Uint64("conn", c.connID),
-					zap.Binary("key", key))
+					zap.Stringer("key", kv.Key(key)))
 				return errors.Trace(conditionPair.Err())
 			}
 
