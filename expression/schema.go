@@ -246,12 +246,13 @@ type NamingForMySQLProtocol struct {
 
 // String implements Stringer interface.
 func (name *NamingForMySQLProtocol) String() string {
-	result := name.ColName.L
+	builder := strings.Builder{}
 	if name.TblName.L != "" {
-		result = name.TblName.L + "." + result
+		builder.WriteString(name.TblName.L + ".")
 	}
 	if name.DBName.L != "" {
-		result = name.DBName.L + "." + result
+		builder.WriteString(name.DBName.L + ".")
 	}
-	return result
+	builder.WriteString(name.ColName.L)
+	return builder.String()
 }
