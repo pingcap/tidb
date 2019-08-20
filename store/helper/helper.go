@@ -67,10 +67,10 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 	kvResp, err := h.Store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
 	if err != nil {
 		logutil.BgLogger().Info("get MVCC by encoded key failed",
-			zap.Binary("encodeKey", encodedKey),
+			zap.Stringer("encodeKey", encodedKey),
 			zap.Reflect("region", keyLocation.Region),
-			zap.Binary("startKey", keyLocation.StartKey),
-			zap.Binary("endKey", keyLocation.EndKey),
+			zap.Stringer("startKey", keyLocation.StartKey),
+			zap.Stringer("endKey", keyLocation.EndKey),
 			zap.Reflect("kvResp", kvResp),
 			zap.Error(err))
 		return nil, errors.Trace(err)
