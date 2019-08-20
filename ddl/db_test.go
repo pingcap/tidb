@@ -4374,7 +4374,14 @@ func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
 	})
 
 	// check records num after drop database.
-	recordsNum = getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
+	for i := 0; i < waitForCleanDataRound; i++ {
+		recordsNum = getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
+		if recordsNum != 0 {
+			time.Sleep(waitForCleanDataInterval)
+		} else {
+			break
+		}
+	}
 	c.Assert(recordsNum, Equals, 0)
 }
 
