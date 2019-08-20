@@ -418,6 +418,7 @@ import (
 	redundant	"REDUNDANT"
 	reload		"RELOAD"
 	remove 		"REMOVE"
+	reorganize	"REORGANIZE"
 	repair		"REPAIR"
 	repeatable	"REPEATABLE"
 	respect		"RESPECT"
@@ -894,6 +895,7 @@ import (
 	OnDeleteUpdateOpt		"optional ON DELETE and UPDATE clause"
 	OptGConcatSeparator		"optional GROUP_CONCAT SEPARATOR"
 	ReferOpt			"reference option"
+	ReorganizePartitionRuleOpt	"optional reorganize partition partition list and definitions"
 	RequireList			"require list"
 	RequireListElement		"require list element"
 	Rolename            "Rolename"
@@ -1132,6 +1134,8 @@ import (
 %precedence key
 %precedence lowerThanLocal
 %precedence local
+%precedence lowerThanRemove
+%precedence remove
 
 %left   join straightJoin inner cross left right full natural
 /* A dummy token to force the priority of TableRef production in a join. */
@@ -1445,6 +1449,13 @@ AlterTableSpec:
 		yylex.AppendError(yylex.Errorf("REBUILD PARTITION syntax is parsed but not implement for now."))
 		parser.lastErrorAsWarn()
 	}
+|	"REORGANIZE" "PARTITION" NoWriteToBinLogAliasOpt ReorganizePartitionRuleOpt {
+		ret := $4.(*ast.AlterTableSpec)
+		ret.NoWriteToBinlog = $3.(bool)
+		$$ = ret
+		yylex.AppendError(yylex.Errorf("REORGANIZE PARTITION syntax is parsed but not implement for now."))
+		parser.lastErrorAsWarn()
+	}
 |	"DROP" KeyOrIndex IfExists Identifier
 	{
 		$$ = &ast.AlterTableSpec{
@@ -1594,6 +1605,25 @@ AlterTableSpec:
 		}
 		yylex.AppendError(yylex.Errorf("The WITH/WITHOUT VALIDATION clause is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
+	}
+
+ReorganizePartitionRuleOpt:
+	/* empty */ %prec lowerThanRemove
+	{
+		ret := &ast.AlterTableSpec{
+			Tp: ast.AlterTableReorganizePartition,
+			OnAllPartitions: true,
+		}
+		$$ = ret
+	}
+|	PartitionNameList "INTO" '(' PartitionDefinitionList ')'
+	{
+		ret := &ast.AlterTableSpec{
+			Tp: ast.AlterTableReorganizePartition,
+			PartitionNames: $1.([]model.CIStr),
+			PartDefinitions: $4.([]*ast.PartitionDefinition),
+		}
+		$$ = ret
 	}
 
 AllOrPartitionNameList:
@@ -4083,7 +4113,7 @@ UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CLEANUP" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "CURRENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
 | "DYNAMIC" | "ENCRYPTION" | "END" | "ENFORCED" | "ENGINE" | "ENGINES" | "ENUM" | "ERRORS" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FOLLOWING" | "FORMAT" | "FULL" |"GLOBAL"
-| "HASH" | "HOUR" | "INSERT_METHOD" | "LESS" | "LOCAL" | "LAST" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REBUILD" | "REDUNDANT"
+| "HASH" | "HOUR" | "INSERT_METHOD" | "LESS" | "LOCAL" | "LAST" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REBUILD" | "REDUNDANT" | "REORGANIZE"
 | "ROLE" |"ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "OPEN"| "SUBPARTITIONS" | "SUBPARTITION" | "TABLES" | "TABLESPACE" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken
 | "TIMESTAMP" %prec lowerThanStringLitToken | "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNBOUNDED" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MASTER" | "MAX_ROWS"
