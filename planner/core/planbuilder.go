@@ -842,7 +842,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
 	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
-	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table}.Init(b.ctx)
+	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx)
 	ts.SetSchema(tblSchema)
 	cop := &copTask{
 		indexPlan:   is,
