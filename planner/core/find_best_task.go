@@ -37,7 +37,7 @@ const (
 	scanFactor        = 1.5 * netWorkFactor
 	descScanFactor    = 2 * scanFactor
 	memoryFactor      = 0.001
-	concurrencyFactor = 0.001
+	concurrencyFactor = 3.0
 
 	selectionFactor = 0.8
 	distinctFactor  = 0.8
@@ -442,15 +442,15 @@ func isCoveringIndex(columns []*expression.Column, indexColumns []*model.IndexCo
 }
 
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
-func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
-	if len(ds.schema.TblID2Handle) > 0 {
-		return
+func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.Column, bool) {
+	handleCol := ds.handleCol
+	if handleCol != nil {
+		return handleCol, false
 	}
-	pkInfo := model.NewExtraHandleColInfo()
-	ts.Columns = append(ts.Columns, pkInfo)
-	handleCol := ds.newExtraHandleSchemaCol()
+	handleCol = ds.newExtraHandleSchemaCol()
 	ts.schema.Append(handleCol)
-	ts.schema.TblID2Handle[ds.tableInfo.ID] = []*expression.Column{handleCol}
+	ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+	return handleCol, true
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
@@ -498,6 +498,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
 			Table:           is.Table,
+			TableAsName:     ds.TableAsName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx)
@@ -522,8 +523,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			cop.cst = rowCount * rowSize * descScanFactor
 		}
 		if cop.tablePlan != nil {
-			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
-			cop.doubleReadNeedProj = true
+			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+			cop.extraHandleCol = col
+			cop.doubleReadNeedProj = isNew
 		}
 		cop.keepOrder = true
 		is.KeepOrder = true
@@ -545,9 +547,9 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
 	if len(idx.Columns) == len(is.schema.Columns) {
 		scanCols = append(scanCols, is.schema.Columns...)
-		handleCols, ok := ds.schema.TblID2Handle[ds.tableInfo.ID]
-		if ok {
-			scanCols = append(scanCols, handleCols[0])
+		handleCol := ds.getPKIsHandleCol()
+		if handleCol != nil {
+			scanCols = append(scanCols, handleCol)
 		}
 	} else {
 		scanCols = is.schema.Columns
