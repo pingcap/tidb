@@ -70,9 +70,9 @@ func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
 	if len(tableNames) == 0 {
 		return nil
 	}
-	hintTables := make([]hintTableInfo, 0, len(tableNames))
-	for _, tableName := range tableNames {
-		hintTables = append(hintTables, hintTableInfo{name: tableName})
+	hintTables := make([]hintTableInfo, len(tableNames))
+	for i, tableName := range tableNames {
+		hintTables[i] = hintTableInfo{name: tableName}
 	}
 	return hintTables
 }
