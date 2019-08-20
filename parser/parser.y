@@ -455,6 +455,7 @@ import (
 	sqlTsiWeek	"SQL_TSI_WEEK"
 	sqlTsiYear	"SQL_TSI_YEAR"
 	start		"START"
+	statsAutoRecalc	"STATS_AUTO_RECALC"
 	statsPersistent	"STATS_PERSISTENT"
 	statsSamplePages	"STATS_SAMPLE_PAGES"
 	status		"STATUS"
@@ -4120,7 +4121,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "NCHAR" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "RESPECT" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "BINDING" | "BINDINGS" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "NONE" | "NULLS" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILE" | "PROFILES"
+| "NONE" | "NULLS" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "STATS_AUTO_RECALC" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILE" | "PROFILES"
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "PRECEDING" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "SLOW" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 | "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT" | "INCREMENTAL" | "CPU" | "MEMORY" | "BLOCK" | "IO" | "CONTEXT" | "SWITCHES" | "PAGE" | "FAULTS" | "IPC" | "SWAPS" | "SOURCE"
@@ -8140,9 +8141,26 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent}
 	}
+|	"STATS_AUTO_RECALC" EqOpt LengthNum
+	{
+		n := $3.(uint64)
+		if n != 0 && n != 1 {
+			yylex.AppendError(yylex.Errorf("The value of STATS_AUTO_RECALC must be one of [0|1|DEFAULT]."))
+			return 1
+		}
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsAutoRecalc, UintValue: n}
+		yylex.AppendError(yylex.Errorf("The STATS_AUTO_RECALC is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"STATS_AUTO_RECALC" EqOpt "DEFAULT"
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsAutoRecalc, Default: true}
+		yylex.AppendError(yylex.Errorf("The STATS_AUTO_RECALC is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
 |	"STATS_SAMPLE_PAGES" EqOpt LengthNum
 	{
-		// Parse it but will ignore it.	
+		// Parse it but will ignore it.
 		// In MySQL, STATS_SAMPLE_PAGES=N(Where 0<N<=65535) or STAS_SAMPLE_PAGES=DEFAULT.
 		// Cause we don't support it, so we don't check range of the value.
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsSamplePages, UintValue: $3.(uint64)}
@@ -8151,9 +8169,9 @@ TableOption:
 	}
 |	"STATS_SAMPLE_PAGES" EqOpt "DEFAULT"
 	{
-		// Parse it but will ignore it.	
+		// Parse it but will ignore it.
 		// In MySQL, default value of STATS_SAMPLE_PAGES is 0.
-		$$ = &ast.TableOption{Tp: ast.TableOptionStatsSamplePages, UintValue: 0}
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsSamplePages, Default: true}
 		yylex.AppendError(yylex.Errorf("The STATS_SAMPLE_PAGES is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
 	}
