@@ -1852,6 +1852,8 @@ const (
 	AlterTableRemovePartitioning
 	AlterTableWithValidation
 	AlterTableWithoutValidation
+	AlterTableSecondaryLoad
+	AlterTableSecondaryUnload
 	AlterTableRebuildPartition
 	AlterTableReorganizePartition
 	AlterTableCheckPartitions
@@ -2295,6 +2297,10 @@ func (n *AlterTableSpec) Restore(ctx *RestoreCtx) error {
 		if !n.WithValidation {
 			ctx.WriteKeyWord(" WITHOUT VALIDATION")
 		}
+	case AlterTableSecondaryLoad:
+		ctx.WriteKeyWord("SECONDARY_LOAD")
+	case AlterTableSecondaryUnload:
+		ctx.WriteKeyWord("SECONDARY_UNLOAD")
 	case AlterTableAlterCheck:
 		ctx.WriteKeyWord("ALTER CHECK ")
 		ctx.WriteName(n.Constraint.Name)
