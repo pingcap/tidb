@@ -1042,7 +1042,7 @@ type SlowQueryLogItems struct {
 	TimeTotal   time.Duration
 	TimeParse   time.Duration
 	TimeCompile time.Duration
-	IndexNames    string
+	IndexNames  string
 	StatsInfos  map[string]uint64
 	CopTasks    *stmtctx.CopTasksDetails
 	ExecDetail  execdetails.ExecDetails
