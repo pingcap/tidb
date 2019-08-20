@@ -464,6 +464,7 @@ var tokenMap = map[string]int{
 	"RELOAD":                   reload,
 	"REMOVE":                   remove,
 	"RENAME":                   rename,
+	"REORGANIZE":               reorganize,
 	"REPAIR":                   repair,
 	"REPEAT":                   repeat,
 	"REPEATABLE":               repeatable,
