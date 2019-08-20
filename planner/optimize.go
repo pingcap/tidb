@@ -16,7 +16,6 @@ package planner
 import (
 	"context"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -24,7 +23,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
-	"go.uber.org/zap"
 )
 
 // Optimize does optimization and creates a Plan.
@@ -32,7 +30,6 @@ import (
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, []*expression.NamingForMySQLProtocol, error) {
 	fp, names := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
-		log.Warn("build point get", zap.Bool("has names", len(names) > 0))
 		return fp, names, nil
 	}
 

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
@@ -122,12 +123,14 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 
 // PSTMTPlanCacheValue stores the cached Statement and StmtNode.
 type PSTMTPlanCacheValue struct {
-	Plan Plan
+	Plan        Plan
+	OutPutNames []*expression.NamingForMySQLProtocol
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
-func NewPSTMTPlanCacheValue(plan Plan) *PSTMTPlanCacheValue {
+func NewPSTMTPlanCacheValue(plan Plan, names []*expression.NamingForMySQLProtocol) *PSTMTPlanCacheValue {
 	return &PSTMTPlanCacheValue{
-		Plan: plan,
+		Plan:        plan,
+		OutPutNames: names,
 	}
 }

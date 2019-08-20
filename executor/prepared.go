@@ -210,6 +210,7 @@ type ExecuteExec struct {
 	plan          plannercore.Plan
 	id            uint32
 	lowerPriority bool
+	outputNames   []*expression.NamingForMySQLProtocol
 }
 
 // Next implements the Executor Next interface.

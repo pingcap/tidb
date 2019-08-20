@@ -181,6 +181,7 @@ type Execute struct {
 	ExecID        uint32
 	Stmt          ast.StmtNode
 	Plan          Plan
+	OutputNames   []*expression.NamingForMySQLProtocol
 }
 
 // OptimizePreparedPlan optimizes the prepared statement.
@@ -233,16 +234,15 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
-	p, err := e.getPhysicalPlan(ctx, sctx, is, prepared)
+	err := e.getPhysicalPlan(ctx, sctx, is, prepared)
 	if err != nil {
 		return err
 	}
 	e.Stmt = prepared.Stmt
-	e.Plan = p
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) (Plan, error) {
+func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) error {
 	var cacheKey kvcache.Key
 	sessionVars := sctx.GetSessionVars()
 	sessionVars.StmtCtx.UseCache = prepared.UseCache
@@ -257,20 +257,24 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			return plan, nil
+			e.OutputNames = cacheValue.(*PSTMTPlanCacheValue).OutPutNames
+			e.Plan = plan
+			return nil
 		}
 	}
-	p, _, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+	p, names, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	e.OutputNames = names
+	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
+		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, names))
 	}
-	return p, err
+	return err
 }
 
 func (e *Execute) rebuildRange(p Plan) error {
