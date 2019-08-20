@@ -70,9 +70,9 @@ func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
 	if len(tableNames) == 0 {
 		return nil
 	}
-	hintTables := make([]hintTableInfo, 0, len(tableNames))
-	for _, tableName := range tableNames {
-		hintTables = append(hintTables, hintTableInfo{name: tableName})
+	hintTables := make([]hintTableInfo, len(tableNames))
+	for i, tableName := range tableNames {
+		hintTables[i] = hintTableInfo{name: tableName}
 	}
 	return hintTables
 }
@@ -1400,22 +1400,6 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
-	case *ast.CreateUserStmt:
-		if raw.IsCreateRole {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateRolePriv, "", "", "", err)
-		} else {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
-		}
-	case *ast.DropUserStmt:
-		if raw.IsDropRole {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropRolePriv, "", "", "", err)
-		} else {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
-		}
 	case *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
