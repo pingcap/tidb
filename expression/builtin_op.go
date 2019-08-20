@@ -409,7 +409,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 			sig = &builtinIntIsTrueSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
 		default:
-			return nil, errors.New(fmt.Sprintf("unexpected types.EvalType %v", argTp))
+			return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 		}
 	case opcode.IsFalsity:
 		switch argTp {
@@ -423,7 +423,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 			sig = &builtinIntIsFalseSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
 		default:
-			return nil, errors.New(fmt.Sprintf("unexpected types.EvalType %v", argTp))
+			return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 		}
 	}
 	return sig, nil
@@ -619,7 +619,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinUnaryNotIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryNotInt)
 	default:
-		return nil, errors.New(fmt.Sprintf("unexpected types.EvalType %v", argTp))
+		return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 	}
 	return sig, nil
 }
