@@ -253,6 +253,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.ctx = from.ctx
 	b.tp = from.tp
 	b.pbCode = from.pbCode
+	b.columnBufferAllocator = newLocalSliceBuffer(len(b.args))
 }
 
 func (b *baseBuiltinFunc) Clone() builtinFunc {

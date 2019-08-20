@@ -1728,6 +1728,7 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	terror.Log(err)
+	fc = &vecRowConvertFuncClass{fc}
 	res = &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,

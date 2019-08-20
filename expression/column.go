@@ -188,7 +188,39 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 
 // VecEval evaluates this expression in a vectorized manner.
 func (col *Column) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	ft := col.RetType
+	switch {
+	case ft.EvalType() == types.ETInt && ft.Hybrid():
+		it := chunk.NewIterator4Chunk(input)
+		result.Reset()
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			v, null, err := col.EvalInt(ctx, row)
+			if err != nil {
+				return err
+			}
+			if null {
+				result.AppendNull()
+			} else {
+				result.AppendInt64(v)
+			}
+		}
+	case ft.EvalType() == types.ETString && ft.Hybrid():
+		it := chunk.NewIterator4Chunk(input)
+		result.ReserveString(input.NumRows())
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			v, null, err := col.EvalString(ctx, row)
+			if err != nil {
+				return err
+			}
+			if null {
+				result.AppendNull()
+			} else {
+				result.AppendString(v)
+			}
+		}
+	default:
+		input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	}
 	return nil
 }
 
