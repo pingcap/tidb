@@ -635,7 +635,6 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 
 	finalSchema := p.schema
 	partialSchema := expression.NewSchema()
-	p.schema = partialSchema
 	partialAgg := p.self
 
 	// TODO: Refactor the way of constructing aggregation functions.
