@@ -446,6 +446,25 @@ func (b *builtinCastIntAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool,
 	return
 }
 
+func (b *builtinCastIntAsIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCastIntAsIntSig) vecEval(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEval(b.ctx, input, result); err != nil {
+		return err
+	}
+	if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) {
+		i64s := result.Int64s()
+		for i := range i64s {
+			if i64s[i] < 0 {
+				i64s[i] = 0
+			}
+		}
+	}
+	return nil
+}
+
 type builtinCastIntAsRealSig struct {
 	baseBuiltinCastFunc
 }
