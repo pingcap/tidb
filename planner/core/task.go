@@ -772,11 +772,15 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
 func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool) float64 {
+	numAggFunc := len(p.AggFuncs)
+	if numAggFunc == 0 {
+		numAggFunc = 1
+	}
 	var cpuCost float64
 	if isRoot {
-		cpuCost = inputRows * cpuFactor * float64(len(p.AggFuncs))
+		cpuCost = inputRows * cpuFactor * float64(numAggFunc)
 	} else {
-		cpuCost = inputRows * copCPUFactor * float64(len(p.AggFuncs))
+		cpuCost = inputRows * copCPUFactor * float64(numAggFunc)
 	}
 	rowsPerGroup := inputRows / p.statsInfo().RowCount
 	memoryCost := rowsPerGroup * distinctFactor * memoryFactor * float64(p.numDistinctFunc())
@@ -849,9 +853,13 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	cardinality := p.statsInfo().RowCount
 	numDistinctFunc := p.numDistinctFunc()
+	numAggFunc := len(p.AggFuncs)
+	if numAggFunc == 0 {
+		numAggFunc = 1
+	}
 	var cpuCost float64
 	if isRoot {
-		cpuCost = inputRows * cpuFactor * float64(len(p.AggFuncs))
+		cpuCost = inputRows * cpuFactor * float64(numAggFunc)
 		divisor, con := p.cpuCostDivisor(numDistinctFunc > 0)
 		if divisor > 0 {
 			cpuCost /= divisor
@@ -859,9 +867,9 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 			cpuCost += (con + 1) * concurrencyFactor
 		}
 	} else {
-		cpuCost = inputRows * copCPUFactor * float64(len(p.AggFuncs))
+		cpuCost = inputRows * copCPUFactor * float64(numAggFunc)
 	}
-	memoryCost := cardinality * memoryFactor * float64(len(p.AggFuncs))
+	memoryCost := cardinality * memoryFactor * float64(numAggFunc)
 	// When aggregation has distinct flag, we would allocate a map for each group to
 	// check duplication.
 	memoryCost += inputRows * distinctFactor * memoryFactor * float64(numDistinctFunc)

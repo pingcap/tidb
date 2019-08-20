@@ -92,14 +92,13 @@ TableReader_7	0.50	root	data:Selection_6
 explain select c1 from t1 where c1 in (select c2 from t2);
 id	count	task	operator info
 Projection_9	1985.00	root	test.t1.c1
-└─HashLeftJoin_13	1985.00	root	inner join, inner:HashAgg_20, equal:[eq(test.t1.c1, test.t2.c2)]
+└─HashLeftJoin_13	1985.00	root	inner join, inner:HashAgg_17, equal:[eq(test.t1.c1, test.t2.c2)]
   ├─TableReader_26	1999.00	root	data:TableScan_25
   │ └─TableScan_25	1999.00	cop	table:t1, range:[-inf,+inf], keep order:false
-  └─HashAgg_20	1985.00	root	group by:col_0, funcs:firstrow(col_0)
-    └─TableReader_21	1985.00	root	data:HashAgg_15
-      └─HashAgg_15	1985.00	cop	group by:test.t2.c2, 
-        └─Selection_19	1985.00	cop	not(isnull(test.t2.c2))
-          └─TableScan_18	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
+  └─HashAgg_17	1985.00	root	group by:test.t2.c2, funcs:firstrow(test.t2.c2)
+    └─TableReader_24	1985.00	root	data:Selection_23
+      └─Selection_23	1985.00	cop	not(isnull(test.t2.c2))
+        └─TableScan_22	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
 explain select * from information_schema.columns;
 id	count	task	operator info
 MemTableScan_4	10000.00	root	
