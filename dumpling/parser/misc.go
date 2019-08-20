@@ -533,6 +533,7 @@ var tokenMap = map[string]int{
 	"STATS_HISTOGRAMS":         statsHistograms,
 	"STATS_HEALTHY":            statsHealthy,
 	"STATS_META":               statsMeta,
+	"STATS_AUTO_RECALC":        statsAutoRecalc,
 	"STATS_PERSISTENT":         statsPersistent,
 	"STATS_SAMPLE_PAGES":       statsSamplePages,
 	"STATUS":                   status,

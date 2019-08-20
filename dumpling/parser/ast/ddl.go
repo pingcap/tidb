@@ -1543,6 +1543,7 @@ const (
 	TableOptionDelayKeyWrite
 	TableOptionRowFormat
 	TableOptionStatsPersistent
+	TableOptionStatsAutoRecalc
 	TableOptionShardRowID
 	TableOptionPreSplitRegion
 	TableOptionPackKeys
@@ -1591,6 +1592,7 @@ const (
 // TableOption is used for parsing table option from SQL.
 type TableOption struct {
 	Tp        TableOptionType
+	Default   bool
 	StrValue  string
 	UintValue uint64
 }
@@ -1698,6 +1700,14 @@ func (n *TableOption) Restore(ctx *RestoreCtx) error {
 		ctx.WritePlain("= ")
 		ctx.WriteKeyWord("DEFAULT")
 		ctx.WritePlain(" /* TableOptionStatsPersistent is not supported */ ")
+	case TableOptionStatsAutoRecalc:
+		ctx.WriteKeyWord("STATS_AUTO_RECALC ")
+		ctx.WritePlain("= ")
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WritePlainf("%d", n.UintValue)
+		}
 	case TableOptionShardRowID:
 		ctx.WriteKeyWord("SHARD_ROW_ID_BITS ")
 		ctx.WritePlainf("= %d", n.UintValue)
@@ -1731,7 +1741,7 @@ func (n *TableOption) Restore(ctx *RestoreCtx) error {
 	case TableOptionStatsSamplePages:
 		ctx.WriteKeyWord("STATS_SAMPLE_PAGES ")
 		ctx.WritePlain("= ")
-		if n.UintValue == 0 {
+		if n.Default {
 			ctx.WriteKeyWord("DEFAULT")
 		} else {
 			ctx.WritePlainf("%d", n.UintValue)
