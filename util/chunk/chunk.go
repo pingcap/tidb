@@ -14,7 +14,6 @@
 package chunk
 
 import (
-	"encoding/binary"
 	"reflect"
 	"unsafe"
 
@@ -630,33 +629,4 @@ func (c *Chunk) Reconstruct() {
 	}
 	c.numVirtualRows = len(c.sel)
 	c.sel = nil
-}
-
-func writeTime(buf []byte, t types.Time) {
-	binary.BigEndian.PutUint16(buf, uint16(t.Time.Year()))
-	buf[2] = uint8(t.Time.Month())
-	buf[3] = uint8(t.Time.Day())
-	buf[4] = uint8(t.Time.Hour())
-	buf[5] = uint8(t.Time.Minute())
-	buf[6] = uint8(t.Time.Second())
-	binary.BigEndian.PutUint32(buf[8:], uint32(t.Time.Microsecond()))
-	buf[12] = t.Type
-	buf[13] = uint8(t.Fsp)
-}
-
-func readTime(buf []byte) types.Time {
-	year := int(binary.BigEndian.Uint16(buf))
-	month := int(buf[2])
-	day := int(buf[3])
-	hour := int(buf[4])
-	minute := int(buf[5])
-	second := int(buf[6])
-	microseconds := int(binary.BigEndian.Uint32(buf[8:]))
-	tp := buf[12]
-	fsp := int(buf[13])
-	return types.Time{
-		Time: types.FromDate(year, month, day, hour, minute, second, microseconds),
-		Type: tp,
-		Fsp:  fsp,
-	}
 }

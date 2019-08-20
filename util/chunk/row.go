@@ -74,7 +74,6 @@ func (r Row) GetBytes(colIdx int) []byte {
 }
 
 // GetTime returns the Time value with the colIdx.
-// TODO: use Time structure directly.
 func (r Row) GetTime(colIdx int) types.Time {
 	return r.c.columns[colIdx].GetTime(r.idx)
 }
