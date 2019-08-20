@@ -2277,17 +2277,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
-	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
-	var hintFromComment []*ast.IndexHint
-	if hints := b.TableHints(); hints != nil {
-		for _, hint := range hints.indexHintList {
-			// Hints from comments can match both original table name and table alias.
-			if hint.tblName == tn.Name || hint.tblName == asName {
-				hintFromComment = append(hintFromComment, hint.indexHint)
-			}
-		}
-	}
-	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, hintFromComment, tableInfo)
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, asName)
 	if err != nil {
 		return nil, err
 	}

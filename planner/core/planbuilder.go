@@ -525,7 +525,7 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, hintFromComment []*ast.IndexHint, tblInfo *model.TableInfo) ([]*accessPath, error) {
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, asName *model.CIStr) ([]*accessPath, error) {
 	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
 	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
 	for _, index := range tblInfo.Indices {
@@ -538,7 +538,16 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, hintFr
 	available := make([]*accessPath, 0, len(publicPaths))
 	ignored := make([]*accessPath, 0, len(publicPaths))
 
-	indexHints = append(hintFromComment, indexHints...)
+	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
+	indexHintsLen := len(indexHints)
+	if hints := b.TableHints(); hints != nil {
+		for _, hint := range hints.indexHintList {
+			if hint.tblName == *asName {
+				indexHints = append(indexHints, hint.indexHint)
+			}
+		}
+	}
+
 	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
@@ -548,11 +557,12 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, hintFr
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
-				if i >= len(hintFromComment) {
-					return nil, ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
+				err := ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
+				// if hint is from comment-style sql hints, we should throw a warning instead of error.
+				if i < indexHintsLen {
+					return nil, err
 				}
-				warn := ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
 			if hint.HintType == ast.HintIgnore {
