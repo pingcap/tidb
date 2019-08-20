@@ -224,7 +224,7 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 
 	// Test for DDLJobHistoryKey.
-	key = meta.DDLJobHistoryKey(t, 888)
+	key := meta.DDLJobHistoryKey(t, 888)
 	c.Assert(key, DeepEquals, []byte{0x6d, 0x44, 0x44, 0x4c, 0x4a, 0x6f, 0x62, 0x48, 0x69, 0xff, 0x73, 0x74, 0x6f, 0x72, 0x79, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x78, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf7})
 }
 
@@ -326,6 +326,13 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
+	// Add multiple history jobs.
+	historyJob1 := &model.Job{ID: 1234}
+	err = t.AddHistoryDDLJob(historyJob1)
+	c.Assert(err, IsNil)
+	historyJob2 := &model.Job{ID: 123}
+	err = t.AddHistoryDDLJob(historyJob2)
+	c.Assert(err, IsNil)
 	all, err := t.GetAllHistoryDDLJobs()
 	c.Assert(err, IsNil)
 	var lastID int64
