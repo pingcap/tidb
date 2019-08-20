@@ -13,7 +13,10 @@
 
 package kv
 
-import "bytes"
+import (
+	"bytes"
+	"encoding/hex"
+)
 
 // Key represents high-level Key type.
 type Key []byte
@@ -68,6 +71,11 @@ func (k Key) HasPrefix(prefix Key) bool {
 // Clone returns a copy of the Key.
 func (k Key) Clone() Key {
 	return append([]byte(nil), k...)
+}
+
+// String implements fmt.Stringer interface.
+func (k Key) String() string {
+	return hex.EncodeToString(k)
 }
 
 // KeyRange represents a range where StartKey <= key < EndKey.
