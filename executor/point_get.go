@@ -92,7 +92,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if e.idxInfo != nil {
-		idxKey, err1 := e.encodeIndexKey()
+		idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
 		}
@@ -140,7 +140,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	return e.decodeRowValToChunk(val, req)
+	return decodeRowValToChunk(e.base(), e.tblInfo, e.handle, val, req)
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
@@ -191,7 +191,28 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 	return e.snapshot.Get(key)
 }
 
-func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {
+func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
+	sc := e.ctx.GetSessionVars().StmtCtx
+	for i := range idxVals {
+		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
+		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
+			idxVals[i], err = ranger.HandlePadCharToFullLength(sc, &colInfo.FieldType, idxVals[i])
+		} else {
+			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	encodedIdxVals, err := codec.EncodeKey(sc, nil, idxVals...)
+	if err != nil {
+		return nil, err
+	}
+	return tablecodec.EncodeIndexSeekKey(tblInfo.ID, idxInfo.ID, encodedIdxVals), nil
+}
+
+func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk) error {
 	colID2CutPos := make(map[int64]int, e.schema.Len())
 	for _, col := range e.schema.Columns {
 		if _, ok := colID2CutPos[col.ID]; !ok {
@@ -207,17 +228,17 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 	}
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for i, col := range e.schema.Columns {
-		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
-			chk.AppendInt64(i, e.handle)
+		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+			chk.AppendInt64(i, handle)
 			continue
 		}
 		if col.ID == model.ExtraHandleID {
-			chk.AppendInt64(i, e.handle)
+			chk.AppendInt64(i, handle)
 			continue
 		}
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {
-			colInfo := getColInfoByID(e.tblInfo, col.ID)
+			colInfo := getColInfoByID(tblInfo, col.ID)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
 				return err1

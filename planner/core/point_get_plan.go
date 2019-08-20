@@ -140,6 +140,11 @@ func (p *PointGetPlan) ResolveIndices() error {
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
+		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
+		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
+		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
+			return fp
+		}
 		fp := tryPointGetPlan(ctx, x)
 		if fp != nil {
 			if checkFastPlanPrivilege(ctx, fp, mysql.SelectPriv) != nil {
@@ -169,6 +174,98 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 		return tryDeletePointPlan(ctx, x)
 	}
 	return nil
+}
+
+func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) Plan {
+	if selStmt.OrderBy != nil || selStmt.GroupBy != nil || selStmt.Limit != nil ||
+		selStmt.Having != nil || len(selStmt.WindowSpecs) > 0 ||
+		selStmt.LockTp != ast.SelectLockNone {
+		return nil
+	}
+	in, ok := selStmt.Where.(*ast.PatternInExpr)
+	if !ok || in.Not || len(in.List) < 1 {
+		return nil
+	}
+
+	children := make([]PhysicalPlan, 0, len(in.List))
+	chReqProps := make([]*property.PhysicalProperty, 0, len(in.List))
+	reusedStmt := &ast.SelectStmt{
+		SelectStmtOpts: selStmt.SelectStmtOpts,
+		Distinct:       selStmt.Distinct,
+		From:           selStmt.From,
+		Fields:         selStmt.Fields,
+	}
+
+	switch leftExpr := in.Expr.(type) {
+	case *ast.ColumnNameExpr:
+		reusedStmt := &ast.SelectStmt{
+			SelectStmtOpts: selStmt.SelectStmtOpts,
+			Distinct:       selStmt.Distinct,
+			From:           selStmt.From,
+			Fields:         selStmt.Fields,
+		}
+		for _, row := range in.List {
+			where := &ast.BinaryOperationExpr{
+				Op: opcode.EQ,
+				L:  in.Expr,
+				R:  row,
+			}
+			reusedStmt.Where = where
+			fp := TryFastPlan(ctx, reusedStmt)
+			if fp == nil {
+				return nil
+			}
+			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: 1})
+			children = append(children, fp.(*PointGetPlan))
+		}
+
+	case *ast.RowExpr:
+		if len(leftExpr.Values) < 1 {
+			return nil
+		}
+
+		eleCount := len(leftExpr.Values)
+		for _, row := range in.List {
+			rightExpr, ok := row.(*ast.RowExpr)
+			if !ok || len(rightExpr.Values) != eleCount {
+				return nil
+			}
+			where := &ast.BinaryOperationExpr{
+				Op: opcode.EQ,
+				L:  leftExpr.Values[0],
+				R:  rightExpr.Values[0],
+			}
+			for i := 1; i < eleCount; i++ {
+				right := &ast.BinaryOperationExpr{
+					Op: opcode.EQ,
+					L:  leftExpr.Values[i],
+					R:  rightExpr.Values[i],
+				}
+				where = &ast.BinaryOperationExpr{
+					Op: opcode.LogicAnd,
+					L:  where,
+					R:  right,
+				}
+			}
+			reusedStmt.Where = where
+			fp := TryFastPlan(ctx, reusedStmt)
+			if fp == nil {
+				return nil
+			}
+			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: 1})
+			children = append(children, fp.(*PointGetPlan))
+		}
+
+	default:
+		return nil
+	}
+
+	ua := PhysicalUnionAll{
+		IsPointGetUnion: true,
+	}.Init(ctx, children[0].statsInfo().Scale(float64(len(children))), chReqProps...)
+	ua.SetSchema(children[0].Schema())
+	ua.SetChildren(children...)
+	return ua
 }
 
 // tryPointGetPlan determine if the SelectStmt can use a PointGetPlan.
