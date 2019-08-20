@@ -22,6 +22,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -1224,6 +1225,11 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 	logQuery(st.OriginText(), s.sessionVars)
 	if useFastExec {
+		err = s.InitTxnWithStartTS(math.MaxUint64)
+		defer s.txn.changeToInvalid()
+		if err != nil {
+			return nil, err
+		}
 		return st.Exec(ctx)
 	}
 	s.PrepareTxnCtx(ctx)

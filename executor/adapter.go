@@ -702,15 +702,6 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 		return false, nil
 	}
 
-	// check txn
-	txn, err := ctx.Txn(false)
-	if err != nil {
-		return false, err
-	}
-	if txn.Valid() {
-		return false, nil
-	}
-
 	// check plan
 	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
 		if len(proj.Children()) != 1 {
