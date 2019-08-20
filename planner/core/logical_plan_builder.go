@@ -64,7 +64,7 @@ const (
 	HintHashAgg = "hash_agg"
 	// HintStreamAgg is hint enforce stream aggregation.
 	HintStreamAgg = "stream_agg"
-	// HintIndex is hint enforce use some indexes.
+	// HintIndex is hint enforce using some indexes.
 	HintIndex = "index"
 )
 
@@ -2277,7 +2277,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, asName)
+	tblName := *asName
+	if tblName.L == "" {
+		tblName = tn.Name
+	}
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, tblName)
 	if err != nil {
 		return nil, err
 	}

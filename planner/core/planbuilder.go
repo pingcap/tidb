@@ -525,7 +525,7 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, asName *model.CIStr) ([]*accessPath, error) {
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, tblName model.CIStr) ([]*accessPath, error) {
 	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
 	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
 	for _, index := range tblInfo.Indices {
@@ -542,7 +542,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 	indexHintsLen := len(indexHints)
 	if hints := b.TableHints(); hints != nil {
 		for _, hint := range hints.indexHintList {
-			if hint.tblName == *asName {
+			if hint.tblName == tblName {
 				indexHints = append(indexHints, hint.indexHint)
 			}
 		}

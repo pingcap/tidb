@@ -1724,8 +1724,13 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	}{
 		// simple case
 		{
-			sql:     "select /*+ INDEX(t, c_d_e) */ * from t t1",
+			sql:     "select /*+ INDEX(t, c_d_e) */ * from t",
 			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+			hasWarn: false,
+		},
+		{
+			sql:     "select /*+ INDEX(t, c_d_e) */ * from t t1",
+			best:    "TableReader(Table(t))",
 			hasWarn: false,
 		},
 		{
@@ -1733,13 +1738,6 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
 			hasWarn: false,
 		},
-		// test use original table name
-		{
-			sql:     "select /*+ INDEX(t, c_d_e) */ * from t t1, t t2 where t1.a = t2.b",
-			best:    "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
-			hasWarn: false,
-		},
-		// test use table alias
 		{
 			sql:     "select /*+ INDEX(t1, c_d_e), INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
