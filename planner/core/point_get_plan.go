@@ -155,7 +155,8 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				// is disabled (either by beginning transaction with START TRANSACTION or by setting
 				// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 				// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
-				if ctx.GetSessionVars().InTxn() {
+				sessVars := ctx.GetSessionVars()
+				if !sessVars.IsAutocommit() || sessVars.InTxn() {
 					fp.Lock = true
 					fp.IsForUpdate = true
 				}
