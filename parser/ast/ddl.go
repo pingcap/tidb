@@ -1843,6 +1843,7 @@ const (
 	AlterTableWithValidation
 	AlterTableWithoutValidation
 	AlterTableRebuildPartition
+	AlterTableReorganizePartition
 	AlterTableCheckPartitions
 	AlterTableExchangePartition
 	AlterTableOptimizePartition
@@ -2244,6 +2245,35 @@ func (n *AlterTableSpec) Restore(ctx *RestoreCtx) error {
 				ctx.WritePlain(",")
 			}
 			ctx.WriteName(name.O)
+		}
+	case AlterTableReorganizePartition:
+		ctx.WriteKeyWord("REORGANIZE PARTITION")
+		if n.NoWriteToBinlog {
+			ctx.WriteKeyWord(" NO_WRITE_TO_BINLOG")
+		}
+		if n.OnAllPartitions {
+			return nil
+		}
+		for i, name := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(",")
+			} else {
+				ctx.WritePlain(" ")
+			}
+			ctx.WriteName(name.O)
+		}
+		ctx.WriteKeyWord(" INTO ")
+		if n.PartDefinitions != nil {
+			ctx.WritePlain("(")
+			for i, def := range n.PartDefinitions {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				if err := def.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.PartDefinitions[%d]", i)
+				}
+			}
+			ctx.WritePlain(")")
 		}
 	case AlterTableExchangePartition:
 		ctx.WriteKeyWord("EXCHANGE PARTITION ")
