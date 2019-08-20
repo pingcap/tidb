@@ -166,7 +166,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		case *ast.UnionStmt:
 			p, err = b.buildUnion(ctx, v)
 		case *ast.TableName:
-			p, err = b.buildDataSource(ctx, v, x.AsName)
+			p, err = b.buildDataSource(ctx, v, &x.AsName)
 		default:
 			err = ErrUnsupportedType.GenWithStackByArgs(v)
 		}
@@ -174,9 +174,6 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
-		if v, ok := p.(*DataSource); ok {
-			v.TableAsName = &x.AsName
-		}
 		for _, col := range p.Schema().Columns {
 			col.OrigTblName = col.TblName
 			if x.AsName.L != "" {
@@ -405,6 +402,10 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	if err != nil {
 		return nil, err
 	}
+
+	handleMap1 := b.handleHelper.popMap()
+	handleMap2 := b.handleHelper.popMap()
+	b.handleHelper.mergeAndPush(handleMap1, handleMap2)
 
 	joinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.Init(b.ctx)
 	joinPlan.SetChildren(leftPlan, rightPlan)
@@ -897,6 +898,11 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, union *ast.UnionStmt) (Log
 	}
 
 	oldLen := unionPlan.Schema().Len()
+
+	for i := 0; i < len(union.SelectList.Selects); i++ {
+		b.handleHelper.popMap()
+	}
+	b.handleHelper.pushMap(nil)
 
 	if union.OrderBy != nil {
 		unionPlan, err = b.buildSort(ctx, unionPlan, union.OrderBy.Items, nil, nil)
@@ -2089,6 +2095,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if sel.LockTp != ast.SelectLockNone {
 		p = b.buildSelectLock(p, sel.LockTp)
 	}
+	b.handleHelper.popMap()
+	b.handleHelper.pushMap(nil)
 
 	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg {
@@ -2184,6 +2192,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 }
 
 func (b *PlanBuilder) buildTableDual() *LogicalTableDual {
+	b.handleHelper.pushMap(nil)
 	return LogicalTableDual{RowCount: 1}.Init(b.ctx)
 }
 
@@ -2233,7 +2242,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
-func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName model.CIStr) (LogicalPlan, error) {
+func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	dbName := tn.Schema
 	if dbName.L == "" {
 		dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -2303,6 +2312,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	ds := DataSource{
 		DBName:              dbName,
+		TableAsName:         asName,
 		table:               tbl,
 		tableInfo:           tableInfo,
 		statisticTable:      statisticTable,
@@ -2344,7 +2354,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		ds.TblCols = append(ds.TblCols, handleCol)
 	}
 	if handleCol != nil {
-		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
+		ds.handleCol = handleCol
+		handleMap := make(map[int64][]*expression.Column)
+		handleMap[tableInfo.ID] = []*expression.Column{handleCol}
+		b.handleHelper.pushMap(handleMap)
+	} else {
+		b.handleHelper.pushMap(nil)
 	}
 	ds.SetSchema(schema)
 
@@ -2358,7 +2373,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 	if txn.Valid() && !txn.IsReadOnly() && !isMemDB {
-		us := LogicalUnionScan{}.Init(b.ctx)
+		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx)
 		us.SetChildren(ds)
 		result = us
 	}
@@ -2487,6 +2502,9 @@ func (b *PlanBuilder) projectVirtualColumns(ctx context.Context, ds *DataSource,
 	}
 
 	proj.SetSchema(ds.Schema().Clone())
+	for _, cols := range b.handleHelper.tailMap() {
+		cols[0] = proj.schema.RetrieveColumn(cols[0])
+	}
 	return proj, nil
 }
 
@@ -2717,8 +2735,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}
 	p = np
 
-	updt := Update{OrderedList: orderedList}.Init(b.ctx)
-	updt.SetSchema(p.Schema())
+	updt := Update{
+		OrderedList: orderedList,
+	}.Init(b.ctx)
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved.
 	updt.SelectPlan, err = DoOptimize(ctx, b.optFlag&^flagEliminateProjection, p)
@@ -2729,11 +2748,15 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err != nil {
 		return nil, err
 	}
+	tblID2Handle, err := resolveIndicesForTblID2Handle(b.handleHelper.tailMap(), updt.SelectPlan.Schema())
+	if err != nil {
+		return nil, err
+	}
 	tblID2table := make(map[int64]table.Table)
-	for id := range updt.SelectPlan.Schema().TblID2Handle {
+	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
-	updt.TblColPosInfos, err = buildColumns2Handle(updt.SelectPlan.Schema(), updt.SelectPlan.Schema().TblID2Handle, tblID2table, true)
+	updt.TblColPosInfos, err = buildColumns2Handle(updt.SelectPlan.Schema(), tblID2Handle, tblID2table, true)
 	return updt, err
 }
 
@@ -2926,8 +2949,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		return nil, err
 	}
 
-	del.SetSchema(expression.NewSchema())
-
 	var tableList []*ast.TableName
 	tableList = extractTableList(delete.TableRefs.TableRefs, tableList, true)
 
@@ -2984,7 +3005,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 	}
 
-	tblID2Handles := del.SelectPlan.Schema().TblID2Handle
+	tblID2Handle, err := resolveIndicesForTblID2Handle(b.handleHelper.tailMap(), del.SelectPlan.Schema())
+	if err != nil {
+		return nil, err
+	}
 	if del.IsMultiTable {
 		// tblID2TableName is the table map value is an array which contains table aliases.
 		// Table ID may not be unique for deleting multiple tables, for statements like
@@ -2994,14 +3018,28 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		for _, tn := range delete.Tables.Tables {
 			tblID2TableName[tn.TableInfo.ID] = append(tblID2TableName[tn.TableInfo.ID], tn)
 		}
-		tblID2Handles = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handles)
+		tblID2Handle = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handle)
 	}
 	tblID2table := make(map[int64]table.Table)
-	for id := range tblID2Handles {
+	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
-	del.TblColPosInfos, err = buildColumns2Handle(del.SelectPlan.Schema(), tblID2Handles, tblID2table, false)
+	del.TblColPosInfos, err = buildColumns2Handle(del.SelectPlan.Schema(), tblID2Handle, tblID2table, false)
 	return del, err
+}
+
+func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]*expression.Column, schema *expression.Schema) (map[int64][]*expression.Column, error) {
+	newMap := make(map[int64][]*expression.Column, len(tblID2Handle))
+	for i, cols := range tblID2Handle {
+		for _, col := range cols {
+			resolvedCol, err := col.ResolveIndices(schema)
+			if err != nil {
+				return nil, err
+			}
+			newMap[i] = append(newMap[i], resolvedCol.(*expression.Column))
+		}
+	}
+	return newMap, nil
 }
 
 func (p *Delete) cleanTblID2HandleMap(tablesToDelete map[int64][]*ast.TableName, tblID2Handle map[int64][]*expression.Column) map[int64][]*expression.Column {
