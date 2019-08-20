@@ -147,7 +147,7 @@ Projection_10	170.34	root	test.gad.id, test.sdk.id, test.gad.aid, test.gad.cm, t
     └─IndexLookUp_17	0.25	root	
       ├─IndexScan_14	1.00	cop	table:sdk, index:aid, dic, range: decided by [eq(test.sdk.aid, test.gad.aid)], keep order:false
       └─Selection_16	0.25	cop	eq(test.sdk.bm, 0), eq(test.sdk.pt, "ios"), gt(test.sdk.t, 1477971479), not(isnull(test.sdk.mac)), not(isnull(test.sdk.t))
-        └─TableScan_15	1.00	cop	table:dd, keep order:false
+        └─TableScan_15	1.00	cop	table:sdk, keep order:false
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	count	task	operator info
 Projection_5	39.28	root	test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, 3_col_0, 3_col_1
