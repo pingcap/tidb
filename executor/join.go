@@ -48,7 +48,6 @@ type HashJoinExec struct {
 	outerKeys   []*expression.Column
 	innerKeys   []*expression.Column
 
-	prepared bool
 	// concurrency is the number of partition, build and join workers.
 	concurrency     uint
 	hashTable       *mvmap.MVMap
@@ -58,11 +57,8 @@ type HashJoinExec struct {
 	joinWorkerWaitGroup sync.WaitGroup
 	finished            atomic.Value
 	// closeCh add a lock for closing executor.
-	closeCh  chan struct{}
-	joinType plannercore.JoinType
-	innerIdx int
-
-	isOuterJoin  bool
+	closeCh      chan struct{}
+	joinType     plannercore.JoinType
 	requiredRows int64
 
 	// We build individual joiner for each join worker when use chunk-based
@@ -78,7 +74,9 @@ type HashJoinExec struct {
 	joinResultCh       chan *hashjoinWorkerResult
 	hashTableValBufs   [][][]byte
 
-	memTracker *memory.Tracker // track memory usage.
+	memTracker  *memory.Tracker // track memory usage.
+	prepared    bool
+	isOuterJoin bool
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -134,7 +132,6 @@ func (e *HashJoinExec) Close() error {
 		e.outerChkResourceCh = nil
 		e.joinChkResourceCh = nil
 	}
-	e.memTracker.Detach()
 	e.memTracker = nil
 
 	err := e.baseExecutor.Close()
@@ -263,37 +260,31 @@ var innerResultLabel fmt.Stringer = stringutil.StringerStr("innerResult")
 
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
-func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}) {
+func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh <-chan struct{}) {
 	defer close(chkCh)
 	e.innerResult = chunk.NewList(e.innerExec.base().retFieldTypes, e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	var err error
 	for {
+		if e.finished.Load().(bool) {
+			return
+		}
+		chk := chunk.NewChunkWithCapacity(e.innerExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
+		err = e.innerExec.Next(ctx, chk)
+		if err != nil {
+			e.innerFinished <- errors.Trace(err)
+			return
+		}
+		if chk.NumRows() == 0 {
+			return
+		}
 		select {
 		case <-doneCh:
 			return
 		case <-e.closeCh:
 			return
-		default:
-			if e.finished.Load().(bool) {
-				return
-			}
-			chk := chunk.NewChunkWithCapacity(e.children[e.innerIdx].base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
-			err = e.innerExec.Next(ctx, chk)
-			if err != nil {
-				e.innerFinished <- errors.Trace(err)
-				return
-			}
-			if chk.NumRows() == 0 {
-				return
-			}
-			select {
-			case chkCh <- chk:
-				break
-			case <-e.closeCh:
-				return
-			}
+		case chkCh <- chk:
 			e.innerResult.Add(chk)
 		}
 	}
@@ -519,9 +510,6 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
 	req.Reset()
-	if e.joinResultCh == nil {
-		return nil
-	}
 
 	result, ok := <-e.joinResultCh
 	if !ok {
@@ -555,7 +543,9 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 		e.innerFinished <- errors.Trace(err)
 		close(doneCh)
 	}
-	// wait fetchInnerRows be finished.
+	// Wait fetchInnerRows be finished.
+	// 1. if buildHashTableForList fails
+	// 2. if outerResult.NumRows() == 0, fetchOutChunks will not wait for inner.
 	for range innerResultCh {
 	}
 }
@@ -563,7 +553,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 // buildHashTableForList builds hash table from `list`.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) error {
+func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) error {
 	e.hashTable = mvmap.NewMVMap()
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
@@ -633,7 +623,6 @@ type NestedLoopApplyExec struct {
 func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
 
-	e.memTracker.Detach()
 	e.memTracker = nil
 	return e.outerExec.Close()
 }

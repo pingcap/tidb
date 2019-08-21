@@ -84,4 +84,13 @@ var (
 			Name:      "high_error_rate_feedback_total",
 			Help:      "Counter of query feedback whose actual count is much different than calculated by current statistics",
 		})
+
+	FastAnalyzeHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "fast_analyze_status",
+			Help:      "Bucketed histogram of some stats in fast analyze.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
+		}, []string{LblSQLType, LblType})
 )

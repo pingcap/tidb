@@ -512,6 +512,19 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 
 	sql10 := "alter table table3 add partition partitions 4;"
 	assertErrorCode(c, tk, sql10, tmysql.ErrPartitionsMustBeDefined)
+
+	tk.MustExec("alter table table3 add partition (partition p3 values less than (2001 + 10))")
+
+	// less than value can be negative or expression.
+	tk.MustExec(`CREATE TABLE tt5 (
+		c3 bigint(20) NOT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	PARTITION BY RANGE ( c3 ) (
+		PARTITION p0 VALUES LESS THAN (-3),
+		PARTITION p1 VALUES LESS THAN (-2)
+	);`)
+	tk.MustExec(`ALTER TABLE tt5 add partition ( partition p2 values less than (-1) );`)
+	tk.MustExec(`ALTER TABLE tt5 add partition ( partition p3 values less than (5-1) );`)
 }
 
 func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
@@ -1453,6 +1466,9 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	_, err := tk.Exec("alter table employees add partition partitions 8;")
 	c.Assert(ddl.ErrUnsupportedAddPartition.Equal(err), IsTrue)
 
+	_, err = tk.Exec("alter table employees add partition (partition p5 values less than (42));")
+	c.Assert(ddl.ErrUnsupportedAddPartition.Equal(err), IsTrue)
+
 	// coalesce partition
 	tk.MustExec(`create table clients (
 		id int,
@@ -1472,6 +1488,124 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 		);`)
 	_, err = tk.Exec("alter table t_part coalesce partition 4;")
 	c.Assert(ddl.ErrCoalesceOnlyOnHashPartition.Equal(err), IsTrue)
+}
+
+func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// add partition
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop database if exists test_db_with_partition_const")
+	tk.MustExec("create database test_db_with_partition_const")
+	tk.MustExec("use test_db_with_partition_const")
+
+	sql1 := `create table t1 ( id int ) 
+		partition by range(4) (
+		partition p1 values less than (10)
+		);`
+	assertErrorCode(c, tk, sql1, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql2 := `create table t2 ( time_recorded timestamp ) 
+		partition by range(TO_DAYS(time_recorded)) (
+		partition p1 values less than (1559192604)
+		);`
+	assertErrorCode(c, tk, sql2, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql3 := `create table t3 ( id int ) 
+		partition by range(DAY(id)) (
+		partition p1 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql3, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql4 := `create table t4 ( id int ) 
+		partition by hash(4) partitions 4
+		;`
+	assertErrorCode(c, tk, sql4, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql5 := `create table t5 ( time_recorded timestamp ) 
+		partition by range(to_seconds(time_recorded)) (
+		partition p1 values less than (1559192604)
+		);`
+	assertErrorCode(c, tk, sql5, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql6 := `create table t6 ( id int ) 
+		partition by range(to_seconds(id)) (
+		partition p1 values less than (1559192604)
+		);`
+	assertErrorCode(c, tk, sql6, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql7 := `create table t7 ( time_recorded timestamp ) 
+		partition by range(abs(time_recorded)) (
+		partition p1 values less than (1559192604)
+		);`
+	assertErrorCode(c, tk, sql7, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql8 := `create table t2332 ( time_recorded time )
+         partition by range(TO_DAYS(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql8, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql9 := `create table t1 ( id int ) 
+		partition by hash(4) partitions 4;`
+	assertErrorCode(c, tk, sql9, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql10 := `create table t1 ( id int ) 
+		partition by hash(ed) partitions 4;`
+	assertErrorCode(c, tk, sql10, tmysql.ErrBadField)
+
+	sql11 := `create table t2332 ( time_recorded time )
+         partition by range(TO_SECONDS(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql11, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql12 := `create table t2332 ( time_recorded time )
+         partition by range(TO_SECONDS(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql12, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql13 := `create table t2332 ( time_recorded time )
+         partition by range(day(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql13, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql14 := `create table t2332 ( time_recorded timestamp )
+         partition by range(day(time_recorded)) ( 
+  		 partition p0 values less than (1)
+		);`
+	assertErrorCode(c, tk, sql14, tmysql.ErrWrongExprInPartitionFunc)
+}
+
+func (s *testIntegrationSuite5) TestConstAndTimezoneDepent2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// add partition
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop database if exists test_db_with_partition_const")
+	tk.MustExec("create database test_db_with_partition_const")
+	tk.MustExec("use test_db_with_partition_const")
+
+	tk.MustExec(`create table t1 ( time_recorded datetime ) 
+	partition by range(TO_DAYS(time_recorded)) (
+	partition p0 values less than (1));`)
+
+	tk.MustExec(`create table t2 ( time_recorded date ) 
+	partition by range(TO_DAYS(time_recorded)) (
+	partition p0 values less than (1));`)
+
+	tk.MustExec(`create table t3 ( time_recorded date ) 
+	partition by range(TO_SECONDS(time_recorded)) (
+	partition p0 values less than (1));`)
+
+	tk.MustExec(`create table t4 ( time_recorded date ) 
+	partition by range(TO_SECONDS(time_recorded)) (
+	partition p0 values less than (1));`)
+
+	tk.MustExec(`create table t5 ( time_recorded timestamp )
+	partition by range(unix_timestamp(time_recorded)) (
+		partition p1 values less than (1559192604)
+	);`)
 }
 
 func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {

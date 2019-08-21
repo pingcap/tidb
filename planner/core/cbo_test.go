@@ -14,6 +14,7 @@
 package core_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -80,7 +81,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
 	c.Assert(len(rs.Rows()), Equals, 10)
 	for _, row := range rs.Rows() {
-		c.Assert(len(row), Equals, 5)
+		c.Assert(len(row), Equals, 6)
 		execInfo := row[4].(string)
 		c.Assert(strings.Contains(execInfo, "time"), Equals, true)
 		c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
@@ -136,9 +137,9 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 	}
 
 	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4").Check(testkit.Rows(
-		"HashLeftJoin_10 10000000000000000.00 root inner join, inner:TableReader_23",
-		"├─HashLeftJoin_12 1000000000000.00 root inner join, inner:TableReader_21",
-		"│ ├─HashLeftJoin_14 100000000.00 root inner join, inner:TableReader_19",
+		"HashLeftJoin_10 10000000000000000.00 root CARTESIAN inner join, inner:TableReader_23",
+		"├─HashLeftJoin_12 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
+		"│ ├─HashLeftJoin_14 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
 		"│ │ ├─TableReader_17 10000.00 root data:TableScan_16",
 		"│ │ │ └─TableScan_16 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"│ │ └─TableReader_19 10000.00 root data:TableScan_18",
@@ -150,9 +151,9 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 	))
 
 	testKit.MustQuery("explain select * from t1 straight_join t2 straight_join t3 straight_join t4").Check(testkit.Rows(
-		"HashLeftJoin_10 10000000000000000.00 root inner join, inner:TableReader_23",
-		"├─HashLeftJoin_12 1000000000000.00 root inner join, inner:TableReader_21",
-		"│ ├─HashLeftJoin_14 100000000.00 root inner join, inner:TableReader_19",
+		"HashLeftJoin_10 10000000000000000.00 root CARTESIAN inner join, inner:TableReader_23",
+		"├─HashLeftJoin_12 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
+		"│ ├─HashLeftJoin_14 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
 		"│ │ ├─TableReader_17 10000.00 root data:TableScan_16",
 		"│ │ │ └─TableScan_16 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"│ │ └─TableReader_19 10000.00 root data:TableScan_18",
@@ -165,8 +166,8 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 
 	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4 where t1.a=t4.a;").Check(testkit.Rows(
 		"HashLeftJoin_11 1248750000000.00 root inner join, inner:TableReader_26, equal:[eq(test.t1.a, test.t4.a)]",
-		"├─HashLeftJoin_13 999000000000.00 root inner join, inner:TableReader_23",
-		"│ ├─HashRightJoin_16 99900000.00 root inner join, inner:TableReader_19",
+		"├─HashLeftJoin_13 999000000000.00 root CARTESIAN inner join, inner:TableReader_23",
+		"│ ├─HashRightJoin_16 99900000.00 root CARTESIAN inner join, inner:TableReader_19",
 		"│ │ ├─TableReader_19 9990.00 root data:Selection_18",
 		"│ │ │ └─Selection_18 9990.00 cop not(isnull(test.t1.a))",
 		"│ │ │   └─TableScan_17 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -279,6 +280,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
 	}
 	testKit.MustExec("analyze table t1")
+	ctx := testKit.Se.(sessionctx.Context)
 	tests := []struct {
 		sql  string
 		best string
@@ -301,11 +303,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where e = 1 group by b",
-			best: "IndexLookUp(Index(t.e)[[1,1]], Table(t)->HashAgg)->HashAgg",
+			best: "IndexLookUp(Index(t.e)[[1,1]], Table(t))->HashAgg",
 		},
 		{
 			sql:  "select count(*) from t where e > 1 group by b",
-			best: "IndexLookUp(Index(t.b)[[NULL,+inf]], Table(t)->Sel([gt(test.t.e, 1)]))->Projection->StreamAgg",
+			best: "TableReader(Table(t)->Sel([gt(test.t.e, 1)])->HashAgg)->HashAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 20",
@@ -313,15 +315,15 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 30",
-			best: "IndexLookUp(Index(t.b)[[-inf,30]], Table(t)->HashAgg)->HashAgg",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 30)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 40",
-			best: "IndexLookUp(Index(t.b)[[-inf,40]], Table(t)->HashAgg)->HashAgg",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 40)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 50",
-			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t)->HashAgg)->HashAgg",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 100000000000",
@@ -329,11 +331,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select * from t where t.b <= 40",
-			best: "IndexLookUp(Index(t.b)[[-inf,40]], Table(t))",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 40)]))",
 		},
 		{
 			sql:  "select * from t where t.b <= 50",
-			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t))",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
 		},
 		{
 			sql:  "select * from t where t.b <= 10000000000",
@@ -342,7 +344,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		// test panic
 		{
 			sql:  "select * from t where 1 and t.b <= 50",
-			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t))",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
 		},
 		{
 			sql:  "select * from t where t.b <= 100 order by t.a limit 1",
@@ -372,7 +374,6 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 	}
 	for _, tt := range tests {
-		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := session.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
@@ -380,7 +381,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -410,7 +411,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t where c1 in (select c1 from t1)",
-			best: "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))])->HashAgg)->HashAgg}(test.t.c1,test.t1.c1)->Projection",
+			best: "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))]))->HashAgg}(test.t.c1,test.t1.c1)->Projection",
 		},
 		{
 			sql:  "select * from t, t1 where t.c1 = t1.c1",
@@ -430,7 +431,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -492,17 +493,17 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 			best: "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
 		},
 		{
-			sql:  "select * from t where t.b < 2",
-			best: "IndexLookUp(Index(t.b)[[-inf,2)], Table(t))",
+			sql:  "select b from t where t.b < 2",
+			best: "IndexReader(Index(t.b)[[-inf,2)])",
 		},
 		{
 			sql:  "select * from t where t.a = 1 and t.b <= 2",
-			best: "IndexLookUp(Index(t.b)[[-inf,2]], Table(t)->Sel([eq(test.t.a, 1)]))",
+			best: "TableReader(Table(t)->Sel([eq(test.t.a, 1) le(test.t.b, 2)]))",
 		},
 		// Test not analyzed table.
 		{
 			sql:  "select * from t1 where t1.a <= 2",
-			best: "IndexLookUp(Index(t1.a)[[-inf,2]], Table(t1))",
+			best: "TableReader(Table(t1)->Sel([le(test.t1.a, 2)]))",
 		},
 		{
 			sql:  "select * from t1 where t1.a = 1 and t1.b <= 2",
@@ -524,8 +525,8 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 			best: "UnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
 		},
 		{
-			sql:  "select * from t4 where t4.b < 2",
-			best: "UnionAll{IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))->IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))}",
+			sql:  "select b from t4 where t4.b < 2",
+			best: "UnionAll{IndexReader(Index(t4.b)[[-inf,2)])->IndexReader(Index(t4.b)[[-inf,2)])}",
 		},
 		{
 			sql:  "select * from t4 where t4.a = 1 and t4.b <= 2",
@@ -546,7 +547,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -583,10 +584,9 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	))
 	statistics.RatioOfPseudoEstimate.Store(0.7)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"IndexLookUp_11 8.84 root ",
-		"├─IndexScan_8 26.59 cop table:t, index:a, range:[-inf,5], keep order:false, stats:pseudo",
-		"└─Selection_10 8.84 cop le(test.t.b, 5)",
-		"  └─TableScan_9 26.59 cop table:t, keep order:false, stats:pseudo",
+		"TableReader_7 8.84 root data:Selection_6",
+		"└─Selection_6 8.84 cop le(test.t.a, 5), le(test.t.b, 5)",
+		"  └─TableScan_5 80.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
 
@@ -623,7 +623,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, core.InPrepare)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
@@ -682,13 +682,13 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
-	tk.MustExec("create table t(a int, b int, c int, index idx(c))")
+	tk.MustExec("create table t(a int, b int, c int, index idx(c,b,a))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
 			"Projection_11 10.00 root 9_aux_0",
-			"└─Apply_13 10.00 root left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, 7_col_0)",
+			"└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, 7_col_0)",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─StreamAgg_20 1.00 root funcs:count(1)",
@@ -703,15 +703,14 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustQuery("explain select (select concat(t1.a, \",\", t1.b) from t t1 where t1.a=t.a and t1.c=t.c) from t").
 		Check(testkit.Rows(
 			"Projection_8 10.00 root concat(t1.a, \",\", t1.b)",
-			"└─Apply_10 10.00 root left outer join, inner:MaxOneRow_13",
+			"└─Apply_10 10.00 root CARTESIAN left outer join, inner:MaxOneRow_13",
 			"  ├─TableReader_12 10.00 root data:TableScan_11",
 			"  │ └─TableScan_11 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─MaxOneRow_13 1.00 root ",
 			"    └─Projection_14 0.10 root concat(cast(test.t1.a), \",\", cast(test.t1.b))",
-			"      └─IndexLookUp_21 0.10 root ",
-			"        ├─IndexScan_18 1.00 cop table:t1, index:c, range: decided by [eq(test.t1.c, test.t.c)], keep order:false",
-			"        └─Selection_20 0.10 cop eq(test.t1.a, test.t.a)",
-			"          └─TableScan_19 1.00 cop table:t, keep order:false",
+			"      └─IndexReader_17 0.10 root index:Selection_16",
+			"        └─Selection_16 0.10 cop eq(test.t1.a, test.t.a)",
+			"          └─IndexScan_15 1.00 cop table:t1, index:c, b, a, range: decided by [eq(test.t1.c, test.t.c)], keep order:false",
 		))
 }
 
@@ -879,7 +878,7 @@ func BenchmarkOptimize(b *testing.B) {
 		b.Run(tt.sql, func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, err := planner.Optimize(ctx, stmt, is)
+				_, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 				c.Assert(err, IsNil)
 			}
 			b.ReportAllocs()
@@ -977,7 +976,7 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 	c.Assert(rs.Rows(), HasLen, 10)
 	hasIndexLookUp12 := false
 	for _, row := range rs.Rows() {
-		c.Assert(row, HasLen, 5)
+		c.Assert(row, HasLen, 6)
 		if strings.HasSuffix(row[0].(string), "IndexLookUp_12") {
 			hasIndexLookUp12 = true
 			c.Assert(row[4], Equals, "time:0ns, loops:0, rows:0")
@@ -1078,15 +1077,30 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	))
 	// Multi-column filter.
 	tk.MustExec("drop table t")
-	tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
-	tk.MustExec("insert into t values (1, 1, 1),(2, 1, 2),(3, 1, 1),(4, 1, 2),(5, 1, 1),(6, 1, 2),(7, 1, 1),(8, 1, 2),(9, 1, 1),(10, 1, 2),(11, 1, 1),(12, 1, 2),(13, 1, 1),(14, 1, 2),(15, 1, 1),(16, 1, 2),(17, 1, 1),(18, 1, 2),(19, 1, 1),(20, 2, 2),(21, 2, 1),(22, 2, 2),(23, 2, 1),(24, 2, 2),(25, 2, 1)")
+	tk.MustExec("create table t(a int primary key, b int, c int, d bigint default 2147483648, e bigint default 2147483648, f bigint default 2147483648, index idx(b,d,a,c))")
+	tk.MustExec("insert into t(a, b, c) values (1, 1, 1),(2, 1, 2),(3, 1, 1),(4, 1, 2),(5, 1, 1),(6, 1, 2),(7, 1, 1),(8, 1, 2),(9, 1, 1),(10, 1, 2),(11, 1, 1),(12, 1, 2),(13, 1, 1),(14, 1, 2),(15, 1, 1),(16, 1, 2),(17, 1, 1),(18, 1, 2),(19, 1, 1),(20, 2, 2),(21, 2, 1),(22, 2, 2),(23, 2, 1),(24, 2, 2),(25, 2, 1)")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_9 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexLookUp_22 1.00 root ",
-		"  ├─IndexScan_18 6.00 cop table:t, index:b, range:[2,2], keep order:false",
-		"  └─TopN_21 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─Selection_20 6.00 cop gt(test.t.c, 0)",
-		"      └─TableScan_19 6.00 cop table:t, keep order:false",
+	tk.MustQuery("EXPLAIN SELECT a FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1").Check(testkit.Rows(
+		"Projection_7 1.00 root test.t.a",
+		"└─TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
+		"  └─IndexReader_17 1.00 root index:TopN_16",
+		"    └─TopN_16 1.00 cop test.t.a:asc, offset:0, count:1",
+		"      └─Selection_15 6.00 cop gt(test.t.c, 0)",
+		"        └─IndexScan_14 6.00 cop table:t, index:b, d, a, c, range:[2,2], keep order:false",
 	))
+}
+
+func (s *testAnalyzeSuite) TestUpdateProjEliminate(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("explain update t t1, (select distinct b from t) t2 set t1.b = t2.b")
 }

@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build !codes
+
 package testkit
 
 import (
@@ -27,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-type contextKeyType int
+type sessionCtxKeyType struct{}
 
-const sessionKey contextKeyType = iota
+var sessionKey = sessionCtxKeyType{}
 
 func getSession(ctx context.Context) session.Session {
 	s := ctx.Value(sessionKey)

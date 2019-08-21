@@ -121,6 +121,36 @@ func (s *testSuite3) TestCreateTable(c *C) {
 		}
 	}
 
+	// test multiple collate specified in column when create.
+	tk.MustExec("drop table if exists test_multiple_column_collate;")
+	tk.MustExec("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8_general_ci")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
+	tk.MustExec("drop table if exists test_multiple_column_collate;")
+	tk.MustExec("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8_general_ci")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
+	// test Err case for multiple collate specified in column when create.
+	tk.MustExec("drop table if exists test_err_multiple_collate;")
+	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_unicode_ci collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_unicode_ci", "utf8mb4").Error())
+
+	tk.MustExec("drop table if exists test_err_multiple_collate;")
+	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) collate utf8_unicode_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_general_ci", "utf8").Error())
+
 	// table option is auto-increment
 	tk.MustExec("drop table if exists create_auto_increment_test;")
 	tk.MustExec("create table create_auto_increment_test (id int not null auto_increment, name varchar(255), primary key(id)) auto_increment = 999;")
@@ -322,6 +352,43 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
 	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
+
+	// test multiple collate modification in column.
+	tk.MustExec("drop table if exists modify_column_multiple_collate")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) collate utf8mb4_bin;")
+	c.Assert(err, IsNil)
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8mb4")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8mb4_bin")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
+	tk.MustExec("drop table if exists modify_column_multiple_collate;")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
+	c.Assert(err, IsNil)
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8mb4")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8mb4_bin")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
+	// test Err case for multiple collate modification in column.
+	tk.MustExec("drop table if exists err_modify_multiple_collate;")
+	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("alter table err_modify_multiple_collate modify column a char(1) charset utf8mb4 collate utf8_bin;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_bin", "utf8mb4").Error())
+
+	tk.MustExec("drop table if exists err_modify_multiple_collate;")
+	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error())
+
 }
 
 func (s *testSuite3) TestDefaultDBAfterDropCurDB(c *C) {

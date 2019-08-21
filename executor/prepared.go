@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -168,6 +169,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	prepared := &ast.Prepared{
 		Stmt:          stmt,
+		StmtType:      GetStmtLabel(stmt),
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
@@ -180,7 +182,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		param.InExecute = false
 	}
 	var p plannercore.Plan
-	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
+	p, err = plannercore.BuildLogicalPlan(ctx, e.ctx, stmt, e.is)
 	if err != nil {
 		return err
 	}
@@ -205,10 +207,10 @@ type ExecuteExec struct {
 	is            infoschema.InfoSchema
 	name          string
 	usingVars     []expression.Expression
-	id            uint32
 	stmtExec      Executor
 	stmt          ast.StmtNode
 	plan          plannercore.Plan
+	id            uint32
 	lowerPriority bool
 }
 
@@ -266,14 +268,18 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args []types.Datum) (sqlexec.Statement, error) {
+func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID uint32, args []types.Datum) (sqlexec.Statement, error) {
+	startTime := time.Now()
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.DurationCompile = time.Since(startTime)
+	}()
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
-	if err := ResetContextOfStmt(ctx, execStmt); err != nil {
+	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
 		return nil, err
 	}
 	execStmt.BinaryArgs = args
-	is := GetInfoSchema(ctx)
-	execPlan, err := planner.Optimize(ctx, execStmt, is)
+	is := GetInfoSchema(sctx)
+	execPlan, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, err
 	}
@@ -282,11 +288,11 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args []types.
 		InfoSchema: is,
 		Plan:       execPlan,
 		StmtNode:   execStmt,
-		Ctx:        ctx,
+		Ctx:        sctx,
 	}
-	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID]; ok {
+	if prepared, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		stmt.Text = prepared.Stmt.Text()
-		ctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
+		sctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
 	}
 	return stmt, nil
 }

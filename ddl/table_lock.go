@@ -198,6 +198,11 @@ func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) (needUpdateTableIn
 	if !tbInfo.IsLocked() {
 		return false
 	}
+	if arg.IsCleanup {
+		tbInfo.Lock = nil
+		return true
+	}
+
 	sessionIndex := findSessionInfoIndex(tbInfo.Lock.Sessions, arg.SessionInfo)
 	if sessionIndex < 0 {
 		// When session clean table lock, session maybe send unlock table even the table lock maybe not hold by the session.

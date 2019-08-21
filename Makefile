@@ -12,14 +12,14 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO        := GO111MODULE=on go
-GOBUILD   := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG)
+GOBUILD   := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG) -tags codes
 GOTEST    := CGO_ENABLED=1 $(GO) test -p 4
 OVERALLS  := CGO_ENABLED=1 GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "cmd"
+PACKAGE_LIST  := go list ./...| grep -vE "cmd" | grep -vE "test"
 PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
@@ -61,7 +61,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint tidy check-static vet
+check: fmt errcheck lint tidy testSuite check-static vet
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
@@ -105,6 +105,10 @@ vet:
 tidy:
 	@echo "go mod tidy"
 	./tools/check/check-tidy.sh
+
+testSuite:
+	@echo "testSuite"
+	./tools/check/check_testSuite.sh
 
 clean:
 	$(GO) clean -i ./...

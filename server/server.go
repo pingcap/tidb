@@ -49,7 +49,6 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -122,9 +121,8 @@ type Server struct {
 
 // ConnectionCount gets current connection count.
 func (s *Server) ConnectionCount() int {
-	var cnt int
 	s.rwlock.RLock()
-	cnt = len(s.clients)
+	cnt := len(s.clients)
 	s.rwlock.RUnlock()
 	return cnt
 }
@@ -295,7 +293,6 @@ func (s *Server) loadTLSCertificates() {
 		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
-		MinVersion:   0,
 	}
 }
 
@@ -342,7 +339,7 @@ func (s *Server) Run() error {
 					terror.Log(clientConn.Close())
 					return errors.Trace(err)
 				}
-				err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host}, plugin.PreAuth, nil)
+				err = authPlugin.OnConnectionEvent(context.Background(), plugin.PreAuth, &variable.ConnectionInfo{Host: host})
 				if err != nil {
 					logutil.BgLogger().Info("do connection event failed", zap.Error(err))
 					terror.Log(clientConn.Close())
@@ -429,7 +426,7 @@ func (s *Server) onConn(conn *clientConn) {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			sessionVars := conn.ctx.GetSessionVars()
-			return authPlugin.OnConnectionEvent(context.Background(), sessionVars.User, plugin.Connected, sessionVars.ConnectionInfo)
+			return authPlugin.OnConnectionEvent(context.Background(), plugin.Connected, sessionVars.ConnectionInfo)
 		}
 		return nil
 	})
@@ -445,7 +442,7 @@ func (s *Server) onConn(conn *clientConn) {
 		if authPlugin.OnConnectionEvent != nil {
 			sessionVars := conn.ctx.GetSessionVars()
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
-			err := authPlugin.OnConnectionEvent(context.Background(), sessionVars.User, plugin.Disconnect, sessionVars.ConnectionInfo)
+			err := authPlugin.OnConnectionEvent(context.Background(), plugin.Disconnect, sessionVars.ConnectionInfo)
 			if err != nil {
 				logutil.BgLogger().Warn("do connection event failed", zap.String("plugin", authPlugin.Name), zap.Error(err))
 			}
@@ -472,11 +469,9 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		ClientPort:        cc.peerPort,
 		ServerID:          1,
 		ServerPort:        int(cc.server.cfg.Port),
-		Duration:          0,
 		User:              cc.user,
 		ServerOSLoginUser: osUser,
 		OSVersion:         osVersion,
-		ClientVersion:     "",
 		ServerVersion:     mysql.TiDBReleaseVersion,
 		SSLVersion:        "v1.2.0", // for current go version
 		PID:               serverPID,
@@ -488,6 +483,7 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 // ShowProcessList implements the SessionManager interface.
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
@@ -497,7 +493,6 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 			rs[pi.ID] = pi
 		}
 	}
-	s.rwlock.RUnlock()
 	return rs
 }
 
@@ -514,11 +509,11 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool) {
-	s.rwlock.Lock()
-	defer s.rwlock.Unlock()
 	logutil.BgLogger().Info("kill", zap.Uint64("connID", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
 	conn, ok := s.clients[uint32(connectionID)]
 	if !ok {
 		return
@@ -539,13 +534,15 @@ func killConn(conn *clientConn) {
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.
 func (s *Server) KillAllConnections() {
-	s.rwlock.Lock()
-	defer s.rwlock.Unlock()
 	logutil.BgLogger().Info("[server] kill all connections.")
 
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
 	for _, conn := range s.clients {
 		atomic.StoreInt32(&conn.status, connStatusShutdown)
-		terror.Log(errors.Trace(conn.closeWithoutLock()))
+		if err := conn.closeWithoutLock(); err != nil {
+			terror.Log(err)
+		}
 		killConn(conn)
 	}
 }
