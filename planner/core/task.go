@@ -683,40 +683,8 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 		groupByItems = append(groupByItems, gbyCol)
 	}
 
-	// Remove unnecessary schema column.
-	// When the select column is same with the group by key, the column can be removed and gets value from the group by key.
-	// e.g
-	// select a, count(b) from t group by a;
-	// The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
-	// Can optimize the schema to [count(b), a] , and change the index to get value.
-	partialCursor = 0
-	numAggFunc := len(p.AggFuncs)
-	numRemoveAggFunc := 0
-	for i := 0; i < numAggFunc; i++ {
-		aggFunc := p.AggFuncs[i-numRemoveAggFunc]
-		if aggFunc.Name == ast.AggFuncFirstRow {
-			canOptimize := false
-			for j, gbyExpr := range p.GroupByItems {
-				if gbyExpr.Equal(p.ctx, aggFunc.Args[0]) {
-					canOptimize = true
-					finalAggFuncs[i].Args[0] = groupByItems[j]
-					break
-				}
-			}
-			if canOptimize {
-				partialSchema.Columns = append(partialSchema.Columns[:partialCursor], partialSchema.Columns[partialCursor+1:]...)
-				p.AggFuncs = append(p.AggFuncs[:i-numRemoveAggFunc], p.AggFuncs[i-numRemoveAggFunc+1:]...)
-				numRemoveAggFunc++
-				continue
-			}
-		}
-		if aggregation.NeedCount(aggFunc.Name) {
-			partialCursor++
-		}
-		if aggregation.NeedValue(aggFunc.Name) {
-			partialCursor++
-		}
-	}
+	// Remove unnecessary FirstRow.
+	p.removeUnnecessaryFirstRow(finalAggFuncs, groupByItems)
 
 	// Create physical "final" aggregation.
 	if p.tp == TypeStreamAgg {
@@ -734,6 +702,41 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	}.initForHash(p.ctx, p.stats)
 	finalAgg.schema = finalSchema
 	return partialAgg, finalAgg
+}
+
+// Remove unnecessary FirstRow.
+// When the select column is same with the group by key, the column can be removed and gets value from the group by key.
+// e.g
+// select a, count(b) from t group by a;
+// The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
+// Can optimize the schema to [count(b), a] , and change the index to get value.
+func (p *basePhysicalAgg) removeUnnecessaryFirstRow(finalAggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) {
+	partialCursor := 0
+	partialAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(p.AggFuncs))
+	for i, aggFunc := range p.AggFuncs {
+		if aggFunc.Name == ast.AggFuncFirstRow {
+			canOptimize := false
+			for j, gbyExpr := range p.GroupByItems {
+				if gbyExpr.Equal(p.ctx, aggFunc.Args[0]) {
+					canOptimize = true
+					finalAggFuncs[i].Args[0] = groupByItems[j]
+					break
+				}
+			}
+			if canOptimize {
+				p.schema.Columns = append(p.schema.Columns[:partialCursor], p.schema.Columns[partialCursor+1:]...)
+				continue
+			}
+		}
+		if aggregation.NeedCount(aggFunc.Name) {
+			partialCursor++
+		}
+		if aggregation.NeedValue(aggFunc.Name) {
+			partialCursor++
+		}
+		partialAggFuncs = append(partialAggFuncs, aggFunc)
+	}
+	p.AggFuncs = partialAggFuncs
 }
 
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
