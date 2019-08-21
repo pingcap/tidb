@@ -957,26 +957,26 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 
 	// Expected output is like:
 	//
-	// 	+--------------------------------+----------+------+-------------------------------------------------------------------------------------------------+----------------------------------+---------------+
-	// | id                             | count    | task | operator info                                                                                   | execution info                   | memory        |
-	// +--------------------------------+----------+------+-------------------------------------------------------------------------------------------------+----------------------------------+---------------+
-	// | Projection_9                   | 10.00    | root | test.t1.id, test.t2.a                                                                           | time:0s, loops:0, rows:0         | N/A           |
-	// | └─IndexJoin_13                 | 10.00    | root | inner join, inner:IndexLookUp_12, outer key:test.t1.a, inner key:test.t2.d                      | time:2.835514ms, loops:1, rows:0 | 1.57421875 KB |
-	// |   ├─Projection_21              | 8.00     | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                                      | time:2.877687ms, loops:1, rows:0 | N/A           |
-	// |   │ └─Selection_22             | 8.00     | root | eq(cast(mod(test.t1.a, 30)), 4)                                                                 | time:2.871136ms, loops:1, rows:0 | N/A           |
-	// |   │   └─TableReader_25         | 10.00    | root | data:Selection_24                                                                               | time:2.865617ms, loops:1, rows:0 | 117 Bytes     |
-	// |   │     └─Selection_24         | 10.00    | cop  | eq(test.t1.b, "t2")                                                                             | time:22.902µs, loops:1, rows:0   | N/A           |
-	// |   │       └─TableScan_23       | 10000.00 | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                                     | time:22.159µs, loops:1, rows:0   | N/A           |
-	// |   └─IndexLookUp_12             | 10.00    | root |                                                                                                 | time:0ns, loops:0, rows:0        | N/A           |
-	// |     ├─IndexScan_10             | 10.00    | cop  | table:t2, index:d, range: decided by [eq(test.t2.d, test.t1.a)], keep order:false, stats:pseudo | time:0ns, loops:0, rows:0        | N/A           |
-	// |     └─TableScan_11             | 10.00    | cop  | table:t2, keep order:false, stats:pseudo                                                        | time:0ns, loops:0, rows:0        | N/A           |
-	// +--------------------------------+----------+------+-------------------------------------------------------------------------------------------------+----------------------------------+---------------+
+	// +--------------------------------+----------+------+------------------------------------------------------------------------------------------------+----------------------------------+---------------+
+	// | id                             | count    | task | operator info                                                                                  | execution info                   | memory        |
+	// +--------------------------------+----------+------+------------------------------------------------------------------------------------------------+----------------------------------+---------------+
+	// | Projection_9                   | 10.00    | root | test.t1.id, test.t2.a                                                                          | time:0s, loops:0, rows:0         | N/A           |
+	// | └─IndexMergeJoin_18            | 10.00    | root | inner join, inner:IndexLookUp_16, outer key:test.t1.a, inner key:test.t2.d                     | time:3.076403ms, loops:1, rows:0 | 1.57421875 KB |
+	// |   ├─Projection_21              | 8.00     | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                                     | time:3.053376ms, loops:1, rows:0 | N/A           |
+	// |   │ └─Selection_22             | 8.00     | root | eq(cast(mod(test.t1.a, 30)), 4)                                                                | time:3.050294ms, loops:1, rows:0 | N/A           |
+	// |   │   └─TableReader_25         | 10.00    | root | data:Selection_24                                                                              | time:3.049266ms, loops:1, rows:0 | 117 Bytes     |
+	// |   │     └─Selection_24         | 10.00    | cop  | eq(test.t1.b, "t2")                                                                            | time:18.888µs, loops:1, rows:0   | N/A           |
+	// |   │       └─TableScan_23       | 10000.00 | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                                    | time:18.443µs, loops:1, rows:0   | N/A           |
+	// |   └─IndexLookUp_16             | 10.00    | root |                                                                                                | time:0ns, loops:0, rows:0        | N/A           |
+	// |     ├─IndexScan_14             | 10.00    | cop  | table:t2, index:d, range: decided by [eq(test.t2.d, test.t1.a)], keep order:true, stats:pseudo | time:0ns, loops:0, rows:0        | N/A           |
+	// |     └─TableScan_15             | 10.00    | cop  | table:t2, keep order:true, stats:pseudo                                                        | time:0ns, loops:0, rows:0        | N/A           |
+	// +--------------------------------+----------+------+------------------------------------------------------------------------------------------------+----------------------------------+---------------+
 	//
 	c.Assert(rs.Rows(), HasLen, 10)
 	hasIndexLookUp12 := false
 	for _, row := range rs.Rows() {
 		c.Assert(row, HasLen, 6)
-		if strings.HasSuffix(row[0].(string), "IndexLookUp_12") {
+		if strings.HasSuffix(row[0].(string), "IndexLookUp_16") {
 			hasIndexLookUp12 = true
 			c.Assert(row[4], Equals, "time:0ns, loops:0, rows:0")
 		}
