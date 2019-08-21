@@ -163,8 +163,13 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 			}
 			// If there are primary keys or unique indices, we have to check TiKV to ensure their uniqueness.
 			// The PresumeKeyNotExists option could delay the check to improve performance.
-			if !sctx.GetSessionVars().ConstraintCheckInPlace {
-				txn.SetOption(kv.PresumeKeyNotExists, nil)
+			sessVars := sctx.GetSessionVars()
+			if !sessVars.ConstraintCheckInPlace {
+				// The purpose of adding the Autocommit and InTxn conditions here is for compatibility (older version TiDB behaviour).
+				// Remove the check should not affect correctness.
+				if sessVars.IsAutocommit() && !sessVars.InTxn() {
+					txn.SetOption(kv.PresumeKeyNotExists, nil)
+				}
 			}
 			newHandle, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
 			txn.DelOption(kv.PresumeKeyNotExists)
