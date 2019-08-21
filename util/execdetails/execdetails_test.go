@@ -15,11 +15,11 @@ package execdetails
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/stringutil"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
