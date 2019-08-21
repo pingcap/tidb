@@ -1713,18 +1713,6 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
-			sql: `create user 'test'@'%' identified by '123456'`,
-			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
-			},
-		},
-		{
-			sql: `drop user 'test'@'%'`,
-			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
-			},
-		},
-		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "", "", nil},

@@ -98,6 +98,7 @@ var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
+var _ = Suite(&testBatchPointGetSuite{})
 var _ = Suite(&testRecoverTable{})
 var _ = Suite(&testFlushSuite{})
 
@@ -2104,6 +2105,40 @@ func (s *testSuiteP1) TestPointGetRepeatableRead(c *C) {
 	<-updateWaitCh // Wait `POINT GET` first time `get`
 	c.Assert(failpoint.Disable(step1), IsNil)
 	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
+	c.Assert(failpoint.Disable(step2), IsNil)
+}
+
+func (s *testSuiteP1) TestBatchPointGetRepeatableRead(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec(`create table batch_point_get (a int, b int, c int, unique key k_b(a, b, c))`)
+	tk1.MustExec("insert into batch_point_get values (1, 1, 1), (2, 3, 4), (3, 4, 5)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	var (
+		step1 = "github.com/pingcap/tidb/executor/batchPointGetRepeatableReadTest-step1"
+		step2 = "github.com/pingcap/tidb/executor/batchPointGetRepeatableReadTest-step2"
+	)
+
+	c.Assert(failpoint.Enable(step1, "return"), IsNil)
+	c.Assert(failpoint.Enable(step2, "pause"), IsNil)
+
+	updateWaitCh := make(chan struct{})
+	go func() {
+		ctx := context.WithValue(context.Background(), "batchPointGetRepeatableReadTest", updateWaitCh)
+		ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
+			return fpname == step1 || fpname == step2
+		})
+		rs, err := tk1.Se.Execute(ctx, "select c from batch_point_get where (a, b, c) in ((1, 1, 1))")
+		c.Assert(err, IsNil)
+		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+		result.Check(testkit.Rows("1"))
+	}()
+
+	<-updateWaitCh // Wait `POINT GET` first time `get`
+	c.Assert(failpoint.Disable(step1), IsNil)
+	tk2.MustExec("update batch_point_get set b = 2, c = 2 where a = 1")
 	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
@@ -4186,13 +4221,24 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	re = tk.MustQuery("show table partition_t regions")
 	rows = re.Rows()
-	// Table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 3)
 	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
 	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
 	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
+
+	// Test pre-split table region when create table.
+	tk.MustExec("drop table if exists t_pre")
+	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2;")
+	re = tk.MustQuery("show table t_pre regions")
+	rows = re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 4)
+	tbl = testGetTableByName(c, tk.Se, "test", "t_pre")
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 }
 
