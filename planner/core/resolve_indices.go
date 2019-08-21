@@ -223,6 +223,11 @@ func (p *PhysicalUnionScan) ResolveIndices() (err error) {
 			return err
 		}
 	}
+	resolvedHandleCol, err := p.HandleCol.ResolveIndices(p.children[0].Schema())
+	if err != nil {
+		return err
+	}
+	p.HandleCol = resolvedHandleCol.(*expression.Column)
 	return
 }
 
@@ -260,6 +265,13 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 	err = p.indexPlan.ResolveIndices()
 	if err != nil {
 		return err
+	}
+	if p.ExtraHandleCol != nil {
+		newCol, err := p.ExtraHandleCol.ResolveIndices(p.tablePlan.Schema())
+		if err != nil {
+			return err
+		}
+		p.ExtraHandleCol = newCol.(*expression.Column)
 	}
 	return
 }
@@ -435,6 +447,24 @@ func (p *Update) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalLock) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	for i, cols := range p.TblID2Handle {
+		for j, col := range cols {
+			resolvedCol, err := col.ResolveIndices(p.children[0].Schema())
+			if err != nil {
+				return err
+			}
+			p.TblID2Handle[i][j] = resolvedCol.(*expression.Column)
+		}
+	}
+	return nil
+}
+
+// ResolveIndices implements Plan interface.
 func (p *Insert) ResolveIndices() (err error) {
 	err = p.baseSchemaProducer.ResolveIndices()
 	if err != nil {
@@ -484,35 +514,10 @@ func (p *Insert) ResolveIndices() (err error) {
 
 func (p *physicalSchemaProducer) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	if p.schema != nil {
-		for i, cols := range p.schema.TblID2Handle {
-			for j, col := range cols {
-				resolvedCol, err := col.ResolveIndices(p.schema)
-				if err != nil {
-					return err
-				}
-				p.schema.TblID2Handle[i][j] = resolvedCol.(*expression.Column)
-			}
-		}
-	}
-	return
+	return err
 }
 
 func (p *baseSchemaProducer) ResolveIndices() (err error) {
-	if p.schema != nil {
-		for i, cols := range p.schema.TblID2Handle {
-			for j, col := range cols {
-				resolvedCol, err := col.ResolveIndices(p.schema)
-				if err != nil {
-					return err
-				}
-				p.schema.TblID2Handle[i][j] = resolvedCol.(*expression.Column)
-			}
-		}
-	}
 	return
 }
 

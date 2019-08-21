@@ -415,7 +415,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	if fld.Column.Tp == mysql.TypeNewDecimal {
 		// Consider the negative sign.
 		ci.ColumnLength++
-		if fld.Column.Decimal > types.DefaultFsp {
+		if fld.Column.Decimal > int(types.DefaultFsp) {
 			// Consider the decimal point.
 			ci.ColumnLength++
 		}
@@ -442,7 +442,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 
 	if fld.Column.Decimal == types.UnspecifiedLength {
 		if fld.Column.Tp == mysql.TypeDuration {
-			ci.Decimal = types.DefaultFsp
+			ci.Decimal = uint8(types.DefaultFsp)
 		} else {
 			ci.Decimal = mysql.NotFixedDec
 		}
