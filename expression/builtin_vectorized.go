@@ -47,7 +47,7 @@ func newLocalSliceBuffer(initCap int) *localSliceBuffer {
 	return &localSliceBuffer{buffers: make([]*chunk.Column, initCap)}
 }
 
-func (r *localSliceBuffer) newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+func newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	switch evalType {
 	case types.ETInt:
 		return chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), capacity), nil
@@ -80,7 +80,7 @@ func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Co
 		return buf, nil
 	}
 	r.Unlock()
-	return r.newBuffer(evalType, capacity)
+	return newBuffer(evalType, capacity)
 }
 
 func (r *localSliceBuffer) put(buf *chunk.Column) {
