@@ -41,6 +41,8 @@ func (s *testMemoryLeak) SetUpSuite(c *C) {
 }
 
 func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
+	c.Skip("too slow")
+
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "create database test_mem")
