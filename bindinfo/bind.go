@@ -23,7 +23,8 @@ type HintsSet struct {
 
 type hintProcessor struct {
 	*HintsSet
-	bindHint2Ast bool // bindHint2Ast indicates the behavior of the processor, `true` for bind hint to ast, `false` for extract hint from ast.
+	// bindHint2Ast indicates the behavior of the processor, `true` for bind hint to ast, `false` for extract hint from ast.
+	bindHint2Ast bool
 	tableCounter int64
 	indexCounter int64
 }

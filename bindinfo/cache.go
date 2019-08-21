@@ -33,7 +33,8 @@ const (
 // BindMeta stores the basic bind info and bindSql astNode.
 type BindMeta struct {
 	*BindRecord
-	*HintsSet // HintSet stores the set of hints of binding sql.
+	// HintSet stores the set of hints of binding sql.
+	*HintsSet
 }
 
 // cache is a k-v map, key is original sql, value is a slice of BindMeta.
