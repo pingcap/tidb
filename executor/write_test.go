@@ -2458,6 +2458,25 @@ func (s *testSuite4) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustExec(`update t set i = 2 where i = 1;`)
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
+
+	tk.MustExec(`drop table t; create table t (id int primary key, v int unique);`)
+	tk.MustExec(`insert into t values (1, 1)`)
+	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
+	tk.MustExec(`set @@autocommit = 0;`)
+
+	_, err = tk.Exec("insert into t values (3, 1)")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("insert into t values (1, 3)")
+	c.Assert(err, NotNil)
+	tk.MustExec("commit")
+
+	tk.MustExec(`set tidb_constraint_check_in_place = 0;`)
+	tk.MustExec("insert into t values (3, 1)")
+	c.Assert(err, NotNil)
+	tk.MustExec("insert into t values (1, 3)")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("commit")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite4) TestDefEnumInsert(c *C) {
