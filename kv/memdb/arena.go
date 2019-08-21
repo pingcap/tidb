@@ -24,21 +24,10 @@ func (addr arenaAddr) isNull() bool {
 	return addr.blockIdx == 0 && addr.blockOffset == 0
 }
 
-func (addr arenaAddr) encode() uint64 {
-	return uint64(addr.blockIdx)<<32 | uint64(addr.blockOffset)
-}
-
 func newArenaAddr(idx int, offset uint32) arenaAddr {
 	return arenaAddr{
 		blockIdx:    uint32(idx) + 1,
 		blockOffset: offset,
-	}
-}
-
-func decodeArenaAddr(encoded uint64) arenaAddr {
-	return arenaAddr{
-		blockIdx:    uint32(encoded >> 32),
-		blockOffset: uint32(encoded),
 	}
 }
 

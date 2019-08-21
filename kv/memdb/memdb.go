@@ -96,16 +96,16 @@ func (db *DB) Put(key []byte, v []byte) bool {
 	// We always insert from the base level and up. After you add a node in base level, we cannot
 	// create a node in the level above because it would have discovered the node in the base level.
 	for i := 0; i < height; i++ {
-		x.nexts[i] = next[i].addr.encode()
+		x.nexts[i] = next[i].addr
 		if prev[i].node == nil {
 			prev[i] = db.head
 		}
 		prev[i].setNextAddr(i, addr)
 	}
 
-	x.prev = prev[0].addr.encode()
+	x.prev = prev[0].addr
 	if next[0].node != nil {
-		next[0].prev = addr.encode()
+		next[0].prev = addr
 	}
 
 	db.length++
@@ -158,7 +158,7 @@ func (db *DB) Delete(key []byte) bool {
 	if !nextAddr.isNull() {
 		nextData := db.arena.getFrom(nextAddr)
 		next := (*node)(unsafe.Pointer(&nextData[0]))
-		next.prev = prev[0].addr.encode()
+		next.prev = prev[0].addr
 	}
 
 	db.length--
@@ -188,9 +188,9 @@ type node struct {
 	nodeHeader
 
 	// Addr of previous node at base level.
-	prev uint64
+	prev arenaAddr
 	// Height of the nexts.
-	nexts [maxHeight]uint64
+	nexts [maxHeight]arenaAddr
 }
 
 type nodeWithAddr struct {
@@ -199,15 +199,15 @@ type nodeWithAddr struct {
 }
 
 func (n *node) getPrevAddr() arenaAddr {
-	return decodeArenaAddr(n.prev)
+	return n.prev
 }
 
 func (n *node) getNextAddr(level int) arenaAddr {
-	return decodeArenaAddr(n.nexts[level])
+	return n.nexts[level]
 }
 
 func (n *node) setNextAddr(level int, addr arenaAddr) {
-	n.nexts[level] = addr.encode()
+	n.nexts[level] = addr
 }
 
 func (n *node) entryLen() int {
