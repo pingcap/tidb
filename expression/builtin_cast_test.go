@@ -321,7 +321,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	var sig builtinFunc
 
 	durationColumn := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
-	durationColumn.RetType.Decimal = types.DefaultFsp
+	durationColumn.RetType.Decimal = int(types.DefaultFsp)
 	// Test cast as Decimal.
 	castToDecCases := []struct {
 		before *Column
@@ -805,7 +805,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	for i, t := range castToTimeCases {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDatetime)
-		tp.Decimal = types.DefaultFsp
+		tp.Decimal = int(types.DefaultFsp)
 		timeFunc := newBaseBuiltinFunc(ctx, args)
 		timeFunc.tp = tp
 		switch i {
@@ -834,7 +834,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		before *Column
 		after  types.Time
 		row    chunk.MutRow
-		fsp    int
+		fsp    int8
 		tp     byte
 	}{
 		// cast real as Time(0).
@@ -889,7 +889,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	for i, t := range castToTimeCases2 {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(t.tp)
-		tp.Decimal = t.fsp
+		tp.Decimal = int(t.fsp)
 		timeFunc := newBaseBuiltinFunc(ctx, args)
 		timeFunc.tp = tp
 		switch i {
@@ -912,7 +912,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		resAfter := t.after.String()
 		if t.fsp > 0 {
 			resAfter += "."
-			for i := 0; i < t.fsp; i++ {
+			for i := 0; i < int(t.fsp); i++ {
 				resAfter += "0"
 			}
 		}
@@ -970,7 +970,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	for i, t := range castToDurationCases {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
-		tp.Decimal = types.DefaultFsp
+		tp.Decimal = int(types.DefaultFsp)
 		durationFunc := newBaseBuiltinFunc(ctx, args)
 		durationFunc.tp = tp
 		switch i {
@@ -1144,7 +1144,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	ctx := s.ctx
 
 	durationColumn0 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
-	durationColumn0.RetType.Decimal = types.DefaultFsp
+	durationColumn0.RetType.Decimal = int(types.DefaultFsp)
 	durationColumn3 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
 	durationColumn3.RetType.Decimal = 3
 	cases := []struct {
