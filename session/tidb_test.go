@@ -151,7 +151,10 @@ func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error
 	if err != nil {
 		return nil, err
 	}
-	return rs, nil
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	return rs[0], nil
 }
 
 func mustExecSQL(c *C, se Session, sql string, args ...interface{}) sqlexec.RecordSet {

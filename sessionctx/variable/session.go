@@ -202,7 +202,7 @@ type SessionVars struct {
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// PreparedStmts stores prepared statement.
-	PreparedStmts        map[uint32]*ast.Prepared
+	PreparedStmts        map[uint32][]*ast.Prepared
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
@@ -429,7 +429,7 @@ func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                       make(map[string]string),
 		systems:                     make(map[string]string),
-		PreparedStmts:               make(map[uint32]*ast.Prepared),
+		PreparedStmts:               make(map[uint32][]*ast.Prepared),
 		PreparedStmtNameToID:        make(map[string]uint32),
 		PreparedParams:              make([]types.Datum, 0, 10),
 		TxnCtx:                      &TransactionContext{},
@@ -622,7 +622,7 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
-func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt *ast.Prepared) error {
+func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt []*ast.Prepared) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
 		valStr, _ := s.GetSystemVar(MaxPreparedStmtCount)
 		maxPreparedStmtCount, err := strconv.ParseInt(valStr, 10, 64)

@@ -182,6 +182,7 @@ type Execute struct {
 	Stmt          ast.StmtNode
 	StmtType      string
 	Plan          Plan
+	IdxInMulti    int
 }
 
 // OptimizePreparedPlan optimizes the prepared statement.
@@ -190,12 +191,12 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
 	}
-	prepared, ok := vars.PreparedStmts[e.ExecID]
+	prepareds, ok := vars.PreparedStmts[e.ExecID]
 	if !ok {
 		return errors.Trace(ErrStmtNotFound)
 	}
+	prepared := prepareds[e.IdxInMulti]
 	vars.StmtCtx.StmtType = prepared.StmtType
-
 	paramLen := len(e.PrepareParams)
 	if paramLen > 0 {
 		// for binary protocol execute, argument is placed in vars.PrepareParams

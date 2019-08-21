@@ -71,16 +71,21 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs ResultSet, err error) {
-	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ctx, ts.id, args)
+func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs []ResultSet, err error) {
+	recordSets, err := ts.ctx.session.ExecutePreparedStmt(ctx, ts.id, args)
 	if err != nil {
 		return nil, err
 	}
-	if tidbRecordset == nil {
+	if len(recordSets) == 0 {
 		return
 	}
-	rs = &tidbResultSet{
-		recordSet: tidbRecordset,
+	if ts.ctx.session.GetSessionVars().ClientCapability&mysql.ClientMultiResults == 0 && len(recordSets) > 1 {
+		// return the first recordset if client doesn't support ClientMultiResults.
+		recordSets = recordSets[:1]
+	}
+	rs = make([]ResultSet, 0, len(recordSets))
+	for _, r := range recordSets {
+		rs = append(rs, &tidbResultSet{recordSet: r})
 	}
 	return
 }

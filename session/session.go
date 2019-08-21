@@ -111,7 +111,7 @@ type Session interface {
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
-	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) (sqlexec.RecordSet, error)
+	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) ([]sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
@@ -268,13 +268,13 @@ func (s *session) cleanRetryInfo() {
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
 		cacheKey = plannercore.NewPSTMTPlanCacheKey(
-			s.sessionVars, firstStmtID, s.sessionVars.PreparedStmts[firstStmtID].SchemaVersion,
+			s.sessionVars, firstStmtID, s.sessionVars.PreparedStmts[firstStmtID][0].SchemaVersion,
 		)
 	}
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
 			if i > 0 {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, s.sessionVars.PreparedStmts[stmtID].SchemaVersion)
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, s.sessionVars.PreparedStmts[stmtID][0].SchemaVersion)
 			}
 			s.PreparedPlanCache().Delete(cacheKey)
 		}
@@ -1222,16 +1222,35 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 }
 
 // ExecutePreparedStmt executes a prepared statement.
-func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
+func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) ([]sqlexec.RecordSet, error) {
 	s.PrepareTxnCtx(ctx)
 	s.sessionVars.StmtCtx.StartTime = time.Now()
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
+	stmts, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
 	}
-	logQuery(st.OriginText(), s.sessionVars)
-	r, err := runStmt(ctx, s, st)
-	return r, err
+	var rs []sqlexec.RecordSet
+	for _, st := range stmts {
+		s.PrepareTxnCtx(ctx)
+		logQuery(st.OriginText(), s.sessionVars)
+		r, err := runStmt(ctx, s, st)
+		if err != nil {
+			return nil, err
+		}
+		if len(stmts) > 1 && r == nil {
+			r = &multiQueryNoDelayRecordSet{
+				affectedRows: s.AffectedRows(),
+				lastMessage:  s.LastMessage(),
+				warnCount:    s.sessionVars.StmtCtx.WarningCount(),
+				lastInsertID: s.sessionVars.StmtCtx.LastInsertID,
+				status:       s.sessionVars.Status,
+			}
+		}
+		if r != nil {
+			rs = append(rs, r)
+		}
+	}
+	return rs, nil
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {

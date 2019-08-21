@@ -362,7 +362,7 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (Pla
 		}
 		vars = append(vars, newExpr)
 	}
-	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID}
+	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID, IdxInMulti: v.IdxInMulti}
 	if v.BinaryArgs != nil {
 		exe.PrepareParams = v.BinaryArgs.([]types.Datum)
 	}
