@@ -30,7 +30,7 @@ func (db *DB) NewIterator() Iterator {
 	}
 }
 
-// Valid returns true iff the iterator is positioned at a valid node.
+// Valid returns true if the iterator is positioned at a valid node.
 func (it *Iterator) Valid() bool { return it.curr != nil }
 
 // Key returns the key at the current position.
@@ -94,8 +94,8 @@ func (it *Iterator) updateState(node *node, nodeData []byte) {
 func (it *Iterator) changeToAddr(addr arenaAddr) {
 	var data []byte
 	var n *node
-	if addr != nullArenaAddr {
-		data = it.db.getArena().getFrom(addr)
+	if !addr.isNull() {
+		data = it.db.arena.getFrom(addr)
 		n = (*node)(unsafe.Pointer(&data[0]))
 	}
 	it.updateState(n, data)

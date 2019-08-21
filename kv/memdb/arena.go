@@ -15,26 +15,37 @@ package memdb
 
 import "math"
 
-type arenaAddr uint64
+type arenaAddr struct {
+	blockIdx    uint32
+	blockOffset uint32
+}
+
+func (addr arenaAddr) isNull() bool {
+	return addr.blockIdx == 0 && addr.blockOffset == 0
+}
+
+func (addr arenaAddr) encode() uint64 {
+	return uint64(addr.blockIdx)<<32 | uint64(addr.blockOffset)
+}
+
+func newArenaAddr(idx int, offset uint32) arenaAddr {
+	return arenaAddr{
+		blockIdx:    uint32(idx) + 1,
+		blockOffset: offset,
+	}
+}
+
+func decodeArenaAddr(encoded uint64) arenaAddr {
+	return arenaAddr{
+		blockIdx:    uint32(encoded >> 32),
+		blockOffset: uint32(encoded),
+	}
+}
 
 const (
-	alignMask                 = 1<<32 - 8 // 29 bit 1 and 3 bit 0.
-	nullBlockOffset           = math.MaxUint32
-	maxBlockSize              = 128 << 20
-	nullArenaAddr   arenaAddr = 0
+	nullBlockOffset = math.MaxUint32
+	maxBlockSize    = 128 << 20
 )
-
-func (addr arenaAddr) blockIdx() int {
-	return int(addr>>32 - 1)
-}
-
-func (addr arenaAddr) blockOffset() uint32 {
-	return uint32(addr)
-}
-
-func newArenaAddr(blockIdx int, blockOffset uint32) arenaAddr {
-	return arenaAddr(uint64(blockIdx+1)<<32 | uint64(blockOffset))
-}
 
 type arena struct {
 	blockSize int
@@ -50,7 +61,7 @@ func newArenaLocator(initBlockSize int) *arena {
 }
 
 func (a *arena) getFrom(addr arenaAddr) []byte {
-	return a.blocks[addr.blockIdx()].getFrom(addr.blockOffset())
+	return a.blocks[addr.blockIdx-1].getFrom(addr.blockOffset)
 }
 
 func (a *arena) alloc(size int) (arenaAddr, []byte) {
@@ -66,7 +77,9 @@ func (a *arena) alloc(size int) (arenaAddr, []byte) {
 		block := a.blocks[a.availIdx]
 		blockOffset := block.alloc(size)
 		if blockOffset != nullBlockOffset {
-			return newArenaAddr(a.availIdx, blockOffset), block.buf[blockOffset : int(blockOffset)+size]
+			addr := newArenaAddr(a.availIdx, blockOffset)
+			data := block.buf[blockOffset : int(blockOffset)+size]
+			return addr, data
 		}
 
 		blockSize := a.blockSize << 1
@@ -74,20 +87,19 @@ func (a *arena) alloc(size int) (arenaAddr, []byte) {
 			a.blockSize = blockSize
 		}
 		a.blocks = append(a.blocks, newArenaBlock(a.blockSize))
-		a.availIdx = len(a.blocks) - 1
+		a.availIdx = int(uint32(len(a.blocks) - 1))
 	}
 }
 
 func (a *arena) reset() {
 	a.availIdx = 0
 	a.blockSize = len(a.blocks[0].buf)
-	a.blocks = a.blocks[:1]
+	a.blocks = []*arenaBlock{a.blocks[0]}
 	a.blocks[0].reset()
 }
 
 type arenaBlock struct {
 	buf    []byte
-	ref    uint64
 	length int
 }
 
@@ -103,17 +115,15 @@ func (a *arenaBlock) getFrom(offset uint32) []byte {
 
 func (a *arenaBlock) alloc(size int) uint32 {
 	// The returned addr should be aligned in 8 bytes.
-	offset := (a.length + 7) & alignMask
+	offset := a.length
 	a.length = offset + size
 	if a.length > len(a.buf) {
 		return nullBlockOffset
 	}
-	a.ref++
 	return uint32(offset)
 }
 
 func (a *arenaBlock) reset() {
 	a.buf = a.buf[:0]
-	a.ref = 0
 	a.length = 0
 }

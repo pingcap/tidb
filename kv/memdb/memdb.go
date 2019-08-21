@@ -69,7 +69,7 @@ func (db *DB) Get(key []byte) []byte {
 // Put sets the value for the given key.
 // It overwrites any previous value for that key.
 func (db *DB) Put(key []byte, v []byte) bool {
-	arena := db.getArena()
+	arena := db.arena
 	lsHeight := db.getHeight()
 	var prev [maxHeight + 1]nodeWithAddr
 	var next [maxHeight + 1]nodeWithAddr
@@ -78,7 +78,7 @@ func (db *DB) Put(key []byte, v []byte) bool {
 	var exists bool
 	for i := lsHeight - 1; i >= 0; i-- {
 		// Use higher level to speed up for current level.
-		prev[i], next[i], exists = db.findSpliceForLevel(db.getArena(), key, prev[i+1], i)
+		prev[i], next[i], exists = db.findSpliceForLevel(db.arena, key, prev[i+1], i)
 	}
 
 	var height int
@@ -96,16 +96,16 @@ func (db *DB) Put(key []byte, v []byte) bool {
 	// We always insert from the base level and up. After you add a node in base level, we cannot
 	// create a node in the level above because it would have discovered the node in the base level.
 	for i := 0; i < height; i++ {
-		x.nexts[i] = uint64(next[i].addr)
+		x.nexts[i] = next[i].addr.encode()
 		if prev[i].node == nil {
 			prev[i] = db.head
 		}
 		prev[i].setNextAddr(i, addr)
 	}
 
-	x.prev = uint64(prev[0].addr)
+	x.prev = prev[0].addr.encode()
 	if next[0].node != nil {
-		next[0].prev = uint64(addr)
+		next[0].prev = addr.encode()
 	}
 
 	db.length++
@@ -113,15 +113,21 @@ func (db *DB) Put(key []byte, v []byte) bool {
 	return true
 }
 
+// The pointers in findSpliceForLevel may point to the node which going to be overwrite,
+// prepareOverwrite update them to point to the next node, so we can link new node with the list correctly.
 func (db *DB) prepareOverwrite(next []nodeWithAddr) int {
 	old := next[0]
-	height := int(old.height)
+
+	// Update necessary states.
 	db.size -= int(old.valLen) + int(old.keyLen)
+	db.length--
+
+	height := int(old.height)
 	for i := 0; i < height; i++ {
 		if next[i].addr == old.addr {
 			next[i].addr = old.getNextAddr(i)
-			if next[i].addr != nullArenaAddr {
-				data := db.getArena().getFrom(next[i].addr)
+			if !next[i].addr.isNull() {
+				data := db.arena.getFrom(next[i].addr)
 				next[i].node = (*node)(unsafe.Pointer(&data[0]))
 			}
 		}
@@ -139,7 +145,7 @@ func (db *DB) Delete(key []byte) bool {
 	var keyNode nodeWithAddr
 	var match bool
 	for i := listHeight - 1; i >= 0; i-- {
-		prev[i], keyNode, match = db.findSpliceForLevel(db.getArena(), key, prev[i+1], i)
+		prev[i], keyNode, match = db.findSpliceForLevel(db.arena, key, prev[i+1], i)
 	}
 	if !match {
 		return false
@@ -149,10 +155,10 @@ func (db *DB) Delete(key []byte) bool {
 		prev[i].setNextAddr(i, keyNode.getNextAddr(i))
 	}
 	nextAddr := keyNode.getNextAddr(0)
-	if nextAddr != nullArenaAddr {
-		nextData := db.getArena().getFrom(nextAddr)
+	if !nextAddr.isNull() {
+		nextData := db.arena.getFrom(nextAddr)
 		next := (*node)(unsafe.Pointer(&nextData[0]))
-		next.prev = uint64(prev[0].addr)
+		next.prev = prev[0].addr.encode()
 	}
 
 	db.length--
@@ -193,15 +199,15 @@ type nodeWithAddr struct {
 }
 
 func (n *node) getPrevAddr() arenaAddr {
-	return arenaAddr(n.prev)
+	return decodeArenaAddr(n.prev)
 }
 
 func (n *node) getNextAddr(level int) arenaAddr {
-	return arenaAddr(n.nexts[level])
+	return decodeArenaAddr(n.nexts[level])
 }
 
 func (n *node) setNextAddr(level int, addr arenaAddr) {
-	n.nexts[level] = uint64(addr)
+	n.nexts[level] = addr.encode()
 }
 
 func (n *node) entryLen() int {
@@ -232,10 +238,10 @@ func (db *DB) setHeight(height int) {
 
 func (db *DB) getNext(n *node, level int) (*node, []byte) {
 	addr := n.getNextAddr(level)
-	if addr == nullArenaAddr {
+	if addr.isNull() {
 		return nil, nil
 	}
-	arena := db.getArena()
+	arena := db.arena
 	data := arena.getFrom(addr)
 	node := (*node)(unsafe.Pointer(&data[0]))
 	return node, data
@@ -248,7 +254,7 @@ func (db *DB) findSpliceForLevel(arena *arena, key []byte, before nodeWithAddr, 
 	for {
 		// Assume before.key < key.
 		nextAddr := before.getNextAddr(level)
-		if nextAddr == nullArenaAddr {
+		if nextAddr.isNull() {
 			return before, nodeWithAddr{}, false
 		}
 		data := arena.getFrom(nextAddr)
@@ -271,8 +277,8 @@ func (db *DB) findGreater(key []byte, allowEqual bool) (*node, []byte, bool) {
 		var nextData []byte
 		var next *node
 		addr := prev.getNextAddr(level)
-		if addr != nullArenaAddr {
-			arena := db.getArena()
+		if !addr.isNull() {
+			arena := db.arena
 			nextData = arena.getFrom(addr)
 			next = (*node)(unsafe.Pointer(&nextData[0]))
 
@@ -372,14 +378,6 @@ func (db *DB) newNode(arena *arena, key []byte, v []byte, height int) (*node, ar
 	copy(data[node.nodeLen():], key)
 	copy(data[node.nodeLen()+int(node.keyLen):], v)
 	return node, addr
-}
-
-func (db *DB) getArena() *arena {
-	return db.arena
-}
-
-func (db *DB) setArena(al *arena) {
-	db.arena = al
 }
 
 func (db *DB) randomHeight() int {
