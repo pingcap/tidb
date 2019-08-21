@@ -2151,7 +2151,7 @@ func (s *testSuite4) TestSplitRegionTimeout(c *C) {
 	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
 	tk.MustExec(`set @@tidb_wait_split_region_timeout=1`)
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
-	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
+	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0 0"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout"), IsNil)
 }
 
@@ -4131,7 +4131,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 
 	// Test show table regions.
 	tk.MustExec(`split table t_regions1 by (0)`)
-	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("3 1"))
+	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("3 1 3"))
 	re := tk.MustQuery("show table t_regions regions")
 	rows := re.Rows()
 	// Table t_regions should have 4 regions now.
@@ -4146,7 +4146,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
 
 	// Test show table index regions.
-	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("4 1"))
+	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("4 1 4"))
 	re = tk.MustQuery("show table t_regions index idx regions")
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
@@ -4175,7 +4175,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 
 	// Test show table regions.
 	tk.MustExec(`set @@session.tidb_wait_split_region_finish=1;`)
-	tk.MustQuery(`split table t_regions by (2500),(5000),(7500);`).Check(testkit.Rows("3 1"))
+	tk.MustQuery(`split table t_regions by (2500),(5000),(7500);`).Check(testkit.Rows("3 1 3"))
 	re = tk.MustQuery("show table t_regions regions")
 	rows = re.Rows()
 	// Table t_regions should have 4 regions now.
@@ -4188,7 +4188,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_7500", tbl.Meta().ID))
 
 	// Test show table index regions.
-	tk.MustQuery(`split table t_regions index idx by (250),(500),(750);`).Check(testkit.Rows("4 1"))
+	tk.MustQuery(`split table t_regions index idx by (250),(500),(750);`).Check(testkit.Rows("4 1 4"))
 	re = tk.MustQuery("show table t_regions index idx regions")
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.

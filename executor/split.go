@@ -357,6 +357,7 @@ func appendSplitRegionResultToChunk(chk *chunk.Chunk, totalRegions, finishScatte
 	} else {
 		chk.AppendFloat64(1, float64(0))
 	}
+	chk.AppendInt64(2, int64(finishScatterNum))
 }
 
 func isCtxDone(ctx context.Context) bool {
