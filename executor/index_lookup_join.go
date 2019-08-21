@@ -482,8 +482,6 @@ func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) err
 func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoinLookUpContent, error) {
 	lookUpContents := make([]*indexJoinLookUpContent, 0, task.outerResult.NumRows())
 	keyBuf := make([]byte, 0, 64)
-	valBuf := make([]byte, 8)
-	tmpPtr := make([][]byte, 2)
 	for i := 0; i < task.outerResult.NumRows(); i++ {
 		outerRow := task.outerResult.GetRow(i)
 		if task.outerMatch != nil && !task.outerMatch[i] {
