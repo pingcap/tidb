@@ -2219,12 +2219,14 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			return nil, err
 		}
 		schema := plan.Schema()
-		if v.Cols != nil && len(v.Cols) != schema.Len() {
-			return nil, ddl.ErrViewWrongList
+		if v.Cols == nil {
+			v.Cols = make([]model.CIStr, len(schema.Columns))
+			for i, col := range schema.Columns {
+				v.Cols[i] = col.ColName
+			}
 		}
-		v.SchemaCols = make([]model.CIStr, schema.Len())
-		for i, col := range schema.Columns {
-			v.SchemaCols[i] = col.ColName
+		if len(v.Cols) != schema.Len() {
+			return nil, ddl.ErrViewWrongList
 		}
 		if _, ok := plan.(LogicalPlan); ok {
 			if b.ctx.GetSessionVars().User != nil {
