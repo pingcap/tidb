@@ -156,7 +156,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
 			op := pb.Op_Put
-			if c := txn.us.LookupConditionPair(k); c != nil && c.ShouldNotExist() {
+			if c := txn.us.LookupConditionPair(k); c != nil {
 				op = pb.Op_Insert
 			}
 			mutations[string(k)] = &mutationEx{
@@ -536,14 +536,14 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				conditionPair := c.txn.us.LookupConditionPair(key)
-				if conditionPair == nil {
+				conditionErr := c.txn.us.LookupConditionPair(key)
+				if conditionErr == nil {
 					return errors.Errorf("conn%d, conditionPair for key:%s should not be nil", c.connID, key)
 				}
 				logutil.BgLogger().Debug("key already exists",
 					zap.Uint64("conn", c.connID),
 					zap.Stringer("key", kv.Key(key)))
-				return errors.Trace(conditionPair.Err())
+				return conditionErr
 			}
 
 			// Extract lock from key error
@@ -579,7 +579,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			Key: k,
 		}
 		conditionPair := c.txn.us.LookupConditionPair(k)
-		if conditionPair != nil && conditionPair.ShouldNotExist() {
+		if conditionPair != nil {
 			mut.Assertion = pb.Assertion_NotExist
 		}
 		mutations[i] = mut
@@ -623,11 +623,11 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				conditionPair := c.txn.us.LookupConditionPair(key)
-				if conditionPair == nil {
+				conditionErr := c.txn.us.LookupConditionPair(key)
+				if conditionErr == nil {
 					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
 				}
-				return errors.Trace(conditionPair.Err())
+				return conditionErr
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
 				return &ErrDeadlock{Deadlock: deadlock}

@@ -146,7 +146,6 @@ func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 
 	condionPair2 := s.us.LookupConditionPair([]byte("2"))
 	c.Assert(condionPair2, NotNil)
-	c.Assert(condionPair2.ShouldNotExist(), IsTrue)
 
 	err2 := s.us.LookupConditionPair([]byte("2")).Err()
 	c.Assert(terror.ErrorEqual(err2, ErrNotExist), IsTrue, Commentf("err %v", err2))

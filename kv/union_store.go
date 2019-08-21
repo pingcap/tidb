@@ -20,7 +20,7 @@ import "context"
 type UnionStore interface {
 	MemBuffer
 	// Returns related condition pair
-	LookupConditionPair(k Key) *conditionPair
+	LookupConditionPair(k Key) error
 	// DeleteConditionPair deletes a condition pair.
 	DeleteConditionPair(k Key)
 	// WalkBuffer iterates all buffered kv pairs.
@@ -55,27 +55,11 @@ type Options interface {
 	Get(opt Option) (v interface{}, ok bool)
 }
 
-// conditionPair is used to store lazy check condition.
-// If condition not match (value is not equal as expected one), returns err.
-type conditionPair struct {
-	key   Key
-	value []byte
-	err   error
-}
-
-func (c *conditionPair) ShouldNotExist() bool {
-	return len(c.value) == 0
-}
-
-func (c *conditionPair) Err() error {
-	return c.err
-}
-
 // unionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
 	*BufferStore
-	lazyConditionPairs map[string]*conditionPair // for delay check
+	lazyConditionPairs map[string]error // for delay check
 	opts               options
 }
 
@@ -83,7 +67,7 @@ type unionStore struct {
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
 		BufferStore:        NewBufferStore(snapshot, DefaultTxnMembufCap),
-		lazyConditionPairs: make(map[string]*conditionPair),
+		lazyConditionPairs: make(map[string]error),
 		opts:               make(map[Option]interface{}),
 	}
 }
@@ -185,9 +169,9 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
 			e, ok := us.opts.Get(PresumeKeyNotExistsError)
 			if ok && e != nil {
-				us.markLazyConditionPair(k, nil, e.(error))
+				us.lazyConditionPairs[string(k)] = e.(error)
 			} else {
-				us.markLazyConditionPair(k, nil, ErrKeyExists)
+				us.lazyConditionPairs[string(k)] = ErrKeyExists
 			}
 			return nil, ErrNotExist
 		}
@@ -202,17 +186,7 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 	return v, nil
 }
 
-// markLazyConditionPair marks a kv pair for later check.
-// If condition not match, should return e as error.
-func (us *unionStore) markLazyConditionPair(k Key, v []byte, e error) {
-	us.lazyConditionPairs[string(k)] = &conditionPair{
-		key:   k.Clone(),
-		value: v,
-		err:   e,
-	}
-}
-
-func (us *unionStore) LookupConditionPair(k Key) *conditionPair {
+func (us *unionStore) LookupConditionPair(k Key) error {
 	if c, ok := us.lazyConditionPairs[string(k)]; ok {
 		return c
 	}
