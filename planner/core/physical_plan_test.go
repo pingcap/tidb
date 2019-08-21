@@ -1232,8 +1232,6 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
-	se.GetSessionVars().HashAggFinalConcurrency = 1
-	se.GetSessionVars().HashAggPartialConcurrency = 1
 	tests := []struct {
 		sql  string
 		best string

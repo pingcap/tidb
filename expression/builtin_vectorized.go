@@ -47,7 +47,7 @@ func newLocalSliceBuffer(initCap int) *localSliceBuffer {
 	return &localSliceBuffer{buffers: make([]*chunk.Column, initCap)}
 }
 
-func (r *localSliceBuffer) newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+func newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	switch evalType {
 	case types.ETInt:
 		return chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), capacity), nil
@@ -69,7 +69,6 @@ func (r *localSliceBuffer) newBuffer(evalType types.EvalType, capacity int) (*ch
 
 func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	r.Lock()
-	defer r.Unlock()
 	if r.size > 0 {
 		buf := r.buffers[r.head]
 		r.head++
@@ -77,14 +76,15 @@ func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Co
 			r.head = 0
 		}
 		r.size--
+		r.Unlock()
 		return buf, nil
 	}
-	return r.newBuffer(evalType, capacity)
+	r.Unlock()
+	return newBuffer(evalType, capacity)
 }
 
 func (r *localSliceBuffer) put(buf *chunk.Column) {
 	r.Lock()
-	defer r.Unlock()
 	if r.size == len(r.buffers) {
 		buffers := make([]*chunk.Column, len(r.buffers)*2)
 		copy(buffers, r.buffers[r.head:])
@@ -99,12 +99,114 @@ func (r *localSliceBuffer) put(buf *chunk.Column) {
 		r.tail = 0
 	}
 	r.size++
+	r.Unlock()
 }
 
+// vecRowConverter is used to convert the underlying builtin function between row-based evaluation and vectorized evaluation.
 type vecRowConverter struct {
 	builtinFunc
+
+	// fields for converting vectorized evaluation to row-based evaluation.
+	buf *chunk.Column
+	sel []int
 }
 
+func newVecRowConverter(underlying builtinFunc) *vecRowConverter {
+	return &vecRowConverter{underlying, nil, nil}
+}
+
+// vecEvalRow evaluates this single row in a vectorized manner.
+func (c *vecRowConverter) vecEvalRow(evalType types.EvalType, row chunk.Row) (err error) {
+	if c.sel == nil {
+		c.sel = make([]int, 1)
+	}
+	c.sel[0] = row.Idx()
+	if c.buf == nil {
+		c.buf, err = c.builtinFunc.get(evalType, 1)
+		if err != nil {
+			return
+		}
+	}
+	input := row.Chunk()
+	sel := input.Sel()
+	input.SetSel(c.sel)
+	err = c.builtinFunc.vecEval(input, c.buf)
+	input.SetSel(sel)
+	return
+}
+
+func (c *vecRowConverter) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	if !c.builtinFunc.vectorized() {
+		return c.builtinFunc.evalInt(row)
+	}
+	if err = c.vecEvalRow(types.ETInt, row); err != nil {
+		return
+	}
+	return c.buf.GetInt64(0), c.buf.IsNull(0), nil
+}
+
+func (c *vecRowConverter) evalReal(row chunk.Row) (val float64, isNull bool, err error) {
+	if !c.builtinFunc.vectorized() {
+		return c.builtinFunc.evalReal(row)
+	}
+	if err = c.vecEvalRow(types.ETReal, row); err != nil {
+		return
+	}
+	return c.buf.GetFloat64(0), c.buf.IsNull(0), nil
+}
+
+func (c *vecRowConverter) evalString(row chunk.Row) (val string, isNull bool, err error) {
+	if !c.builtinFunc.vectorized() {
+		return c.builtinFunc.evalString(row)
+	}
+	if err = c.vecEvalRow(types.ETString, row); err != nil {
+		return
+	}
+	return c.buf.GetString(0), c.buf.IsNull(0), nil
+}
+
+func (c *vecRowConverter) evalDecimal(row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
+	if !c.builtinFunc.vectorized() {
+		return c.builtinFunc.evalDecimal(row)
+	}
+	if err = c.vecEvalRow(types.ETDecimal, row); err != nil {
+		return
+	}
+	return c.buf.GetDecimal(0), c.buf.IsNull(0), nil
+}
+
+func (c *vecRowConverter) evalTime(row chunk.Row) (val types.Time, isNull bool, err error) {
+	if !c.builtinFunc.vectorized() {
+		return c.builtinFunc.evalTime(row)
+	}
+	if err = c.vecEvalRow(types.ETDatetime, row); err != nil {
+		return
+	}
+	return c.buf.GetTime(0), c.buf.IsNull(0), nil
+}
+
+func (c *vecRowConverter) evalDuration(row chunk.Row) (val types.Duration, isNull bool, err error) {
+	if !c.builtinFunc.vectorized() {
+		return c.builtinFunc.evalDuration(row)
+	}
+	if err = c.vecEvalRow(types.ETReal, row); err != nil {
+		return
+	}
+	return c.buf.GetDuration(0, 0), c.buf.IsNull(0), nil
+}
+
+func (c *vecRowConverter) evalJSON(row chunk.Row) (val json.BinaryJSON, isNull bool, err error) {
+	if !c.builtinFunc.vectorized() {
+		return c.builtinFunc.evalJSON(row)
+	}
+	if err = c.vecEvalRow(types.ETReal, row); err != nil {
+		return
+	}
+	return c.buf.GetJSON(0), c.buf.IsNull(0), nil
+}
+
+// vecEval evaluates this builtin function in a vectorized manner.
+// If the underlying builtin function is row-based, it will be converted to vectorized.
 func (c *vecRowConverter) vecEval(input *chunk.Chunk, result *chunk.Column) error {
 	if c.builtinFunc.vectorized() {
 		return c.builtinFunc.vecEval(input, result)
@@ -221,7 +323,7 @@ func (c *vecRowConverter) equal(bf builtinFunc) bool {
 }
 
 func (c *vecRowConverter) Clone() builtinFunc {
-	return &vecRowConverter{c.builtinFunc.Clone()}
+	return &vecRowConverter{c.builtinFunc.Clone(), nil, nil}
 }
 
 type vecRowConvertFuncClass struct {
@@ -233,5 +335,5 @@ func (c *vecRowConvertFuncClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	return &vecRowConverter{bf}, nil
+	return newVecRowConverter(bf), nil
 }
