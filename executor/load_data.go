@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"runtime"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -180,7 +179,6 @@ func (e *LoadDataInfo) EnqOneTask(ctx context.Context) error {
 				return err
 			}
 		}
-		logutil.Logger(ctx).Debug("one task enqueued ", zap.Int("current queue len", len(e.commitTaskQueue)))
 		// reset rows buffer, will reallocate buffer but NOT reuse
 		e.SetMaxRowsInBatch(e.maxRowsInBatch)
 	}
@@ -188,7 +186,7 @@ func (e *LoadDataInfo) EnqOneTask(ctx context.Context) error {
 }
 
 // CommitOneTask insert Data from LoadDataInfo.rows, then make commit and refresh txn
-func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask, resetBuf bool) error {
+func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error {
 	var err error
 	defer func() {
 		if err != nil {
@@ -209,10 +207,6 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask, reset
 		logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
 		return err
 	}
-	// this only set in sequential mode, e.rows buffer will be reused in sequential mode
-	if resetBuf {
-		e.curBatchCnt = 0
-	}
 	return err
 }
 
@@ -222,10 +216,8 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 	defer func() {
 		r := recover()
 		if r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("CommitWork panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("CommitWork panicked",
+				zap.Stack("stack"))
 		}
 		if err != nil || r != nil {
 			e.ForceQuitProcess()
@@ -244,14 +236,11 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 			break
 		case commitTask, ok := <-e.commitTaskQueue:
 			if ok {
-				err = e.CommitOneTask(ctx, commitTask, false)
+				err = e.CommitOneTask(ctx, commitTask)
 				if err != nil {
 					break
 				}
 				tasks++
-				logutil.Logger(ctx).Debug("commit one task finished",
-					zap.Uint64("finished tasks count", tasks),
-					zap.Int("pending tasks count", len(e.commitTaskQueue)))
 			} else {
 				end = true
 				logutil.Logger(ctx).Info("commit work all finished",

@@ -1044,7 +1044,7 @@ func (cc *clientConn) writeReq(filePath string) error {
 }
 
 func insertDataWithCommit(ctx context.Context, prevData,
-	curData []byte, loadDataInfo *executor.LoadDataInfo, enqTask bool) ([]byte, error) {
+	curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
 	var reachLimit bool
 	for {
@@ -1055,12 +1055,8 @@ func insertDataWithCommit(ctx context.Context, prevData,
 		if !reachLimit {
 			break
 		}
-		if enqTask {
-			// push into commit task queue
-			err = loadDataInfo.EnqOneTask(ctx)
-		} else {
-			err = loadDataInfo.CommitOneTask(ctx, loadDataInfo.MakeCommitTask(), true)
-		}
+		// push into commit task queue
+		err = loadDataInfo.EnqOneTask(ctx)
 		if err != nil {
 			return prevData, err
 		}
@@ -1078,10 +1074,7 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 	defer func() {
 		r := recover()
 		if r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("process routine panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("process routine panicked", zap.Stack("stack"))
 		}
 		if err != nil || r != nil {
 			loadDataInfo.ForceQuitCommit()
@@ -1112,7 +1105,7 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 			break
 		}
 		// prepare batch and enqueue task
-		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo, true)
+		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
 		if err != nil {
 			break
 		}
