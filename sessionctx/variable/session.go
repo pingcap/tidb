@@ -1059,7 +1059,7 @@ type SlowQueryLogItems struct {
 // # Query_time: 4.895492
 // # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
 // # DB: test
-// # Index_names: [idx1,idx2]
+// # Index_names: [t1.idx1,t2.idx2]
 // # Is_internal: false
 // # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 // # Stats: t1:1,t2:2
