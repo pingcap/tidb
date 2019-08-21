@@ -560,8 +560,8 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] delete range failed on range",
 				zap.String("uuid", w.uuid),
-				zap.Binary("startKey", startKey),
-				zap.Binary("endKey", endKey),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
 				zap.Error(err))
 			continue
 		}
@@ -572,8 +572,8 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
 				zap.String("uuid", w.uuid),
-				zap.Binary("startKey", startKey),
-				zap.Binary("endKey", endKey),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
 				zap.Error(err))
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
@@ -612,8 +612,8 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] redo-delete range failed on range",
 				zap.String("uuid", w.uuid),
-				zap.Binary("startKey", startKey),
-				zap.Binary("endKey", endKey),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
 				zap.Error(err))
 			continue
 		}
@@ -624,8 +624,8 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to remove delete_range_done record",
 				zap.String("uuid", w.uuid),
-				zap.Binary("startKey", startKey),
-				zap.Binary("endKey", endKey),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
 				zap.Error(err))
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save_redo").Inc()
 		}
