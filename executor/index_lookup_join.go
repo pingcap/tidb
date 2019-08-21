@@ -101,7 +101,7 @@ type lookUpJoinTask struct {
 	lookupMap         *mvmap.MVMap
 	matchKeyMap       *mvmap.MVMap
 	nullMap           map[string]bool
-	matchedInners     []chunk.Row
+	matchedInnerRows  []chunk.Row
 
 	doneCh   chan error
 	cursor   int
@@ -252,7 +252,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
 			e.lookUpMatchedInners(task, task.cursor)
-			e.innerIter = chunk.NewIterator4Slice(task.matchedInners)
+			e.innerIter = chunk.NewIterator4Slice(task.matchedInnerRows)
 			e.innerIter.Begin()
 		}
 
@@ -313,12 +313,12 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx int) {
 	outerKey := task.encodedLookUpKeys.GetRow(rowIdx).GetBytes(0)
 	e.innerPtrBytes = task.lookupMap.Get(outerKey, e.innerPtrBytes[:0])
-	task.matchedInners = task.matchedInners[:0]
+	task.matchedInnerRows = task.matchedInnerRows[:0]
 
 	for _, b := range e.innerPtrBytes {
 		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
 		matchedInner := task.innerResult.GetRow(ptr)
-		task.matchedInners = append(task.matchedInners, matchedInner)
+		task.matchedInnerRows = append(task.matchedInnerRows, matchedInner)
 	}
 }
 
@@ -473,11 +473,9 @@ func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) err
 	if err != nil {
 		return err
 	}
-	if iw.outerCtx.keepOrder {
-		err = iw.buildLookUpMap(task)
-		if err != nil {
-			return err
-		}
+	err = iw.buildLookUpMap(task)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -488,7 +486,11 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 	valBuf := make([]byte, 8)
 	tmpPtr := make([][]byte, 2)
 	for i := 0; i < task.outerResult.NumRows(); i++ {
-		dLookUpKey, err := iw.constructDatumLookupKey(task, i)
+		outerRow := task.outerResult.GetRow(i)
+		if task.outerMatch != nil && !task.outerMatch[i] {
+			continue
+		}
+		dLookUpKey, err := iw.constructDatumLookupKey(task, outerRow)
 		if err != nil {
 			return nil, err
 		}
@@ -524,11 +526,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 	return lookUpContents, nil
 }
 
-func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int) ([]types.Datum, error) {
-	if task.outerMatch != nil && !task.outerMatch[rowIdx] {
-		return nil, nil
-	}
-	outerRow := task.outerResult.GetRow(rowIdx)
+func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, outerRow chunk.Row) ([]types.Datum, error) {
 	sc := iw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(iw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
@@ -538,10 +536,6 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 		// IndexNestedLoopJoin, thus the filter will always be false if
 		// outerValue is null, and we don't need to lookup it.
 		if outerValue.IsNull() {
-			if !iw.outerCtx.keepOrder {
-				dLookupKey = append(dLookupKey, outerValue)
-				continue
-			}
 			return nil, nil
 		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
