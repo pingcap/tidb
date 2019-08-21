@@ -127,7 +127,7 @@ func FindColName(names []*NamingForMySQLProtocol, astCol *ast.ColumnName) (int, 
 			if idx == -1 {
 				idx = i
 			} else {
-				return -1, errors.Errorf("Column %s is ambiguous", name.String())
+				return -1, errNonUniq.GenWithStackByArgs(name.String(), "field list")
 			}
 		}
 	}

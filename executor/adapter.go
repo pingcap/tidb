@@ -75,10 +75,11 @@ func (a *recordSet) Fields() []*ast.ResultField {
 
 func colNames2ResultFields(schema *expression.Schema, names []*expression.NamingForMySQLProtocol, defaultDB string) []*ast.ResultField {
 	rfs := make([]*ast.ResultField, 0, schema.Len())
+	defaultDBCIStr := model.NewCIStr(defaultDB)
 	for i := 0; i < schema.Len(); i++ {
 		dbName := names[i].DBName
 		if dbName.L == "" && names[i].TblName.L != "" {
-			dbName = model.NewCIStr(defaultDB)
+			dbName = defaultDBCIStr
 		}
 		origColName := names[i].OrigColName
 		if origColName.L == "" {
@@ -92,6 +93,7 @@ func colNames2ResultFields(schema *expression.Schema, names []*expression.Naming
 			DBName:       dbName,
 		}
 		// This is for compatibility.
+		// See issue https://github.com/pingcap/tidb/issues/10513 .
 		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
 			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
 		}
@@ -127,6 +129,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 			},
 		}
 		// This is for compatibility.
+		// See issue https://github.com/pingcap/tidb/issues/10513 .
 		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
 			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
 		}
