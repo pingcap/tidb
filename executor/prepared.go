@@ -131,71 +131,73 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return util.SyntaxError(err)
 	}
-	if len(stmts) != 1 {
-		return ErrPrepareMulti
-	}
-	stmt := stmts[0]
-	err = ResetContextOfStmt(e.ctx, stmt)
-	if err != nil {
-		return err
-	}
-	var extractor paramMarkerExtractor
-	stmt.Accept(&extractor)
+	var prepareds []*ast.Prepared
+	for _, stmt := range stmts {
+		err = ResetContextOfStmt(e.ctx, stmt)
+		if err != nil {
+			return err
+		}
 
-	// DDL Statements can not accept parameters
-	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
-		return ErrPrepareDDL
-	}
+		var extractor paramMarkerExtractor
+		stmt.Accept(&extractor)
 
-	// Prepare parameters should NOT over 2 bytes(MaxUint16)
-	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
-	if len(extractor.markers) > math.MaxUint16 {
-		return ErrPsManyParam
-	}
+		// DDL Statements can not accept parameters
+		if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
+			return ErrPrepareDDL
+		}
 
-	err = plannercore.Preprocess(e.ctx, stmt, e.is, plannercore.InPrepare)
-	if err != nil {
-		return err
-	}
+		// Prepare parameters should NOT over 2 bytes(MaxUint16)
+		// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
+		if len(extractor.markers) > math.MaxUint16 {
+			return ErrPsManyParam
+		}
 
-	// The parameter markers are appended in visiting order, which may not
-	// be the same as the position order in the query string. We need to
-	// sort it by position.
-	sorter := &paramMarkerSorter{markers: extractor.markers}
-	sort.Sort(sorter)
-	e.ParamCount = len(sorter.markers)
-	for i := 0; i < e.ParamCount; i++ {
-		sorter.markers[i].SetOrder(i)
-	}
-	prepared := &ast.Prepared{
-		Stmt:          stmt,
-		StmtType:      GetStmtLabel(stmt),
-		Params:        sorter.markers,
-		SchemaVersion: e.is.SchemaMetaVersion(),
-	}
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && (vars.LightningMode || plannercore.Cacheable(stmt))
+		err = plannercore.Preprocess(e.ctx, stmt, e.is, plannercore.InPrepare)
+		if err != nil {
+			return err
+		}
 
-	// We try to build the real statement of preparedStmt.
-	for i := range prepared.Params {
-		param := prepared.Params[i].(*driver.ParamMarkerExpr)
-		param.Datum.SetNull()
-		param.InExecute = false
+		// The parameter markers are appended in visiting order, which may not
+		// be the same as the position order in the query string. We need to
+		// sort it by position.
+		sorter := &paramMarkerSorter{markers: extractor.markers}
+		sort.Sort(sorter)
+		e.ParamCount += len(sorter.markers)
+		for i := 0; i < len(sorter.markers); i++ {
+			sorter.markers[i].SetOrder(i)
+		}
+
+		prepared := &ast.Prepared{
+			Stmt:          stmt,
+			StmtType:      GetStmtLabel(stmt),
+			Params:        sorter.markers,
+			SchemaVersion: e.is.SchemaMetaVersion(),
+		}
+		prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && (vars.LightningMode || plannercore.Cacheable(stmt))
+
+		// We try to build the real statement of preparedStmt.
+		for i := range prepared.Params {
+			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			param.Datum.SetNull()
+			param.InExecute = false
+		}
+		var p plannercore.Plan
+		p, err = plannercore.BuildLogicalPlan(ctx, e.ctx, stmt, e.is)
+		if err != nil {
+			return err
+		}
+		if _, ok := stmt.(*ast.SelectStmt); ok {
+			e.Fields = append(e.Fields, schema2ResultFields(p.Schema(), vars.CurrentDB)...)
+		}
+		if e.ID == 0 {
+			e.ID = vars.GetNextPreparedStmtID()
+		}
+		if e.name != "" {
+			vars.PreparedStmtNameToID[e.name] = e.ID
+		}
+		prepareds = append(prepareds, prepared)
 	}
-	var p plannercore.Plan
-	p, err = plannercore.BuildLogicalPlan(ctx, e.ctx, stmt, e.is)
-	if err != nil {
-		return err
-	}
-	if _, ok := stmt.(*ast.SelectStmt); ok {
-		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
-	}
-	if e.ID == 0 {
-		e.ID = vars.GetNextPreparedStmtID()
-	}
-	if e.name != "" {
-		vars.PreparedStmtNameToID[e.name] = e.ID
-	}
-	return vars.AddPreparedStmt(e.ID, prepared)
+	return vars.AddPreparedStmt(e.ID, prepareds)
 }
 
 // ExecuteExec represents an EXECUTE executor.
@@ -261,7 +263,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
 		e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
-			vars, id, vars.PreparedStmts[id].SchemaVersion,
+			vars, id, vars.PreparedStmts[id][0].SchemaVersion,
 		))
 	}
 	vars.RemovePreparedStmt(id)
@@ -269,34 +271,41 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID uint32, args []types.Datum) (sqlexec.Statement, error) {
+func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID uint32, args []types.Datum) (stmts []sqlexec.Statement, err error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
-	execStmt := &ast.ExecuteStmt{ExecID: ID}
-	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
-		return nil, err
-	}
-	execStmt.BinaryArgs = args
-	is := GetInfoSchema(sctx)
-	execPlan, err := planner.Optimize(ctx, sctx, execStmt, is)
-	if err != nil {
-		return nil, err
-	}
 
-	stmt := &ExecStmt{
-		InfoSchema:  is,
-		Plan:        execPlan,
-		StmtNode:    execStmt,
-		Ctx:         sctx,
-		outputNames: execPlan.OutputNames(),
+	if prepareds, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
+		var paramIdx int
+		for idx, prepared := range prepareds {
+			execStmt := &ast.ExecuteStmt{ExecID: ID, IdxInMulti: idx}
+			if err := ResetContextOfStmt(sctx, execStmt); err != nil {
+				return nil, err
+			}
+			stmtArgs := args[paramIdx : paramIdx+len(prepared.Params)]
+			paramIdx += len(prepared.Params)
+			execStmt.BinaryArgs = stmtArgs
+			is := GetInfoSchema(sctx)
+			execPlan, err := planner.Optimize(ctx, sctx, execStmt, is)
+			if err != nil {
+				return nil, err
+			}
+
+			stmt := &ExecStmt{
+				InfoSchema:  is,
+				Plan:        execPlan,
+				StmtNode:    execStmt,
+				Ctx:         sctx,
+				outputNames: execPlan.OutputNames(),
+			}
+			stmt.Text = prepared.Stmt.Text()
+			sctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
+			stmts = append(stmts, stmt)
+		}
 	}
-	if prepared, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
-		stmt.Text = prepared.Stmt.Text()
-		sctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
-	}
-	return stmt, nil
+	return stmts, nil
 }
 
 func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
@@ -308,7 +317,7 @@ func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 		}
 	}
 	if prepared, ok := vars.PreparedStmts[execID]; ok {
-		return prepared.Stmt, nil
+		return prepared[stmt.IdxInMulti].Stmt, nil
 	}
 	return nil, plannercore.ErrStmtNotFound
 }

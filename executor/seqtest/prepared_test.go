@@ -86,7 +86,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 		rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
 		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 <nil>"))
+		tk.ResultSetToResult(rs[0], Commentf("%v", rs)).Check(testkit.Rows("1 <nil>"))
 
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
@@ -96,7 +96,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk1.MustExec("insert prepare_test (c1) values (3)")
 		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
 		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+		tk.ResultSetToResult(rs[0], Commentf("%v", rs)).Check(testkit.Rows("3"))
 
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
@@ -107,7 +107,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk1.MustExec("insert prepare_test (c1) values (3)")
 		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
 		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+		tk.ResultSetToResult(rs[0], Commentf("%v", rs)).Check(testkit.Rows("3"))
 
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 in (select c1 from prepare_test where c1 = ?)"
@@ -118,7 +118,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk1.MustExec("insert prepare_test (c1) values (3)")
 		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
 		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+		tk.ResultSetToResult(rs[0], Commentf("%v", rs)).Check(testkit.Rows("3"))
 
 		tk.MustExec("begin")
 		tk.MustExec("insert prepare_test (c1) values (4)")
@@ -128,23 +128,23 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.MustExec("rollback")
 		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(4)})
 		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
+		tk.ResultSetToResult(rs[0], Commentf("%v", rs)).Check(testkit.Rows())
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
 		stmt, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Se, stmtID, []types.Datum{types.NewDatum(1)})
 		c.Assert(err, IsNil)
-		c.Assert(stmt.OriginText(), Equals, query)
+		c.Assert(stmt[0].OriginText(), Equals, query)
 
 		// Check that rebuild plan works.
 		tk.Se.PrepareTxnCtx(ctx)
-		_, err = stmt.RebuildPlan(ctx)
+		_, err = stmt[0].RebuildPlan(ctx)
 		c.Assert(err, IsNil)
-		rs, err = stmt.Exec(ctx)
+		rs1, err := stmt[0].Exec(ctx)
 		c.Assert(err, IsNil)
-		req := rs.NewChunk()
-		err = rs.Next(ctx, req)
+		req := rs1.NewChunk()
+		err = rs1.Next(ctx, req)
 		c.Assert(err, IsNil)
-		c.Assert(rs.Close(), IsNil)
+		c.Assert(rs1.Close(), IsNil)
 
 		// Make schema change.
 		tk.MustExec("drop table if exists prepare2")

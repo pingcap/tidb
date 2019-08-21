@@ -113,7 +113,10 @@ func (tk *CTestKit) Exec(ctx context.Context, sql string, args ...interface{}) (
 	if err != nil {
 		return nil, err
 	}
-	return rs, nil
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	return rs[0], nil
 }
 
 // CheckExecResult checks the affected rows and the insert id after executing MustExec.

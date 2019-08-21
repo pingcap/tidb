@@ -1106,9 +1106,9 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(1)})
 	c.Assert(err, IsNil)
-	rs.Close()
+	rs[0].Close()
 	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(2)})
-	rs.Close()
+	rs[0].Close()
 	c.Assert(err, IsNil)
 }
 

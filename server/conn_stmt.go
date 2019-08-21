@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -192,15 +193,19 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
-		stmt.StoreResultSet(rs)
-		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
+		// TODO: FIX ME!!!!!
+		stmt.StoreResultSet(rs[0])
+		err = cc.writeColumnInfo(rs[0].Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
 			return err
 		}
 		// explicitly flush columnInfo to client.
 		return cc.flush()
 	}
-	return cc.writeResultset(ctx, rs, true, 0, 0)
+	if len(rs) > 1 {
+		return cc.writeMultiResultset(ctx, rs, true)
+	}
+	return cc.writeResultset(ctx, rs[0], true, 0, 0)
 }
 
 // maxFetchSize constants
@@ -616,8 +621,16 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 
 func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	sv := cc.ctx.GetSessionVars()
-	if prepared, ok := sv.PreparedStmts[stmtID]; ok {
-		return prepared.Stmt.Text() + sv.GetExecuteArgumentsInfo()
+	var sql strings.Builder
+	if prepareds, ok := sv.PreparedStmts[stmtID]; ok {
+		for i, prepared := range prepareds {
+			if i != 0 {
+				sql.WriteString(";")
+			}
+			sql.WriteString(prepared.Stmt.Text())
+		}
+		sql.WriteString(sv.GetExecuteArgumentsInfo())
+		return sql.String()
 	}
 	return fmt.Sprintf("prepared statement not found, ID: %d", stmtID)
 }

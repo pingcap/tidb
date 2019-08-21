@@ -460,11 +460,9 @@ func (s *testKvEncoderSuite) TestError(c *C) {
 	c.Assert(err, ErrorMatches, "*You have an error in your SQL syntax.*")
 
 	_, err = encoder.PrepareStmt("")
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, "*Can not prepare multiple statements")
+	c.Assert(err, IsNil)
 	_, _, err = encoder.EncodePrepareStmt(0, 0, 0)
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, "*Prepared statement not found")
+	c.Assert(err, IsNil)
 
 	encoder = &kvEncoder{}
 	err = encoder.SetSystemVariable("", "")
