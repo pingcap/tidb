@@ -505,21 +505,9 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 		if err != nil {
 			return nil, err
 		}
-		if !iw.outerCtx.keepOrder {
-			if tmpPtr = task.lookupMap.Get(keyBuf, tmpPtr[:0]); len(tmpPtr) == 0 {
-				if !iw.hasNullInOuterJoinKey(task.outerResult.GetRow(i)) {
-					task.encodedLookUpKeys.AppendBytes(0, keyBuf)
-					lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: task.outerResult.GetRow(i)})
-				}
-			}
-			rowPtr := uint32(i)
-			*(*uint32)(unsafe.Pointer(&valBuf[0])) = rowPtr
-			task.lookupMap.Put(keyBuf, valBuf)
-		} else {
-			// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
-			task.encodedLookUpKeys.AppendBytes(0, keyBuf)
-			lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: task.outerResult.GetRow(i)})
-		}
+		// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
+		task.encodedLookUpKeys.AppendBytes(0, keyBuf)
+		lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: task.outerResult.GetRow(i)})
 	}
 
 	task.memTracker.Consume(task.encodedLookUpKeys.MemoryUsage())
