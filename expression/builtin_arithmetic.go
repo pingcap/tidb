@@ -768,8 +768,8 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (ret int64
 	ret, err = c.ToInt()
 	if isLHSUnsigned || isRHSUnsigned {
 		val, err := c.ToUint()
+		// err returned by ToUInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 		if err == types.ErrOverflow && ret != 0 {
-			// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s DIV %s)", s.args[0].String(), s.args[1].String()))
 		}
 		ret = int64(val)
