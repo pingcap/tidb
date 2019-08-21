@@ -529,7 +529,7 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 		"KEY `IDX_EndTime` (`END_TIME`)," +
 		"KEY `IDX_RoundId` (`ROUND_ID`)," +
 		"KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488 " +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='comment_x' AUTO_INCREMENT=505488 " +
 		"PARTITION BY RANGE ( month(`end_time`) ) (" +
 		"PARTITION p1 VALUES LESS THAN (2)," +
 		"PARTITION p2 VALUES LESS THAN (3)," +
@@ -556,7 +556,7 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 			"  KEY `IDX_EndTime` (`END_TIME`),\n"+
 			"  KEY `IDX_RoundId` (`ROUND_ID`),\n"+
 			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488\n"+
+			") ENGINE=InnoDB AUTO_INCREMENT=505488 DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='comment_x'\n"+
 			"PARTITION BY RANGE ( month(`end_time`) ) (\n"+
 			"  PARTITION p1 VALUES LESS THAN (2),\n"+
 			"  PARTITION p2 VALUES LESS THAN (3),\n"+

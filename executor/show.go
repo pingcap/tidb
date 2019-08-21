@@ -775,8 +775,19 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	buf.WriteString("\n")
-
 	buf.WriteString(") ENGINE=InnoDB")
+
+	if hasAutoIncID {
+		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// It's campatible with MySQL.
+		if autoIncID > 1 {
+			fmt.Fprintf(&buf, " AUTO_INCREMENT=%d", autoIncID)
+		}
+	}
+
 	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 {
@@ -790,17 +801,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	// Displayed if the compression typed is set.
 	if len(tb.Meta().Compression) != 0 {
 		fmt.Fprintf(&buf, " COMPRESSION='%s'", tb.Meta().Compression)
-	}
-
-	if hasAutoIncID {
-		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// It's campatible with MySQL.
-		if autoIncID > 1 {
-			fmt.Fprintf(&buf, " AUTO_INCREMENT=%d", autoIncID)
-		}
 	}
 
 	if tb.Meta().ShardRowIDBits > 0 {
