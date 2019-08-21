@@ -264,8 +264,7 @@ func (db *DB) findSpliceForLevel(arena *arena, key []byte, before nodeWithAddr, 
 }
 
 func (db *DB) findGreater(key []byte, allowEqual bool) (*node, []byte, bool) {
-	var prev *node
-	prev = db.head.node
+	prev := db.head.node
 	level := db.getHeight() - 1
 
 	for {
@@ -304,9 +303,8 @@ func (db *DB) findGreater(key []byte, allowEqual bool) (*node, []byte, bool) {
 }
 
 func (db *DB) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
-	var prev *node
 	var prevData []byte
-	prev = db.head.node
+	prev := db.head.node
 	level := db.getHeight() - 1
 
 	for {
@@ -342,9 +340,8 @@ func (db *DB) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
 // findLast returns the last element. If head (empty db), we return nil. All the find functions
 // will NEVER return the head nodes.
 func (db *DB) findLast() (*node, []byte) {
-	var node *node
 	var nodeData []byte
-	node = db.head.node
+	node := db.head.node
 	level := db.getHeight() - 1
 
 	for {
