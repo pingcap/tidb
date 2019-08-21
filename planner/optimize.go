@@ -41,7 +41,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	var oriHint *bindinfo.HintsSet
 	if stmtNode, ok := node.(ast.StmtNode); ok {
-		node, oriHint = addHint(sctx, stmtNode)
+		oriHint = addHint(sctx, stmtNode)
 	}
 	plan, err := optimize(ctx, sctx, node, is)
 	// Restore the original hint in case of prepare stmt.
@@ -102,42 +102,48 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
 }
 
-func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) (ast.StmtNode, *bindinfo.HintsSet) {
-	// When the domain is initializing, the bind will be nil.
-	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
-		return stmtNode, nil
-	}
+func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, string, string) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
-		var oriHintSet *bindinfo.HintsSet
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt:
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestHash(normalizeSQL)
-			x.Stmt, oriHintSet = addHintForSelect(hash, normalizeSQL, ctx, x.Stmt)
+			return x.Stmt.(*ast.SelectStmt), normalizeSQL, hash
 		}
-		return x, oriHintSet
 	case *ast.SelectStmt:
-		normalizeSQL, hash := parser.NormalizeDigest(x.Text())
-		return addHintForSelect(hash, normalizeSQL, ctx, x)
-	default:
-		return stmtNode, nil
+		normalizedSQL, hash := parser.NormalizeDigest(x.Text())
+		return x, normalizedSQL, hash
 	}
+	return nil, "", ""
 }
 
-func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt ast.StmtNode) (ast.StmtNode, *bindinfo.HintsSet) {
+func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) *bindinfo.HintsSet {
+	// When the domain is initializing, the bind will be nil.
+	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
+		return nil
+	}
+	selectStmt, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmtNode)
+	if selectStmt == nil {
+		return nil
+	}
+	return addHintForSelect(ctx, selectStmt, normalizedSQL, hash)
+}
+
+func addHintForSelect(ctx sessionctx.Context, stmt ast.StmtNode, normdOrigSQL, hash string) *bindinfo.HintsSet {
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord != nil {
 		if bindRecord.Status == bindinfo.Invalid {
-			return stmt, nil
+			return nil
 		}
 		if bindRecord.Status == bindinfo.Using {
 			metrics.BindUsageCounter.WithLabelValues(metrics.ScopeSession).Inc()
 			oriHint := bindinfo.CollectHint(stmt)
-			return bindinfo.BindHint(stmt, bindRecord.HintsSet), oriHint
+			bindinfo.BindHint(stmt, bindRecord.HintsSet)
+			return oriHint
 		}
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
@@ -148,27 +154,15 @@ func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt as
 	if bindRecord != nil {
 		metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Inc()
 		oriHint := bindinfo.CollectHint(stmt)
-		return bindinfo.BindHint(stmt, bindRecord.HintsSet), oriHint
+		bindinfo.BindHint(stmt, bindRecord.HintsSet)
+		return oriHint
 	}
-	return stmt, nil
+	return nil
 }
 
 func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode) {
-	var normdOrigSQL, hash string
-	switch x := stmtNode.(type) {
-	case *ast.ExplainStmt:
-		switch x.Stmt.(type) {
-		case *ast.SelectStmt:
-			normalizeExplainSQL := parser.Normalize(x.Text())
-			idx := strings.Index(normalizeExplainSQL, "select")
-			normdOrigSQL = normalizeExplainSQL[idx:]
-			hash = parser.DigestHash(normdOrigSQL)
-		default:
-			return
-		}
-	case *ast.SelectStmt:
-		normdOrigSQL, hash = parser.NormalizeDigest(x.Text())
-	default:
+	selectStmt, normdOrigSQL, hash := extractSelectAndNormalizeDigest(stmtNode)
+	if selectStmt == nil {
 		return
 	}
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
