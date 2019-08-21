@@ -441,6 +441,14 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 			args:   []interface{}{int64(-9223372036854775808), float64(-1)},
 			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(-9223372036854775808 DIV -1\\)'"},
 		},
+		{
+			args:   []interface{}{uint64(1), float64(-2)},
+			expect: []interface{}{0, nil},
+		},
+		{
+			args:   []interface{}{uint64(1), float64(-1)},
+			expect: []interface{}{nil, "*BIGINT UNSIGNED value is out of range in '\\(1 DIV -1\\)'"},
+		},
 	}
 
 	for _, tc := range testCases {
