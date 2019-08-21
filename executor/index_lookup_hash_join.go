@@ -162,9 +162,6 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		}
 	}
 	e.joinChkResourceCh = nil
-
-	e.memTracker.Detach()
-	e.memTracker = nil
 	return e.children[0].Close()
 }
 
