@@ -243,9 +243,6 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 				tasks++
 			} else {
 				end = true
-				logutil.Logger(ctx).Info("commit work all finished",
-					zap.Uint64("total processed task count", tasks),
-					zap.Uint64("batch size", e.maxRowsInBatch))
 				break
 			}
 		}

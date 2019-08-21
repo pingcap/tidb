@@ -1114,7 +1114,7 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 		}
 	}
 	if err != nil {
-		logutil.Logger(ctx).Error("load data process error", zap.Error(err))
+		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
 	} else {
 		err = loadDataInfo.EnqOneTask(ctx)
 		if err != nil {
