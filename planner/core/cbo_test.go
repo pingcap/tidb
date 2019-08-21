@@ -281,9 +281,6 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	}
 	testKit.MustExec("analyze table t1")
 	ctx := testKit.Se.(sessionctx.Context)
-	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
 	tests := []struct {
 		sql  string
 		best string
@@ -496,8 +493,8 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 			best: "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
 		},
 		{
-			sql:  "select * from t where t.b < 2",
-			best: "IndexLookUp(Index(t.b)[[-inf,2)], Table(t))",
+			sql:  "select b from t where t.b < 2",
+			best: "IndexReader(Index(t.b)[[-inf,2)])",
 		},
 		{
 			sql:  "select * from t where t.a = 1 and t.b <= 2",
@@ -528,8 +525,8 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 			best: "UnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
 		},
 		{
-			sql:  "select * from t4 where t4.b < 2",
-			best: "UnionAll{IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))->IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))}",
+			sql:  "select b from t4 where t4.b < 2",
+			best: "UnionAll{IndexReader(Index(t4.b)[[-inf,2)])->IndexReader(Index(t4.b)[[-inf,2)])}",
 		},
 		{
 			sql:  "select * from t4 where t4.a = 1 and t4.b <= 2",
@@ -685,13 +682,9 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
-	tk.MustExec("create table t(a int, b int, c int, index idx(c))")
+	tk.MustExec("create table t(a int, b int, c int, index idx(c,b,a))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
 	tk.MustExec("analyze table t")
-	ctx := tk.Se.(sessionctx.Context)
-	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
 			"Projection_11 10.00 root 9_aux_0",
@@ -715,10 +708,9 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"  │ └─TableScan_11 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─MaxOneRow_13 1.00 root ",
 			"    └─Projection_14 0.10 root concat(cast(test.t1.a), \",\", cast(test.t1.b))",
-			"      └─IndexLookUp_21 0.10 root ",
-			"        ├─IndexScan_18 1.00 cop table:t1, index:c, range: decided by [eq(test.t1.c, test.t.c)], keep order:false",
-			"        └─Selection_20 0.10 cop eq(test.t1.a, test.t.a)",
-			"          └─TableScan_19 1.00 cop table:t, keep order:false",
+			"      └─IndexReader_17 0.10 root index:Selection_16",
+			"        └─Selection_16 0.10 cop eq(test.t1.a, test.t.a)",
+			"          └─IndexScan_15 1.00 cop table:t1, index:c, b, a, range: decided by [eq(test.t1.c, test.t.c)], keep order:false",
 		))
 }
 
@@ -1084,16 +1076,16 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	))
 	// Multi-column filter.
 	tk.MustExec("drop table t")
-	tk.MustExec("create table t(a int primary key, b int, c int, d bigint default 2147483648, e bigint default 2147483648, f bigint default 2147483648, index idx_b(b))")
+	tk.MustExec("create table t(a int primary key, b int, c int, d bigint default 2147483648, e bigint default 2147483648, f bigint default 2147483648, index idx(b,d,a,c))")
 	tk.MustExec("insert into t(a, b, c) values (1, 1, 1),(2, 1, 2),(3, 1, 1),(4, 1, 2),(5, 1, 1),(6, 1, 2),(7, 1, 1),(8, 1, 2),(9, 1, 1),(10, 1, 2),(11, 1, 1),(12, 1, 2),(13, 1, 1),(14, 1, 2),(15, 1, 1),(16, 1, 2),(17, 1, 1),(18, 1, 2),(19, 1, 1),(20, 2, 2),(21, 2, 1),(22, 2, 2),(23, 2, 1),(24, 2, 2),(25, 2, 1)")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_9 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexLookUp_22 1.00 root ",
-		"  ├─IndexScan_18 6.00 cop table:t, index:b, range:[2,2], keep order:false",
-		"  └─TopN_21 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─Selection_20 6.00 cop gt(test.t.c, 0)",
-		"      └─TableScan_19 6.00 cop table:t, keep order:false",
+	tk.MustQuery("EXPLAIN SELECT a FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1").Check(testkit.Rows(
+		"Projection_7 1.00 root test.t.a",
+		"└─TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
+		"  └─IndexReader_17 1.00 root index:TopN_16",
+		"    └─TopN_16 1.00 cop test.t.a:asc, offset:0, count:1",
+		"      └─Selection_15 6.00 cop gt(test.t.c, 0)",
+		"        └─IndexScan_14 6.00 cop table:t, index:b, d, a, c, range:[2,2], keep order:false",
 	))
 }
 

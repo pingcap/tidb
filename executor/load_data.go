@@ -351,14 +351,14 @@ type field struct {
 
 type fieldWriter struct {
 	pos           int
+	ReadBuf       []byte
+	OutputBuf     []byte
 	enclosedChar  byte
 	fieldTermChar byte
 	term          string
 	isEnclosed    bool
 	isLineStart   bool
 	isFieldStart  bool
-	ReadBuf       []byte
-	OutputBuf     []byte
 }
 
 func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf []byte, term string) {

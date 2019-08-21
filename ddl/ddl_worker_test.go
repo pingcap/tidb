@@ -353,9 +353,9 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 }
 
 type testCancelJob struct {
-	act           model.ActionType // act is the job action.
 	jobIDs        []int64
-	cancelRetErrs []error // cancelRetErrs is the first return value of CancelJobs.
+	cancelRetErrs []error          // cancelRetErrs is the first return value of CancelJobs.
+	act           model.ActionType // act is the job action.
 	cancelState   model.SchemaState
 }
 

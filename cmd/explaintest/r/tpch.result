@@ -1240,11 +1240,11 @@ Projection_25	1.00	root	tpch.supplier.s_name, 17_col_0
       │ │     └─TableScan_76	1.00	cop	table:orders, range: decided by [tpch.l1.l_orderkey], keep order:true
       │ └─IndexLookUp_67	1.00	root	
       │   ├─IndexScan_65	1.00	cop	table:l2, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(tpch.l2.l_orderkey, tpch.l1.l_orderkey)], keep order:true
-      │   └─TableScan_66	1.00	cop	table:lineitem, keep order:true
+      │   └─TableScan_66	1.00	cop	table:l2, keep order:true
       └─IndexLookUp_44	0.80	root	
         ├─IndexScan_41	1.00	cop	table:l3, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(tpch.l3.l_orderkey, tpch.l1.l_orderkey)], keep order:true
         └─Selection_43	0.80	cop	gt(tpch.l3.l_receiptdate, tpch.l3.l_commitdate)
-          └─TableScan_42	1.00	cop	table:lineitem, keep order:true
+          └─TableScan_42	1.00	cop	table:l3, keep order:true
 /*
 Q22 Global Sales Opportunity Query
 The Global Sales Opportunity Query identifies geographies where there are customers who may be likely to make a

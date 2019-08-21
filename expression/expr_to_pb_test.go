@@ -432,7 +432,7 @@ func (s *testEvaluatorSuite) TestPushDownSwitcher(c *C) {
 	}{
 		{ast.And, tipb.ScalarFuncSig_BitAndSig, true},
 		{ast.Or, tipb.ScalarFuncSig_BitOrSig, false},
-		{ast.UnaryNot, tipb.ScalarFuncSig_UnaryNot, true},
+		{ast.UnaryNot, tipb.ScalarFuncSig_UnaryNotInt, true},
 	}
 	var enabled []string
 	for i, funcName := range cases {
