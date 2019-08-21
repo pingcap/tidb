@@ -866,7 +866,7 @@ func init() {
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
-			return rows, errors.Trace(err)
+			return rows, errors.Trace(e.err)
 		}
 		ctx := context.TODO()
 		err = exec.Open(ctx)
