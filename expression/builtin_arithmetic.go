@@ -766,15 +766,21 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (ret int64
 	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
 	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 
-	ret, err = c.ToInt()
 	if isLHSUnsigned || isRHSUnsigned {
 		val, err := c.ToUint()
-		// err returned by ToUInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
-		if err == types.ErrOverflow && ret != 0 {
+		// err returned by ToUint may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
+		if err == types.ErrOverflow {
+			v, err := c.ToInt()
+			// when the final result is at (-1, 0], it should be return 0 instead of the error
+			if v == 0 && err == types.ErrTruncated {
+				ret = int64(0)
+				return ret, false, nil
+			}
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s DIV %s)", s.args[0].String(), s.args[1].String()))
 		}
 		ret = int64(val)
 	} else {
+		ret, err = c.ToInt()
 		// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 		if err == types.ErrOverflow {
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s DIV %s)", s.args[0].String(), s.args[1].String()))
