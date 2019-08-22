@@ -402,6 +402,15 @@ type SessionVars struct {
 
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
 	ReplicaRead kv.ReplicaReadType
+
+	// StartTime is the query start time.
+	StartTime time.Time
+
+	// DurationParse is the duration of pasing SQL string to AST.
+	DurationParse time.Duration
+
+	// DurationCompile is the duration of compiling AST to execution plan.
+	DurationCompile time.Duration
 }
 
 // ConnectionInfo present connection used by audit.
