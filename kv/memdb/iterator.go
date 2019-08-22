@@ -55,7 +55,7 @@ func (it *Iterator) Prev() {
 
 // Seek locates the iterator to the first entry with a key >= seekKey.
 func (it *Iterator) Seek(seekKey []byte) {
-	node, nodeData, _ := it.db.findGreater(seekKey, true) // find >=.
+	node, nodeData, _ := it.db.findGreater(seekKey) // find >=.
 	it.updateState(node, nodeData)
 }
 

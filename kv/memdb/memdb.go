@@ -59,7 +59,7 @@ func (db *DB) Reset() {
 // Get gets the value for the given key. It returns nil if the
 // DB does not contain the key.
 func (db *DB) Get(key []byte) []byte {
-	node, data, match := db.findGreater(key, true)
+	node, data, match := db.findGreater(key)
 	if !match {
 		return nil
 	}
@@ -200,7 +200,7 @@ func (db *DB) findSpliceForLevel(arena *arena, key []byte, before nodeWithAddr, 
 	}
 }
 
-func (db *DB) findGreater(key []byte, allowEqual bool) (*node, []byte, bool) {
+func (db *DB) findGreater(key []byte) (*node, []byte, bool) {
 	prev := db.head.node
 	level := db.height - 1
 
@@ -222,12 +222,7 @@ func (db *DB) findGreater(key []byte, allowEqual bool) (*node, []byte, bool) {
 			}
 			if cmp == 0 {
 				// prev.key < key == next.key.
-				if allowEqual {
-					return next, nextData, true
-				}
-				level = 0
-				prev = next
-				continue
+				return next, nextData, true
 			}
 		}
 		// next is greater than key or next is nil. go to the lower level.
@@ -341,10 +336,6 @@ type node struct {
 type nodeWithAddr struct {
 	*node
 	addr arenaAddr
-}
-
-func (n *node) entryLen() int {
-	return n.nodeLen() + int(n.keyLen) + int(n.valLen)
 }
 
 func (n *node) nodeLen() int {

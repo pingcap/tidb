@@ -103,7 +103,6 @@ func (a *arenaBlock) getFrom(offset uint32) []byte {
 }
 
 func (a *arenaBlock) alloc(size int) uint32 {
-	// The returned addr should be aligned in 8 bytes.
 	offset := a.length
 	a.length = offset + size
 	if a.length > len(a.buf) {

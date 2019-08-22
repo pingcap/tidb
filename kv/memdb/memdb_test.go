@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/goleveldb/leveldb/comparer"
+	"github.com/pingcap/goleveldb/leveldb/memdb"
 )
 
 const (
@@ -77,12 +79,15 @@ func (s testMemDBSuite) TestOverwrite(c *C) {
 	p := s.fillDB(cnt)
 	var buf [4]byte
 
+	sz := p.Size()
 	for i := 0; i < cnt; i += 3 {
 		var newBuf [4]byte
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
 		binary.BigEndian.PutUint32(newBuf[:], uint32(i*10))
 		p.Put(buf[:], newBuf[:])
 	}
+	c.Check(p.Len(), Equals, cnt)
+	c.Check(p.Size(), Equals, sz)
 
 	for i := 0; i < cnt; i++ {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
@@ -170,8 +175,130 @@ func (s testMemDBSuite) TestDelete(c *C) {
 	}
 }
 
+func (s testMemDBSuite) TestKVLargeThanBlock(c *C) {
+	p := New(4 * 1024)
+	p.Put([]byte{1}, make([]byte, 1))
+	p.Put([]byte{2}, make([]byte, 4096))
+	c.Check(len(p.arena.blocks), Equals, 2)
+	p.Put([]byte{3}, make([]byte, 3000))
+	c.Check(len(p.arena.blocks), Equals, 2)
+	c.Check(len(p.Get([]byte{3})), Equals, 3000)
+}
+
+func (s testMemDBSuite) TestEmptyDB(c *C) {
+	p := New(4 * 1024)
+	c.Check(p.Get([]byte{0}), IsNil)
+	c.Check(p.Delete([]byte{0}), IsFalse)
+	it := p.NewIterator()
+	it.SeekToFirst()
+	c.Check(it.Valid(), IsFalse)
+	it.SeekToLast()
+	c.Check(it.Valid(), IsFalse)
+	it.SeekForPrev([]byte{0})
+	c.Check(it.Valid(), IsFalse)
+	it.SeekForExclusivePrev([]byte{0})
+	c.Check(it.Valid(), IsFalse)
+	it.Seek([]byte{0xff})
+	c.Check(it.Valid(), IsFalse)
+}
+
+func (s testMemDBSuite) TestRest(c *C) {
+	p := s.fillDB(10000)
+	p.Reset()
+	c.Check(p.Get([]byte{0}), IsNil)
+	c.Check(p.Delete([]byte{0}), IsFalse)
+	c.Check(p.Size(), Equals, 0)
+	c.Check(p.Len(), Equals, 0)
+
+	key := []byte{0}
+	p.Put(key, key)
+	c.Check(p.Get(key), BytesEquals, key)
+
+	it := p.NewIterator()
+	it.SeekToFirst()
+	c.Check(it.Key(), BytesEquals, key)
+	c.Check(it.Value(), BytesEquals, key)
+	it.Next()
+	c.Check(it.Valid(), IsFalse)
+
+	it.SeekToLast()
+	c.Check(it.Key(), BytesEquals, key)
+	c.Check(it.Value(), BytesEquals, key)
+	it.Prev()
+	c.Check(it.Valid(), IsFalse)
+}
+
+func (s testMemDBSuite) TestRandom(c *C) {
+	const cnt = 500000
+	p1 := New(4 * 1024)
+	p2 := memdb.New(comparer.DefaultComparer, 4*1024)
+	var buf [4]byte
+	for i := 0; i < cnt; i++ {
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		p1.Put(buf[:], buf[:])
+		_ = p2.Put(buf[:], buf[:])
+	}
+
+	c.Check(p1.Len(), Equals, p2.Len())
+	c.Check(p1.Size(), Equals, p2.Size())
+
+	for _, k := range rand.Perm(cnt) {
+		binary.BigEndian.PutUint32(buf[:], uint32(k))
+		switch rand.Intn(4) {
+		case 0, 1:
+			var vbuf [4]byte
+			binary.BigEndian.PutUint32(vbuf[:], uint32(k+rand.Intn(10000)))
+			p1.Put(buf[:], vbuf[:])
+			_ = p2.Put(buf[:], vbuf[:])
+		case 2:
+			p1.Delete(buf[:])
+			_ = p2.Delete(buf[:])
+		}
+	}
+
+	c.Check(p1.Len(), Equals, p2.Len())
+	c.Check(p1.Size(), Equals, p2.Size())
+
+	it1 := p1.NewIterator()
+	it1.SeekToFirst()
+
+	it2 := p2.NewIterator(nil)
+
+	var prevKey, prevVal []byte
+	for it2.First(); it2.Valid(); it2.Next() {
+		c.Check(it1.Key(), BytesEquals, it2.Key())
+		c.Check(it1.Value(), BytesEquals, it2.Value())
+
+		it := p1.NewIterator()
+		it.Seek(it2.Key())
+		c.Check(it.Key(), BytesEquals, it2.Key())
+		c.Check(it.Value(), BytesEquals, it2.Value())
+
+		it.SeekForPrev(it2.Key())
+		c.Check(it.Key(), BytesEquals, it2.Key())
+		c.Check(it.Value(), BytesEquals, it2.Value())
+
+		if prevKey != nil {
+			it.SeekForExclusivePrev(it2.Key())
+			c.Check(it.Key(), BytesEquals, prevKey)
+			c.Check(it.Value(), BytesEquals, prevVal)
+		}
+
+		it1.Next()
+		prevKey = it2.Key()
+		prevVal = it2.Value()
+	}
+
+	it1.SeekToLast()
+	for it2.Last(); it2.Valid(); it2.Prev() {
+		c.Check(it1.Key(), BytesEquals, it2.Key())
+		c.Check(it1.Value(), BytesEquals, it2.Value())
+		it1.Prev()
+	}
+}
+
 func (s testMemDBSuite) fillDB(cnt int) *DB {
-	p := New(4 * 1024 * 1024)
+	p := New(4 * 1024)
 	var buf [4]byte
 	for i := 0; i < cnt; i++ {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
