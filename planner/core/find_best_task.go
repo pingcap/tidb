@@ -523,6 +523,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}
 		if cop.tablePlan != nil {
 			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+			cop.doubleReadNeedProj = true
 		}
 		cop.keepOrder = true
 		is.KeepOrder = true
