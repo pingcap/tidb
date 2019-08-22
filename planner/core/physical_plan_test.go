@@ -1620,18 +1620,18 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		},
 		// with Aggregation hints
 		{
-			sql:     "select /*+ HASH_AGG */ count(*) from t t1, t t2 where t1.a = t2.b",
+			sql:     "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->HashAgg",
 			warning: "",
 		},
 		{
-			sql:     "select /*+ STREAM_AGG */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
+			sql:     "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->Sort->StreamAgg",
 			warning: "",
 		},
 		// test conflict warning
 		{
-			sql:     "select /*+ HASH_AGG STREAM_AGG */ count(*) from t t1, t t2 where t1.a = t2.b",
+			sql:     "select /*+ HASH_AGG() STREAM_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
 			warning: "[planner:1815]Optimizer aggregation hints are conflicted",
 		},

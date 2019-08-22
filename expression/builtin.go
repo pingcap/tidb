@@ -177,8 +177,32 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
-func (b *baseBuiltinFunc) vecEval(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("baseBuiltinFunc.vecEval() should never be called, please contact the TiDB team for help")
+func (b *baseBuiltinFunc) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("baseBuiltinFunc.vecEvalInt() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("baseBuiltinFunc.vecEvalReal() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("baseBuiltinFunc.vecEvalString() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("baseBuiltinFunc.vecEvalDecimal() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("baseBuiltinFunc.vecEvalTime() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("baseBuiltinFunc.vecEvalDuration() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("baseBuiltinFunc.vecEvalJSON() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalInt(row chunk.Row) (int64, bool, error) {
@@ -294,10 +318,29 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 type vecBuiltinFunc interface {
 	columnBufferAllocator
 
-	// vecEval evaluates this builtin function in a vectorized manner.
-	vecEval(input *chunk.Chunk, result *chunk.Column) error
 	// vectorized returns if this builtin function supports vectorized evaluation.
 	vectorized() bool
+
+	// vecEvalInt evaluates this builtin function in a vectorized manner.
+	vecEvalInt(input *chunk.Chunk, result *chunk.Column) error
+
+	// vecEvalReal evaluates this builtin function in a vectorized manner.
+	vecEvalReal(input *chunk.Chunk, result *chunk.Column) error
+
+	// vecEvalString evaluates this builtin function in a vectorized manner.
+	vecEvalString(input *chunk.Chunk, result *chunk.Column) error
+
+	// vecEvalDecimal evaluates this builtin function in a vectorized manner.
+	vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error
+
+	// vecEvalTime evaluates this builtin function in a vectorized manner.
+	vecEvalTime(input *chunk.Chunk, result *chunk.Column) error
+
+	// vecEvalDuration evaluates this builtin function in a vectorized manner.
+	vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error
+
+	// vecEvalJSON evaluates this builtin function in a vectorized manner.
+	vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error
 }
 
 // builtinFunc stands for a particular function signature.
