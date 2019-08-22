@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
@@ -105,6 +106,16 @@ PARTITION BY RANGE ( a ) (
 	}
 }
 
+func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	ctx := tk.Se.(sessionctx.Context)
+	ctx.GetSessionVars().ReplicaRead = kv.ReplicaReadFollower
+	tk.MustExec("analyze table t")
+}
+
 func (s *testSuite1) TestAnalyzeRestrict(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -126,8 +137,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tk.MustExec("insert into t values (19), (19), (19)")
 
 	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
-	executor.MaxSampleSize = 30
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 30 samples")
 	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -181,7 +191,6 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
-	executor.MaxSampleSize = 20
 	executor.RandSeed = 123
 
 	tk.MustExec("use test")
@@ -214,6 +223,8 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 			indicesInfo = append(indicesInfo, idx)
 		}
 	}
+	opts := make(map[ast.AnalyzeOptionType]uint64)
+	opts[ast.AnalyzeOptNumSamples] = 20
 	mockExec := &executor.AnalyzeTestFastExec{
 		Ctx:             tk.Se.(sessionctx.Context),
 		PKInfo:          pkCol,
@@ -222,6 +233,7 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 		Concurrency:     1,
 		PhysicalTableID: tbl.(table.PhysicalTable).GetPhysicalID(),
 		TblInfo:         tblInfo,
+		Opts:            opts,
 	}
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
@@ -252,7 +264,6 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
-	executor.MaxSampleSize = 6
 	executor.RandSeed = 123
 
 	tk.MustExec("use test")
@@ -271,7 +282,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "char")`, i*3, i*3))
 	}
-	tk.MustExec("analyze table t with 5 buckets")
+	tk.MustExec("analyze table t with 5 buckets, 6 samples")
 
 	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

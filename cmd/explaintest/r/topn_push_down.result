@@ -173,7 +173,7 @@ Projection_13	0.00	root	test.te.expect_time
     ├─TopN_95	0.00	root	test.te.expect_time:asc, offset:0, count:5
     │ └─IndexJoin_36	0.00	root	inner join, inner:IndexLookUp_35, outer key:test.tr.id, inner key:test.te.trade_id
     │   ├─IndexLookUp_74	0.00	root	
-    │   │ ├─Selection_72	0.00	cop	eq(test.tr.business_type, 18), in(test.tr.trade_type, 1)
+    │   │ ├─Selection_72	0.00	cop	eq(test.tr.business_type, 18), eq(test.tr.trade_type, 1)
     │   │ │ └─IndexScan_70	10.00	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
     │   │ └─Selection_73	0.00	cop	eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
     │   │   └─TableScan_71	0.00	cop	table:tr, keep order:false, stats:pseudo
@@ -240,19 +240,19 @@ explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limi
 id	count	task	operator info
 Limit_11	5.00	root	offset:0, count:5
 └─MergeJoin_12	5.00	root	inner join, left key:test.t1.a, right key:test.t2.a
-  ├─IndexReader_14	4.00	root	index:IndexScan_13
-  │ └─IndexScan_13	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
-  └─IndexReader_16	4.00	root	index:IndexScan_15
-    └─IndexScan_15	4.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+  ├─IndexReader_15	4.00	root	index:IndexScan_14
+  │ └─IndexScan_14	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+  └─IndexReader_17	4.00	root	index:IndexScan_16
+    └─IndexScan_16	4.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
 explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
 └─Selection_13	5.00	root	isnull(test.t2.a)
   └─MergeJoin_14	5.00	root	left outer join, left key:test.t1.a, right key:test.t2.a
-    ├─IndexReader_16	4.00	root	index:IndexScan_15
-    │ └─IndexScan_15	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
-    └─IndexReader_18	4.00	root	index:IndexScan_17
-      └─IndexScan_17	4.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+    ├─IndexReader_17	4.00	root	index:IndexScan_16
+    │ └─IndexScan_16	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+    └─IndexReader_19	4.00	root	index:IndexScan_18
+      └─IndexScan_18	4.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
 explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	count	task	operator info
 Limit_11	5.00	root	offset:0, count:5

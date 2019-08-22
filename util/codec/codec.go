@@ -147,6 +147,38 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 	return b, errors.Trace(err)
 }
 
+// EstimateValueSize uses to estimate the value  size of the encoded values.
+func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, error) {
+	l := 0
+	switch val.Kind() {
+	case types.KindInt64:
+		l = valueSizeOfSignedInt(val.GetInt64())
+	case types.KindUint64:
+		l = valueSizeOfUnsignedInt(val.GetUint64())
+	case types.KindFloat32, types.KindFloat64, types.KindMysqlTime, types.KindMysqlDuration:
+		l = 9
+	case types.KindString, types.KindBytes:
+		l = valueSizeOfBytes(val.GetBytes())
+	case types.KindMysqlDecimal:
+		l = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac()) + 1
+	case types.KindMysqlEnum:
+		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlEnum().ToNumber()))
+	case types.KindMysqlSet:
+		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlSet().ToNumber()))
+	case types.KindMysqlBit, types.KindBinaryLiteral:
+		val, err := val.GetBinaryLiteral().ToInt(sc)
+		terror.Log(errors.Trace(err))
+		l = valueSizeOfUnsignedInt(val)
+	case types.KindMysqlJSON:
+		l = 2 + len(val.GetMysqlJSON().Value)
+	case types.KindNull, types.KindMinNotNull, types.KindMaxValue:
+		l = 1
+	default:
+		return l, errors.Errorf("unsupported encode type %d", val.Kind())
+	}
+	return l, nil
+}
+
 // EncodeMySQLTime encodes datum of `KindMysqlTime` to []byte.
 func EncodeMySQLTime(sc *stmtctx.StatementContext, d types.Datum, tp byte, b []byte) (_ []byte, err error) {
 	t := d.GetMysqlTime()
@@ -181,6 +213,10 @@ func encodeBytes(b []byte, v []byte, comparable bool) []byte {
 	return b
 }
 
+func valueSizeOfBytes(v []byte) int {
+	return valueSizeOfSignedInt(int64(len(v))) + len(v)
+}
+
 func sizeBytes(v []byte, comparable bool) int {
 	if comparable {
 		reallocSize := (len(v)/encGroupSize + 1) * (encGroupSize + 1)
@@ -201,6 +237,20 @@ func encodeSignedInt(b []byte, v int64, comparable bool) []byte {
 	return b
 }
 
+func valueSizeOfSignedInt(v int64) int {
+	if v < 0 {
+		v = 0 - v - 1
+	}
+	// Flag occupy 1 bit and at lease 1 bit.
+	size := 2
+	v = v >> 6
+	for v > 0 {
+		size++
+		v = v >> 7
+	}
+	return size
+}
+
 func encodeUnsignedInt(b []byte, v uint64, comparable bool) []byte {
 	if comparable {
 		b = append(b, uintFlag)
@@ -210,6 +260,17 @@ func encodeUnsignedInt(b []byte, v uint64, comparable bool) []byte {
 		b = EncodeUvarint(b, v)
 	}
 	return b
+}
+
+func valueSizeOfUnsignedInt(v uint64) int {
+	// Flag occupy 1 bit and at lease 1 bit.
+	size := 2
+	v = v >> 7
+	for v > 0 {
+		size++
+		v = v >> 7
+	}
+	return size
 }
 
 func sizeInt(comparable bool) int {
@@ -668,7 +729,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		v := types.Duration{Duration: time.Duration(r), Fsp: ft.Decimal}
+		v := types.Duration{Duration: time.Duration(r), Fsp: int8(ft.Decimal)}
 		chk.AppendDuration(colIdx, v)
 	case jsonFlag:
 		var size int
@@ -692,7 +753,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
 	switch ft.Tp {
 	case mysql.TypeDuration:
-		v := types.Duration{Duration: time.Duration(val), Fsp: ft.Decimal}
+		v := types.Duration{Duration: time.Duration(val), Fsp: int8(ft.Decimal)}
 		chk.AppendDuration(colIdx, v)
 	default:
 		chk.AppendInt64(colIdx, val)
@@ -704,7 +765,7 @@ func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.Field
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
 		t.Type = ft.Tp
-		t.Fsp = ft.Decimal
+		t.Fsp = int8(ft.Decimal)
 		var err error
 		err = t.FromPackedUint(val)
 		if err != nil {

@@ -109,7 +109,7 @@ func (s *testLockSuite) TestScanLockResolveWithGet(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
-		v, err := txn.Get([]byte{ch})
+		v, err := txn.Get(context.TODO(), []byte{ch})
 		c.Assert(err, IsNil)
 		c.Assert(v, BytesEquals, []byte{ch})
 	}
@@ -158,8 +158,8 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(s.store, ver)
-	m, err := snapshot.BatchGet(keys)
+	snapshot := newTiKVSnapshot(s.store, ver, 0)
+	m, err := snapshot.BatchGet(context.Background(), keys)
 	c.Assert(err, IsNil)
 	c.Assert(len(m), Equals, int('z'-'a'+1))
 	for ch := byte('a'); ch <= byte('z'); ch++ {

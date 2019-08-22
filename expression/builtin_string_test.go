@@ -821,7 +821,7 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("haha", "utf8")))
 	c.Assert(err, IsNil)
 	c.Assert(f, NotNil)
-	wrongFunction := f.(*builtinConvertSig)
+	wrongFunction := f.(*vecRowConverter).builtinFunc.(*builtinConvertSig)
 	wrongFunction.tp.Charset = "wrongcharset"
 	_, err = evalBuiltinFunc(wrongFunction, chunk.Row{})
 	c.Assert(err.Error(), Equals, "[expression:1115]Unknown character set: 'wrongcharset'")
@@ -2171,7 +2171,7 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 		{`萌萌哒(๑•ᴗ•๑)😊`, `'萌萌哒(๑•ᴗ•๑)😊'`},
 		{`㍿㌍㍑㌫`, `'㍿㌍㍑㌫'`},
 		{string([]byte{0, 26}), `'\0\Z'`},
-		{nil, nil},
+		{nil, "NULL"},
 	}
 
 	for _, t := range tbl {

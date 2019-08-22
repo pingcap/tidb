@@ -195,6 +195,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	return e.Next(ctx, req)
 }
@@ -414,15 +415,35 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendInt64(0, e.jobs[i].ID)
-		req.AppendString(1, getSchemaName(e.is, e.jobs[i].SchemaID))
-		req.AppendString(2, getTableName(e.is, e.jobs[i].TableID))
+		schemaName := e.jobs[i].SchemaName
+		tableName := ""
+		finishTS := uint64(0)
+		if e.jobs[i].BinlogInfo != nil {
+			finishTS = e.jobs[i].BinlogInfo.FinishedTS
+			if e.jobs[i].BinlogInfo.TableInfo != nil {
+				tableName = e.jobs[i].BinlogInfo.TableInfo.Name.L
+			}
+			if len(schemaName) == 0 && e.jobs[i].BinlogInfo.DBInfo != nil {
+				schemaName = e.jobs[i].BinlogInfo.DBInfo.Name.L
+			}
+		}
+		// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
+		if len(schemaName) == 0 {
+			schemaName = getSchemaName(e.is, e.jobs[i].SchemaID)
+		}
+		if len(tableName) == 0 {
+			tableName = getTableName(e.is, e.jobs[i].TableID)
+		}
+		req.AppendString(1, schemaName)
+		req.AppendString(2, tableName)
 		req.AppendString(3, e.jobs[i].Type.String())
 		req.AppendString(4, e.jobs[i].SchemaState.String())
 		req.AppendInt64(5, e.jobs[i].SchemaID)
 		req.AppendInt64(6, e.jobs[i].TableID)
 		req.AppendInt64(7, e.jobs[i].RowCount)
 		req.AppendString(8, model.TSConvert2Time(e.jobs[i].StartTS).String())
-		req.AppendString(9, e.jobs[i].State.String())
+		req.AppendString(9, model.TSConvert2Time(finishTS).String())
+		req.AppendString(10, e.jobs[i].State.String())
 	}
 	e.cursor += numCurBatch
 	return nil
@@ -730,6 +751,8 @@ type SelectLockExec struct {
 
 	Lock ast.SelectLockType
 	keys []kv.Key
+
+	tblID2Handle map[int64][]*expression.Column
 }
 
 // Open implements the Executor Open interface.
@@ -739,8 +762,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	}
 
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.ForUpdate = true
-	for id := range e.Schema().TblID2Handle {
+	for id := range e.tblID2Handle {
 		// This operation is only for schema validator check.
 		txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
 	}
@@ -755,12 +777,12 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
-	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
+	if len(e.tblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
 	if req.NumRows() != 0 {
 		iter := chunk.NewIterator4Chunk(req)
-		for id, cols := range e.Schema().TblID2Handle {
+		for id, cols := range e.tblID2Handle {
 			for _, col := range cols {
 				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
@@ -769,13 +791,18 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
+	return doLockKeys(ctx, e.ctx, e.keys...)
+}
+
+func doLockKeys(ctx context.Context, se sessionctx.Context, keys ...kv.Key) error {
+	se.GetSessionVars().TxnCtx.ForUpdate = true
 	// Lock keys only once when finished fetching all results.
-	txn, err := e.ctx.Txn(true)
+	txn, err := se.Txn(true)
 	if err != nil {
 		return err
 	}
-	forUpdateTS := e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, forUpdateTS, e.keys...)
+	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
+	return txn.LockKeys(ctx, forUpdateTS, keys...)
 }
 
 // LimitExec represents limit executor
@@ -887,12 +914,13 @@ func init() {
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
 			defer span1.Finish()
+			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
 
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
-			return rows, err
+			return rows, e.err
 		}
 		err = exec.Open(ctx)
 		defer terror.Call(exec.Close)
@@ -1214,14 +1242,14 @@ type UnionExec struct {
 	baseExecutor
 
 	stopFetchData atomic.Value
-	wg            sync.WaitGroup
 
 	finished      chan struct{}
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
-	initialized   bool
 
 	childrenResults []*chunk.Chunk
+	wg              sync.WaitGroup
+	initialized     bool
 }
 
 // unionWorkerResult stores the result for a union worker.

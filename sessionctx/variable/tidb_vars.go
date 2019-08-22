@@ -141,6 +141,9 @@ const (
 
 	// TiDBLowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
 	TiDBLowResolutionTSO = "tidb_low_resolution_tso"
+
+	// TiDBReplicaRead is used for reading data from replicas, followers for example.
+	TiDBReplicaRead = "tidb_replica_read"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -225,11 +228,11 @@ const (
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 
-	// tidb_back_off_weight is used to control the max back off time in TiDB.
+	// tidb_backoff_weight is used to control the max back off time in TiDB.
 	// The default maximum back off time is a small value.
 	// BackOffWeight could multiply it to let the user adjust the maximum time for retrying.
 	// Only positive integers can be accepted, which means that the maximum back off time can only grow.
-	TiDBBackOffWeight = "tidb_back_off_weight"
+	TiDBBackOffWeight = "tidb_backoff_weight"
 
 	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
