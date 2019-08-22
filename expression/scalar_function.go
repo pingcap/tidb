@@ -41,9 +41,39 @@ type ScalarFunction struct {
 	hashcode []byte
 }
 
-// VecEval evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	return sf.Function.vecEval(input, result)
+// VecEvalInt evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalInt(input, result)
+}
+
+// VecEvalReal evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalReal(input, result)
+}
+
+// VecEvalString evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalString(input, result)
+}
+
+// VecEvalDecimal evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalDecimal(input, result)
+}
+
+// VecEvalTime evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalTime(input, result)
+}
+
+// VecEvalDuration evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalDuration(input, result)
+}
+
+// VecEvalJSON evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalJSON(input, result)
 }
 
 // GetArgs gets arguments of function.
