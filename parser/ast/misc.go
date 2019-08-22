@@ -2026,8 +2026,10 @@ type TableOptimizerHint struct {
 	// Table hints has no schema info
 	// It allows only table name or alias (if table has an alias)
 	HintName model.CIStr
-	Tables   []model.CIStr
-	Indexes  []model.CIStr
+	// QBName is the default effective query block of this hint.
+	QBName  model.CIStr
+	Tables  []HintTable
+	Indexes []model.CIStr
 	// Statement Execution Time Optimizer Hints
 	// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html#optimizer-hints-execution-time
 	MaxExecutionTime uint64
@@ -2036,16 +2038,40 @@ type TableOptimizerHint struct {
 	HintFlag         bool
 }
 
+// HintTable is table in the hint. It may have query block info.
+type HintTable struct {
+	TableName model.CIStr
+	QBName    model.CIStr
+}
+
+func (ht *HintTable) Restore(ctx *RestoreCtx) {
+	ctx.WriteName(ht.TableName.String())
+	if ht.QBName.L != "" {
+		ctx.WriteKeyWord("@")
+		ctx.WriteName(ht.QBName.String())
+	}
+}
+
 // Restore implements Node interface.
 func (n *TableOptimizerHint) Restore(ctx *RestoreCtx) error {
 	ctx.WriteKeyWord(n.HintName.String())
-	// Hints without args.
+	ctx.WritePlain("(")
+	if n.QBName.L != "" {
+		if n.HintName.L != "qb_name" {
+			ctx.WriteKeyWord("@")
+		}
+		ctx.WriteName(n.QBName.String())
+	}
+	// Hints without args except query block.
 	switch n.HintName.L {
-	case "hash_agg", "stream_agg", "read_consistent_replica", "no_index_merge":
+	case "hash_agg", "stream_agg", "read_consistent_replica", "no_index_merge", "qb_name":
+		ctx.WritePlain(")")
 		return nil
 	}
-	// Hints with args.
-	ctx.WritePlain("(")
+	if n.QBName.L != "" {
+		ctx.WritePlain(" ")
+	}
+	// Hints with args except query block.
 	switch n.HintName.L {
 	case "max_execution_time":
 		ctx.WritePlainf("%d", n.MaxExecutionTime)
@@ -2054,14 +2080,15 @@ func (n *TableOptimizerHint) Restore(ctx *RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(", ")
 			}
-			ctx.WriteName(table.String())
+			table.Restore(ctx)
 		}
 	case "index", "use_index_merge":
-		if len(n.Tables) != 0 {
-			ctx.WriteName(n.Tables[0].String())
-		}
-		for _, index := range n.Indexes {
-			ctx.WritePlain(", ")
+		n.Tables[0].Restore(ctx)
+		ctx.WritePlain(" ")
+		for i, index := range n.Indexes {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
 			ctx.WriteName(index.String())
 		}
 	case "use_toja", "enable_plan_cache":
