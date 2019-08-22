@@ -45,12 +45,12 @@ func (it *Iterator) Value() []byte {
 
 // Next moves the iterator to the next entry.
 func (it *Iterator) Next() {
-	it.changeToAddr(it.curr.getNextAddr(0))
+	it.changeToAddr(it.curr.nexts[0])
 }
 
 // Prev moves the iterator to the previous entry.
 func (it *Iterator) Prev() {
-	it.changeToAddr(it.curr.getPrevAddr())
+	it.changeToAddr(it.curr.prev)
 }
 
 // Seek locates the iterator to the first entry with a key >= seekKey.
