@@ -704,19 +704,19 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			userString = sessVars.User.String()
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
-			SQL:      sql,
-			Digest:   digest,
-			Start:    a.Ctx.GetSessionVars().StmtCtx.StartTime,
-			Duration: costTime,
-			Detail:   sessVars.StmtCtx.GetExecDetails(),
-			Succ:     succ,
-			ConnID:   sessVars.ConnectionID,
-			TxnTS:    txnTS,
-			User:     userString,
-			DB:       sessVars.CurrentDB,
-			TableIDs: tableIDs,
-			IndexIDs: indexNames,
-			Internal: sessVars.InRestrictedSQL,
+			SQL:        sql,
+			Digest:     digest,
+			Start:      a.Ctx.GetSessionVars().StmtCtx.StartTime,
+			Duration:   costTime,
+			Detail:     sessVars.StmtCtx.GetExecDetails(),
+			Succ:       succ,
+			ConnID:     sessVars.ConnectionID,
+			TxnTS:      txnTS,
+			User:       userString,
+			DB:         sessVars.CurrentDB,
+			TableIDs:   tableIDs,
+			IndexNames: indexNames,
+			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
 }
