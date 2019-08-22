@@ -146,7 +146,7 @@ Projection_10	170.34	root	test.gad.id, test.sdk.id, test.gad.aid, test.gad.cm, t
     └─IndexLookUp_17	0.25	root	
       ├─IndexScan_14	1.00	cop	table:sdk, index:aid, dic, range: decided by [eq(test.sdk.aid, test.gad.aid)], keep order:false
       └─Selection_16	0.25	cop	eq(test.sdk.bm, 0), eq(test.sdk.pt, "ios"), gt(test.sdk.t, 1477971479), not(isnull(test.sdk.mac)), not(isnull(test.sdk.t))
-        └─TableScan_15	1.00	cop	table:dd, keep order:false
+        └─TableScan_15	1.00	cop	table:sdk, keep order:false
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	count	task	operator info
 Projection_5	39.28	root	test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, 3_col_0, 3_col_1
@@ -160,9 +160,9 @@ id	count	task	operator info
 Projection_10	428.32	root	test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
 └─Limit_13	428.32	root	offset:0, count:2000
   └─IndexJoin_19	428.32	root	inner join, inner:IndexLookUp_18, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic
-    ├─TableReader_41	428.32	root	data:Selection_40
-    │ └─Selection_40	428.32	cop	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
-    │   └─TableScan_39	2000.00	cop	table:dt, range:[0,+inf], keep order:false
+    ├─TableReader_40	428.32	root	data:Selection_39
+    │ └─Selection_39	428.32	cop	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
+    │   └─TableScan_38	2000.00	cop	table:dt, range:[0,+inf], keep order:false
     └─IndexLookUp_18	0.48	root	
       ├─IndexScan_15	1.00	cop	table:rr, index:aid, dic, range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false
       └─Selection_17	0.48	cop	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
