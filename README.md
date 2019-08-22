@@ -28,7 +28,7 @@ TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports 
 
 - __MySQL Compatible Syntax__
 
-    TiDB acts like it is a MySQL 5.7 server to your applications. You can continue to use all of the existing MySQL client libraries, and in many cases, you will not need to change a single line of code in your application. Because TiDB is built from scratch, not a MySQL fork, please check out the list of [known compatibility differences](https://www.pingcap.com/docs/sql/mysql-compatibility/).
+    TiDB acts like it is a MySQL 5.7 server to your applications. You can continue to use all of the existing MySQL client libraries, and in many cases, you will not need to change a single line of code in your application. Because TiDB is built from scratch, not a MySQL fork, please check out the list of [known compatibility differences](https://pingcap.com/docs/v3.0/reference/mysql-compatibility/).
 
 - __Distributed Transactions with Strong Consistency__
 
