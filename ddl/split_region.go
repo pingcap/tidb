@@ -70,7 +70,6 @@ func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scat
 	// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
 
 	// Split table region.
-	regionIDs := make([]uint64, 0, 1<<(tbInfo.PreSplitRegions)+len(tbInfo.Indices))
 	step := int64(1 << (tbInfo.ShardRowIDBits - tbInfo.PreSplitRegions))
 	max := int64(1 << tbInfo.ShardRowIDBits)
 	splitTableKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions))
@@ -81,7 +80,7 @@ func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scat
 		splitTableKeys = append(splitTableKeys, key)
 	}
 	var err error
-	regionIDs, err = store.SplitRegions(context.Background(), splitTableKeys, scatter)
+	regionIDs, err := store.SplitRegions(context.Background(), splitTableKeys, scatter)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] pre split some table regions failed",
 			zap.Stringer("table", tbInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
