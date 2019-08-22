@@ -443,6 +443,7 @@ var tokenMap = map[string]int{
 	"PROFILE":                  profile,
 	"PROFILES":                 profiles,
 	"PUMP":                     pump,
+	"QB_NAME":                  hintQBName,
 	"QUARTER":                  quarter,
 	"QUERY":                    query,
 	"QUERY_TYPE":               hintQueryType,
