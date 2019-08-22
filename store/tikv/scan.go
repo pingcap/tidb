@@ -31,11 +31,11 @@ type Scanner struct {
 	batchSize    int
 	cache        []*pb.KvPair
 	idx          int
-	nextStartKey []byte
-	endKey       []byte
+	nextStartKey kv.Key
+	endKey       kv.Key
 
 	// Use for reverse scan.
-	nextEndKey []byte
+	nextEndKey kv.Key
 	reverse    bool
 
 	valid bool
@@ -155,8 +155,8 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 
 func (s *Scanner) getData(bo *Backoffer) error {
 	logutil.BgLogger().Debug("txn getData",
-		zap.Binary("nextStartKey", s.nextStartKey),
-		zap.Binary("nextEndKey", s.nextEndKey),
+		zap.Stringer("nextStartKey", s.nextStartKey),
+		zap.Stringer("nextEndKey", s.nextEndKey),
 		zap.Bool("reverse", s.reverse),
 		zap.Uint64("txnStartTS", s.startTS()))
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)

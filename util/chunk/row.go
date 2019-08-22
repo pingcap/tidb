@@ -28,6 +28,11 @@ type Row struct {
 	idx int
 }
 
+// Chunk returns the Chunk which the row belongs to.
+func (r Row) Chunk() *Chunk {
+	return r.c
+}
+
 // IsEmpty returns true if the Row is empty.
 func (r Row) IsEmpty() bool {
 	return r == Row{}

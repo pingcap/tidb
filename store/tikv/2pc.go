@@ -328,8 +328,11 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	var batches []batchKeys
 	var sizeFunc = c.keySize
 	if action == actionPrewrite {
-		for region, keys := range groups {
-			c.regionTxnSize[region.id] = len(keys)
+		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
+		if len(bo.errors) == 0 {
+			for region, keys := range groups {
+				c.regionTxnSize[region.id] = len(keys)
+			}
 		}
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
@@ -539,7 +542,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				}
 				logutil.BgLogger().Debug("key already exists",
 					zap.Uint64("conn", c.connID),
-					zap.Binary("key", key))
+					zap.Stringer("key", kv.Key(key)))
 				return errors.Trace(conditionPair.Err())
 			}
 
