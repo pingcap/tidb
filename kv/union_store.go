@@ -19,10 +19,10 @@ import "context"
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
 	MemBuffer
-	// Returns related condition pair
-	LookupConditionPair(k Key) error
-	// DeleteConditionPair deletes a condition pair.
-	DeleteConditionPair(k Key)
+	// GetKeyExistErr gets the key exist error for the lazy check.
+	GetKeyExistErr(k Key) error
+	// DeleteKeyExistErr deletes the key exist error for the lazy check.
+	DeleteKeyExistErr(k Key)
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -59,16 +59,16 @@ type Options interface {
 // snapshot for read.
 type unionStore struct {
 	*BufferStore
-	lazyConditionPairs map[string]error // for delay check
-	opts               options
+	keyExistErrs map[string]error // for the lazy check
+	opts         options
 }
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
-		BufferStore:        NewBufferStore(snapshot, DefaultTxnMembufCap),
-		lazyConditionPairs: make(map[string]error),
-		opts:               make(map[Option]interface{}),
+		BufferStore:  NewBufferStore(snapshot, DefaultTxnMembufCap),
+		keyExistErrs: make(map[string]error),
+		opts:         make(map[Option]interface{}),
 	}
 }
 
@@ -169,9 +169,9 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
 			e, ok := us.opts.Get(PresumeKeyNotExistsError)
 			if ok && e != nil {
-				us.lazyConditionPairs[string(k)] = e.(error)
+				us.keyExistErrs[string(k)] = e.(error)
 			} else {
-				us.lazyConditionPairs[string(k)] = ErrKeyExists
+				us.keyExistErrs[string(k)] = ErrKeyExists
 			}
 			return nil, ErrNotExist
 		}
@@ -186,15 +186,15 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 	return v, nil
 }
 
-func (us *unionStore) LookupConditionPair(k Key) error {
-	if c, ok := us.lazyConditionPairs[string(k)]; ok {
+func (us *unionStore) GetKeyExistErr(k Key) error {
+	if c, ok := us.keyExistErrs[string(k)]; ok {
 		return c
 	}
 	return nil
 }
 
-func (us *unionStore) DeleteConditionPair(k Key) {
-	delete(us.lazyConditionPairs, string(k))
+func (us *unionStore) DeleteKeyExistErr(k Key) {
+	delete(us.keyExistErrs, string(k))
 }
 
 // SetOption implements the UnionStore SetOption interface.

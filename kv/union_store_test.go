@@ -141,13 +141,13 @@ func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	_, err = s.us.Get(context.TODO(), []byte("2"))
 	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue, Commentf("err %v", err))
 
-	condionPair1 := s.us.LookupConditionPair([]byte("1"))
-	c.Assert(condionPair1, IsNil)
+	existErr1 := s.us.GetKeyExistErr([]byte("1"))
+	c.Assert(existErr1, IsNil)
 
-	condionPair2 := s.us.LookupConditionPair([]byte("2"))
-	c.Assert(condionPair2, NotNil)
+	existErr2 := s.us.GetKeyExistErr([]byte("2"))
+	c.Assert(existErr2, NotNil)
 
-	err2 := s.us.LookupConditionPair([]byte("2"))
+	err2 := s.us.GetKeyExistErr([]byte("2"))
 	c.Assert(terror.ErrorEqual(err2, ErrNotExist), IsTrue, Commentf("err %v", err2))
 }
 
