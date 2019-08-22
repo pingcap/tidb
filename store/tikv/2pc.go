@@ -155,7 +155,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
 			op := pb.Op_Put
-			if c := txn.us.GetKeyExistErr(k); c != nil {
+			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
 				op = pb.Op_Insert
 			}
 			mutations[string(k)] = &mutationEx{
@@ -535,14 +535,14 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				existErr := c.txn.us.GetKeyExistErr(key)
-				if existErr == nil {
+				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
+				if existErrInfo == nil {
 					return errors.Errorf("conn%d, existErr for key:%s should not be nil", c.connID, key)
 				}
 				logutil.BgLogger().Debug("key already exists",
 					zap.Uint64("conn", c.connID),
 					zap.Stringer("key", kv.Key(key)))
-				return kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", existErr.GetValue(), existErr.GetIdxName())
+				return existErrInfo.Err()
 			}
 
 			// Extract lock from key error
@@ -577,7 +577,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			Op:  pb.Op_PessimisticLock,
 			Key: k,
 		}
-		existErr := c.txn.us.GetKeyExistErr(k)
+		existErr := c.txn.us.GetKeyExistErrInfo(k)
 		if existErr != nil {
 			mut.Assertion = pb.Assertion_NotExist
 		}
@@ -622,11 +622,11 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				existErr := c.txn.us.GetKeyExistErr(key)
-				if existErr == nil {
+				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
+				if existErrInfo == nil {
 					return errors.Errorf("conn%d, existErr for key:%s should not be nil", c.connID, key)
 				}
-				return kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", existErr.GetValue(), existErr.GetIdxName())
+				return existErrInfo.Err()
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
 				return &ErrDeadlock{Deadlock: deadlock}

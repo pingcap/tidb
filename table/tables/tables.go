@@ -608,17 +608,19 @@ func (t *tableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 		if err != nil {
 			return 0, err
 		}
-		var entryKey string
+		var dupErr error
 		if !skipCheck && v.Meta().Unique {
-			entryKey, err = t.genIndexKeyStr(indexVals)
+			entryKey, err := t.genIndexKeyStr(indexVals)
 			if err != nil {
 				return 0, err
 			}
-			txn.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo(v.Meta().Name.String(), entryKey))
+			existErrInfo := kv.NewExistErrInfo(v.Meta().Name.String(), entryKey)
+			txn.SetOption(kv.PresumeKeyNotExistsError, existErrInfo)
+			dupErr = existErrInfo.Err()
 		}
 		if dupHandle, err := v.Create(sctx, rm, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				return dupHandle, kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
+				return dupHandle, dupErr
 			}
 			return 0, err
 		}
@@ -1105,11 +1107,12 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 	}
 	// Check key exists.
 	recordKey := t.RecordKey(recordID)
-	txn.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("PRIMARY", strconv.Itoa(int(recordID))))
+	existErrInfo := kv.NewExistErrInfo("PRIMARY", strconv.Itoa(int(recordID)))
+	txn.SetOption(kv.PresumeKeyNotExistsError, existErrInfo)
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	_, err = txn.Get(ctx, recordKey)
 	if err == nil {
-		return kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
+		return existErrInfo.Err()
 	} else if !kv.ErrNotExist.Equal(err) {
 		return err
 	}

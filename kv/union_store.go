@@ -19,10 +19,10 @@ import "context"
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
 	MemBuffer
-	// GetKeyExistErr gets the key exist error info for the lazy check.
-	GetKeyExistErr(k Key) *existErrInfo
-	// DeleteKeyExistErr deletes the key exist error info for the lazy check.
-	DeleteKeyExistErr(k Key)
+	// GetKeyExistErrInfo gets the key exist error info for the lazy check.
+	GetKeyExistErrInfo(k Key) *existErrInfo
+	// DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
+	DeleteKeyExistErrInfo(k Key)
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -73,6 +73,11 @@ func (e *existErrInfo) GetIdxName() string {
 // GetValue gets the existed value of the existed error.
 func (e *existErrInfo) GetValue() string {
 	return e.value
+}
+
+// Err generates the error for existErrInfo
+func (e *existErrInfo) Err() error {
+	return ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", e.value, e.idxName)
 }
 
 // unionStore is an in-memory Store which contains a buffer for write and a
@@ -204,14 +209,14 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 	return v, nil
 }
 
-func (us *unionStore) GetKeyExistErr(k Key) *existErrInfo {
+func (us *unionStore) GetKeyExistErrInfo(k Key) *existErrInfo {
 	if c, ok := us.keyExistErrs[string(k)]; ok {
 		return c
 	}
 	return nil
 }
 
-func (us *unionStore) DeleteKeyExistErr(k Key) {
+func (us *unionStore) DeleteKeyExistErrInfo(k Key) {
 	delete(us.keyExistErrs, string(k))
 }
 
