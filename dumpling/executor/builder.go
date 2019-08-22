@@ -232,7 +232,8 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 
 func (b *executorBuilder) buildChange(v *plannercore.Change) Executor {
 	return &ChangeExec{
-		ChangeStmt: v.ChangeStmt,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		ChangeStmt:   v.ChangeStmt,
 	}
 }
 
