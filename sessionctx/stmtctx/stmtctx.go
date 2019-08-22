@@ -131,7 +131,7 @@ type StatementContext struct {
 	MemTracker       *memory.Tracker
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
-	IndexIDs         []int64
+	IndexNames       []string
 	nowTs            time.Time // use this variable for now/current_timestamp calculation/cache for one stmt
 	stmtTimeCached   bool
 	StmtType         string
@@ -419,7 +419,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.allExecDetails = make([]*execdetails.ExecDetails, 0, 4)
 	sc.mu.Unlock()
 	sc.TableIDs = sc.TableIDs[:0]
-	sc.IndexIDs = sc.IndexIDs[:0]
+	sc.IndexNames = sc.IndexNames[:0]
 	sc.StartTime = time.Now()
 	sc.DurationCompile = time.Duration(0)
 	sc.DurationParse = time.Duration(0)
