@@ -594,6 +594,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StartTime = time.Now()
+			s.sessionVars.DurationCompile = time.Duration(0)
+			s.sessionVars.DurationParse = time.Duration(0)
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
 			schemaVersion, err = st.RebuildPlan(ctx)
@@ -1009,7 +1012,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	startTS := time.Now()
-	s.GetSessionVars().StmtCtx.StartTime = startTS
+	s.GetSessionVars().StartTime = startTS
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1019,7 +1022,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(startTS)
-	s.GetSessionVars().StmtCtx.DurationParse = durParse
+	s.GetSessionVars().DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
 		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
@@ -1059,7 +1062,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			s.handleInvalidBindRecord(ctx, stmtNode)
 		}
 		durCompile := time.Since(startTS)
-		s.GetSessionVars().StmtCtx.DurationCompile = durCompile
+		s.GetSessionVars().DurationCompile = durCompile
 		if isInternal {
 			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
 		} else {
@@ -1227,7 +1230,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args .
 	}
 
 	s.PrepareTxnCtx(ctx)
-	s.sessionVars.StmtCtx.StartTime = time.Now()
+	s.sessionVars.StartTime = time.Now()
 	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args...)
 	if err != nil {
 		return nil, err
