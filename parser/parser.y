@@ -261,6 +261,7 @@ import (
 	values			"VALUES"
 	long			"LONG"
 	varcharType		"VARCHAR"
+	varcharacter		"VARCHARACTER"
 	varbinaryType		"VARBINARY"
 	varying			"VARYING"
 	virtual			"VIRTUAL"
@@ -1087,8 +1088,8 @@ import (
 	ValueSym		"Value or Values"
 	Char			"{CHAR|CHARACTER}"
 	NChar			"{NCHAR|NATIONAL CHARACTER|NATIONAL CHAR}"
-	Varchar			"{VARCHAR|CHARACTER VARYING|CHAR VARYING}"
-	NVarchar		"{NATIONAL VARCHAR|NVARCHAR|NCHAR VARCHAR|NATIONAL CHARACTER VARYING|NATIONAL CHAR VARYING|NCHAR VARYING}"
+	Varchar			"{VARCHAR|VARCHARACTER|CHARACTER VARYING|CHAR VARYING}"
+	NVarchar		"{NATIONAL VARCHAR|NATIONAL VARCHARACTER|NVARCHAR|NCHAR VARCHAR|NATIONAL CHARACTER VARYING|NATIONAL CHAR VARYING|NCHAR VARYING}"
 	DeallocateSym		"Deallocate or drop"
 	OuterOpt		"optional OUTER clause"
 	CrossOpt		"Cross join option"
@@ -8725,6 +8726,24 @@ StringType:
 		x.Collate = charset.CollationBin
 		$$ = x
 	}
+|	"LONG" Varchar OptBinary
+	{
+		x := types.NewFieldType(mysql.TypeMediumBlob)
+		x.Charset = $3.(*ast.OptBinary).Charset
+		if $3.(*ast.OptBinary).IsBinary {
+			x.Flag |= mysql.BinaryFlag
+		}
+		$$ = x
+	}
+|	"LONG" OptBinary
+	{
+		x := types.NewFieldType(mysql.TypeMediumBlob)
+		x.Charset = $2.(*ast.OptBinary).Charset
+		if $2.(*ast.OptBinary).IsBinary {
+			x.Flag |= mysql.BinaryFlag
+		}
+		$$ = x
+	}
 
 Char:
 	"CHARACTER"
@@ -8739,11 +8758,14 @@ Varchar:
 	"CHARACTER" "VARYING"
 |	"CHAR" "VARYING"
 | 	"VARCHAR"
+|	"VARCHARACTER"
 
 NVarchar:
 	"NATIONAL" "VARCHAR"
+|	"NATIONAL" "VARCHARACTER"
 | 	"NVARCHAR"
 |	"NCHAR" "VARCHAR"
+|	"NCHAR" "VARCHARACTER"
 | 	"NATIONAL" "CHARACTER" "VARYING"
 | 	"NATIONAL" "CHAR" "VARYING"
 | 	"NCHAR" "VARYING"
@@ -8771,6 +8793,11 @@ BlobType:
 		x := types.NewFieldType(mysql.TypeLongBlob)
 		$$ = x
 	}
+|	"LONG" "VARBINARY"
+	{
+		x := types.NewFieldType(mysql.TypeMediumBlob)
+		$$ = x
+	}
 
 TextType:
 	"TINYTEXT"
@@ -8793,16 +8820,6 @@ TextType:
 |	"LONGTEXT"
 	{
 		x := types.NewFieldType(mysql.TypeLongBlob)
-		$$ = x
-	}
-|	"LONG"
-	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
-		$$ = x
-	}
-|	"LONG" "VARCHAR"
-	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
 		$$ = x
 	}
 
