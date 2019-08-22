@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
+
 	"go.uber.org/zap"
 )
 
@@ -64,6 +65,7 @@ var (
 	ValidStorage = map[string]bool{
 		"mocktikv": true,
 		"tikv":     true,
+		"unistore": true,
 	}
 	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
 	CheckTableBeforeDrop = false
