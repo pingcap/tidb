@@ -82,6 +82,8 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	ExtraHandleCol *expression.Column
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -274,6 +276,8 @@ type PhysicalLock struct {
 	basePhysicalPlan
 
 	Lock ast.SelectLockType
+
+	TblID2Handle map[int64][]*expression.Column
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -287,6 +291,9 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
+	// IsPointGetUnion indicates all the children are PointGet and
+	// all of them reference the same table and use the same `unique key`
+	IsPointGetUnion bool
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -358,6 +365,8 @@ type PhysicalUnionScan struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
+
+	HandleCol *expression.Column
 }
 
 // IsPartition returns true and partition ID if it works on a partition.

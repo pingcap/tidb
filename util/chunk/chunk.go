@@ -14,7 +14,6 @@
 package chunk
 
 import (
-	"encoding/binary"
 	"reflect"
 	"unsafe"
 
@@ -79,22 +78,28 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	return chk
 }
 
+// renewWithCapacity creates a new Chunk based on an existing Chunk with capacity. The newly
+// created Chunk has the same data schema with the old Chunk.
+func renewWithCapacity(chk *Chunk, cap int) *Chunk {
+	newChk := new(Chunk)
+	if chk.columns == nil {
+		return newChk
+	}
+	newChk.columns = renewColumns(chk.columns, cap)
+	newChk.numVirtualRows = 0
+	newChk.capacity = cap
+	newChk.requiredRows = cap
+	return newChk
+}
+
 // Renew creates a new Chunk based on an existing Chunk. The newly created Chunk
 // has the same data schema with the old Chunk. The capacity of the new Chunk
 // might be doubled based on the capacity of the old Chunk and the maxChunkSize.
 //  chk: old chunk(often used in previous call).
 //  maxChunkSize: the limit for the max number of rows.
 func Renew(chk *Chunk, maxChunkSize int) *Chunk {
-	newChk := new(Chunk)
-	if chk.columns == nil {
-		return newChk
-	}
 	newCap := reCalcCapacity(chk, maxChunkSize)
-	newChk.columns = renewColumns(chk.columns, newCap)
-	newChk.numVirtualRows = 0
-	newChk.capacity = newCap
-	newChk.requiredRows = maxChunkSize
-	return newChk
+	return renewWithCapacity(chk, newCap)
 }
 
 // renewColumns creates the columns of a Chunk. The capacity of the newly
@@ -624,33 +629,4 @@ func (c *Chunk) Reconstruct() {
 	}
 	c.numVirtualRows = len(c.sel)
 	c.sel = nil
-}
-
-func writeTime(buf []byte, t types.Time) {
-	binary.BigEndian.PutUint16(buf, uint16(t.Time.Year()))
-	buf[2] = uint8(t.Time.Month())
-	buf[3] = uint8(t.Time.Day())
-	buf[4] = uint8(t.Time.Hour())
-	buf[5] = uint8(t.Time.Minute())
-	buf[6] = uint8(t.Time.Second())
-	binary.BigEndian.PutUint32(buf[8:], uint32(t.Time.Microsecond()))
-	buf[12] = t.Type
-	buf[13] = uint8(t.Fsp)
-}
-
-func readTime(buf []byte) types.Time {
-	year := int(binary.BigEndian.Uint16(buf))
-	month := int(buf[2])
-	day := int(buf[3])
-	hour := int(buf[4])
-	minute := int(buf[5])
-	second := int(buf[6])
-	microseconds := int(binary.BigEndian.Uint32(buf[8:]))
-	tp := buf[12]
-	fsp := int(buf[13])
-	return types.Time{
-		Time: types.FromDate(year, month, day, hour, minute, second, microseconds),
-		Type: tp,
-		Fsp:  int8(fsp),
-	}
 }
