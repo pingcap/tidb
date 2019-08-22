@@ -16,8 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
-	"github.com/pingcap/tidb/kv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -25,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
