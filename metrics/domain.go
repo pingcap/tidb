@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// Metrics for the domain package.
 var (
 	// LoadSchemaCounter records the counter of load schema.
 	LoadSchemaCounter = prometheus.NewCounterVec(
