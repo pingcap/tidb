@@ -70,7 +70,7 @@ func tableNames2HintTableInfo(hintTables []ast.HintTable) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
-	hintTableInfos := make([]hintTableInfo, 0, len(hintTables))
+	hintTableInfos := make([]hintTableInfo, len(hintTables))
 	for i, hintTable := range hintTables {
 		hintTableInfos[i] = hintTableInfo{name: hintTable.TableName}
 	}
