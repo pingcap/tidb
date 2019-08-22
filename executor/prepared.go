@@ -253,7 +253,7 @@ func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...interface{}) (sqlexec.Statement, error) {
 	startTime := time.Now()
 	defer func() {
-		ctx.GetSessionVars().StmtCtx.DurationCompile = time.Since(startTime)
+		ctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
 
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
