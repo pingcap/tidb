@@ -24,11 +24,15 @@ type MutableString string
 // String converts slice to MutableString without copy.
 // The MutableString can be converts to string without copy.
 // Use it at your own risk.
-func String(b []byte) MutableString {
+func String(b []byte) (s MutableString) {
 	if len(b) == 0 {
 		return ""
 	}
-	return *(*MutableString)(unsafe.Pointer(&b))
+	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pstring.Data = pbytes.Data
+	pstring.Len = pbytes.Len
+	return
 }
 
 // Slice converts string to slice without copy.
