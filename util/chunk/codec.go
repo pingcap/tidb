@@ -174,7 +174,7 @@ func getFixedLen(colType *types.FieldType) int {
 		mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeYear, mysql.TypeDuration:
 		return 8
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		return 16
+		return sizeTime
 	case mysql.TypeNewDecimal:
 		return types.MyDecimalStructSize
 	default:

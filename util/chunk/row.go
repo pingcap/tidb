@@ -28,6 +28,11 @@ type Row struct {
 	idx int
 }
 
+// Chunk returns the Chunk which the row belongs to.
+func (r Row) Chunk() *Chunk {
+	return r.c
+}
+
 // IsEmpty returns true if the Row is empty.
 func (r Row) IsEmpty() bool {
 	return r == Row{}
@@ -74,7 +79,6 @@ func (r Row) GetBytes(colIdx int) []byte {
 }
 
 // GetTime returns the Time value with the colIdx.
-// TODO: use Time structure directly.
 func (r Row) GetTime(colIdx int) types.Time {
 	return r.c.columns[colIdx].GetTime(r.idx)
 }

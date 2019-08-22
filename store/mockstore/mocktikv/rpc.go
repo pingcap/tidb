@@ -57,6 +57,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				PrimaryLock: locked.Primary,
 				LockVersion: locked.StartTS,
 				LockTtl:     locked.TTL,
+				TxnSize:     locked.TxnSize,
 			},
 		}
 	}
@@ -709,6 +710,15 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp = handler.handleKvScan(r)
 
 	case tikvrpc.CmdPrewrite:
+		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
+			switch val.(string) {
+			case "notLeader":
+				failpoint.Return(&tikvrpc.Response{
+					Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+				}, nil)
+			}
+		})
+
 		r := req.Prewrite()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.Resp = &kvrpcpb.PrewriteResponse{RegionError: err}
