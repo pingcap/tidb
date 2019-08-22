@@ -1774,15 +1774,16 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 	tblMap := make(map[*model.TableInfo]struct{}, len(notInGbyCols))
 	for col, errExprLoc := range notInGbyCols {
 		tblInfo := tblInfoFromCol(sel.From.TableRefs, col)
-		if tblInfo == nil {
-			continue
-		}
-		if _, ok := tblMap[tblInfo]; ok {
-			continue
-		}
-		if checkColFuncDepend(p, col, tblInfo, gbyCols, whereDepends, joinDepends) {
-			tblMap[tblInfo] = struct{}{}
-			continue
+		if tblInfo != nil {
+			// If the tblInfo is nil, we may have a derived table which is difficult to extract the talInfo.
+			// In this case, we directly reject such query without check the functional dependency.
+			if _, ok := tblMap[tblInfo]; ok {
+				continue
+			}
+			if checkColFuncDepend(p, col, tblInfo, gbyCols, whereDepends, joinDepends) {
+				tblMap[tblInfo] = struct{}{}
+				continue
+			}
 		}
 		switch errExprLoc.Loc {
 		case ErrExprInSelect:

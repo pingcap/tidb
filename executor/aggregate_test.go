@@ -552,6 +552,8 @@ func (s *testSuite1) TestOnlyFullGroupBy(c *C) {
 	//tk.MustQuery("select * from (select * from t) as e group by b,d")
 	//err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
 	//c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue)
+	err = tk.ExecToErr("select a from (select a, b from t) as e group by b")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue)
 
 	// test order by
 	tk.MustQuery("select c from t group by c,d order by d")
