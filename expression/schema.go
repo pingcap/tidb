@@ -107,6 +107,9 @@ func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error
 			if idx == -1 {
 				idx = i
 			} else {
+				if col.IsInsertSelect && s.Columns[idx].IsInsertSelect {
+					continue
+				}
 				// For query like:
 				// create table t1(a int); create table t2(d int);
 				// select 1 from t1, t2 where 1 = (select d from t2 where a > 1) and d = 1;

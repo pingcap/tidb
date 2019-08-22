@@ -176,6 +176,15 @@ func (s *testSuite3) TestInsertOnDuplicateKey(c *C) {
 	tk.CheckLastMessage("Records: 4  Duplicates: 0  Warnings: 0")
 	tk.MustQuery(`select * from t2 order by a;`).Check(testkit.Rows(`1 1 1`, `3 2 2`))
 
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(a bigint primary key, b bigint);`)
+	tk.MustExec(`create table t2(a bigint primary key, b bigint);`)
+	tk.MustExec(`insert into t1 values (1, 2);`)
+	tk.MustExec(`insert into t2 values (1, 1);`)
+	tk.MustExec(`insert into t2 values (2, 2);`)
+	_, err = tk.Exec(`insert into t1 select a,a from t2 src on duplicate key update a = 100+src.a;`)
+	tk.MustQuery(`select * from t1 order by a;`).Check(testkit.Rows(`2 2`, `101 2`))
+
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(a int primary key, b int);`)
 	tk.MustExec(`insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);`)

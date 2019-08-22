@@ -169,6 +169,8 @@ type Column struct {
 
 	hashcode []byte
 
+	// IsInsertSelect means if this column is the select field of insertSelect
+	IsInsertSelect bool
 	// IsReferenced means if this column is referenced to an Aggregation column, or a Subquery column,
 	// or an argument column of function IfNull.
 	// If so, this column's name will be the plain sql text.

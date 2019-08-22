@@ -1802,6 +1802,10 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		}
 	}
 
+	for _, col := range selectPlan.Schema().Columns {
+		col.IsInsertSelect = true
+	}
+
 	insertPlan.SelectPlan, err = DoOptimize(ctx, b.optFlag, selectPlan.(LogicalPlan))
 	if err != nil {
 		return err
