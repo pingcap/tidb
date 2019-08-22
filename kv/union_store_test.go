@@ -137,7 +137,7 @@ func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	c.Assert(v, BytesEquals, []byte("1"))
 
 	s.us.SetOption(PresumeKeyNotExists, nil)
-	s.us.SetOption(PresumeKeyNotExistsError, ErrNotExist)
+	s.us.SetOption(PresumeKeyNotExistsError, NewExistErrInfo("name", "value"))
 	_, err = s.us.Get(context.TODO(), []byte("2"))
 	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue, Commentf("err %v", err))
 
@@ -148,7 +148,8 @@ func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	c.Assert(existErr2, NotNil)
 
 	err2 := s.us.GetKeyExistErr([]byte("2"))
-	c.Assert(terror.ErrorEqual(err2, ErrNotExist), IsTrue, Commentf("err %v", err2))
+	c.Assert(err2.GetIdxName(), Equals, "name", Commentf("err %v", err2))
+	c.Assert(err2.GetValue(), Equals, "value", Commentf("err %v", err2))
 }
 
 func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {

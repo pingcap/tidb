@@ -19,9 +19,9 @@ import "context"
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
 	MemBuffer
-	// GetKeyExistErr gets the key exist error for the lazy check.
-	GetKeyExistErr(k Key) error
-	// DeleteKeyExistErr deletes the key exist error for the lazy check.
+	// GetKeyExistErr gets the key exist error info for the lazy check.
+	GetKeyExistErr(k Key) *existErrInfo
+	// DeleteKeyExistErr deletes the key exist error info for the lazy check.
 	DeleteKeyExistErr(k Key)
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
@@ -55,11 +55,31 @@ type Options interface {
 	Get(opt Option) (v interface{}, ok bool)
 }
 
+type existErrInfo struct {
+	idxName string
+	value   string
+}
+
+// NewExistErrInfo is used to new an existErrInfo
+func NewExistErrInfo(idxName string, value string) *existErrInfo {
+	return &existErrInfo{idxName: idxName, value: value}
+}
+
+// GetIdxName gets the index name of the existed error.
+func (e *existErrInfo) GetIdxName() string {
+	return e.idxName
+}
+
+// GetValue gets the existed value of the existed error.
+func (e *existErrInfo) GetValue() string {
+	return e.value
+}
+
 // unionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
 	*BufferStore
-	keyExistErrs map[string]error // for the lazy check
+	keyExistErrs map[string]*existErrInfo // for the lazy check
 	opts         options
 }
 
@@ -67,7 +87,7 @@ type unionStore struct {
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
 		BufferStore:  NewBufferStore(snapshot, DefaultTxnMembufCap),
-		keyExistErrs: make(map[string]error),
+		keyExistErrs: make(map[string]*existErrInfo),
 		opts:         make(map[Option]interface{}),
 	}
 }
@@ -168,10 +188,8 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 	if IsErrNotFound(err) {
 		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
 			e, ok := us.opts.Get(PresumeKeyNotExistsError)
-			if ok && e != nil {
-				us.keyExistErrs[string(k)] = e.(error)
-			} else {
-				us.keyExistErrs[string(k)] = ErrKeyExists
+			if ok {
+				us.keyExistErrs[string(k)] = e.(*existErrInfo)
 			}
 			return nil, ErrNotExist
 		}
@@ -186,7 +204,7 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 	return v, nil
 }
 
-func (us *unionStore) GetKeyExistErr(k Key) error {
+func (us *unionStore) GetKeyExistErr(k Key) *existErrInfo {
 	if c, ok := us.keyExistErrs[string(k)]; ok {
 		return c
 	}

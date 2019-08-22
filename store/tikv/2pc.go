@@ -542,7 +542,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				logutil.BgLogger().Debug("key already exists",
 					zap.Uint64("conn", c.connID),
 					zap.Stringer("key", kv.Key(key)))
-				return existErr
+				return kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", existErr.GetValue(), existErr.GetIdxName())
 			}
 
 			// Extract lock from key error
@@ -626,7 +626,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 				if existErr == nil {
 					return errors.Errorf("conn%d, existErr for key:%s should not be nil", c.connID, key)
 				}
-				return existErr
+				return kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", existErr.GetValue(), existErr.GetIdxName())
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
 				return &ErrDeadlock{Deadlock: deadlock}

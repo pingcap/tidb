@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -603,23 +604,21 @@ func (t *tableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	for _, v := range t.WritableIndices() {
-		var err2 error
-		indexVals, err2 = v.FetchValues(r, indexVals)
-		if err2 != nil {
-			return 0, err2
+		indexVals, err = v.FetchValues(r, indexVals)
+		if err != nil {
+			return 0, err
 		}
-		var dupKeyErr error
+		var entryKey string
 		if !skipCheck && v.Meta().Unique {
-			entryKey, err1 := t.genIndexKeyStr(indexVals)
-			if err1 != nil {
-				return 0, err1
+			entryKey, err = t.genIndexKeyStr(indexVals)
+			if err != nil {
+				return 0, err
 			}
-			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
-			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
+			txn.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo(v.Meta().Name.String(), entryKey))
 		}
 		if dupHandle, err := v.Create(sctx, rm, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				return dupHandle, dupKeyErr
+				return dupHandle, kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			}
 			return 0, err
 		}
@@ -1106,12 +1105,11 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 	}
 	// Check key exists.
 	recordKey := t.RecordKey(recordID)
-	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
-	txn.SetOption(kv.PresumeKeyNotExistsError, e)
+	txn.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("PRIMARY", strconv.Itoa(int(recordID))))
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	_, err = txn.Get(ctx, recordKey)
 	if err == nil {
-		return e
+		return kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 	} else if !kv.ErrNotExist.Equal(err) {
 		return err
 	}
