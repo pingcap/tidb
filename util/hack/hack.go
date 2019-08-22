@@ -25,6 +25,9 @@ type MutableString string
 // The MutableString can be converts to string without copy.
 // Use it at your own risk.
 func String(b []byte) MutableString {
+	if len(b) == 0 {
+		return ""
+	}
 	return *(*MutableString)(unsafe.Pointer(&b))
 }
 
