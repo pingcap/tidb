@@ -1001,8 +1001,8 @@ const (
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
 	SlowLogIsInternalStr = "Is_internal"
-	// SlowLogIndexIDsStr is slow log field name.
-	SlowLogIndexIDsStr = "Index_ids"
+	// SlowLogIndexNamesStr is slow log field name.
+	SlowLogIndexNamesStr = "Index_names"
 	// SlowLogDigestStr is slow log field name.
 	SlowLogDigestStr = "Digest"
 	// SlowLogQuerySQLStr is slow log field name.
@@ -1042,7 +1042,7 @@ type SlowQueryLogItems struct {
 	TimeTotal   time.Duration
 	TimeParse   time.Duration
 	TimeCompile time.Duration
-	IndexIDs    string
+	IndexNames  string
 	StatsInfos  map[string]uint64
 	CopTasks    *stmtctx.CopTasksDetails
 	ExecDetail  execdetails.ExecDetails
@@ -1059,7 +1059,7 @@ type SlowQueryLogItems struct {
 // # Query_time: 4.895492
 // # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
 // # DB: test
-// # Index_ids: [1,2]
+// # Index_names: [t1.idx1,t2.idx2]
 // # Is_internal: false
 // # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 // # Stats: t1:1,t2:2
@@ -1088,8 +1088,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(s.CurrentDB) > 0 {
 		writeSlowLogItem(&buf, SlowLogDBStr, s.CurrentDB)
 	}
-	if len(logItems.IndexIDs) > 0 {
-		writeSlowLogItem(&buf, SlowLogIndexIDsStr, logItems.IndexIDs)
+	if len(logItems.IndexNames) > 0 {
+		writeSlowLogItem(&buf, SlowLogIndexNamesStr, logItems.IndexNames)
 	}
 
 	writeSlowLogItem(&buf, SlowLogIsInternalStr, strconv.FormatBool(s.InRestrictedSQL))
