@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"io"
 	"math/bits"
 	"reflect"
 	"time"
@@ -604,4 +605,17 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 		}
 	}
 	return dst
+}
+
+// WriteTo writes the raw data in the specific row to w.
+func (c *Column) WriteTo(rowID int, w io.Writer) (int, error) {
+	var data []byte
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		data = c.data[rowID*elemLen : rowID*elemLen+elemLen]
+	} else {
+		start, end := c.offsets[rowID], c.offsets[rowID]
+		data = c.data[start:end]
+	}
+	return w.Write(data)
 }

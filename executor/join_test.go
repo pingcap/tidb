@@ -284,6 +284,16 @@ func (s *testSuite2) TestJoinCast(c *C) {
 	result := tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
 	result.Check(testkit.Rows("1"))
 
+	// int64(-1) != uint64(18446744073709551615)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 bigint)")
+	tk.MustExec("create table t1(c1 bigint unsigned)")
+	tk.MustExec("insert into t values (-1)")
+	tk.MustExec("insert into t1 values (18446744073709551615)")
+	result = tk.MustQuery("select * from t , t1 where t.c1 = t1.c1")
+	result.Check(testkit.Rows())
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int,c2 double)")

@@ -15,6 +15,8 @@ package codec
 
 import (
 	"bytes"
+	"fmt"
+	"hash/crc32"
 	"math"
 	"testing"
 	"time"
@@ -812,7 +814,7 @@ func (s *testCodecSuite) TestJSON(c *C) {
 	}
 
 	buf := make([]byte, 0, 4096)
-	buf, err := encode(nil, buf, datums, false, false)
+	buf, err := encode(nil, buf, datums, false)
 	c.Assert(err, IsNil)
 
 	datums1, err := Decode(buf, 2)
@@ -1042,12 +1044,74 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	for i := 0; i < len(tps); i++ {
 		colIdx[i] = i
 	}
-	b1, err1 := HashChunkRow(sc, nil, chk.GetRow(0), tps, colIdx)
-	b2, err2 := HashValues(sc, nil, datums...)
+	h := crc32.NewIEEE()
+	err1 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx)
+	sum1 := h.Sum32()
+	h.Reset()
+	err2 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx)
+	sum2 := h.Sum32()
 
 	c.Assert(err1, IsNil)
 	c.Assert(err2, IsNil)
-	c.Assert(b1, BytesEquals, b2)
+	c.Assert(sum1, Equals, sum2)
+
+	// uint64(18446744073709551615) != int64(-1)
+	// uint64(1) == int64(1)
+	tp1 := new(types.FieldType)
+	types.DefaultTypeForValue(uint64(18446744073709551615), tp1)
+	chk1 := chunk.New([]*types.FieldType{tp1}, 1, 1)
+	chk1.AppendUint64(0, 18446744073709551615)
+	chk1.AppendUint64(0, 1)
+
+	tp2 := new(types.FieldType)
+	types.DefaultTypeForValue(int64(-1), tp2)
+	chk2 := chunk.New([]*types.FieldType{tp2}, 1, 1)
+	chk2.AppendInt64(0, -1)
+	chk2.AppendInt64(0, 1)
+
+	h.Reset()
+	err1 = HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0})
+	sum1 = h.Sum32()
+	h.Reset()
+	err2 = HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
+	sum2 = h.Sum32()
+	fmt.Println(sum1, sum2)
+	c.Assert(err1, IsNil)
+	c.Assert(err2, IsNil)
+	c.Assert(sum1, Not(Equals), sum2)
+
+	h.Reset()
+	err1 = HashChunkRow(sc, h, chk1.GetRow(1), []*types.FieldType{tp1}, []int{0})
+	sum1 = h.Sum32()
+	h.Reset()
+	err2 = HashChunkRow(sc, h, chk2.GetRow(1), []*types.FieldType{tp2}, []int{0})
+	sum2 = h.Sum32()
+	c.Assert(err1, IsNil)
+	c.Assert(err2, IsNil)
+	c.Assert(sum1, Equals, sum2)
+
+	// Decimal(1.00) == Decimal(1.000)
+	tp1 = new(types.FieldType)
+	dec := types.NewDecFromStringForTest("1.10")
+	types.DefaultTypeForValue(dec, tp1)
+	chk1 = chunk.New([]*types.FieldType{tp1}, 1, 1)
+	chk1.AppendMyDecimal(0, dec)
+
+	tp2 = new(types.FieldType)
+	dec = types.NewDecFromStringForTest("01.100")
+	types.DefaultTypeForValue(dec, tp2)
+	chk2 = chunk.New([]*types.FieldType{tp2}, 1, 1)
+	chk2.AppendMyDecimal(0, dec)
+
+	h.Reset()
+	err1 = HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0})
+	sum1 = h.Sum32()
+	h.Reset()
+	err2 = HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
+	sum2 = h.Sum32()
+	c.Assert(err1, IsNil)
+	c.Assert(err2, IsNil)
+	c.Assert(sum1, Not(Equals), sum2)
 }
 
 func (s *testCodecSuite) TestValueSizeOfSignedInt(c *C) {

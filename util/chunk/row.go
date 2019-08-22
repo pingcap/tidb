@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"io"
 	"unsafe"
 
 	"github.com/pingcap/parser/mysql"
@@ -202,6 +203,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		}
 	}
 	return d
+}
+
+// WriteTo writes the raw data with the colIdx to w.
+func (r Row) WriteTo(colIdx int, w io.Writer) (int, error) {
+	return r.c.columns[colIdx].WriteTo(r.idx, w)
 }
 
 // IsNull returns if the datum in the chunk.Row is null.
