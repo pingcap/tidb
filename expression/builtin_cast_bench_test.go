@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func BenchmarkCastIntAsCast(b *testing.B) {
+func BenchmarkCastIntAsInt(b *testing.B) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}
 	baseFunc := newBaseBuiltinFunc(mock.NewContext(), []Expression{col})
 	baseCast := newBaseBuiltinCastFunc(baseFunc, false)
