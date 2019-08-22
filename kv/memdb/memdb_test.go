@@ -230,29 +230,34 @@ func (s testMemDBSuite) TestRest(c *C) {
 
 func (s testMemDBSuite) TestRandom(c *C) {
 	const cnt = 500000
+	keys := make([][]byte, cnt)
+	for i := range keys {
+		keys[i] = make([]byte, rand.Intn(19)+1)
+		rand.Read(keys[i])
+	}
+
 	p1 := New(4 * 1024)
 	p2 := memdb.New(comparer.DefaultComparer, 4*1024)
-	var buf [4]byte
-	for i := 0; i < cnt; i++ {
-		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		p1.Put(buf[:], buf[:])
-		_ = p2.Put(buf[:], buf[:])
+	for _, k := range keys {
+		p1.Put(k, k)
+		_ = p2.Put(k, k)
 	}
 
 	c.Check(p1.Len(), Equals, p2.Len())
 	c.Check(p1.Size(), Equals, p2.Size())
 
-	for _, k := range rand.Perm(cnt) {
-		binary.BigEndian.PutUint32(buf[:], uint32(k))
+	rand.Shuffle(cnt, func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
+
+	for _, k := range keys {
 		switch rand.Intn(4) {
 		case 0, 1:
-			var vbuf [4]byte
-			binary.BigEndian.PutUint32(vbuf[:], uint32(k+rand.Intn(10000)))
-			p1.Put(buf[:], vbuf[:])
-			_ = p2.Put(buf[:], vbuf[:])
+			newValue := make([]byte, rand.Intn(19)+1)
+			rand.Read(newValue)
+			p1.Put(k, newValue)
+			_ = p2.Put(k, newValue)
 		case 2:
-			p1.Delete(buf[:])
-			_ = p2.Delete(buf[:])
+			p1.Delete(k)
+			_ = p2.Delete(k)
 		}
 	}
 
