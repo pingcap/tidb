@@ -63,6 +63,7 @@ type pstmtPlanCacheKey struct {
 	database       string
 	connID         uint64
 	pstmtID        uint32
+	idxInMulti     int
 	snapshot       uint64
 	schemaVersion  int64
 	sqlMode        mysql.SQLMode
@@ -94,18 +95,19 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
 // so we can reuse Key instead of new every time.
-func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int64) {
+func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, idx int, schemaVersion int64) {
 	psStmtKey, isPsStmtKey := key.(*pstmtPlanCacheKey)
 	if !isPsStmtKey {
 		return
 	}
 	psStmtKey.pstmtID = pstmtID
+	psStmtKey.idxInMulti = idx
 	psStmtKey.schemaVersion = schemaVersion
 	psStmtKey.hash = psStmtKey.hash[:0]
 }
 
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
-func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
+func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, idxInMulti int, schemaVersion int64) kvcache.Key {
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
@@ -114,6 +116,7 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 		database:       sessionVars.CurrentDB,
 		connID:         sessionVars.ConnectionID,
 		pstmtID:        pstmtID,
+		idxInMulti:     idxInMulti,
 		snapshot:       sessionVars.SnapshotTS,
 		schemaVersion:  schemaVersion,
 		sqlMode:        sessionVars.SQLMode,

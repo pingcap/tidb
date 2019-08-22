@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -208,7 +207,6 @@ type ExecuteExec struct {
 
 	is            infoschema.InfoSchema
 	name          string
-	usingVars     []expression.Expression
 	stmtExec      Executor
 	stmt          ast.StmtNode
 	plan          plannercore.Plan
@@ -261,12 +259,14 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
+	removedPss := vars.RemovePreparedStmt(id)
 	if plannercore.PreparedPlanCacheEnabled() {
-		e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
-			vars, id, vars.PreparedStmts[id][0].SchemaVersion,
-		))
+		for idx, ps := range removedPss {
+			e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
+				vars, id, idx, ps.SchemaVersion,
+			))
+		}
 	}
-	vars.RemovePreparedStmt(id)
 	return nil
 }
 

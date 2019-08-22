@@ -650,14 +650,16 @@ func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt []*ast.Prepared) error
 }
 
 // RemovePreparedStmt removes preparedStmt from current session and decrease count in global.
-func (s *SessionVars) RemovePreparedStmt(stmtID uint32) {
-	_, exists := s.PreparedStmts[stmtID]
+func (s *SessionVars) RemovePreparedStmt(stmtID uint32) (pss []*ast.Prepared) {
+	var exists bool
+	pss, exists = s.PreparedStmts[stmtID]
 	if !exists {
 		return
 	}
 	delete(s.PreparedStmts, stmtID)
 	afterMinus := atomic.AddInt64(&preparedStmtCount, -1)
 	metrics.PreparedStmtGauge.Set(float64(afterMinus))
+	return
 }
 
 // WithdrawAllPreparedStmt remove all preparedStmt in current session and decrease count in global.
