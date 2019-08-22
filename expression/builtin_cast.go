@@ -435,15 +435,23 @@ func (b *builtinCastIntAsIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastIntAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
-	res, isNull, err = b.args[0].EvalInt(b.ctx, row)
-	if isNull || err != nil {
-		return
+func (b *builtinCastIntAsIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCastIntAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
 	}
-	if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && res < 0 {
-		res = 0
+	if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) {
+		i64s := result.Int64s()
+		for i := range i64s {
+			if i64s[i] < 0 {
+				i64s[i] = 0
+			}
+		}
 	}
-	return
+	return nil
 }
 
 type builtinCastIntAsRealSig struct {
@@ -1726,6 +1734,7 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 	case types.ETString:
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	}
+	fc = &vecRowConvertFuncClass{fc}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	terror.Log(err)
 	res = &ScalarFunction{
