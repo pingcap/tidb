@@ -205,32 +205,52 @@ func (ts *testMiscSuite) TestUserSpec(c *C) {
 
 func (ts *testMiscSuite) TestTableOptimizerHintRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
-		{"INDEX(t1, c1)", "INDEX(`t1`, `c1`)"},
+		{"INDEX(t1 c1)", "INDEX(`t1` `c1`)"},
+		{"INDEX(@sel_1 t1 c1)", "INDEX(@`sel_1` `t1` `c1`)"},
+		{"INDEX(t1@sel_1 c1)", "INDEX(`t1`@`sel_1` `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},
+		{"TIDB_SMJ(@sel1 t1,t2)", "TIDB_SMJ(@`sel1` `t1`, `t2`)"},
+		{"TIDB_SMJ(t1@sel1,t2@sel2)", "TIDB_SMJ(`t1`@`sel1`, `t2`@`sel2`)"},
 		{"TIDB_INLJ(t1,t2)", "TIDB_INLJ(`t1`, `t2`)"},
+		{"TIDB_INLJ(@sel1 t1,t2)", "TIDB_INLJ(@`sel1` `t1`, `t2`)"},
+		{"TIDB_INLJ(t1@sel1,t2@sel2)", "TIDB_INLJ(`t1`@`sel1`, `t2`@`sel2`)"},
 		{"TIDB_HJ(t1,t2)", "TIDB_HJ(`t1`, `t2`)"},
+		{"TIDB_HJ(@sel1 t1,t2)", "TIDB_HJ(@`sel1` `t1`, `t2`)"},
+		{"TIDB_HJ(t1@sel1,t2@sel2)", "TIDB_HJ(`t1`@`sel1`, `t2`@`sel2`)"},
 		{"SM_JOIN(t1,t2)", "SM_JOIN(`t1`, `t2`)"},
 		{"INL_JOIN(t1,t2)", "INL_JOIN(`t1`, `t2`)"},
 		{"HASH_JOIN(t1,t2)", "HASH_JOIN(`t1`, `t2`)"},
 		{"MAX_EXECUTION_TIME(3000)", "MAX_EXECUTION_TIME(3000)"},
-		{"USE_INDEX_MERGE(t1, c1)", "USE_INDEX_MERGE(`t1`, `c1`)"},
+		{"MAX_EXECUTION_TIME(@sel1 3000)", "MAX_EXECUTION_TIME(@`sel1` 3000)"},
+		{"USE_INDEX_MERGE(t1 c1)", "USE_INDEX_MERGE(`t1` `c1`)"},
+		{"USE_INDEX_MERGE(@sel1 t1 c1)", "USE_INDEX_MERGE(@`sel1` `t1` `c1`)"},
+		{"USE_INDEX_MERGE(t1@sel1 c1)", "USE_INDEX_MERGE(`t1`@`sel1` `c1`)"},
 		{"USE_TOJA(TRUE)", "USE_TOJA(TRUE)"},
 		{"USE_TOJA(FALSE)", "USE_TOJA(FALSE)"},
+		{"USE_TOJA(@sel1 TRUE)", "USE_TOJA(@`sel1` TRUE)"},
 		{"QUERY_TYPE(OLAP)", "QUERY_TYPE(OLAP)"},
 		{"QUERY_TYPE(OLTP)", "QUERY_TYPE(OLTP)"},
+		{"QUERY_TYPE(@sel1 OLTP)", "QUERY_TYPE(@`sel1` OLTP)"},
 		{"MEMORY_QUOTA(1 G)", "MEMORY_QUOTA(1024 M)"},
-		{"HASH_AGG", "HASH_AGG"},
-		{"STREAM_AGG", "STREAM_AGG"},
-		{"NO_INDEX_MERGE", "NO_INDEX_MERGE"},
-		{"READ_CONSISTENT_REPLICA", "READ_CONSISTENT_REPLICA"},
+		{"MEMORY_QUOTA(@sel1 1 G)", "MEMORY_QUOTA(@`sel1` 1024 M)"},
+		{"HASH_AGG()", "HASH_AGG()"},
+		{"HASH_AGG(@sel1)", "HASH_AGG(@`sel1`)"},
+		{"STREAM_AGG()", "STREAM_AGG()"},
+		{"STREAM_AGG(@sel1)", "STREAM_AGG(@`sel1`)"},
+		{"NO_INDEX_MERGE()", "NO_INDEX_MERGE()"},
+		{"NO_INDEX_MERGE(@sel1)", "NO_INDEX_MERGE(@`sel1`)"},
+		{"READ_CONSISTENT_REPLICA()", "READ_CONSISTENT_REPLICA()"},
+		{"READ_CONSISTENT_REPLICA(@sel1)", "READ_CONSISTENT_REPLICA(@`sel1`)"},
+		{"QB_NAME(sel1)", "QB_NAME(`sel1`)"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).TableHints[0]
 	}
 	RunNodeRestoreTest(c, testCases, "select /*+ %s */ * from t1 join t2", extractNodeFunc)
 }
+
 func (ts *testMiscSuite) TestChangeStmtRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
