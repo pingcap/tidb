@@ -8,11 +8,11 @@ set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
 id	count	task	operator info
-IndexMergeJoin_28	5.00	root	inner join, inner:IndexLookUp_26, outer key:test.t2.a, inner key:test.t1.a
-├─IndexLookUp_26	5.00	root	
-│ ├─Selection_25	5.00	cop	not(isnull(test.t1.a))
-│ │ └─IndexScan_23	5.00	cop	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:true
-│ └─TableScan_24	5.00	cop	table:t1, keep order:true
+IndexJoin_22	5.00	root	inner join, inner:IndexLookUp_21, outer key:test.t2.a, inner key:test.t1.a
+├─IndexLookUp_21	5.00	root	
+│ ├─Selection_20	5.00	cop	not(isnull(test.t1.a))
+│ │ └─IndexScan_18	5.00	cop	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
+│ └─TableScan_19	5.00	cop	table:t1, keep order:false
 └─TableReader_31	1.00	root	data:Selection_30
   └─Selection_30	1.00	cop	not(isnull(test.t2.a))
     └─TableScan_29	1.00	cop	table:t2, range:[-inf,+inf], keep order:false

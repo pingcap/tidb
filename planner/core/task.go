@@ -191,7 +191,7 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	innerCPUCost := cpuFactor * outerCnt
 	// Cost of sorting and removing duplicate lookup keys:
 	// (outerCnt / batchSize) * (sortFactor + 1.0) * batchSize * cpuFactor
-	// If `p.NeedOuterSort` is false, the sortFactor is batchSize * Log2(batchSize).
+	// If `p.NeedOuterSort` is true, the sortFactor is batchSize * Log2(batchSize).
 	// Otherwise, it's 0.
 	batchSize := math.Min(float64(p.ctx.GetSessionVars().IndexJoinBatchSize), outerCnt)
 	sortFactor := 0.0
@@ -205,9 +205,6 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	// (outerCnt / batchSize) * (batchSize * distinctFactor) * cpuFactor
 	// Since we don't know the number of copTasks built, ignore these network cost now.
 	innerCPUCost += outerCnt * distinctFactor * cpuFactor
-	// CPU cost of building hash table for inner results:
-	// (outerCnt / batchSize) * (batchSize * distinctFactor) * innerCnt * cpuFactor
-	innerCPUCost += outerCnt * distinctFactor * innerCnt * cpuFactor
 	innerConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency)
 	cpuCost += innerCPUCost / innerConcurrency
 	// Cost of merge join in inner worker.
@@ -220,21 +217,22 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 			numPairs = 0
 		}
 	}
-	outerCardinality := numPairs / outerCnt
+	avgProbeCnt := numPairs / outerCnt
 	var probeCost float64
-	// Inner workers do merge join parallelly. But they can only keep one outer batch
+	// Inner workers do merge join parallelly. But they can only save ONE outer batch
 	// results. So as the number of outer batch is exceed inner concurrency, it degenerates
-	// linear execution.
+	// linear execution. In a word, the calculation of merge join is only parallel at first
+	// `innerConcurrency` number of inner tasks.
 	if outerCnt/batchSize >= innerConcurrency {
-		probeCost = (numPairs - batchSize*outerCardinality*(innerConcurrency-1)) * cpuFactor
+		probeCost = (numPairs - batchSize*avgProbeCnt*(innerConcurrency-1)) * cpuFactor
 	} else {
-		probeCost = batchSize * outerCardinality * cpuFactor
+		probeCost = batchSize * avgProbeCnt * cpuFactor
 	}
-	cpuCost += probeCost
+	cpuCost += probeCost + (innerConcurrency+1.0)*concurrencyFactor
 
 	// Index merge join save the join results in inner worker.
 	// So the memory cost consider the results size for each batch.
-	memoryCost := innerConcurrency * (batchSize * outerCardinality) * memoryFactor
+	memoryCost := innerConcurrency * (batchSize * avgProbeCnt) * memoryFactor
 
 	innerPlanCost := outerCnt * innerTask.cost()
 	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost

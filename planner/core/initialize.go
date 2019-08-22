@@ -407,10 +407,11 @@ func (p PhysicalIndexJoin) Init(ctx sessionctx.Context, stats *property.StatsInf
 }
 
 // Init initializes PhysicalIndexMergeJoin.
-func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexMergeJoin {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeIndexMergeJoin, &p)
-	p.childrenReqProps = props
-	p.stats = stats
+func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMergeJoin {
+	ctx.GetSessionVars().PlanID++
+	p.tp = TypeIndexMergeJoin
+	p.id = ctx.GetSessionVars().PlanID
+	p.ctx = ctx
 	return &p
 }
 

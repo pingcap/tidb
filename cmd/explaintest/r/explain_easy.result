@@ -365,13 +365,13 @@ Projection_10	5.00	root	9_aux_0
   ├─TableReader_14	5.00	root	data:TableScan_13
   │ └─TableScan_13	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_19	1.00	root	funcs:count(1)
-    └─IndexMergeJoin_54	2.40	root	left outer join, inner:TableReader_52, outer key:test.s.a, inner key:test.t1.a
-      ├─IndexReader_40	2.40	root	index:Selection_39
-      │ └─Selection_39	2.40	cop	eq(3, test.t.a)
-      │   └─IndexScan_38	3.00	cop	table:s, index:b, range:[3,3], keep order:false
-      └─TableReader_52	0.80	root	data:Selection_51
-        └─Selection_51	0.80	cop	eq(3, test.t.a)
-          └─TableScan_50	1.00	cop	table:t1, range: decided by [test.s.a], keep order:true
+    └─MergeJoin_44	2.40	root	left outer join, left key:test.s.a, right key:test.t1.a
+      ├─TableReader_34	2.40	root	data:Selection_33
+      │ └─Selection_33	2.40	cop	eq(3, test.t.a), eq(test.s.b, 3)
+      │   └─TableScan_32	5.00	cop	table:s, range:[-inf,+inf], keep order:true
+      └─TableReader_37	4.00	root	data:Selection_36
+        └─Selection_36	4.00	cop	eq(3, test.t.a)
+          └─TableScan_35	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
 explain select t.c in (select count(*) from t s right join t t1 on s.a = t1.a where 3 = t.a and t1.b = 3) from t;
 id	count	task	operator info
 Projection_10	5.00	root	9_aux_0
@@ -379,13 +379,13 @@ Projection_10	5.00	root	9_aux_0
   ├─TableReader_14	5.00	root	data:TableScan_13
   │ └─TableScan_13	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_19	1.00	root	funcs:count(1)
-    └─IndexMergeJoin_52	2.40	root	right outer join, inner:TableReader_50, outer key:test.t1.a, inner key:test.s.a
-      ├─TableReader_50	0.80	root	data:Selection_49
-      │ └─Selection_49	0.80	cop	eq(3, test.t.a)
-      │   └─TableScan_48	1.00	cop	table:s, range: decided by [test.t1.a], keep order:true
-      └─IndexReader_39	2.40	root	index:Selection_38
-        └─Selection_38	2.40	cop	eq(3, test.t.a)
-          └─IndexScan_37	3.00	cop	table:t1, index:b, range:[3,3], keep order:false
+    └─MergeJoin_43	2.40	root	right outer join, left key:test.s.a, right key:test.t1.a
+      ├─TableReader_33	4.00	root	data:Selection_32
+      │ └─Selection_32	4.00	cop	eq(3, test.t.a)
+      │   └─TableScan_31	5.00	cop	table:s, range:[-inf,+inf], keep order:true
+      └─TableReader_36	2.40	root	data:Selection_35
+        └─Selection_35	2.40	cop	eq(3, test.t.a), eq(test.t1.b, 3)
+          └─TableScan_34	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
 drop table if exists t;
 create table t(a int unsigned);
 explain select t.a = '123455' from t;
