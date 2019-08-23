@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -640,10 +641,10 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	// TODO: Refactor the way of constructing aggregation functions.
 	partialCursor := 0
 	finalAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
-	for i, aggFun := range p.AggFuncs {
+	for i, aggFunc := range p.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
-		finalAggFunc.Name = aggFun.Name
-		args := make([]expression.Expression, 0, len(aggFun.Args))
+		finalAggFunc.Name = aggFunc.Name
+		args := make([]expression.Expression, 0, len(aggFunc.Args))
 		if aggregation.NeedCount(finalAggFunc.Name) {
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
@@ -666,7 +667,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 		}
 		finalAggFunc.Args = args
 		finalAggFunc.Mode = aggregation.FinalMode
-		finalAggFunc.RetTp = aggFun.RetTp
+		finalAggFunc.RetTp = aggFunc.RetTp
 		finalAggFuncs[i] = finalAggFunc
 	}
 
@@ -681,6 +682,9 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 		partialSchema.Append(gbyCol)
 		groupByItems = append(groupByItems, gbyCol)
 	}
+
+	// Remove unnecessary FirstRow.
+	p.removeUnnecessaryFirstRow(finalAggFuncs, groupByItems)
 
 	// Create physical "final" aggregation.
 	if p.tp == TypeStreamAgg {
@@ -698,6 +702,41 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	}.initForHash(p.ctx, p.stats)
 	finalAgg.schema = finalSchema
 	return partialAgg, finalAgg
+}
+
+// Remove unnecessary FirstRow.
+// When the select column is same with the group by key, the column can be removed and gets value from the group by key.
+// e.g
+// select a, count(b) from t group by a;
+// The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
+// Can optimize the schema to [count(b), a] , and change the index to get value.
+func (p *basePhysicalAgg) removeUnnecessaryFirstRow(finalAggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) {
+	partialCursor := 0
+	partialAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(p.AggFuncs))
+	for i, aggFunc := range p.AggFuncs {
+		if aggFunc.Name == ast.AggFuncFirstRow {
+			canOptimize := false
+			for j, gbyExpr := range p.GroupByItems {
+				if gbyExpr.Equal(p.ctx, aggFunc.Args[0]) {
+					canOptimize = true
+					finalAggFuncs[i].Args[0] = groupByItems[j]
+					break
+				}
+			}
+			if canOptimize {
+				p.schema.Columns = append(p.schema.Columns[:partialCursor], p.schema.Columns[partialCursor+1:]...)
+				continue
+			}
+		}
+		if aggregation.NeedCount(aggFunc.Name) {
+			partialCursor++
+		}
+		if aggregation.NeedValue(aggFunc.Name) {
+			partialCursor++
+		}
+		partialAggFuncs = append(partialAggFuncs, aggFunc)
+	}
+	p.AggFuncs = partialAggFuncs
 }
 
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
@@ -728,11 +767,15 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
 func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool) float64 {
+	numAggFunc := len(p.AggFuncs)
+	if numAggFunc == 0 {
+		numAggFunc = 1
+	}
 	var cpuCost float64
 	if isRoot {
-		cpuCost = inputRows * cpuFactor * float64(len(p.AggFuncs))
+		cpuCost = inputRows * cpuFactor * float64(numAggFunc)
 	} else {
-		cpuCost = inputRows * copCPUFactor * float64(len(p.AggFuncs))
+		cpuCost = inputRows * copCPUFactor * float64(numAggFunc)
 	}
 	rowsPerGroup := inputRows / p.statsInfo().RowCount
 	memoryCost := rowsPerGroup * distinctFactor * memoryFactor * float64(p.numDistinctFunc())
@@ -805,9 +848,13 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	cardinality := p.statsInfo().RowCount
 	numDistinctFunc := p.numDistinctFunc()
+	numAggFunc := len(p.AggFuncs)
+	if numAggFunc == 0 {
+		numAggFunc = 1
+	}
 	var cpuCost float64
 	if isRoot {
-		cpuCost = inputRows * cpuFactor * float64(len(p.AggFuncs))
+		cpuCost = inputRows * cpuFactor * float64(numAggFunc)
 		divisor, con := p.cpuCostDivisor(numDistinctFunc > 0)
 		if divisor > 0 {
 			cpuCost /= divisor
@@ -815,9 +862,9 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 			cpuCost += (con + 1) * concurrencyFactor
 		}
 	} else {
-		cpuCost = inputRows * copCPUFactor * float64(len(p.AggFuncs))
+		cpuCost = inputRows * copCPUFactor * float64(numAggFunc)
 	}
-	memoryCost := cardinality * memoryFactor * float64(len(p.AggFuncs))
+	memoryCost := cardinality * memoryFactor * float64(numAggFunc)
 	// When aggregation has distinct flag, we would allocate a map for each group to
 	// check duplication.
 	memoryCost += inputRows * distinctFactor * memoryFactor * float64(numDistinctFunc)

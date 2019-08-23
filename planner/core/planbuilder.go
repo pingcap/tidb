@@ -66,15 +66,15 @@ type hintTableInfo struct {
 	matched bool
 }
 
-func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
-	if len(tableNames) == 0 {
+func tableNames2HintTableInfo(hintTables []ast.HintTable) []hintTableInfo {
+	if len(hintTables) == 0 {
 		return nil
 	}
-	hintTables := make([]hintTableInfo, 0, len(tableNames))
-	for _, tableName := range tableNames {
-		hintTables = append(hintTables, hintTableInfo{name: tableName})
+	hintTableInfos := make([]hintTableInfo, len(hintTables))
+	for i, hintTable := range hintTables {
+		hintTableInfos[i] = hintTableInfo{name: hintTable.TableName}
 	}
-	return hintTables
+	return hintTableInfos
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
@@ -842,7 +842,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
 	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
-	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table}.Init(b.ctx)
+	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx)
 	ts.SetSchema(tblSchema)
 	cop := &copTask{
 		indexPlan:   is,
@@ -1210,7 +1210,7 @@ func buildTableRegionsSchema() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
 	schema.Append(buildColumn("", "REGION_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "START_KEY", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "END_Key", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_KEY", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "LEADER_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "LEADER_STORE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "PEERS", mysql.TypeVarchar, 64))
