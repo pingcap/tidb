@@ -184,7 +184,7 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 
 func (ow *indexHashJoinOuterWorker) buildTask(ctx context.Context) (*indexHashJoinTask, error) {
 	task, err := ow.outerWorker.buildTask(ctx)
-	if err != nil {
+	if task == nil || err != nil {
 		return nil, err
 	}
 	return &indexHashJoinTask{
