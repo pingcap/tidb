@@ -232,7 +232,8 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 
 func (b *executorBuilder) buildChange(v *plannercore.Change) Executor {
 	return &ChangeExec{
-		ChangeStmt: v.ChangeStmt,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		ChangeStmt:   v.ChangeStmt,
 	}
 }
 
@@ -1929,7 +1930,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	ret.ranges = is.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
+	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	return ret
 }
 
@@ -2008,7 +2009,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	ret.ranges = is.Ranges
 	executorCounterIndexLookUpExecutor.Inc()
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
+	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	return ret
 }

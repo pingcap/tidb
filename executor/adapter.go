@@ -192,7 +192,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	startTime := time.Now()
 	defer func() {
-		a.Ctx.GetSessionVars().StmtCtx.DurationCompile = time.Since(startTime)
+		a.Ctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
 
 	is := GetInfoSchema(a.Ctx)
@@ -522,6 +522,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
+	a.Ctx.GetSessionVars().StartTime = time.Now()
+	a.Ctx.GetSessionVars().DurationCompile = time.Duration(0)
+	a.Ctx.GetSessionVars().DurationParse = time.Duration(0)
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -624,7 +627,7 @@ func (a *ExecStmt) logAudit() {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StmtCtx.StartTime)
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
 			audit.OnGeneralEvent(ctx, sessVars, plugin.Log, cmd)
 		}
 		return nil
@@ -642,7 +645,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		return
 	}
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(a.Ctx.GetSessionVars().StmtCtx.StartTime)
+	costTime := time.Since(a.Ctx.GetSessionVars().StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
@@ -653,12 +656,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
 
-	var tableIDs, indexIDs string
+	var tableIDs, indexNames string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
 		tableIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
 	}
-	if len(sessVars.StmtCtx.IndexIDs) > 0 {
-		indexIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
+	if len(sessVars.StmtCtx.IndexNames) > 0 {
+		indexNames = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexNames), " ", ",", -1)
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
@@ -671,9 +674,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			SQL:         sql,
 			Digest:      digest,
 			TimeTotal:   costTime,
-			TimeParse:   a.Ctx.GetSessionVars().StmtCtx.DurationParse,
-			TimeCompile: a.Ctx.GetSessionVars().StmtCtx.DurationCompile,
-			IndexIDs:    indexIDs,
+			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
+			IndexNames:  indexNames,
 			StatsInfos:  statsInfos,
 			CopTasks:    copTaskInfo,
 			ExecDetail:  execDetail,
@@ -687,9 +690,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			SQL:         sql,
 			Digest:      digest,
 			TimeTotal:   costTime,
-			TimeParse:   a.Ctx.GetSessionVars().StmtCtx.DurationParse,
-			TimeCompile: a.Ctx.GetSessionVars().StmtCtx.DurationCompile,
-			IndexIDs:    indexIDs,
+			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
+			IndexNames:  indexNames,
 			StatsInfos:  statsInfos,
 			CopTasks:    copTaskInfo,
 			ExecDetail:  execDetail,
@@ -704,19 +707,19 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			userString = sessVars.User.String()
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
-			SQL:      sql,
-			Digest:   digest,
-			Start:    a.Ctx.GetSessionVars().StmtCtx.StartTime,
-			Duration: costTime,
-			Detail:   sessVars.StmtCtx.GetExecDetails(),
-			Succ:     succ,
-			ConnID:   sessVars.ConnectionID,
-			TxnTS:    txnTS,
-			User:     userString,
-			DB:       sessVars.CurrentDB,
-			TableIDs: tableIDs,
-			IndexIDs: indexIDs,
-			Internal: sessVars.InRestrictedSQL,
+			SQL:        sql,
+			Digest:     digest,
+			Start:      a.Ctx.GetSessionVars().StartTime,
+			Duration:   costTime,
+			Detail:     sessVars.StmtCtx.GetExecDetails(),
+			Succ:       succ,
+			ConnID:     sessVars.ConnectionID,
+			TxnTS:      txnTS,
+			User:       userString,
+			DB:         sessVars.CurrentDB,
+			TableIDs:   tableIDs,
+			IndexNames: indexNames,
+			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
 }
