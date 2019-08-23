@@ -1,0 +1,23 @@
+drop table if exists t, tt;
+
+create table t(a int, b int, index ia(a));
+
+desc select avg(a) from t;
+
+desc select /*+ access_from_flash(t) */ avg(a) from t;
+
+desc select /*+ access_from_flash(t) */ sum(a) from t;
+
+desc select /*+ access_from_flash(t) */ sum(a+1) from t;
+
+desc select /*+ access_from_flash(t) */ sum(isnull(a)) from t;
+
+create table tt(a int, b int, primary key(a));
+
+desc select /*+ tidb_inlj(t1) access_from_flash(t2)*/ * from tt t1 join tt t2 on t1.a = t2.a;
+
+desc select /*+ tidb_inlj(t1) access_from_flash(t2)*/ * from t t1 join t t2 on t1.a = t2.a;
+
+desc select /*+ tidb_inlj(t1) access_from_flash(t1)*/ * from t t1 join t t2 on t1.a = t2.a where t1.b = 1;
+
+desc select /*+ tidb_inlj(t1) access_from_flash(t2,t1)*/ * from t t1 join t t2 on t1.a = t2.a;

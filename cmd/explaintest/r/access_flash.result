@@ -1,0 +1,66 @@
+drop table if exists t;
+create table t(a int, b int, index ia(a));
+desc select avg(a) from t;
+id	count	task	operator info
+HashAgg_11	1.00	root	funcs:avg(col_0, col_1)
+└─TableReader_12	1.00	root	data:HashAgg_5
+  └─HashAgg_5	1.00	cop	funcs:avg(test.t.a)
+    └─TableScan_10	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select /*+ access_from_flash(t) */ avg(a) from t;
+id	count	task	operator info
+HashAgg_11	1.00	root	funcs:avg(col_0, col_1)
+└─TableReader_12	1.00	root	data:HashAgg_5
+  └─HashAgg_5	1.00	cop	funcs:avg(test.t.a)
+    └─TableScan_10	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select /*+ access_from_flash(t) */ sum(a) from t;
+id	count	task	operator info
+HashAgg_11	1.00	root	funcs:sum(col_0)
+└─TableReader_12	1.00	root	data:HashAgg_5
+  └─HashAgg_5	1.00	cop	funcs:sum(test.t.a)
+    └─TableScan_10	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select /*+ access_from_flash(t) */ sum(a+1) from t;
+id	count	task	operator info
+HashAgg_11	1.00	root	funcs:sum(col_0)
+└─TableReader_12	1.00	root	data:HashAgg_5
+  └─HashAgg_5	1.00	cop	funcs:sum(plus(test.t.a, 1))
+    └─TableScan_10	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select /*+ access_from_flash(t) */ sum(isnull(a)) from t;
+id	count	task	operator info
+HashAgg_11	1.00	root	funcs:sum(col_0)
+└─TableReader_12	1.00	root	data:HashAgg_5
+  └─HashAgg_5	1.00	cop	funcs:sum(isnull(test.t.a))
+    └─TableScan_10	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+create table tt(a int, b int, primary key(a));
+desc select /*+ tidb_inlj(t1) access_from_flash(t2)*/ * from tt t1 join tt t2 on t1.a = t2.a;
+id	count	task	operator info
+IndexJoin_12	12500.00	root	inner join, inner:TableReader_11, outer key:test.t2.a, inner key:test.t1.a
+├─TableReader_11	1.00	root	data:TableScan_10
+│ └─TableScan_10	1.00	cop	table:t1, range: decided by [test.t2.a], keep order:false, stats:pseudo
+└─TableReader_14	10000.00	root	data:TableScan_13
+  └─TableScan_13	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select /*+ tidb_inlj(t1) access_from_flash(t2)*/ * from t t1 join t t2 on t1.a = t2.a;
+id	count	task	operator info
+IndexJoin_11	12487.50	root	inner join, inner:IndexLookUp_10, outer key:test.t2.a, inner key:test.t1.a
+├─IndexLookUp_10	9.99	root	
+│ ├─Selection_9	9.99	cop	not(isnull(test.t1.a))
+│ │ └─IndexScan_7	10.00	cop	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo
+│ └─TableScan_8	9.99	cop	table:t, keep order:false, stats:pseudo
+└─TableReader_13	10000.00	root	data:TableScan_12
+  └─TableScan_12	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select /*+ tidb_inlj(t1) access_from_flash(t1)*/ * from t t1 join t t2 on t1.a = t2.a where t1.b = 1;
+id	count	task	operator info
+IndexJoin_12	12.50	root	inner join, inner:IndexLookUp_11, outer key:test.t1.a, inner key:test.t2.a
+├─TableReader_17	10.00	root	data:Selection_16
+│ └─Selection_16	10.00	cop	eq(test.t1.b, 1)
+│   └─TableScan_15	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─IndexLookUp_11	9.99	root	
+  ├─Selection_10	9.99	cop	not(isnull(test.t2.a))
+  │ └─IndexScan_8	10.00	cop	table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
+  └─TableScan_9	9.99	cop	table:t, keep order:false, stats:pseudo
+desc select /*+ tidb_inlj(t1) access_from_flash(t2,t1)*/ * from t t1 join t t2 on t1.a = t2.a;
+id	count	task	operator info
+HashLeftJoin_7	12500.00	root	inner join, inner:TableReader_12, equal:[eq(test.t1.a, test.t2.a)]
+├─TableReader_10	10000.00	root	data:TableScan_9
+│ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_12	10000.00	root	data:TableScan_11
+  └─TableScan_11	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
