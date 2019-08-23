@@ -115,12 +115,16 @@ type twoPhaseCommitter struct {
 	regionTxnSize map[uint64]int
 }
 
-// taskProcessor add rateLimiter to control concurrency of txn 2pc
-type taskProcessor struct {
-	rateLimiter *rateLimit
+// batchExecutor is txn controller providing rate control like utils
+type batchExecutor struct {
+	rateLimiter *rateLimit           // rate limit for concurrency control, maybe more strategies
+	committer   *twoPhaseCommitter   // here maybe more different type committer in the future
+	action      twoPhaseCommitAction // the work action type
+	procFn      procOneBatchFn       // injected proc batch function
+	backoffer   *Backoffer           // Backoffer
 }
 
-type procFunc func(bo *Backoffer, batch batchKeys) error
+type procOneBatchFn func(bo *Backoffer, batch batchKeys) error
 
 type mutationEx struct {
 	pb.Mutation
@@ -384,10 +388,18 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 
 // doActionOnBatches does action to batches in parallel.
 func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseCommitAction, batches []batchKeys) error {
-	if len(batches) == 0 {
-		return nil
+	singleBatchActionFunc, err := c.getProcFuncByType(action)
+	if err != nil {
+		return err
 	}
-	var singleBatchActionFunc func(bo *Backoffer, batch batchKeys) error
+	rateLim := len(batches) // this will be used for LargeTxn, set rateLim here
+	batchExecutor := newBatchExecutor(rateLim, c, action, singleBatchActionFunc, bo)
+	err = batchExecutor.process(batches)
+	return errors.Trace(err)
+}
+
+func (c *twoPhaseCommitter) getProcFuncByType(action twoPhaseCommitAction) (procOneBatchFn, error) {
+	var singleBatchActionFunc procOneBatchFn
 	switch action {
 	case actionPrewrite:
 		singleBatchActionFunc = c.prewriteSingleBatch
@@ -399,23 +411,10 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		singleBatchActionFunc = c.pessimisticLockSingleBatch
 	case actionPessimisticRollback:
 		singleBatchActionFunc = c.pessimisticRollbackSingleBatch
+	default:
+		return nil, errors.Errorf("invalid action type=%v", action)
 	}
-	if len(batches) == 1 {
-		e := singleBatchActionFunc(bo, batches[0])
-		if e != nil {
-			logutil.BgLogger().Debug("2PC doActionOnBatches failed",
-				zap.Uint64("conn", c.connID),
-				zap.Stringer("action type", action),
-				zap.Error(e),
-				zap.Uint64("txnStartTS", c.startTS))
-		}
-		return errors.Trace(e)
-	}
-
-	rateLim := len(batches) // this will be used for LargeTxn
-	processor := newTaskProcessor(rateLim)
-	err := processor.process(c, singleBatchActionFunc, bo, action, batches)
-	return errors.Trace(err)
+	return singleBatchActionFunc, nil
 }
 
 func (c *twoPhaseCommitter) keyValueSize(key []byte) int {
@@ -1009,22 +1008,22 @@ func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn 
 	return b
 }
 
-// newTaskProcessor create processor to handle concurrent batch works(prewrite/commit etc)
-func newTaskProcessor(rateLimit int) *taskProcessor {
-	return &taskProcessor{newRateLimit(rateLimit)}
+// newBatchExecutor create processor to handle concurrent batch works(prewrite/commit etc)
+func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
+	action twoPhaseCommitAction, procFn procOneBatchFn, backoffer *Backoffer) *batchExecutor {
+	return &batchExecutor{newRateLimit(rateLimit), committer,
+		action, procFn, backoffer}
 }
 
 // startWork concurrently do the work for each batch considering rate limit
-func (tp *taskProcessor) startWorker(exitCh chan struct{}, ch chan error,
-	procFn procFunc, action twoPhaseCommitAction,
-	backoffer *Backoffer, batches []batchKeys) {
+func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, batches []batchKeys) {
 	for idx, batch1 := range batches {
-		if exit := tp.rateLimiter.getToken(exitCh); !exit {
+		if exit := batchExe.rateLimiter.getToken(exitCh); !exit {
 			batch := batch1
 			go func() {
 				var procRes error
-				defer tp.rateLimiter.putToken()
-				if action == actionCommit {
+				defer batchExe.rateLimiter.putToken()
+				if batchExe.action == actionCommit {
 					// Because the secondary batches of the commit actions are implemented to be
 					// committed asynchronously in background goroutines, we should not
 					// fork a child context and call cancel() while the foreground goroutine exits.
@@ -1032,52 +1031,66 @@ func (tp *taskProcessor) startWorker(exitCh chan struct{}, ch chan error,
 					// Here we makes a new clone of the original backoffer for this goroutine
 					// exclusively to avoid the data race when using the same backoffer
 					// in concurrent goroutines.
-					singleBatchBackoffer := backoffer.Clone()
-					procRes = procFn(singleBatchBackoffer, batch)
+					singleBatchBackoffer := batchExe.backoffer.Clone()
+					procRes = batchExe.procFn(singleBatchBackoffer, batch)
 				} else {
-					singleBatchBackoffer, singleBatchCancel := backoffer.Fork()
+					singleBatchBackoffer, singleBatchCancel := batchExe.backoffer.Fork()
 					defer singleBatchCancel()
-					procRes = procFn(singleBatchBackoffer, batch)
+					procRes = batchExe.procFn(singleBatchBackoffer, batch)
 				}
 				ch <- procRes
 			}()
 		} else {
-			logutil.Logger(backoffer.ctx).Info("break startWorker", zap.Stringer("action", action),
-				zap.Int("batch size", len(batches)), zap.Int("index", idx))
+			logutil.Logger(batchExe.backoffer.ctx).Info("break startWorker",
+				zap.Stringer("action", batchExe.action), zap.Int("batch size", len(batches)),
+				zap.Int("index", idx))
 			break
 		}
 	}
 }
 
 // process will start worker routine and collect results
-func (tp *taskProcessor) process(c *twoPhaseCommitter, procFn procFunc,
-	bo *Backoffer, action twoPhaseCommitAction, batches []batchKeys) error {
+func (batchExe *batchExecutor) process(batches []batchKeys) error {
 	var err error
+	if len(batches) == 0 {
+		return nil
+	}
+	if len(batches) == 1 {
+		e := batchExe.procFn(batchExe.backoffer, batches[0])
+		if e != nil {
+			logutil.BgLogger().Debug("2PC doActionOnBatches failed",
+				zap.Uint64("conn", batchExe.committer.connID),
+				zap.Stringer("action type", batchExe.action),
+				zap.Error(e),
+				zap.Uint64("txnStartTS", batchExe.committer.startTS))
+		}
+		return errors.Trace(e)
+	}
 	// For prewrite, stop sending other requests after receiving first error.
-	backoffer := bo
+	backoffer := batchExe.backoffer
 	var cancel context.CancelFunc
-	if action == actionPrewrite {
-		backoffer, cancel = bo.Fork()
+	if batchExe.action == actionPrewrite {
+		backoffer, cancel = batchExe.backoffer.Fork()
 		defer cancel()
 	}
 	// concurrently do the work for each batch.
 	ch := make(chan error, len(batches))
 	exitCh := make(chan struct{})
-	go tp.startWorker(exitCh, ch, procFn, action, backoffer, batches)
+	go batchExe.startWorker(exitCh, ch, batches)
 	// check results
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
 			logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatches failed",
-				zap.Uint64("conn", c.connID),
-				zap.Stringer("action type", action),
+				zap.Uint64("conn", batchExe.committer.connID),
+				zap.Stringer("action type", batchExe.action),
 				zap.Error(e),
-				zap.Uint64("txnStartTS", c.startTS))
+				zap.Uint64("txnStartTS", batchExe.committer.startTS))
 			// Cancel other requests and return the first error.
 			if cancel != nil {
 				logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatches to cancel other actions",
-					zap.Uint64("conn", c.connID),
-					zap.Stringer("action type", action),
-					zap.Uint64("txnStartTS", c.startTS))
+					zap.Uint64("conn", batchExe.committer.connID),
+					zap.Stringer("action type", batchExe.action),
+					zap.Uint64("txnStartTS", batchExe.committer.startTS))
 				cancel()
 			}
 			if err == nil {
