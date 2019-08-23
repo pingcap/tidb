@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,18 +22,34 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func BenchmarkCastIntAsInt(b *testing.B) {
+func genCastIntAsInt() (builtinFunc, *chunk.Chunk, *chunk.Column) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}
 	baseFunc := newBaseBuiltinFunc(mock.NewContext(), []Expression{col})
 	baseCast := newBaseBuiltinCastFunc(baseFunc, false)
-	cast := builtinCastIntAsIntSig{baseCast}
-
+	cast := &builtinCastIntAsIntSig{baseCast}
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
 	for i := 0; i < 1024; i++ {
 		input.AppendInt64(0, int64(i))
 	}
 	result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+	return cast, input, result
+}
 
+func BenchmarkCastIntAsIntRow(b *testing.B) {
+	cast, input, _ := genCastIntAsInt()
+	it := chunk.NewIterator4Chunk(input)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			if _, _, err := cast.evalInt(row); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
+func BenchmarkCastIntAsIntVec(b *testing.B) {
+	cast, input, result := genCastIntAsInt()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := cast.vecEvalInt(input, result); err != nil {

@@ -475,7 +475,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e
 	}
-	return newVecRowConverter(f), nil
+	return f, nil
 }
 
 func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
