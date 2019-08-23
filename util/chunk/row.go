@@ -22,9 +22,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-// VirChunk contains one virtual row, it's read-only.
-var VirChunk = &Chunk{numVirtualRows: 1}
-
 // Row represents a row of data, can be used to access values.
 type Row struct {
 	c   *Chunk
