@@ -1680,6 +1680,47 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestAggToCopHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "insert into mysql.opt_rule_blacklist values(\"aggregation_eliminate\")")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin reload opt_rule_blacklist")
+	c.Assert(err, IsNil)
+
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select /*+ AGG_TO_COP(), STREAM_AGG() */ sum(a) from t group by a",
+			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+		},
+	}
+	ctx := context.Background()
+	for i, test := range tests {
+		comment := Commentf("case:%v sql:%s", i, test)
+		stmt, err := s.ParseOneStmt(test.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		c.Assert(err, IsNil)
+		c.Assert(core.ToString(p), Equals, test.best)
+
+		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, 0)
+	}
+}
+
 func (s *testPlanSuite) TestHintAlias(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()

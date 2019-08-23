@@ -66,6 +66,8 @@ const (
 	HintStreamAgg = "stream_agg"
 	// HintIndex is hint enforce using some indexes.
 	HintIndex = "index"
+	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
+	HintAggToCop = "agg_to_cop"
 )
 
 const (
@@ -99,6 +101,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx)
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.preferAggType = hint.preferAggType
+		plan4Agg.preferAggToCop = hint.preferAggToCop
 	}
 	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
@@ -1959,6 +1962,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 		indexHintList                               []indexHintInfo
 		preferAggType                               uint
+		preferAggToCop                              bool
 	)
 	for _, hint := range hints {
 		switch hint.HintName.L {
@@ -1983,17 +1987,20 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 					},
 				})
 			}
+		case HintAggToCop:
+			preferAggToCop = true
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList) > 0 || preferAggType != 0 {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList) > 0 || preferAggType != 0 || preferAggToCop {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
 			indexHintList:             indexHintList,
 			preferAggType:             preferAggType,
+			preferAggToCop:            preferAggToCop,
 		})
 		return true
 	}

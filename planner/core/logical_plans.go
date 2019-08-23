@@ -250,6 +250,8 @@ type LogicalAggregation struct {
 
 	// preferAggType stores preferred aggregation algorithm type.
 	preferAggType uint
+	// preferAggToCop indicates whether want it to be pushed to coprocessor.
+	preferAggToCop bool
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.

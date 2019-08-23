@@ -61,6 +61,7 @@ type tableHintInfo struct {
 	hashJoinTables            []hintTableInfo
 	indexHintList             []indexHintInfo
 	preferAggType             uint
+	preferAggToCop            bool
 }
 
 type hintTableInfo struct {

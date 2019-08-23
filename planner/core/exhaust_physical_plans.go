@@ -1257,28 +1257,29 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
+func (la *LogicalAggregation) aggPushDownCheck() bool {
+	// Child may be of other types in the future, such as limit, topn and projection.
+	_, ok := la.children[0].(*DataSource)
+	return ok
+}
+
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	_, desc := prop.AllSameOrder()
-	enforcedAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
-		Enforced:    true,
 		Items:       property.ItemsFromCols(la.groupByCols, desc),
+		Enforced:    true,
 	}
+	// Won't consider cop task types, because enforced stream aggregation will be followed by sort.
+	childProp.TaskTp = property.RootTaskType
 
-	for _, taskTp := range wholeTaskTypes {
-		copiedChildProperty := new(property.PhysicalProperty)
-		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
-		copiedChildProperty.TaskTp = taskTp
+	agg := basePhysicalAgg{
+		GroupByItems: la.GroupByItems,
+		AggFuncs:     la.AggFuncs,
+	}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+	agg.SetSchema(la.schema.Clone())
 
-		agg := basePhysicalAgg{
-			GroupByItems: la.GroupByItems,
-			AggFuncs:     la.AggFuncs,
-		}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
-		agg.SetSchema(la.schema.Clone())
-		enforcedAggs = append(enforcedAggs, agg)
-	}
-	return enforcedAggs
+	return []PhysicalPlan{agg}
 }
 
 func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -1297,7 +1298,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
-	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1)+len(wholeTaskTypes))
+	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1)+1)
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 	}
@@ -1313,9 +1314,16 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			continue
 		}
 
-		// The table read of "CopDoubleReadTaskType" can't promises the sort
-		// property that the stream aggregation required, no need to consider.
-		for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType} {
+		var taskTypes []property.TaskType
+		if !la.preferAggToCop {
+			taskTypes = append(taskTypes, property.RootTaskType)
+		}
+		if la.aggPushDownCheck() {
+			// The table read of "CopDoubleReadTaskType" can't promises the sort
+			// property that the stream aggregation required, no need to consider.
+			taskTypes = append(taskTypes, property.CopSingleReadTaskType)
+		}
+		for _, taskTp := range taskTypes {
 			copiedChildProperty := new(property.PhysicalProperty)
 			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 			copiedChildProperty.TaskTp = taskTp
@@ -1341,7 +1349,15 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		return nil
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
-	for _, taskTp := range wholeTaskTypes {
+	var taskTypes []property.TaskType
+	if !la.preferAggToCop {
+		taskTypes = append(taskTypes, property.RootTaskType)
+	}
+	if la.aggPushDownCheck() {
+		taskTypes = append(taskTypes, property.CopSingleReadTaskType)
+		taskTypes = append(taskTypes, property.CopDoubleReadTaskType)
+	}
+	for _, taskTp := range taskTypes {
 		agg := basePhysicalAgg{
 			GroupByItems: la.GroupByItems,
 			AggFuncs:     la.AggFuncs,
@@ -1353,6 +1369,15 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	if la.preferAggToCop {
+		if !la.aggPushDownCheck() {
+			errMsg := "Optimizer Hint AGG_TO_COP is inapplicable"
+			warning := ErrInternal.GenWithStack(errMsg)
+			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			la.preferAggToCop = false
+		}
+	}
+
 	preferHash := (la.preferAggType & preferHashAgg) > 0
 	preferStream := (la.preferAggType & preferStreamAgg) > 0
 	if preferHash && preferStream {
