@@ -160,7 +160,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 
 // ConstItem implements Expression interface.
 func (col *CorrelatedColumn) ConstItem() bool {
-	return true
+	return false
 }
 
 // Decorrelate implements Expression interface.
