@@ -1971,7 +1971,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 		case HintIndex:
 			if len(hint.Tables) != 0 && len(hint.Indexes) != 0 {
 				indexHintList = append(indexHintList, indexHintInfo{
-					tblName: hint.Tables[0],
+					tblName: hint.Tables[0].TableName,
 					indexHint: &ast.IndexHint{
 						IndexNames: hint.Indexes,
 						HintType:   ast.HintUse,
