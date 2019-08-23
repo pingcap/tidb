@@ -221,7 +221,7 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	var probeCost float64
 	// Inner workers do merge join in parallel, but they can only save ONE outer batch
 	// results. So as the number of outer batch exceeds inner concurrency, it would fall back to
-	// linear execution. In a word, the calculation of merge join is only parallel at first
+	// linear execution. In a word, the merge join only run in parallel for the first
 	// `innerConcurrency` number of inner tasks.
 	if outerCnt/batchSize >= innerConcurrency {
 		probeCost = (numPairs - batchSize*avgProbeCnt*(innerConcurrency-1)) * cpuFactor
