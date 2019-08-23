@@ -2033,7 +2033,7 @@ type TableOptimizerHint struct {
 	// Statement Execution Time Optimizer Hints
 	// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html#optimizer-hints-execution-time
 	MaxExecutionTime uint64
-	MemoryQuota      uint64
+	MemoryQuota      int64
 	QueryType        model.CIStr
 	HintFlag         bool
 }
@@ -2100,7 +2100,7 @@ func (n *TableOptimizerHint) Restore(ctx *RestoreCtx) error {
 	case "query_type":
 		ctx.WriteKeyWord(n.QueryType.String())
 	case "memory_quota":
-		ctx.WritePlainf("%d M", n.MemoryQuota)
+		ctx.WritePlainf("%d MB", n.MemoryQuota/1024/1024)
 	}
 	ctx.WritePlain(")")
 	return nil

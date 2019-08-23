@@ -6548,7 +6548,7 @@ TableOptimizerHintOpt:
 	}
 |	hintMemoryQuota '(' QueryBlockOpt HintMemoryQuota ')'
 	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), MemoryQuota: $4.(uint64)}
+		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), MemoryQuota: $4.(int64)}
 	}
 |	hintHASHAGG '(' QueryBlockOpt ')'
 	{
@@ -6619,15 +6619,14 @@ HintQueryType:
 HintMemoryQuota:
 	NUM Identifier
 	{
-		// May change into MB/MiB or GB/GiB
 		switch model.NewCIStr($2).L {
-		case "m":
-			$$ = getUint64FromNUM($1)
-		case "g":
-			$$ = getUint64FromNUM($1) * 1024
+		case "mb":
+			$$ = $1.(int64) * 1024 * 1024
+		case "gb":
+			$$ = $1.(int64) * 1024 * 1024 * 1024
 		default:
-			// Trigger warning in TiDB Planner
-			$$ = uint64(0)
+			// Executor handle memory quota < 0 as no memory limit, here use it to trigger warning in TiDB.
+			$$ = int64(-1)
 		}
 	}
 
