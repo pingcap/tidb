@@ -555,6 +555,10 @@ func ScanSnapshotTableRecord(sessCtx sessionctx.Context, store kv.Storage, ver k
 		return nil, 0, errors.Trace(err)
 	}
 
+	if sessCtx.GetSessionVars().ReplicaRead.IsFollowerRead() {
+		snap.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
+
 	records, nextHandle, err := ScanTableRecord(sessCtx, snap, t, startHandle, limit)
 
 	return records, nextHandle, errors.Trace(err)
@@ -626,7 +630,7 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 // genExprs use to calculate generated column value.
 func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder *decoder.RowDecoder) ([]types.Datum, error) {
 	key := t.RecordKey(h)
-	value, err := txn.Get(key)
+	value, err := txn.Get(context.TODO(), key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -699,8 +703,8 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	}
 
 	logutil.BgLogger().Debug("record",
-		zap.Binary("startKey", startKey),
-		zap.Binary("key", it.Key()),
+		zap.Stringer("startKey", startKey),
+		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
 	rowDecoder := makeRowDecoder(t, cols, genExprs)
 	for it.Valid() && it.Key().HasPrefix(prefix) {

@@ -764,7 +764,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 		w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
 	}
 
-	batchVals, err := txn.BatchGet(w.batchCheckKeys)
+	batchVals, err := txn.BatchGet(context.Background(), w.batchCheckKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}

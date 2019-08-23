@@ -8,6 +8,8 @@ create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
 
 set @@session.tidb_opt_agg_push_down = 1;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
+set @@session.tidb_hashagg_partial_concurrency = 1;
+set @@session.tidb_hashagg_final_concurrency = 1;
 
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 explain select * from t1;
@@ -165,3 +167,9 @@ insert into t values (1),(2),(2),(2),(9),(9),(9),(10);
 analyze table t with 1 buckets;
 explain select * from t where a >= 3 and a <= 8;
 drop table t;
+
+# https://github.com/pingcap/tidb/issues/10626
+create table t(a int, b int, index idx_ab(a, b));
+explain select a, b from t where a in (1) order by b;
+explain select a, b from t where a = 1 order by b;
+drop table if exists t;

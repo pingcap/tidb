@@ -30,7 +30,7 @@ import (
 // splitKey) and [splitKey, end).
 func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64, err error) {
 	logutil.BgLogger().Info("start split region",
-		zap.Binary("at", splitKey))
+		zap.Stringer("at", splitKey))
 	bo := NewBackoffer(context.Background(), splitRegionBackoff)
 	sender := NewRegionRequestSender(s.regionCache, s.client)
 	req := tikvrpc.NewRequest(tikvrpc.CmdSplitRegion, &kvrpcpb.SplitRegionRequest{
@@ -45,7 +45,7 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64,
 		}
 		if bytes.Equal(splitKey, loc.StartKey) {
 			logutil.BgLogger().Info("skip split region",
-				zap.Binary("at", splitKey))
+				zap.Stringer("at", splitKey))
 			return 0, nil
 		}
 		res, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
@@ -65,9 +65,9 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64,
 		}
 		splitRegion := res.Resp.(*kvrpcpb.SplitRegionResponse)
 		logutil.BgLogger().Info("split region complete",
-			zap.Binary("at", splitKey),
-			zap.Stringer("new region left", splitRegion.GetLeft()),
-			zap.Stringer("new region right", splitRegion.GetRight()))
+			zap.Stringer("at", splitKey),
+			zap.Stringer("new region left", logutil.Hex(splitRegion.GetLeft())),
+			zap.Stringer("new region right", logutil.Hex(splitRegion.GetRight())))
 		left := splitRegion.GetLeft()
 		if left == nil {
 			return 0, nil

@@ -1713,18 +1713,6 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
-			sql: `create user 'test'@'%' identified by '123456'`,
-			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
-			},
-		},
-		{
-			sql: `drop user 'test'@'%'`,
-			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
-			},
-		},
-		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "", "", nil},
@@ -2373,7 +2361,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max from t group by c",
-			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_3) over(rows between 1 preceding and 1 following))->Projection",
+			result: "TableReader(Table(t))->HashAgg->Window(max(sel_agg_3) over(rows between 1 preceding and 1 following))->Projection",
 		},
 		{
 			sql:    "select nth_value(a, 1.0) over() from t",
@@ -2468,6 +2456,14 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "SELECT NTH_VALUE(a, 1) FROM LAST IGNORE NULLS over (partition by b order by b), a FROM t",
 			result: "[planner:1235]This version of TiDB doesn't yet support 'IGNORE NULLS'",
+		},
+		{
+			sql:    "SELECT NTH_VALUE(fieldA, ATAN(-1)) OVER (w1) AS 'ntile', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as te WINDOW w1 AS ( ORDER BY fieldB ASC, fieldA DESC )",
+			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
+			sql:    "SELECT NTH_VALUE(fieldA, -1) OVER (w1 PARTITION BY fieldB ORDER BY fieldB , fieldA ) AS 'ntile', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as temp WINDOW w1 AS ( ORDER BY fieldB ASC, fieldA DESC )",
+			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
 	}
 
@@ -2632,5 +2628,31 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 			c.Assert(p, IsNil)
 			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 0)
 		}
+	}
+}
+
+func (s *testPlanSuite) TestUpdateEQCond(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select t1.a from t t1, t t2 where t1.a = t2.a+1",
+			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t1.a,plus(test.t2.a, 1))->Projection",
+		},
+	}
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is)
+		builder := NewPlanBuilder(MockContext(), s.is)
+		p, err := builder.Build(ctx, stmt)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -57,6 +58,7 @@ type tableHintInfo struct {
 	indexNestedLoopJoinTables []hintTableInfo
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
+	preferAggType             uint
 }
 
 type hintTableInfo struct {
@@ -64,15 +66,15 @@ type hintTableInfo struct {
 	matched bool
 }
 
-func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
-	if len(tableNames) == 0 {
+func tableNames2HintTableInfo(hintTables []ast.HintTable) []hintTableInfo {
+	if len(hintTables) == 0 {
 		return nil
 	}
-	hintTables := make([]hintTableInfo, 0, len(tableNames))
-	for _, tableName := range tableNames {
-		hintTables = append(hintTables, hintTableInfo{name: tableName})
+	hintTableInfos := make([]hintTableInfo, len(hintTables))
+	for i, hintTable := range hintTables {
+		hintTableInfos[i] = hintTableInfo{name: hintTable.TableName}
 	}
-	return hintTables
+	return hintTableInfos
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
@@ -171,7 +173,6 @@ type PlanBuilder struct {
 	ctx          sessionctx.Context
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
-	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -186,11 +187,64 @@ type PlanBuilder struct {
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
 
+	windowSpecs  map[string]*ast.WindowSpec
+	inUpdateStmt bool
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
 
-	windowSpecs map[string]*ast.WindowSpec
+	// handleHelper records the handle column position for tables. Delete/Update/SelectLock/UnionScan may need this information.
+	// It collects the information by the following procedure:
+	//   Since we build the plan tree from bottom to top, we maintain a stack to record the current handle information.
+	//   If it's a dataSource/tableDual node, we create a new map.
+	//   If it's a aggregation, we pop the map and push a nil map since no handle information left.
+	//   If it's a union, we pop all children's and push a nil map.
+	//   If it's a join, we pop its children's out then merge them and push the new map to stack.
+	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
+	handleHelper *handleColHelper
+}
+
+type handleColHelper struct {
+	id2HandleMapStack []map[int64][]*expression.Column
+	stackTail         int
+}
+
+func (hch *handleColHelper) appendColToLastMap(tblID int64, col *expression.Column) {
+	tailMap := hch.id2HandleMapStack[hch.stackTail-1]
+	tailMap[tblID] = append(tailMap[tblID], col)
+}
+
+func (hch *handleColHelper) popMap() map[int64][]*expression.Column {
+	ret := hch.id2HandleMapStack[hch.stackTail-1]
+	hch.stackTail--
+	hch.id2HandleMapStack = hch.id2HandleMapStack[:hch.stackTail]
+	return ret
+}
+
+func (hch *handleColHelper) pushMap(m map[int64][]*expression.Column) {
+	hch.id2HandleMapStack = append(hch.id2HandleMapStack, m)
+	hch.stackTail++
+}
+
+func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]*expression.Column) {
+	newMap := make(map[int64][]*expression.Column)
+	for k, v := range m1 {
+		newMap[k] = make([]*expression.Column, len(v))
+		copy(newMap[k], v)
+	}
+	for k, v := range m2 {
+		if _, ok := newMap[k]; ok {
+			newMap[k] = append(newMap[k], v...)
+		} else {
+			newMap[k] = make([]*expression.Column, len(v))
+			copy(newMap[k], v)
+		}
+	}
+	hch.pushMap(newMap)
+}
+
+func (hch *handleColHelper) tailMap() map[int64][]*expression.Column {
+	return hch.id2HandleMapStack[hch.stackTail-1]
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -226,9 +280,10 @@ func (b *PlanBuilder) GetOptFlag() uint64 {
 // NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PlanBuilder {
 	return &PlanBuilder{
-		ctx:       sctx,
-		is:        is,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
+		ctx:          sctx,
+		is:           is,
+		colMapper:    make(map[*ast.ColumnNameExpr]int),
+		handleHelper: &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
 	}
 }
 
@@ -336,7 +391,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) 
 	proj.SetChildren(p)
 	proj.self = proj
 	proj.SetSchema(schema)
-	proj.calculateNoDelay = true
+	proj.CalculateNoDelay = true
 	return proj, nil
 }
 
@@ -528,7 +583,10 @@ func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableI
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
-	selectLock := LogicalLock{Lock: lock}.Init(b.ctx)
+	selectLock := LogicalLock{
+		Lock:         lock,
+		tblID2Handle: b.handleHelper.tailMap(),
+	}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock
 }
@@ -781,11 +839,16 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		Ranges:           ranger.FullRange(),
 		GenExprs:         genExprsMap,
 	}.Init(b.ctx)
-	is.stats = property.NewSimpleStats(0)
+	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
+	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
-	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table}.Init(b.ctx)
+	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx)
 	ts.SetSchema(tblSchema)
-	cop := &copTask{indexPlan: is, tablePlan: ts}
+	cop := &copTask{
+		indexPlan:   is,
+		tablePlan:   ts,
+		tblColHists: is.stats.HistColl,
+	}
 	ts.HandleIdx = pkOffset
 	is.initSchema(id, idx, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
@@ -1147,7 +1210,7 @@ func buildTableRegionsSchema() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
 	schema.Append(buildColumn("", "REGION_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "START_KEY", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "END_Key", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_KEY", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "LEADER_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "LEADER_STORE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "PEERS", mysql.TypeVarchar, 64))
@@ -1337,23 +1400,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
-	case *ast.CreateUserStmt:
-		if raw.IsCreateRole {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateRolePriv, "", "", "", err)
-		} else {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
-		}
-	case *ast.DropUserStmt:
-		if raw.IsDropRole {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropRolePriv, "", "", "", err)
-		} else {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
-		}
-	case *ast.AlterUserStmt, *ast.SetDefaultRoleStmt:
+	case *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
@@ -2177,26 +2224,43 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 	return p, nil
 }
 
+const (
+	// TraceFormatRow indicates row tracing format.
+	TraceFormatRow = "row"
+	// TraceFormatJSON indicates json tracing format.
+	TraceFormatJSON = "json"
+	// TraceFormatLog indicates log tracing format.
+	TraceFormatLog = "log"
+)
+
 // buildTrace builds a trace plan. Inside this method, it first optimize the
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
 	switch trace.Format {
-	case "row":
+	case TraceFormatRow:
 		retFields := []string{"operation", "duration", "spanID"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
 		schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
 		schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
 		p.SetSchema(schema)
-	case "json":
+	case TraceFormatJSON:
 		retFields := []string{"json"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
 		p.SetSchema(schema)
+	case TraceFormatLog:
+		retFields := []string{"time", "event", "tags", "spanName", "spanID"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		schema.Append(buildColumn("", "time", mysql.TypeTimestamp, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "event", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "tags", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "spanName", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
 	default:
-		return nil, errors.New("trace format should be one of 'row' or 'json'")
+		return nil, errors.New("trace format should be one of 'row', 'log' or 'json'")
 	}
 	return p, nil
 }

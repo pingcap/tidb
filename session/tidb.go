@@ -278,10 +278,8 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 	}
 	var rows []chunk.Row
 	req := rs.NewChunk()
+	// Must reuse `req` for imitating server.(*clientConn).writeChunks
 	for {
-		// Since we collect all the rows, we can not reuse the chunk.
-		iter := chunk.NewIterator4Chunk(req)
-
 		err := rs.Next(ctx, req)
 		if err != nil {
 			return nil, err
@@ -290,10 +288,10 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 			break
 		}
 
+		iter := chunk.NewIterator4Chunk(req.CopyConstruct())
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			rows = append(rows, row)
 		}
-		req = chunk.Renew(req, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
 }
@@ -328,8 +326,9 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 	return sRows, nil
 }
 
+// Session errors.
 var (
-	errForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
+	ErrForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
 		mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
 )
 

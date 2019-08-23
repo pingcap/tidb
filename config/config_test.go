@@ -38,7 +38,6 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
-	conf.Performance.TxnEntryCountLimit = 1000
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	configFile := "config.toml"
@@ -66,7 +65,6 @@ enable-table-lock = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
 [performance]
-txn-entry-count-limit=2000
 txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
@@ -87,7 +85,6 @@ server-port=20171
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")
 
 	// Test that the value will be overwritten by the config file.
-	c.Assert(conf.Performance.TxnEntryCountLimit, Equals, uint64(2000))
 	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")

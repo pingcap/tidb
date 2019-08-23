@@ -105,17 +105,24 @@ func (s *RegionRequestSender) SendReqCtx(
 		}
 	})
 
+	var replicaRead kv.ReplicaReadType
+	if req.ReplicaRead {
+		replicaRead = kv.ReplicaReadFollower
+	} else {
+		replicaRead = kv.ReplicaReadLeader
+	}
 	for {
 		switch sType {
 		case TiKV:
-			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID)
+			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
 		case TiFlash:
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
 		default:
-
+			err = errors.Errorf("unsupported storage type: %v", sType)
+			// err = errors.Errorf("Can not find the TiFlash store address, region version id:%v", RegionVerID)
 		}
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		if rpcCtx == nil {
 			// If the region is not found in cache, it must be out
@@ -128,6 +135,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			return resp, nil, err
 		}
 
+		logutil.Eventf(bo.ctx, "send %s request to region %d at %s", req.Type, regionID.id, ctx.Addr)
 		s.storeAddr = ctx.Addr
 		var retry bool
 		resp, retry, err = s.sendReqToRegion(bo, ctx, req, timeout)

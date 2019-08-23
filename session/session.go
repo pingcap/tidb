@@ -183,6 +183,9 @@ type session struct {
 	ddlOwnerChecker owner.DDLOwnerChecker
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables map[int64]model.TableLockTpInfo
+
+	// shared coprocessor client per session
+	client kv.Client
 }
 
 // AddTableLock adds table lock to the session lock map.
@@ -444,6 +447,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		txnSize = s.txn.Size()
 		isPessimistic = s.txn.IsPessimistic()
 	}
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.doCommitWitRetry", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 	err := s.doCommit(ctx)
 	if err != nil {
 		commitRetryLimit := s.sessionVars.RetryLimit
@@ -541,7 +549,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 }
 
 func (s *session) GetClient() kv.Client {
-	return s.store.GetClient()
+	return s.client
 }
 
 func (s *session) String() string {
@@ -626,7 +634,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	connID := s.sessionVars.ConnectionID
 	s.sessionVars.RetryInfo.Retrying = true
 	if s.sessionVars.TxnCtx.ForUpdate {
-		err = errForUpdateCantRetry.GenWithStackByArgs(connID)
+		err = ErrForUpdateCantRetry.GenWithStackByArgs(connID)
 		return err
 	}
 
@@ -641,6 +649,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StartTime = time.Now()
+			s.sessionVars.DurationCompile = time.Duration(0)
+			s.sessionVars.DurationParse = time.Duration(0)
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
 			schemaVersion, err = st.RebuildPlan(ctx)
@@ -1029,6 +1040,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		span1 := span.Tracer().StartSpan("session.Execute", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
+		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 	if recordSets, err = s.execute(ctx, sql); err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
@@ -1048,6 +1060,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	startTS := time.Now()
+	s.GetSessionVars().StartTime = startTS
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1056,11 +1069,13 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("sql", sql))
 		return nil, util.SyntaxError(err)
 	}
+	durParse := time.Since(startTS)
+	s.GetSessionVars().DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
-		sessionExecuteParseDurationInternal.Observe(time.Since(startTS).Seconds())
+		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
-		sessionExecuteParseDurationGeneral.Observe(time.Since(startTS).Seconds())
+		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
 	}
 
 	var tempStmtNodes []ast.StmtNode
@@ -1094,10 +1109,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			}
 			s.handleInvalidBindRecord(ctx, stmtNode)
 		}
+		durCompile := time.Since(startTS)
+		s.GetSessionVars().DurationCompile = durCompile
 		if isInternal {
-			sessionExecuteCompileDurationInternal.Observe(time.Since(startTS).Seconds())
+			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
 		} else {
-			sessionExecuteCompileDurationGeneral.Observe(time.Since(startTS).Seconds())
+			sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
 		}
 		s.currentPlan = stmt.Plan
 
@@ -1210,6 +1227,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
 	s.PrepareTxnCtx(ctx)
+	s.sessionVars.StartTime = time.Now()
 	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
@@ -1249,6 +1267,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
+		if s.sessionVars.ReplicaRead.IsFollowerRead() {
+			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		}
 	}
 	return &s.txn, nil
 }
@@ -1309,6 +1330,9 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	txn.SetCap(s.getMembufCap())
 	txn.SetVars(s.sessionVars.KVVars)
+	if s.GetSessionVars().ReplicaRead.IsFollowerRead() {
+		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
@@ -1601,6 +1625,7 @@ func createSession(store kv.Storage) (*session, error) {
 		parser:          parser.New(),
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
+		client:          store.GetClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -1625,6 +1650,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
+		client:      store.GetClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -1641,7 +1667,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 34
+	currentBootstrapVersion = 35
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

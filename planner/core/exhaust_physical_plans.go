@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -36,7 +35,10 @@ import (
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	childProp := prop.Clone()
-	us := PhysicalUnionScan{Conditions: p.conditions}.Init(p.ctx, p.stats, childProp)
+	us := PhysicalUnionScan{
+		Conditions: p.conditions,
+		HandleCol:  p.handleCol,
+	}.Init(p.ctx, p.stats, childProp)
 	return []PhysicalPlan{us}
 }
 
@@ -117,7 +119,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 }
 
 func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
-	joins := make([]PhysicalPlan, 0, len(p.leftProperties))
+	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	for _, lhsChildProperty := range p.leftProperties {
 		offsets := getMaxSortPrefix(lhsChildProperty, p.LeftJoinKeys)
@@ -158,10 +160,10 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 			joins = append(joins, mergeJoin)
 		}
 	}
-	// If TiDB_SMJ hint is existed && no join keys in children property,
-	// it should to enforce merge join.
-	if len(joins) == 0 && (p.preferJoinType&preferMergeJoin) > 0 {
-		return p.getEnforcedMergeJoin(prop)
+	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
+	// because we can't trust lhsChildProperty completely.
+	if (p.preferJoinType & preferMergeJoin) > 0 {
+		joins = append(joins, p.getEnforcedMergeJoin(prop)...)
 	}
 
 	return joins
@@ -282,6 +284,8 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int)
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
+		LeftJoinKeys:    p.LeftJoinKeys,
+		RightJoinKeys:   p.RightJoinKeys,
 		JoinType:        p.JoinType,
 		Concurrency:     uint(p.ctx.GetSessionVars().HashJoinConcurrency),
 		DefaultValues:   p.DefaultValues,
@@ -291,40 +295,12 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int)
 	return hashJoin
 }
 
-// joinKeysMatchIndex checks whether the join key is in the index.
-// It returns a slice a[] what a[i] means keys[i] is related with indexCols[a[i]], -1 for no matching column.
-// It will return nil if there's no column that matches index.
-func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) []int {
-	keyOff2IdxOff := make([]int, len(keys))
-	for i := range keyOff2IdxOff {
-		keyOff2IdxOff[i] = -1
-	}
-	// There should be at least one column in join keys which can match the index's column.
-	matched := false
-	tmpSchema := expression.NewSchema(keys...)
-	for i, idxCol := range indexCols {
-		if colLengths[i] != types.UnspecifiedLength {
-			continue
-		}
-		keyOff := tmpSchema.ColumnIndex(idxCol)
-		if keyOff == -1 {
-			continue
-		}
-		matched = true
-		keyOff2IdxOff[keyOff] = i
-	}
-	if !matched {
-		return nil
-	}
-	return keyOff2IdxOff
-}
-
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
 func (p *LogicalJoin) constructIndexJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
-	innerPlan PhysicalPlan,
+	innerTask task,
 	ranges []*ranger.Range,
 	keyOff2IdxOff []int,
 	lens []int,
@@ -377,7 +353,7 @@ func (p *LogicalJoin) constructIndexJoin(
 		OuterJoinKeys:   newOuterKeys,
 		InnerJoinKeys:   newInnerKeys,
 		DefaultValues:   p.DefaultValues,
-		innerPlan:       innerPlan,
+		innerTask:       innerTask,
 		KeyOff2IdxOff:   newKeyOff,
 		IdxColLens:      lens,
 		Ranges:          ranges,
@@ -435,10 +411,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			keyOff2IdxOff[i] = 0
 		}
 		if pkMatched {
-			innerPlan := p.constructInnerTableScan(ds, pkCol, outerJoinKeys, us)
+			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
-			return p.constructIndexJoin(prop, outerIdx, innerPlan, nil, keyOff2IdxOff, nil, nil)
+			return p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)
 		}
 	}
 	helper := &indexJoinBuildHelper{join: p}
@@ -447,7 +423,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			continue
 		}
 		indexInfo := path.index
-		err := helper.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
+		emptyRange, err := helper.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
+		if emptyRange {
+			return nil
+		}
 		if err != nil {
 			logutil.BgLogger().Warn("build index join failed", zap.Error(err))
 		}
@@ -464,8 +443,8 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 		idxCols, lens := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
 		rangeInfo := helper.buildRangeDecidedByInformation(idxCols, outerJoinKeys)
-		innerPlan := p.constructInnerIndexScan(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
-		return p.constructIndexJoin(prop, outerIdx, innerPlan, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
+		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
+		return p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
 	}
 	return nil
 }
@@ -513,8 +492,8 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 	return buffer.String()
 }
 
-// constructInnerTableScan is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column, us *LogicalUnionScan) PhysicalPlan {
+// constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
+func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column, us *LogicalUnionScan) task {
 	ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -526,22 +505,28 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 		rangeDecidedBy:  outerJoinKeys,
 	}.Init(ds.ctx)
 	ts.SetSchema(ds.schema)
-
-	ts.stats = property.NewSimpleStats(1)
-	ts.stats.StatsVersion = ds.statisticTable.Version
-	if ds.statisticTable.Pseudo {
-		ts.stats.StatsVersion = statistics.PseudoVersion
+	ts.stats = &property.StatsInfo{
+		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
+		RowCount:     1,
+		StatsVersion: ds.stats.StatsVersion,
+		// Cardinality would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
-
+	for i := range ds.stats.Cardinality {
+		ds.stats.Cardinality[i] = 1
+	}
+	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
+		cst:               scanFactor * rowSize * ts.stats.RowCount,
+		tblColHists:       ds.TblColHists,
 	}
 	selStats := ts.stats.Scale(selectionFactor)
 	ts.addPushedDownSelection(copTask, selStats)
-	t := finishCopTask(ds.ctx, copTask)
-	reader := t.plan()
-	return p.constructInnerUnionScan(us, reader)
+	t := finishCopTask(ds.ctx, copTask).(*rootTask)
+	reader := t.p
+	t.p = p.constructInnerUnionScan(us, reader)
+	return t
 }
 
 func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
@@ -550,14 +535,17 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	}
 	// Use `reader.stats` instead of `us.stats` because it should be more accurate. No need to specify
 	// childrenReqProps now since we have got reader already.
-	physicalUnionScan := PhysicalUnionScan{Conditions: us.conditions}.Init(us.ctx, reader.statsInfo(), nil)
+	physicalUnionScan := PhysicalUnionScan{
+		Conditions: us.conditions,
+		HandleCol:  us.handleCol,
+	}.Init(us.ctx, reader.statsInfo(), nil)
 	physicalUnionScan.SetChildren(reader)
 	return physicalUnionScan
 }
 
-// constructInnerIndexScan is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, filterConds []expression.Expression,
-	outerJoinKeys []*expression.Column, us *LogicalUnionScan, rangeInfo string) PhysicalPlan {
+// constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
+func (p *LogicalJoin) constructInnerIndexScanTask(ds *DataSource, idx *model.IndexInfo, filterConds []expression.Expression,
+	outerJoinKeys []*expression.Column, us *LogicalUnionScan, rangeInfo string) task {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
@@ -572,28 +560,34 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 
 	var rowCount float64
 	idxHist, ok := ds.statisticTable.Indices[idx.ID]
+	// TODO: we are assuming that:
+	// - rows are uniformly distributed among the distinct values;
+	// - every outer row can find matches in inner table;
+	// The second assumption is too strong, we'd better analyze histograms
+	// of both sides to compute a factor we should multiply to the current
+	// estimated `rowCount`.
+	// We can improve this after https://github.com/pingcap/tidb/pull/8097
+	// is merged, since it provides some utilities we need.
 	if ok && !ds.statisticTable.Pseudo {
 		rowCount = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 	} else {
 		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
 	}
-	is.stats = property.NewSimpleStats(rowCount)
-	is.stats.StatsVersion = ds.statisticTable.Version
-	if ds.statisticTable.Pseudo {
-		is.stats.StatsVersion = statistics.PseudoVersion
-	}
-
+	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	cop := &copTask{
-		indexPlan: is,
+		indexPlan:   is,
+		tblColHists: ds.TblColHists,
+		tblCols:     ds.TblCols,
 	}
 	if !isCoveringIndex(ds.schema.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.Init(ds.ctx)
+		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table, TableAsName: ds.TableAsName}.Init(ds.ctx)
 		ts.SetSchema(is.dataSourceSchema)
 		cop.tablePlan = ts
 	}
-
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
+	rowSize := is.indexScanRowSize(idx, ds)
+	cop.cst = rowCount * rowSize * scanFactor
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, idx.Columns, ds.tableInfo)
 	path := &accessPath{
 		indexFilters:     indexConds,
@@ -612,9 +606,10 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	selectivity := ds.stats.RowCount / ds.tableStats.RowCount
 	finalStats := ds.stats.ScaleByExpectCnt(selectivity * rowCount)
 	is.addPushedDownSelection(cop, ds, path, finalStats)
-	t := finishCopTask(ds.ctx, cop)
-	reader := t.plan()
-	return p.constructInnerUnionScan(us, reader)
+	t := finishCopTask(ds.ctx, cop).(*rootTask)
+	reader := t.p
+	t.p = p.constructInnerUnionScan(us, reader)
+	return t
 }
 
 var symmetricOp = map[string]string{
@@ -808,10 +803,10 @@ func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(
 	return notKeyEqAndIn, nil
 }
 
-func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) error {
+func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) (emptyRange bool, err error) {
 	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.schema.Columns, indexInfo)
 	if len(idxCols) == 0 {
-		return nil
+		return false, nil
 	}
 	accesses := make([]expression.Expression, 0, len(idxCols))
 	ijHelper.resetContextForIndex(innerJoinKeys, idxCols, colLengths)
@@ -821,7 +816,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
 	// If no join key is matched while join keys actually are not empty. We don't choose index join for now.
 	if matchedKeyCnt <= 0 && len(innerJoinKeys) > 0 {
-		return nil
+		return false, nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
 	remained = append(remained, remainedEqAndIn...)
@@ -829,7 +824,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
 	// A more strict check is applied later.
 	if lastColPos <= 0 {
-		return nil
+		return false, nil
 	}
 	// If all the index columns are covered by eq/in conditions, we don't need to consider other conditions anymore.
 	if lastColPos == len(idxCols) {
@@ -837,15 +832,18 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1. And t2 has index(a, b).
 		//      If we don't have the following check, TiDB will build index join for this case.
 		if matchedKeyCnt <= 0 {
-			return nil
+			return false, nil
 		}
 		remained = append(remained, rangeFilterCandidates...)
-		ranges, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
+		ranges, emptyRange, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
 		if err != nil {
-			return err
+			return false, err
+		}
+		if emptyRange {
+			return true, nil
 		}
 		ijHelper.updateBestChoice(ranges, indexInfo, accesses, remained, nil)
-		return nil
+		return false, nil
 	}
 	lastPossibleCol := idxCols[lastColPos]
 	lastColManager := &ColWithCmpFuncManager{
@@ -860,7 +858,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1 and t2.c > 10 and t2.c < 20. And t2 has index(a, b, c).
 		//      If we don't have the following check, TiDB will build index join for this case.
 		if matchedKeyCnt <= 0 {
-			return nil
+			return false, nil
 		}
 		colAccesses, colRemained := ranger.DetachCondsForColumn(ijHelper.join.ctx, rangeFilterCandidates, lastPossibleCol)
 		var ranges, nextColRange []*ranger.Range
@@ -868,12 +866,15 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 		if len(colAccesses) > 0 {
 			nextColRange, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.ctx.GetSessionVars().StmtCtx, lastPossibleCol.RetType, colLengths[lastColPos])
 			if err != nil {
-				return err
+				return false, err
 			}
 		}
-		ranges, err = ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
+		ranges, emptyRange, err = ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
 		if err != nil {
-			return err
+			return false, err
+		}
+		if emptyRange {
+			return true, nil
 		}
 		remained = append(remained, colRemained...)
 		if colLengths[lastColPos] != types.UnspecifiedLength {
@@ -881,16 +882,19 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 		}
 		accesses = append(accesses, colAccesses...)
 		ijHelper.updateBestChoice(ranges, indexInfo, accesses, remained, nil)
-		return nil
+		return false, nil
 	}
 	accesses = append(accesses, lastColAccess...)
 	remained = append(remained, rangeFilterCandidates...)
-	ranges, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, true)
+	ranges, emptyRange, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, true)
 	if err != nil {
-		return err
+		return false, err
+	}
+	if emptyRange {
+		return true, nil
 	}
 	ijHelper.updateBestChoice(ranges, indexInfo, accesses, remained, lastColManager)
-	return nil
+	return false, nil
 }
 
 func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, idxInfo *model.IndexInfo, accesses,
@@ -909,7 +913,7 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, i
 	}
 }
 
-func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, err error) {
+func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, emptyRange bool, err error) {
 	pointLength := matchedKeyCnt + len(eqAndInFuncs)
 	if nextColRange != nil {
 		for _, colRan := range nextColRange {
@@ -936,49 +940,37 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			HighVal: make([]types.Datum, pointLength, pointLength),
 		})
 	}
-	emptyRow := chunk.Row{}
+	sc := ijHelper.join.ctx.GetSessionVars().StmtCtx
 	for i, j := 0, 0; j < len(eqAndInFuncs); i++ {
 		// This position is occupied by join key.
 		if ijHelper.curIdxOff2KeyOff[i] != -1 {
 			continue
 		}
-		sf := eqAndInFuncs[j].(*expression.ScalarFunction)
-		// Deal with the first two args.
-		if _, ok := sf.GetArgs()[0].(*expression.Column); ok {
-			for _, ran := range ranges {
-				ran.LowVal[i], err = sf.GetArgs()[1].Eval(emptyRow)
-				if err != nil {
-					return nil, err
-				}
-				ran.HighVal[i] = ran.LowVal[i]
-			}
-		} else {
-			for _, ran := range ranges {
-				ran.LowVal[i], err = sf.GetArgs()[0].Eval(emptyRow)
-				if err != nil {
-					return nil, err
-				}
-				ran.HighVal[i] = ran.LowVal[i]
-			}
+		oneColumnRan, err := ranger.BuildColumnRange([]expression.Expression{eqAndInFuncs[j]}, sc, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
+		if err != nil {
+			return nil, false, err
 		}
-		// If the length of in function's constant list is more than one, we will expand ranges.
+		if len(oneColumnRan) == 0 {
+			return nil, true, nil
+		}
+		for _, ran := range ranges {
+			ran.LowVal[i] = oneColumnRan[0].LowVal[0]
+			ran.HighVal[i] = oneColumnRan[0].HighVal[0]
+		}
 		curRangeLen := len(ranges)
-		for argIdx := 2; argIdx < len(sf.GetArgs()); argIdx++ {
+		for ranIdx := 1; ranIdx < len(oneColumnRan); ranIdx++ {
 			newRanges := make([]*ranger.Range, 0, curRangeLen)
 			for oldRangeIdx := 0; oldRangeIdx < curRangeLen; oldRangeIdx++ {
 				newRange := ranges[oldRangeIdx].Clone()
-				newRange.LowVal[i], err = sf.GetArgs()[argIdx].Eval(emptyRow)
-				if err != nil {
-					return nil, err
-				}
-				newRange.HighVal[i] = newRange.LowVal[i]
+				newRange.LowVal[i] = oneColumnRan[ranIdx].LowVal[0]
+				newRange.HighVal[i] = oneColumnRan[ranIdx].HighVal[0]
 				newRanges = append(newRanges, newRange)
 			}
 			ranges = append(ranges, newRanges...)
 		}
 		j++
 	}
-	return ranges, nil
+	return ranges, false, nil
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
@@ -991,9 +983,11 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	defer func() {
 		if !forced && hasIndexJoinHint {
 			// Construct warning message prefix.
-			errMsg := "Optimizer Hint TIDB_INLJ is inapplicable"
+			errMsg := "Optimizer Hint INL_JOIN or TIDB_INLJ is inapplicable"
 			if p.hintInfo != nil {
-				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(TiDBIndexNestedLoopJoin, p.hintInfo.indexNestedLoopJoinTables))
+				errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
+					restore2JoinHint(HintINLJ, p.hintInfo.indexNestedLoopJoinTables),
+					restore2JoinHint(TiDBIndexNestedLoopJoin, p.hintInfo.indexNestedLoopJoinTables))
 			}
 
 			// Append inapplicable reason.
@@ -1073,10 +1067,10 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 	return joins
 }
 
-// tryToGetChildProp will check if this sort property can be pushed or not.
+// TryToGetChildProp will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
-func (p *LogicalProjection) tryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
+func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
 	newProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: prop.ExpectedCnt}
 	newCols := make([]property.Item, 0, len(prop.Items))
 	for _, col := range prop.Items {
@@ -1093,14 +1087,14 @@ func (p *LogicalProjection) tryToGetChildProp(prop *property.PhysicalProperty) (
 }
 
 func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	newProp, ok := p.tryToGetChildProp(prop)
+	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
 		return nil
 	}
 	proj := PhysicalProjection{
 		Exprs:                p.Exprs,
-		CalculateNoDelay:     p.calculateNoDelay,
-		AvoidColumnEvaluator: p.avoidColumnEvaluator,
+		CalculateNoDelay:     p.CalculateNoDelay,
+		AvoidColumnEvaluator: p.AvoidColumnEvaluator,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
@@ -1198,11 +1192,36 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
+func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+	_, desc := prop.AllSameOrder()
+	enforcedAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
+	childProp := &property.PhysicalProperty{
+		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
+		Enforced:    true,
+		Items:       property.ItemsFromCols(la.groupByCols, desc),
+	}
+
+	for _, taskTp := range wholeTaskTypes {
+		copiedChildProperty := new(property.PhysicalProperty)
+		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+		copiedChildProperty.TaskTp = taskTp
+
+		agg := basePhysicalAgg{
+			GroupByItems: la.GroupByItems,
+			AggFuncs:     la.AggFuncs,
+		}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
+		agg.SetSchema(la.schema.Clone())
+		enforcedAggs = append(enforcedAggs, agg)
+	}
+	return enforcedAggs
+}
+
 func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	all, desc := prop.AllSameOrder()
-	if len(la.possibleProperties) == 0 || !all {
+	if !all {
 		return nil
 	}
+
 	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.Mode == aggregation.FinalMode {
 			return nil
@@ -1213,7 +1232,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
-	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
+	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1)+len(wholeTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 	}
@@ -1244,6 +1263,11 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			streamAggs = append(streamAggs, agg)
 		}
 	}
+	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
+	// because we can't trust possibleChildProperty completely.
+	if (la.preferAggType & preferStreamAgg) > 0 {
+		streamAggs = append(streamAggs, la.getEnforcedStreamAggs(prop)...)
+	}
 	return streamAggs
 }
 
@@ -1264,9 +1288,35 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	aggs := make([]PhysicalPlan, 0, len(la.possibleProperties)+1)
-	aggs = append(aggs, la.getHashAggs(prop)...)
-	aggs = append(aggs, la.getStreamAggs(prop)...)
+	preferHash := (la.preferAggType & preferHashAgg) > 0
+	preferStream := (la.preferAggType & preferStreamAgg) > 0
+	if preferHash && preferStream {
+		errMsg := "Optimizer aggregation hints are conflicted"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		la.preferAggType = 0
+		preferHash, preferStream = false, false
+	}
+
+	hashAggs := la.getHashAggs(prop)
+	if hashAggs != nil && preferHash {
+		return hashAggs
+	}
+
+	streamAggs := la.getStreamAggs(prop)
+	if streamAggs != nil && preferStream {
+		return streamAggs
+	}
+
+	if streamAggs == nil && preferStream {
+		errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
+
+	aggs := make([]PhysicalPlan, 0, len(hashAggs)+len(streamAggs))
+	aggs = append(aggs, hashAggs...)
+	aggs = append(aggs, streamAggs...)
 	return aggs
 }
 
@@ -1297,7 +1347,8 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	childProp := prop.Clone()
 	lock := PhysicalLock{
-		Lock: p.Lock,
+		Lock:         p.Lock,
+		TblID2Handle: p.tblID2Handle,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 	return []PhysicalPlan{lock}
 }

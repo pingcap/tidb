@@ -6,6 +6,8 @@ c3 int,
 PRIMARY KEY (c1)
 );
 INSERT INTO t VALUES (1,2,3);
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
 SELECT * from t;
 c1	c2	c3
 1	2	3
@@ -298,9 +300,9 @@ count(a)
 explain select count(a) from t where b>0 group by a, b order by a;
 id	count	task	operator info
 Projection_7	2666.67	root	count(a)
-└─StreamAgg_31	2666.67	root	group by:col_2, col_3, funcs:count(col_0), firstrow(col_1)
+└─StreamAgg_31	2666.67	root	group by:col_2, col_3, funcs:count(col_0), firstrow(col_2)
   └─IndexReader_32	2666.67	root	index:StreamAgg_29
-    └─StreamAgg_29	2666.67	cop	group by:test.t.a, test.t.b, funcs:count(test.t.a), firstrow(test.t.a)
+    └─StreamAgg_29	2666.67	cop	group by:test.t.a, test.t.b, funcs:count(test.t.a)
       └─Selection_23	3333.33	cop	gt(test.t.b, 0)
         └─IndexScan_22	10000.00	cop	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b order by a;
@@ -313,9 +315,9 @@ explain select count(a) from t where b>0 group by a, b order by a limit 1;
 id	count	task	operator info
 Projection_9	1.00	root	count(a)
 └─Limit_15	1.00	root	offset:0, count:1
-  └─StreamAgg_39	1.00	root	group by:col_2, col_3, funcs:count(col_0), firstrow(col_1)
+  └─StreamAgg_39	1.00	root	group by:col_2, col_3, funcs:count(col_0), firstrow(col_2)
     └─IndexReader_40	1.00	root	index:StreamAgg_35
-      └─StreamAgg_35	1.00	cop	group by:test.t.a, test.t.b, funcs:count(test.t.a), firstrow(test.t.a)
+      └─StreamAgg_35	1.00	cop	group by:test.t.a, test.t.b, funcs:count(test.t.a)
         └─Selection_38	1.25	cop	gt(test.t.b, 0)
           └─IndexScan_37	3.75	cop	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b order by a limit 1;

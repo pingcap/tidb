@@ -112,7 +112,7 @@ func (s *testGCWorkerSuite) mustPut(c *C, key, value string) {
 func (s *testGCWorkerSuite) mustGet(c *C, key string, ts uint64) string {
 	snap, err := s.store.GetSnapshot(kv.Version{Ver: ts})
 	c.Assert(err, IsNil)
-	value, err := snap.Get([]byte(key))
+	value, err := snap.Get(context.TODO(), []byte(key))
 	c.Assert(err, IsNil)
 	return string(value)
 }
@@ -120,7 +120,7 @@ func (s *testGCWorkerSuite) mustGet(c *C, key string, ts uint64) string {
 func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
 	snap, err := s.store.GetSnapshot(kv.Version{Ver: ts})
 	c.Assert(err, IsNil)
-	_, err = snap.Get([]byte(key))
+	_, err = snap.Get(context.TODO(), []byte(key))
 	c.Assert(err, Equals, kv.ErrNotExist)
 }
 
@@ -576,8 +576,10 @@ Loop:
 		for storeIndex := range expectedStores {
 			i := rangeIndex*len(expectedStores) + storeIndex
 			c.Assert(sentReq[i].addr, Equals, expectedStores[storeIndex].Address)
-			c.Assert(sentReq[i].req.UnsafeDestroyRange().GetStartKey(), DeepEquals, sortedRanges[rangeIndex].StartKey)
-			c.Assert(sentReq[i].req.UnsafeDestroyRange().GetEndKey(), DeepEquals, sortedRanges[rangeIndex].EndKey)
+			c.Assert(kv.Key(sentReq[i].req.UnsafeDestroyRange().GetStartKey()), DeepEquals,
+				sortedRanges[rangeIndex].StartKey)
+			c.Assert(kv.Key(sentReq[i].req.UnsafeDestroyRange().GetEndKey()), DeepEquals,
+				sortedRanges[rangeIndex].EndKey)
 		}
 	}
 }
