@@ -934,7 +934,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test stream agg + limit or sort
 		{
 			sql:  "select count(*) from t group by g order by g limit 10",
-			best: "IndexReader(Index(t.g)[[NULL,+inf]])->StreamAgg->Limit->Projection",
+			best: "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit->Projection",
 		},
 		{
 			sql:  "select count(*) from t group by g limit 10",
@@ -942,20 +942,20 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		},
 		{
 			sql:  "select count(*) from t group by g order by g",
-			best: "IndexReader(Index(t.g)[[NULL,+inf]])->StreamAgg->Projection",
+			best: "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Projection",
 		},
 		{
 			sql:  "select count(*) from t group by g order by g desc limit 1",
-			best: "IndexReader(Index(t.g)[[NULL,+inf]])->StreamAgg->Limit->Projection",
+			best: "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit->Projection",
 		},
 		// Test hash agg + limit or sort
 		{
 			sql:  "select count(*) from t group by b order by b limit 10",
-			best: "TableReader(Table(t))->HashAgg->TopN([test.t.b],0,10)->Projection",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg->TopN([test.t.b],0,10)->Projection",
 		},
 		{
 			sql:  "select count(*) from t group by b order by b",
-			best: "TableReader(Table(t))->HashAgg->Sort->Projection",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg->Sort->Projection",
 		},
 		{
 			sql:  "select count(*) from t group by b limit 10",
@@ -1620,18 +1620,18 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		},
 		// with Aggregation hints
 		{
-			sql:     "select /*+ HASH_AGG */ count(*) from t t1, t t2 where t1.a = t2.b",
+			sql:     "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->HashAgg",
 			warning: "",
 		},
 		{
-			sql:     "select /*+ STREAM_AGG */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
+			sql:     "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->Sort->StreamAgg",
 			warning: "",
 		},
 		// test conflict warning
 		{
-			sql:     "select /*+ HASH_AGG STREAM_AGG */ count(*) from t t1, t t2 where t1.a = t2.b",
+			sql:     "select /*+ HASH_AGG() STREAM_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
 			warning: "[planner:1815]Optimizer aggregation hints are conflicted",
 		},
