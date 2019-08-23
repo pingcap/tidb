@@ -66,15 +66,15 @@ type hintTableInfo struct {
 	matched bool
 }
 
-func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
-	if len(tableNames) == 0 {
+func tableNames2HintTableInfo(hintTables []ast.HintTable) []hintTableInfo {
+	if len(hintTables) == 0 {
 		return nil
 	}
-	hintTables := make([]hintTableInfo, len(tableNames))
-	for i, tableName := range tableNames {
-		hintTables[i] = hintTableInfo{name: tableName}
+	hintTableInfos := make([]hintTableInfo, len(hintTables))
+	for i, hintTable := range hintTables {
+		hintTableInfos[i] = hintTableInfo{name: hintTable.TableName}
 	}
-	return hintTables
+	return hintTableInfos
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
@@ -1210,7 +1210,7 @@ func buildTableRegionsSchema() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
 	schema.Append(buildColumn("", "REGION_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "START_KEY", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "END_Key", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_KEY", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "LEADER_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "LEADER_STORE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "PEERS", mysql.TypeVarchar, 64))
