@@ -11,10 +11,11 @@ CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
-GO        := GO111MODULE=on go
-GOBUILD   := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG) -tags codes
-GOTEST    := CGO_ENABLED=1 $(GO) test -p 4
-OVERALLS  := CGO_ENABLED=1 GO111MODULE=on overalls
+GO              := GO111MODULE=on go
+GOBUILD         := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG) -tags codes
+GOBUILDCOVERAGE := GOPATH=$(GOPATH) CGO_ENABLED=1 cd tidb-server; $(GO) test -coverpkg="../..." -c .
+GOTEST          := CGO_ENABLED=1 $(GO) test -p 4
+OVERALLS        := CGO_ENABLED=1 GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -185,6 +186,17 @@ ifeq ($(TARGET), "")
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server tidb-server/main.go
 else
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
+endif
+
+coverage_server:
+# Rename tidb-server main_test to a .go source file, and make sure it is renamed-back when `make` exit on any condition
+	bash -c "trap 'mv tidb-server/main_test.go tidb-server/main_test' EXIT; mv tidb-server/main_test tidb-server/main_test.go; make coverage_server_internal"
+
+coverage_server_internal:
+ifeq ($(TARGET), "")
+	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o ../bin/tidb-coverage-server
+else
+	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)'
 endif
 
 benchkv:
