@@ -1742,26 +1742,24 @@ AlgorithmClause:
 	}
 
 LockClause:
-	"LOCK" EqOpt "NONE"
-	{
-		$$ = ast.LockTypeNone
-	}
-|	"LOCK" EqOpt "DEFAULT"
+	"LOCK" EqOpt "DEFAULT"
 	{
 		$$ = ast.LockTypeDefault
 	}
-|	"LOCK" EqOpt "SHARED"
+|	"LOCK" EqOpt Identifier
 	{
-		$$ = ast.LockTypeShared
-	}
-|	"LOCK" EqOpt "EXCLUSIVE"
-	{
-		$$ = ast.LockTypeExclusive
-	}
-|	"LOCK" EqOpt identifier
-	{
-		yylex.AppendError(ErrUnknownAlterLock.GenWithStackByArgs($3))
-		return 1
+		id := strings.ToUpper($3)
+
+		if id == "NONE" {
+			$$ = ast.LockTypeNone
+		} else if id == "SHARED" {
+			$$ = ast.LockTypeShared
+		} else if id == "EXCLUSIVE" {
+			$$ = ast.LockTypeExclusive
+		} else {
+			yylex.AppendError(ErrUnknownAlterLock.GenWithStackByArgs($3))
+			return 1
+		}
 	}
 
 KeyOrIndex: "KEY" | "INDEX"
