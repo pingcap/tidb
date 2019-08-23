@@ -22,6 +22,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	pd "github.com/pingcap/pd/client"
 	"net"
 	"strconv"
 	"strings"
@@ -178,6 +179,8 @@ type session struct {
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
 
+	tsoReqAlloc tsoReqAlloc
+
 	statsCollector *handle.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
@@ -186,6 +189,27 @@ type session struct {
 
 	// shared coprocessor client per session
 	client kv.Client
+}
+
+var _ pd.TsoReqAlloc = &tsoReqAlloc{}
+
+type tsoReqAlloc struct {
+	pool []*pd.TsoRequest
+}
+
+func (s *tsoReqAlloc) Get() *pd.TsoRequest {
+	if len(s.pool) == 0 {
+		return pd.NewReqAlloc()
+	}
+	var req *pd.TsoRequest
+	req, s.pool = s.pool[len(s.pool)-1], s.pool[:len(s.pool)-1]
+	return req
+}
+
+func (s *tsoReqAlloc) Put(req *pd.TsoRequest) {
+	if len(s.pool) < 2 {
+		s.pool = append(s.pool, req)
+	}
 }
 
 // AddTableLock adds table lock to the session lock map.

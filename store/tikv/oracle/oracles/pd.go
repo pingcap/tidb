@@ -93,8 +93,8 @@ func (f *tsFuture) Wait() (uint64, error) {
 	return ts, nil
 }
 
-func (o *pdOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
-	ts := o.c.GetTSAsync(ctx)
+func (o *pdOracle) GetTimestampAsync(ctx context.Context, alloc pd.TsoReqAlloc) oracle.Future {
+	ts := o.c.GetTSAsyncWithAlloc(ctx, alloc)
 	return &tsFuture{ts, o}
 }
 
