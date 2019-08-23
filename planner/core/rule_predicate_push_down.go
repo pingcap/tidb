@@ -328,8 +328,8 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	for _, expr := range p.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
-			remained, child := p.baseLogicalPlan.PredicatePushDown(canBePushed)
-			return append(remained, predicates...), child
+			_, child := p.baseLogicalPlan.PredicatePushDown(nil)
+			return predicates, child
 		}
 	}
 	for _, cond := range predicates {
