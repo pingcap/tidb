@@ -579,6 +579,7 @@ import (
 	statsBuckets    "STATS_BUCKETS"
 	statsHealthy    "STATS_HEALTHY"
 	tidb		"TIDB"
+	hintAggToCop	"AGG_TO_COP"
 	hintHJ		"HASH_JOIN"
 	hintSMJ		"SM_JOIN"
 	hintINLJ	"INL_JOIN"
@@ -4209,7 +4210,7 @@ UnReservedKeyword:
 
 TiDBKeyword:
  "ADMIN" | "BUCKETS" | "CANCEL" | "CMSKETCH" | "DDL" | "DEPTH" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "SAMPLES" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB"
-| "HASH_JOIN" | "SM_JOIN" | "INL_JOIN" | "HASH_AGG" | "STREAM_AGG" | "USE_INDEX_MERGE" | "NO_INDEX_MERGE" | "USE_TOJA" | "ENABLE_PLAN_CACHE" | "USE_PLAN_CACHE"
+| "AGG_TO_COP" | "HASH_JOIN" | "SM_JOIN" | "INL_JOIN" | "HASH_AGG" | "STREAM_AGG" | "USE_INDEX_MERGE" | "NO_INDEX_MERGE" | "USE_TOJA" | "ENABLE_PLAN_CACHE" | "USE_PLAN_CACHE"
 | "READ_CONSISTENT_REPLICA" | "QB_NAME" | "QUERY_TYPE" | "MEMORY_QUOTA" | "OLAP" | "OLTP" |"TOPN" | "SPLIT" | "OPTIMISTIC" | "PESSIMISTIC" | "WIDTH" | "REGIONS"
 
 NotKeywordToken:
@@ -6555,6 +6556,10 @@ TableOptimizerHintOpt:
 		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr)}
 	}
 |	hintSTREAMAGG '(' QueryBlockOpt ')'
+	{
+		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr)}
+	}
+|	hintAggToCop '(' QueryBlockOpt ')'
 	{
 		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr)}
 	}
