@@ -13253,7 +13253,7 @@ yynewstate:
 		}
 	case 1220:
 		{
-			parser.yyVAL.item = &ast.TableOptimizerHint{HintName: model.NewCIStr(yyS[yypt-4].ident), QBName: yyS[yypt-2].item.(model.CIStr), MemoryQuota: yyS[yypt-1].item.(uint64)}
+			parser.yyVAL.item = &ast.TableOptimizerHint{HintName: model.NewCIStr(yyS[yypt-4].ident), QBName: yyS[yypt-2].item.(model.CIStr), MemoryQuota: yyS[yypt-1].item.(int64)}
 		}
 	case 1221:
 		{
@@ -13313,15 +13313,14 @@ yynewstate:
 		}
 	case 1235:
 		{
-			// May change into MB/MiB or GB/GiB
 			switch model.NewCIStr(yyS[yypt-0].ident).L {
-			case "m":
-				parser.yyVAL.item = getUint64FromNUM(yyS[yypt-1].item)
-			case "g":
-				parser.yyVAL.item = getUint64FromNUM(yyS[yypt-1].item) * 1024
+			case "mb":
+				parser.yyVAL.item = yyS[yypt-1].item.(int64) * 1024 * 1024
+			case "gb":
+				parser.yyVAL.item = yyS[yypt-1].item.(int64) * 1024 * 1024 * 1024
 			default:
-				// Trigger warning in TiDB Planner
-				parser.yyVAL.item = uint64(0)
+				// Executor handle memory quota < 0 as no memory limit, here use it to trigger warning in TiDB.
+				parser.yyVAL.item = int64(-1)
 			}
 		}
 	case 1236:
