@@ -562,7 +562,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		useMaxTS, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		useMaxTS, err := CanUseMaxTS(ctx, a.Plan)
 		if err != nil {
 			return nil, err
 		}
@@ -724,13 +724,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 }
 
-// IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
+// CanUseMaxTS returns true when meets following conditions:
 //  1. ctx is auto commit tagged
 //  2. txn is not valid
 //  2. plan is point get by pk, or point get by unique index (no double read)
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) (bool, error) {
-	// check auto commit
-	if !ctx.GetSessionVars().IsAutocommit() {
+func CanUseMaxTS(ctx sessionctx.Context, p plannercore.Plan) (bool, error) {
+	// check auto commit and transaction status
+	if !ctx.GetSessionVars().IsAutocommit() || ctx.GetSessionVars().InTxn() {
 		return false, nil
 	}
 

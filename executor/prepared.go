@@ -275,7 +275,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID
 		return nil, false, err
 	}
 
-	useMaxTS, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, execPlan.(*plannercore.Execute).Plan)
+	useMaxTS, err := CanUseMaxTS(sctx, execPlan.(*plannercore.Execute).Plan)
 	if err != nil {
 		return nil, false, err
 	}
