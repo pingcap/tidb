@@ -350,9 +350,15 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.JSONRemove,
 
 		// date functions.
-		ast.DateFormat:
+		ast.DateFormat,
+		ast.DateAdd,
+		ast.TimestampDiff:
 		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
 		return true && !disallowPushdown
+	case ast.Cast:
+		if sf.Function.PbCode() == tipb.ScalarFuncSig_CastDecimalAsDecimal {
+			return true
+		}
 	}
 	return false
 }
