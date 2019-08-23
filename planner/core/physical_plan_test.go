@@ -1703,3 +1703,75 @@ func (s *testPlanSuite) TestHintAlias(c *C) {
 		c.Assert(core.ToString(p1), Equals, core.ToString(p2))
 	}
 }
+
+func (s *testPlanSuite) TestIndexHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+
+	tests := []struct {
+		sql     string
+		best    string
+		hasWarn bool
+	}{
+		// simple case
+		{
+			sql:     "select /*+ INDEX(t, c_d_e) */ * from t",
+			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+			hasWarn: false,
+		},
+		{
+			sql:     "select /*+ INDEX(t, c_d_e) */ * from t t1",
+			best:    "TableReader(Table(t))",
+			hasWarn: false,
+		},
+		{
+			sql:     "select /*+ INDEX(t1, c_d_e) */ * from t t1",
+			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+			hasWarn: false,
+		},
+		{
+			sql:     "select /*+ INDEX(t1, c_d_e), INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+			best:    "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
+			hasWarn: false,
+		},
+		// test multiple indexes
+		{
+			sql:     "select /*+ INDEX(t, c_d_e, f, g) */ * from t order by f",
+			best:    "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
+			hasWarn: false,
+		},
+		// there will be a warning instead of error when index not exist
+		{
+			sql:     "select /*+ INDEX(t, no_such_index) */ * from t",
+			best:    "TableReader(Table(t))",
+			hasWarn: true,
+		},
+	}
+	ctx := context.Background()
+	for i, test := range tests {
+		comment := Commentf("case:%v sql:%s", i, test)
+		stmt, err := s.ParseOneStmt(test.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		c.Assert(err, IsNil)
+		c.Assert(core.ToString(p), Equals, test.best, comment)
+
+		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+		if test.hasWarn {
+			c.Assert(warnings, HasLen, 1, comment)
+		} else {
+			c.Assert(warnings, HasLen, 0, comment)
+		}
+
+	}
+}
