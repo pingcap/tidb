@@ -135,10 +135,10 @@ func (s *RegionRequestSender) SendReqCtx(
 			return resp, nil, err
 		}
 
-		logutil.Eventf(bo.ctx, "send %s request to region %d at %s", req.Type, regionID.id, ctx.Addr)
-		s.storeAddr = ctx.Addr
+		logutil.Eventf(bo.ctx, "send %s request to region %d at %s", req.Type, regionID.id, rpcCtx.Addr)
+		s.storeAddr = rpcCtx.Addr
 		var retry bool
-		resp, retry, err = s.sendReqToRegion(bo, ctx, req, timeout)
+		resp, retry, err = s.sendReqToRegion(bo, rpcCtx, req, timeout)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -146,13 +146,13 @@ func (s *RegionRequestSender) SendReqCtx(
 			continue
 		}
 
-		var regionErr *kv.RegionError
+		var regionErr *errorpb.Error
 		regionErr, err = resp.GetRegionError()
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			retry, err = s.onRegionError(bo, ctx, regionErr)
+			retry, err = s.onRegionError(bo, rpcCtx, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -160,7 +160,7 @@ func (s *RegionRequestSender) SendReqCtx(
 				continue
 			}
 		}
-		return resp, ctx, nil
+		return resp, rpcCtx, nil
 	}
 }
 
