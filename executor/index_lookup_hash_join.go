@@ -12,13 +12,12 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
-	"sort"
 )
 
 //IndexNestedLoopHashJoin is the hash join executor
 type IndexNestedLoopHashJoin struct {
 	IndexLookUpJoin
-	resultCh          chan *indexLookUpResult
+	resultCh          chan *indexHashJoinResult
 	joinChkResourceCh []chan *chunk.Chunk
 }
 
@@ -32,8 +31,14 @@ type indexHashJoinInnerWorker struct {
 	matchedOuterPtrs  [][]byte
 	joiner            joiner
 	joinChkResourceCh chan *chunk.Chunk
-	resultCh          chan *indexLookUpResult
+	resultCh          chan *indexHashJoinResult
 	taskCh            <-chan *indexHashJoinTask
+}
+
+type indexHashJoinResult struct {
+	chk *chunk.Chunk
+	err error
+	src chan<- *chunk.Chunk
 }
 
 type outerRowStatusFlag byte
@@ -46,11 +51,10 @@ const (
 
 type indexHashJoinTask struct {
 	*lookUpJoinTask
-	// nullOuterRowIdx indicates the offset of the outer rows which contains null
-	// join key(s).
 	outerRowStatus     []outerRowStatusFlag
 	nullOuterRowIdx    set.IntSet
 	matchedOuterRowIdx set.IntSet
+	err                error
 }
 
 // Open implements the IndexNestedLoopHashJoin Executor interface.
@@ -97,7 +101,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	ow := e.newOuterWorker(innerCh)
 	go util.WithRecovery(func() { ow.run(workerCtx) }, e.finishJoinWorkers)
 
-	e.resultCh = make(chan *indexLookUpResult, concurrency+1)
+	e.resultCh = make(chan *indexHashJoinResult, concurrency+1)
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := int(0); i < concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
@@ -113,14 +117,14 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
-		e.resultCh <- &indexLookUpResult{err: errors.Errorf("%v", r)}
+		e.resultCh <- &indexHashJoinResult{err: errors.Errorf("%v", r)}
 	}
 	e.workerWg.Done()
 }
 
 func (e *IndexNestedLoopHashJoin) finishWaiter(r interface{}) {
 	if r != nil {
-		e.resultCh <- &indexLookUpResult{err: errors.Errorf("%v", r)}
+		e.resultCh <- &indexHashJoinResult{err: errors.Errorf("%v", r)}
 	}
 	close(e.resultCh)
 }
@@ -172,7 +176,7 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 			return
 		}
 		if err != nil {
-			task.buildError = err
+			task.err = err
 			ow.pushToChan(ctx, task, ow.innerCh)
 			return
 		}
@@ -259,8 +263,8 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context) {
 		if !ok {
 			break
 		}
-		if task.buildError != nil {
-			joinResult.err = task.buildError
+		if task.err != nil {
+			joinResult.err = task.err
 			break
 		}
 		err := iw.handleTask(ctx, task, joinResult)
@@ -274,8 +278,8 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context) {
 	}
 }
 
-func (iw *indexHashJoinInnerWorker) getNewJoinResult() (bool, *indexLookUpResult) {
-	joinResult := &indexLookUpResult{
+func (iw *indexHashJoinInnerWorker) getNewJoinResult() (bool, *indexHashJoinResult) {
+	joinResult := &indexHashJoinResult{
 		src: iw.joinChkResourceCh,
 	}
 	ok := true
@@ -314,49 +318,12 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(task *indexHash
 	return err
 }
 
-func (iw *indexHashJoinInnerWorker) constructSortedLookupContent(task *indexHashJoinTask) (lookUpContents []*indexJoinLookUpContent, err error) {
-	lookUpContents = make([]*indexJoinLookUpContent, 0, task.lookupMap.Len())
-	keyBuf := make([]byte, 0, 64)
-	iter := task.lookupMap.NewIterator()
-	for _, value := iter.Next(); value != nil; _, value = iter.Next() {
-		rowIdx := *(*int)(unsafe.Pointer(&value[0]))
-		outerRow := task.outerResult.GetRow(rowIdx)
-		dLookUpKey, err := iw.constructDatumLookupKey(task.lookUpJoinTask, outerRow)
-		if err != nil {
-			return nil, err
-		}
-		//if dLookUpKey == nil {
-		//	// Append null to make looUpKeys the same length as outer Result.
-		//	task.encodedLookUpKeys.AppendNull(0)
-		//	continue
-		//}
-
-		keyBuf = keyBuf[:0]
-		keyBuf, err = codec.HashValues(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dLookUpKey...)
-		if err != nil {
-			return nil, err
-		}
-		lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: task.outerResult.GetRow(rowIdx)})
-	}
-	sc := iw.ctx.GetSessionVars().StmtCtx
-	sort.Slice(lookUpContents, func(i, j int) bool {
-		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[j].keys)
-		if cmp != 0 || iw.nextColCompareFilters == nil {
-			return cmp < 0
-		}
-		return iw.nextColCompareFilters.CompareRow(lookUpContents[i].row, lookUpContents[j].row) < 0
-	})
-
-	return lookUpContents, nil
-}
-
-func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexLookUpResult) error {
+func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult) error {
 	err := iw.buildHashTableForOuterResult(task)
 	if err != nil {
 		return err
 	}
 	lookUpContents, err := iw.constructLookupContent(task.lookUpJoinTask)
-	//lookUpContents, err := iw.constructSortedLookupContent(task)
 	if err != nil {
 		return err
 	}
@@ -390,7 +357,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 }
 
 func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(innerRow chunk.Row, task *indexHashJoinTask,
-	joinResult *indexLookUpResult) (bool, *indexLookUpResult) {
+	joinResult *indexHashJoinResult) (bool, *indexHashJoinResult) {
 	var err error
 	keyBuf := make([]byte, 0, 64)
 	keyBuf, err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, keyBuf, innerRow, iw.rowTypes, iw.keyCols)

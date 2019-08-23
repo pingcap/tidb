@@ -47,7 +47,7 @@ var _ Executor = &IndexLookUpJoin{}
 //
 // The execution flow is very similar to IndexLookUpReader:
 // 1. outerWorker read N outer rows, build a task and send it to result channel and inner worker channel.
-// 2. The innerWorker receives the task, bue.ilds key ranges from outer rows and fetch inner rows, builds inner row hash map.
+// 2. The innerWorker receives the task, builds key ranges from outer rows and fetch inner rows, builds inner row hash map.
 // 3. main thread receives the task, waits for inner worker finish handling the task.
 // 4. main thread join each outer row by look up the inner rows hash map in the task.
 type IndexLookUpJoin struct {
@@ -80,10 +80,9 @@ type IndexLookUpJoin struct {
 }
 
 type outerCtx struct {
-	rowTypes  []*types.FieldType
-	keyCols   []int
-	filter    expression.CNFExprs
-	keepOrder bool
+	rowTypes []*types.FieldType
+	keyCols  []int
+	filter   expression.CNFExprs
 }
 
 type innerCtx struct {
@@ -101,9 +100,7 @@ type lookUpJoinTask struct {
 	innerResult       *chunk.List
 	encodedLookUpKeys *chunk.Chunk
 	lookupMap         *mvmap.MVMap
-	matchKeyMap       *mvmap.MVMap
-	nullMap           map[string]bool
-	matchedInnerRows  []chunk.Row
+	matchedInners     []chunk.Row
 
 	doneCh   chan error
 	cursor   int
@@ -111,7 +108,6 @@ type lookUpJoinTask struct {
 	hasNull  bool
 
 	memTracker *memory.Tracker // track memory usage.
-	buildError error
 }
 
 type outerWorker struct {
@@ -144,12 +140,6 @@ type innerWorker struct {
 	indexRanges           []*ranger.Range
 	nextColCompareFilters *plannercore.ColWithCmpFuncManager
 	keyOff2IdxOff         []int
-}
-
-type indexLookUpResult struct {
-	chk *chunk.Chunk
-	err error
-	src chan<- *chunk.Chunk
 }
 
 // Open implements the Executor interface.
@@ -254,7 +244,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
 			e.lookUpMatchedInners(task, task.cursor)
-			e.innerIter = chunk.NewIterator4Slice(task.matchedInnerRows)
+			e.innerIter = chunk.NewIterator4Slice(task.matchedInners)
 			e.innerIter.Begin()
 		}
 
@@ -312,12 +302,12 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx int) {
 	outerKey := task.encodedLookUpKeys.GetRow(rowIdx).GetBytes(0)
 	e.innerPtrBytes = task.lookupMap.Get(outerKey, e.innerPtrBytes[:0])
-	task.matchedInnerRows = task.matchedInnerRows[:0]
+	task.matchedInners = task.matchedInners[:0]
 
 	for _, b := range e.innerPtrBytes {
 		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
 		matchedInner := task.innerResult.GetRow(ptr)
-		task.matchedInnerRows = append(task.matchedInnerRows, matchedInner)
+		task.matchedInners = append(task.matchedInners, matchedInner)
 	}
 }
 
@@ -374,8 +364,6 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		outerResult:       newFirstChunk(ow.executor),
 		encodedLookUpKeys: chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, ow.ctx.GetSessionVars().MaxChunkSize),
 		lookupMap:         mvmap.NewMVMap(),
-		matchKeyMap:       mvmap.NewMVMap(),
-		nullMap:           make(map[string]bool),
 	}
 	task.memTracker = memory.NewTracker(stringutil.MemoizeStr(func() string { return fmt.Sprintf("lookup join task %p", task) }), -1)
 	task.memTracker.AttachTo(ow.parentMemTracker)
@@ -483,11 +471,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 	lookUpContents := make([]*indexJoinLookUpContent, 0, task.outerResult.NumRows())
 	keyBuf := make([]byte, 0, 64)
 	for i := 0; i < task.outerResult.NumRows(); i++ {
-		outerRow := task.outerResult.GetRow(i)
-		if task.outerMatch != nil && !task.outerMatch[i] {
-			continue
-		}
-		dLookUpKey, err := iw.constructDatumLookupKey(task, outerRow)
+		dLookUpKey, err := iw.constructDatumLookupKey(task, i)
 		if err != nil {
 			return nil, err
 		}
@@ -496,7 +480,6 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			task.encodedLookUpKeys.AppendNull(0)
 			continue
 		}
-
 		keyBuf = keyBuf[:0]
 		keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dLookUpKey...)
 		if err != nil {
@@ -521,7 +504,11 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 	return lookUpContents, nil
 }
 
-func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, outerRow chunk.Row) ([]types.Datum, error) {
+func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int) ([]types.Datum, error) {
+	if task.outerMatch != nil && !task.outerMatch[rowIdx] {
+		return nil, nil
+	}
+	outerRow := task.outerResult.GetRow(rowIdx)
 	sc := iw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(iw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
@@ -645,15 +632,6 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 
 func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
 	for _, ordinal := range iw.keyCols {
-		if row.IsNull(ordinal) {
-			return true
-		}
-	}
-	return false
-}
-
-func (iw *innerWorker) hasNullInOuterJoinKey(row chunk.Row) bool {
-	for _, ordinal := range iw.outerCtx.keyCols {
 		if row.IsNull(ordinal) {
 			return true
 		}

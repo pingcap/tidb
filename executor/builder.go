@@ -1771,9 +1771,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 		outerCtx: outerCtx{
-			rowTypes:  outerTypes,
-			filter:    outerFilter,
-			keepOrder: v.KeepOuterOrder,
+			rowTypes: outerTypes,
+			filter:   outerFilter,
 		},
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
@@ -1799,7 +1798,6 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	}
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = newFirstChunk(e)
-	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
 	executorCounterIndexLookUpJoin.Inc()
 	return &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
 }
