@@ -15,8 +15,12 @@ package main
 
 import "testing"
 
+var isCoverageServer = "0"
+
 // TestRunMain is a dummy test case, which contains only the main function of tidb-server,
 // and it is used to generate coverage_server.
 func TestRunMain(t *testing.T) {
-	main()
+	if isCoverageServer == "1" {
+		main()
+	}
 }

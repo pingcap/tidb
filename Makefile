@@ -35,6 +35,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git re
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.GoVersion=$(shell go version)"
 
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
+COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
 
 CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
@@ -189,14 +190,10 @@ else
 endif
 
 coverage_server:
-# Rename tidb-server main_test to a .go source file, and make sure it is renamed-back when `make` exit on any condition
-	bash -c "trap 'mv tidb-server/main_test.go tidb-server/main_test' EXIT; mv tidb-server/main_test tidb-server/main_test.go; make coverage_server_internal"
-
-coverage_server_internal:
 ifeq ($(TARGET), "")
-	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o ../bin/tidb-coverage-server
+	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(COVERAGE_SERVER_LDFLAGS) $(CHECK_FLAG)' -o ../bin/tidb-coverage-server
 else
-	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)'
+	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(COVERAGE_SERVER_LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)'
 endif
 
 benchkv:
