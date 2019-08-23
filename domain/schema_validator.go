@@ -67,7 +67,8 @@ type schemaValidator struct {
 	latestSchemaExpire time.Time
 	// deltaSchemaInfos is a queue that maintain the history of changes.
 	deltaSchemaInfos []deltaSchemaInfo
-	notMergeCnt      int
+	// notMergeCnt is used to record the number of deltaSchemaInfo that have not been merged.
+	notMergeCnt int
 }
 
 // NewSchemaValidator returns a SchemaValidator structure.
