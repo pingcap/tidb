@@ -240,6 +240,8 @@ type Request struct {
 	// Streaming indicates using streaming API for this request, result in that one Next()
 	// call would not corresponds to a whole region result.
 	Streaming bool
+	// SendToFlash is true, this request is sent to the flash store.
+	SendToFlash bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
 	ReplicaRead ReplicaReadType
 }

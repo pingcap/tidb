@@ -417,6 +417,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			return p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)
 		}
 	}
+	// if DataSource prefer flash, then inner child of index join can't be the index scan.
+	if ds.preferStoreType&preferFlash != 0 {
+		return nil
+	}
+
 	helper := &indexJoinBuildHelper{join: p}
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
@@ -503,6 +508,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 		filterCondition: ds.pushedDownConds,
 		Ranges:          ranges,
 		rangeDecidedBy:  outerJoinKeys,
+		accessFromFlash: ds.preferStoreType&preferFlash != 0,
 	}.Init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	ts.stats = &property.StatsInfo{

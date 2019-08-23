@@ -58,6 +58,8 @@ const (
 	HintINLJ = "inl_join"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
+	// AccessFromFlash is hint enforce some tables read from flash.
+	AccessFromFlash = "access_from_flash"
 	// HintHJ is hint enforce hash join.
 	HintHJ = "hash_join"
 	// HintHashAgg is hint enforce hash aggregation.
@@ -172,8 +174,9 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
-		if v, ok := p.(*DataSource); ok {
-			v.TableAsName = &x.AsName
+		if ds, ok := p.(*DataSource); ok {
+			ds.TableAsName = &x.AsName
+			ds.setPreferredStoreType(b.TableHints())
 		}
 		for _, col := range p.Schema().Columns {
 			col.OrigTblName = col.TblName
@@ -371,6 +374,21 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
+}
+
+func (p *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
+	if hintInfo == nil {
+		return
+	}
+
+	alias := p.TableAsName
+	if alias.L == "" {
+		alias = &p.tableInfo.Name
+	}
+
+	if hintInfo.ifPreferFlash(alias) {
+		p.preferStoreType |= preferFlash
 	}
 }
 
@@ -1952,7 +1970,7 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 }
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
-	var sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
+	var sortMergeTables, INLJTables, hashJoinTables, flashTables []hintTableInfo
 	var preferAggType uint
 	for _, hint := range hints {
 		switch hint.HintName.L {
@@ -1966,16 +1984,19 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 			preferAggType |= preferHashAgg
 		case HintStreamAgg:
 			preferAggType |= preferStreamAgg
+		case AccessFromFlash:
+			flashTables = tableNames2HintTableInfo(hint.Tables)
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 || preferAggType != 0 {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(flashTables) > 0 || preferAggType != 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
 			preferAggType:             preferAggType,
+			flashTables:               flashTables,
 		})
 		return true
 	}

@@ -58,6 +58,8 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	AccessFromFlash bool
 }
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -162,6 +164,8 @@ type PhysicalTableScan struct {
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx int
+
+	accessFromFlash bool
 
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool

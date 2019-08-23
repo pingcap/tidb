@@ -405,6 +405,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			}
 			continue
 		}
+		// Flash storage do not support index scan.
+		if ds.preferStoreType&preferFlash != 0 {
+			continue
+		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate)
 		if err != nil {
 			return nil, err
@@ -803,6 +807,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
+		accessFromFlash: ds.preferStoreType&preferFlash != 0,
 	}.Init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	if ts.Table.PKIsHandle {

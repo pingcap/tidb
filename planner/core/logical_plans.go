@@ -99,6 +99,7 @@ const (
 	preferMergeJoin
 	preferHashAgg
 	preferStreamAgg
+	preferFlash
 )
 
 // LogicalJoin is the logical join plan.
@@ -366,6 +367,8 @@ type DataSource struct {
 	// TblColHists contains the Histogram of all original table columns,
 	// it is converted from statisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
+	//preferStoreType means the DataSource is enforced to which storage.
+	preferStoreType int
 }
 
 // accessPath indicates the way we access a table: by using single index, or by using multiple indexes,

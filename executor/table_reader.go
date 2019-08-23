@@ -78,7 +78,8 @@ type TableReaderExecutor struct {
 	// corColInFilter tells whether there's correlated column in filter.
 	corColInFilter bool
 	// corColInAccess tells whether there's correlated column in access conditions.
-	corColInAccess bool
+	corColInAccess  bool
+	accessFromFlash bool
 }
 
 // Open initialzes necessary variables for using this executor.
@@ -184,6 +185,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
+		SetSendToFlash(e.accessFromFlash).
 		Build()
 	if err != nil {
 		return nil, err

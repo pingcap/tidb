@@ -412,7 +412,15 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
-		p := PhysicalTableReader{tablePlan: t.tablePlan}.Init(ctx)
+		tp := t.tablePlan
+		for len(tp.Children()) > 0 {
+			tp = tp.Children()[0]
+		}
+		ts := tp.(*PhysicalTableScan)
+		p := PhysicalTableReader{
+			tablePlan:       t.tablePlan,
+			AccessFromFlash: ts.accessFromFlash,
+		}.Init(ctx)
 		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
 	}
@@ -617,11 +625,19 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
+func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
+		if copToFlash {
+			if !aggregation.CheckAggPushFlash(aggFunc) {
+				return nil, p.self
+			}
+			if _, remain := expression.CheckExprPushFlash(append(aggFunc.Args, p.GroupByItems...)); len(remain) > 0 {
+				return nil, p.self
+			}
+		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return nil, p.self
@@ -704,7 +720,14 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate()
+		// copToFlash means whether the cop task is run on flash storage
+		copToFlash := false
+		if cop.tablePlan != nil {
+			if ts, ok := cop.tablePlan.(*PhysicalTableScan); ok {
+				copToFlash = ts.accessFromFlash
+			}
+		}
+		partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
 		if partialAgg != nil {
 			if cop.tablePlan != nil {
 				cop.finishIndexPlan()
@@ -761,7 +784,14 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate()
+		// copToFlash means whether the cop task is run on flash storage
+		copToFlash := false
+		if cop.tablePlan != nil {
+			if ts, ok := cop.tablePlan.(*PhysicalTableScan); ok {
+				copToFlash = ts.accessFromFlash
+			}
+		}
+		partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
 		if partialAgg != nil {
 			if cop.tablePlan != nil {
 				cop.finishIndexPlan()

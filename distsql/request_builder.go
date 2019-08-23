@@ -127,6 +127,12 @@ func (builder *RequestBuilder) SetKeepOrder(order bool) *RequestBuilder {
 	return builder
 }
 
+// SetSendToFlash sets "SendToFlash" for "kv.Request".
+func (builder *RequestBuilder) SetSendToFlash(sendToFlash bool) *RequestBuilder {
+	builder.Request.SendToFlash = sendToFlash
+	return builder
+}
+
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
