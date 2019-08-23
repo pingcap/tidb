@@ -24,8 +24,7 @@ type IndexNestedLoopHashJoin struct {
 
 type indexHashJoinOuterWorker struct {
 	outerWorker
-	hasNullRows []chunk.Row
-	innerCh     chan *indexHashJoinTask
+	innerCh chan *indexHashJoinTask
 }
 
 type indexHashJoinInnerWorker struct {
@@ -93,7 +92,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	workerCtx, cancelFunc := context.WithCancel(ctx)
 	e.cancelFunc = cancelFunc
-	innerCh := make(chan *lookUpJoinTask, concurrency)
+	innerCh := make(chan *indexHashJoinTask, concurrency)
 	e.workerWg.Add(1)
 	ow := e.newOuterWorker(innerCh)
 	go util.WithRecovery(func() { ow.run(workerCtx) }, e.finishJoinWorkers)
@@ -203,24 +202,24 @@ func (ow *indexHashJoinOuterWorker) pushToChan(ctx context.Context, task *indexH
 	return false
 }
 
-func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *lookUpJoinTask) *indexHashJoinOuterWorker {
+func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask) *indexHashJoinOuterWorker {
 	ow := &indexHashJoinOuterWorker{
 		outerWorker: outerWorker{
 			outerCtx:         e.outerCtx,
 			ctx:              e.ctx,
 			executor:         e.children[0],
 			executorChk:      chunk.NewChunkWithCapacity(e.outerCtx.rowTypes, e.maxChunkSize),
-			innerCh:          innerCh,
 			batchSize:        32,
 			maxBatchSize:     e.ctx.GetSessionVars().IndexJoinBatchSize,
 			parentMemTracker: e.memTracker,
 			lookup:           &e.IndexLookUpJoin,
 		},
+		innerCh: innerCh,
 	}
 	return ow
 }
 
-func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *lookUpJoinTask, workerID int) *indexHashJoinInnerWorker {
+func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask, workerID int) *indexHashJoinInnerWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
 	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges))
 	for _, ran := range e.indexRanges {
@@ -230,12 +229,12 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *lookUpJoinTask, wo
 		innerWorker: innerWorker{
 			innerCtx:      e.innerCtx,
 			outerCtx:      e.outerCtx,
-			taskCh:        taskCh,
 			ctx:           e.ctx,
 			executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
 			indexRanges:   copiedRanges,
 			keyOff2IdxOff: e.keyOff2IdxOff,
 		},
+		taskCh:            taskCh,
 		joiner:            e.joiner,
 		joinChkResourceCh: e.joinChkResourceCh[workerID],
 		resultCh:          e.resultCh,
