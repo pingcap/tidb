@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"strings"
 	"testing"
 
@@ -674,6 +675,54 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	}
 	buf.WriteString(" from mysql.user where user = 'superadmin'")
 	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
+}
+
+func (s *testPrivilegeSuite) TestDDLOnSysDatabase(c *C) {
+	dbs := []string{util.InformationSchemaLowerName, util.PerformanceSchemaLowerName, mysql.SystemDB}
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	for _, db := range dbs {
+		// Drop database in lower case
+		_, err := se.Execute(context.Background(), fmt.Sprintf("drop database %s", db))
+		c.Assert(strings.Contains(err.Error(), "denied for user"), IsTrue)
+
+		// Drop database in upper case
+		_, err = se.Execute(context.Background(), fmt.Sprintf("drop database %s", strings.ToUpper(db)))
+		c.Assert(strings.Contains(err.Error(), "denied for user"), IsTrue)
+
+		// Alter database in lower case
+		_, err = se.Execute(context.Background(), fmt.Sprintf("alter database %s CHARACTER SET = utf8mb4", db))
+		c.Assert(strings.Contains(err.Error(), "denied for user"), IsTrue)
+
+		// Show database is allowed
+		mustExec(c, se, fmt.Sprintf("show create database %s", db))
+	}
+}
+
+func (s *testPrivilegeSuite) TestDDLOnSysTable(c *C) {
+	dbs := []string{util.InformationSchemaLowerName, util.PerformanceSchemaLowerName, mysql.SystemDB}
+	tk := testkit.NewTestKit(c, s.store)
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	for _, db := range dbs {
+		result := tk.MustQuery(fmt.Sprintf("show tables from %s", db))
+		for _, tableName := range result.Rows() {
+			// Drop table is forbidden
+			_, err := se.Execute(context.Background(), fmt.Sprintf("drop table %s.%s", db, tableName[0]))
+			c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+
+			// Alter table is forbidden
+			_, err = se.Execute(context.Background(), fmt.Sprintf("alter table %s.%s rename to %s.%s_bak",
+				db, tableName[0], db, tableName[0]))
+			c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+
+			// Show table is allowed
+			mustExec(c, se, fmt.Sprintf("show create table %s.%s", db, tableName[0]))
+
+			// Select is allowed
+			mustExec(c, se, fmt.Sprintf("select * from %s.%s limit 1", db, tableName[0]))
+		}
+	}
 }
 
 func mustExec(c *C, se session.Session, sql string) {
