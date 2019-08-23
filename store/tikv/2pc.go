@@ -1021,7 +1021,7 @@ func (tp *taskProcessor) startWorker(exitCh chan struct{}, ch chan error,
 	for idx, batch1 := range batches {
 		if exit := tp.rateLimiter.getToken(exitCh); !exit {
 			batch := batch1
-			go func(i int) {
+			go func() {
 				var procRes error
 				defer tp.rateLimiter.putToken()
 				if action == actionCommit {
@@ -1040,19 +1040,19 @@ func (tp *taskProcessor) startWorker(exitCh chan struct{}, ch chan error,
 					procRes = procFn(singleBatchBackoffer, batch)
 				}
 				ch <- procRes
-			}(idx)
+			}()
 		} else {
-			logutil.Logger(backoffer.ctx).Info("break startWorker", zap.Stringer("action", action))
+			logutil.Logger(backoffer.ctx).Info("break startWorker", zap.Stringer("action", action),
+				zap.Int("batch size", len(batches)), zap.Int("index", idx))
 			break
 		}
 	}
 }
 
 // process will start worker routine and collect results
-func (tp *taskProcessor) process(committer *twoPhaseCommitter, procFn procFunc,
+func (tp *taskProcessor) process(c *twoPhaseCommitter, procFn procFunc,
 	bo *Backoffer, action twoPhaseCommitAction, batches []batchKeys) error {
 	var err error
-	c := committer
 	// For prewrite, stop sending other requests after receiving first error.
 	backoffer := bo
 	var cancel context.CancelFunc
