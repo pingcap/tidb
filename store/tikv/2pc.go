@@ -537,11 +537,8 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				key := alreadyExist.GetKey()
 				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
 				if existErrInfo == nil {
-					return errors.Errorf("conn%d, existErr for key:%s should not be nil", c.connID, key)
+					return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
 				}
-				logutil.BgLogger().Debug("key already exists",
-					zap.Uint64("conn", c.connID),
-					zap.Stringer("key", kv.Key(key)))
 				return existErrInfo.Err()
 			}
 
@@ -624,7 +621,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 				key := alreadyExist.GetKey()
 				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
 				if existErrInfo == nil {
-					return errors.Errorf("conn%d, existErr for key:%s should not be nil", c.connID, key)
+					return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
 				}
 				return existErrInfo.Err()
 			}
@@ -804,7 +801,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		return errors.Trace(err)
 	}
 	if keyErr := resp.Resp.(*pb.BatchRollbackResponse).GetError(); keyErr != nil {
-		err = errors.Errorf("conn%d 2PC cleanup failed: %s", c.connID, keyErr)
+		err = errors.Errorf("conn %d 2PC cleanup failed: %s", c.connID, keyErr)
 		logutil.BgLogger().Debug("2PC failed cleanup key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
@@ -917,7 +914,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 
 	// check commitTS
 	if commitTS <= c.startTS {
-		err = errors.Errorf("conn%d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
+		err = errors.Errorf("conn %d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
 			c.connID, c.startTS, commitTS)
 		logutil.BgLogger().Error("invalid transaction", zap.Error(err))
 		return errors.Trace(err)
@@ -934,7 +931,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	})
 
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
-		err = errors.Errorf("conn%d txn takes too much time, txnStartTS: %d, comm: %d",
+		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err
 	}
