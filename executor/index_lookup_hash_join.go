@@ -11,7 +11,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/set"
 )
 
 //IndexNestedLoopHashJoin is the hash join executor
@@ -51,10 +50,8 @@ const (
 
 type indexHashJoinTask struct {
 	*lookUpJoinTask
-	outerRowStatus     []outerRowStatusFlag
-	nullOuterRowIdx    set.IntSet
-	matchedOuterRowIdx set.IntSet
-	err                error
+	outerRowStatus []outerRowStatusFlag
+	err            error
 }
 
 // Open implements the IndexNestedLoopHashJoin Executor interface.
