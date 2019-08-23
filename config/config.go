@@ -323,6 +323,8 @@ type TiFlash struct {
 	// LabelKey and LabelValue are used to check whether a store is TiFlash.
 	LabelKey   string `toml:"label-key" json:"label-key"`
 	LabelValue string `toml:"label-value" json:"label-value"`
+	// Server port represents the port of TiFlash server.
+	ServerPort uint16 `toml:"server-port" json:"server-port"`
 }
 
 var defaultConf = Config{
@@ -413,6 +415,7 @@ var defaultConf = Config{
 	TiFlash: TiFlash{
 		LabelKey:   "zone",
 		LabelValue: "engine",
+		ServerPort: 20171,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

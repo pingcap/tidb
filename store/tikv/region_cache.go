@@ -26,7 +26,7 @@ import (
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
@@ -256,9 +256,9 @@ func (c *RPCContext) String() string {
 		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx)
 }
 
-// GetRPCContext returns RPCContext for a region. If it returns nil, the region
+// GetTiKVRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
-func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
+func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -301,9 +301,9 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	}, nil
 }
 
-// GetFlashRPCContext returns RPCContext for a region must access flash store. If it returns nil, the region
+// GetTiFlashRPCContext returns RPCContext for a region must access flash store. If it returns nil, the region
 // must be out of date and already dropped from cache or not flash store found.
-func (c *RegionCache) GetFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
+func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -317,18 +317,21 @@ func (c *RegionCache) GetFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCCon
 	regionStore := cachedRegion.getStore()
 
 	for i, store := range regionStore.stores {
-		if !store.isFlash {
-			continue
-		}
-		peer, storeIdx := cachedRegion.meta.Peers[i], i
-		addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
+		addr, err := c.getStoreAddr(bo, cachedRegion, store, i)
 		if err != nil {
 			return nil, err
 		}
-		if store == nil || len(addr) == 0 {
+		if len(addr) == 0 {
 			cachedRegion.invalidate()
 			return nil, nil
 		}
+		if store.getResolveState() == needCheck {
+			store.reResolve(c)
+		}
+		if store.storeType != TiFlash {
+			continue
+		}
+		peer, storeIdx := cachedRegion.meta.Peers[i], i
 		storeFailEpoch := atomic.LoadUint32(&store.fail)
 		if storeFailEpoch != regionStore.storeFails[regionStore.workStoreIdx] {
 			cachedRegion.invalidate()
@@ -1072,6 +1075,13 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 		(bytes.Compare(key, r.meta.GetEndKey()) <= 0 || len(r.meta.GetEndKey()) == 0)
 }
 
+type StoreType uint8
+
+const (
+	TiKV StoreType = iota
+	TiFlash
+)
+
 // Store contains a kv process's address.
 type Store struct {
 	addr         string     // loaded store address
@@ -1079,7 +1089,7 @@ type Store struct {
 	state        uint64     // unsafe store storeState
 	resolveMutex sync.Mutex // protect pd from concurrent init requests
 	fail         uint32     // store fail count, see RegionStore.storeFails
-	isFlash      bool       // is the store theflash
+	storeType    StoreType  // type of the store
 }
 
 type resolveState uint64
@@ -1125,9 +1135,10 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		addr = store.GetAddress()
 		s.addr = addr
+		s.storeType = TiKV
 		for _, label := range store.Labels {
 			if label.Key == confTiFlash.LabelKey && label.Value == confTiFlash.LabelValue {
-				s.isFlash = true
+				s.storeType = TiFlash
 				break
 			}
 		}
@@ -1168,16 +1179,16 @@ func (s *Store) reResolve(c *RegionCache) {
 	}
 
 	confTiFlash := config.GetGlobalConfig().TiFlash
-	isFlash := false
+	storeType := TiKV
 	for _, label := range store.Labels {
 		if label.Key == confTiFlash.LabelKey && label.Value == confTiFlash.LabelValue {
-			isFlash = true
+			storeType = TiFlash
 		}
 	}
 	addr = store.GetAddress()
 	if s.addr != addr {
 		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr, isFlash: isFlash}
+		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType}
 		newStore.state = *(*uint64)(unsafe.Pointer(&state))
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore

@@ -74,6 +74,7 @@ max-batch-size=128
 [tiflash]
 label-key="zone"
 label-value="engine"
+server-port=20171
 `)
 
 	c.Assert(err, IsNil)
@@ -97,6 +98,7 @@ label-value="engine"
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(conf.TiFlash.LabelKey, Equals, "zone")
 	c.Assert(conf.TiFlash.LabelValue, Equals, "engine")
+	c.Assert(conf.TiFlash.ServerPort, Equals, uint16(20171))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

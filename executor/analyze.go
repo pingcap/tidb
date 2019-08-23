@@ -623,7 +623,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		})
 		var resp *tikvrpc.Response
 		var rpcCtx *tikv.RPCContext
-		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region)
+		rpcCtx, *err = e.cache.GetTiKVRPCContext(bo, loc.Region)
 		if *err != nil {
 			return
 		}

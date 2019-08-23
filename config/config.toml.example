@@ -321,3 +321,11 @@ max-retry-count = 256
 # default TTL in milliseconds for pessimistic lock.
 # The value must between "15s" and "120s".
 ttl = "40s"
+
+[tiflash]
+# key and value of a store label indicates the type of a store is tiflash
+label-key = "zone"
+label-value = "engine"
+
+# region request is sent to the designative server port of a tiflash server
+server-port = 20171
