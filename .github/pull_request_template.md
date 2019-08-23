@@ -36,3 +36,7 @@ Related changes
  - Need to update the documentation
  - Need to update the `tidb-ansible` repository
  - Need to be included in the release note
+
+Release note
+
+ - Write release note if need cherry-pick or new feature.
