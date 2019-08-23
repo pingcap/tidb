@@ -666,10 +666,10 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 
 			resp, err1 := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.UnsafeDestroyRangeTimeout)
 			if err1 == nil {
-				if resp == nil || resp.Resp == nil {
+				if resp == nil {
 					err1 = errors.Errorf("unsafe destroy range returns nil response from store %v", storeID)
 				} else {
-					errStr := (resp.Resp.(*kvrpcpb.UnsafeDestroyRangeResponse)).Error
+					errStr := (resp.(*kvrpcpb.UnsafeDestroyRangeResponse)).Error
 					if len(errStr) > 0 {
 						err1 = errors.Errorf("unsafe destroy range failed on store %v: %s", storeID, errStr)
 					}
@@ -834,7 +834,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
-		regionErr, err := resp.GetRegionError()
+		regionErr, err := tikvrpc.GetRegionError(resp)
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
@@ -845,10 +845,10 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 			}
 			continue
 		}
-		if resp.Resp == nil {
+		if resp == nil {
 			return stat, errors.Trace(tikv.ErrBodyMissing)
 		}
-		locksResp := resp.Resp.(*kvrpcpb.ScanLockResponse)
+		locksResp := resp.(*kvrpcpb.ScanLockResponse)
 		if locksResp.GetError() != nil {
 			return stat, errors.Errorf("unexpected scanlock error: %s", locksResp)
 		}
@@ -979,7 +979,7 @@ func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region ti
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	regionErr, err := resp.GetRegionError()
+	regionErr, err := tikvrpc.GetRegionError(resp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -987,10 +987,10 @@ func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region ti
 		return regionErr, nil
 	}
 
-	if resp.Resp == nil {
+	if resp == nil {
 		return nil, errors.Trace(tikv.ErrBodyMissing)
 	}
-	gcResp := resp.Resp.(*kvrpcpb.GCResponse)
+	gcResp := resp.(*kvrpcpb.GCResponse)
 	if gcResp.GetError() != nil {
 		return nil, errors.Errorf("unexpected gc error: %s", gcResp.GetError())
 	}

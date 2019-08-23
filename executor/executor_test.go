@@ -2707,7 +2707,7 @@ func (c *checkRequestClient) getCheckPriority() pb.CommandPri {
 	return (pb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
 }
 
-func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (tikvrpc.Response, error) {
 	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	c.mu.RLock()
 	checkFlags := c.mu.checkFlags

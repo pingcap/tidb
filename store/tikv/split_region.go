@@ -53,7 +53,7 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64,
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		regionErr, err := res.GetRegionError()
+		regionErr, err := tikvrpc.GetRegionError(res)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -64,7 +64,7 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64,
 			}
 			continue
 		}
-		splitRegion := res.Resp.(*kvrpcpb.SplitRegionResponse)
+		splitRegion := res.(*kvrpcpb.SplitRegionResponse)
 		logutil.BgLogger().Info("split region complete",
 			zap.String("at", hex.EncodeToString(splitKey)),
 			zap.Stringer("new region left", logutil.Hex(splitRegion.GetLeft())),

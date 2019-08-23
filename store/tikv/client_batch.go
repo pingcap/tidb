@@ -479,7 +479,7 @@ func sendBatchRequest(
 	batchConn *batchConn,
 	req *tikvpb.BatchCommandsRequest_Request,
 	timeout time.Duration,
-) (*tikvrpc.Response, error) {
+) (tikvrpc.Response, error) {
 	entry := &batchCommandsEntry{
 		ctx:      ctx,
 		req:      req,

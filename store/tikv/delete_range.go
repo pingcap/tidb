@@ -114,7 +114,7 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (Ra
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
-		regionErr, err := resp.GetRegionError()
+		regionErr, err := tikvrpc.GetRegionError(resp)
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
@@ -125,10 +125,10 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (Ra
 			}
 			continue
 		}
-		if resp.Resp == nil {
+		if resp == nil {
 			return stat, errors.Trace(ErrBodyMissing)
 		}
-		deleteRangeResp := resp.Resp.(*kvrpcpb.DeleteRangeResponse)
+		deleteRangeResp := resp.(*kvrpcpb.DeleteRangeResponse)
 		if err := deleteRangeResp.GetError(); err != "" {
 			return stat, errors.Errorf("unexpected delete range err: %v", err)
 		}

@@ -431,7 +431,7 @@ type regionProperityClient struct {
 	}
 }
 
-func (c *regionProperityClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *regionProperityClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (tikvrpc.Response, error) {
 	if req.Type == tikvrpc.CmdDebugGetRegionProperties {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -439,7 +439,7 @@ func (c *regionProperityClient) SendRequest(ctx context.Context, addr string, re
 		// Mock failure once.
 		if req.DebugGetRegionProperties().RegionId == c.mu.regionID {
 			c.mu.regionID = 0
-			return &tikvrpc.Response{}, nil
+			return tikvrpc.Response(nil), nil
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)

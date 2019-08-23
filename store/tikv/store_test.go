@@ -217,11 +217,11 @@ type checkRequestClient struct {
 	priority pb.CommandPri
 }
 
-func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (tikvrpc.Response, error) {
 	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
-		if resp.Resp != nil {
-			(resp.Resp.(*pb.GetResponse)).Error = &pb.KeyError{
+		if resp != nil {
+			(resp.(*pb.GetResponse)).Error = &pb.KeyError{
 				Abort: "request check error",
 			}
 		}

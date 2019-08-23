@@ -472,18 +472,18 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	// The request sent to the specified key and store wil fail.
 	var failKey []byte = nil
 	var failStore *metapb.Store = nil
-	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (tikvrpc.Response, error) {
 		sendReqCh <- SentReq{req, addr}
-		resp := &tikvrpc.Response{
-			Resp: &kvrpcpb.UnsafeDestroyRangeResponse{},
-		}
+		resp := tikvrpc.Response(
+			&kvrpcpb.UnsafeDestroyRangeResponse{},
+		)
 		if bytes.Equal(req.UnsafeDestroyRange().GetStartKey(), failKey) && addr == failStore.GetAddress() {
 			if failType == failRPCErr {
 				return nil, errors.New("error")
 			} else if failType == failNilResp {
-				resp.Resp = nil
+				resp = nil
 			} else if failType == failErrResp {
-				(resp.Resp.(*kvrpcpb.UnsafeDestroyRangeResponse)).Error = "error"
+				(resp.(*kvrpcpb.UnsafeDestroyRangeResponse)).Error = "error"
 			} else {
 				panic("unreachable")
 			}
@@ -587,9 +587,9 @@ type testGCWorkerClient struct {
 	unsafeDestroyRangeHandler handler
 }
 
-type handler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
+type handler = func(addr string, req *tikvrpc.Request) (tikvrpc.Response, error)
 
-func (c *testGCWorkerClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *testGCWorkerClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (tikvrpc.Response, error) {
 	if req.Type == tikvrpc.CmdUnsafeDestroyRange && c.unsafeDestroyRangeHandler != nil {
 		return c.unsafeDestroyRangeHandler(addr, req)
 	}

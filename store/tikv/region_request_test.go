@@ -69,7 +69,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	c.Assert(region, NotNil)
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
+	c.Assert(resp, NotNil)
 
 	// stop store.
 	s.cluster.StopStore(s.store)
@@ -86,7 +86,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	c.Assert(region, NotNil)
 	resp, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
+	c.Assert(resp, NotNil)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOne(c *C) {
@@ -107,7 +107,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOn
 	c.Assert(region, NotNil)
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
+	c.Assert(resp, NotNil)
 
 	// stop store2 and make store1 as new leader.
 	s.cluster.StopStore(store2)
@@ -117,10 +117,10 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOn
 	bo2 := NewBackoffer(context.Background(), 100)
 	resp, err = s.regionRequestSender.SendReq(bo2, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	regionErr, err := resp.GetRegionError()
+	regionErr, err := tikvrpc.GetRegionError(resp)
 	c.Assert(err, IsNil)
 	c.Assert(regionErr, IsNil)
-	c.Assert(resp.Resp, NotNil)
+	c.Assert(resp, NotNil)
 }
 
 func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
@@ -133,12 +133,12 @@ func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
 	c.Assert(region, NotNil)
 	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
+	c.Assert(resp, NotNil)
 	c.Assert(ctx, NotNil)
 	req.ReplicaRead = true
 	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
+	c.Assert(resp, NotNil)
 	c.Assert(ctx, NotNil)
 }
 
@@ -152,7 +152,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	c.Assert(region, NotNil)
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
+	c.Assert(resp, NotNil)
 
 	// set store to cancel state.
 	s.cluster.CancelStore(s.store)
@@ -169,7 +169,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	c.Assert(region, NotNil)
 	resp, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
+	c.Assert(resp, NotNil)
 }
 
 func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
@@ -197,7 +197,7 @@ type cancelContextClient struct {
 	redirectAddr string
 }
 
-func (c *cancelContextClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *cancelContextClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (tikvrpc.Response, error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	cancel()
 	return c.Client.SendRequest(childCtx, c.redirectAddr, req, timeout)

@@ -206,7 +206,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		regionErr, err := resp.GetRegionError()
+		regionErr, err := tikvrpc.GetRegionError(resp)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -219,10 +219,10 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			}
 			continue
 		}
-		if resp.Resp == nil {
+		if resp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}
-		cmdScanResp := resp.Resp.(*pb.ScanResponse)
+		cmdScanResp := resp.(*pb.ScanResponse)
 
 		err = s.snapshot.store.CheckVisibility(s.startTS())
 		if err != nil {

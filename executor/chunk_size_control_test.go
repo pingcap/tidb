@@ -45,7 +45,7 @@ type testSlowClient struct {
 	regionDelay map[uint64]time.Duration
 }
 
-func (c *testSlowClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *testSlowClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (tikvrpc.Response, error) {
 	regionID := req.RegionId
 	delay := c.GetDelay(regionID)
 	if req.Type == tikvrpc.CmdCop && delay > 0 {
