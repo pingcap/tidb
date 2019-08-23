@@ -55,20 +55,6 @@ func GetCompareFunc(tp *types.FieldType) CompareFunc {
 	return nil
 }
 
-// GetCompareFuncWithTypes gets a compare function for the two field types.
-func GetCompareFuncWithTypes(tp1, tp2 *types.FieldType) CompareFunc {
-	switch tp1.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		f1, f2 := mysql.HasUnsignedFlag(tp1.Flag), mysql.HasUnsignedFlag(tp2.Flag)
-		if f1 && !f2 {
-			return cmpUint64AndInt64
-		} else if !f1 && f2 {
-			return cmpInt64AndUint64
-		}
-	}
-	return GetCompareFunc(tp1)
-}
-
 func cmpNull(lNull, rNull bool) int {
 	if lNull && rNull {
 		return 0
@@ -93,32 +79,6 @@ func cmpUint64(l Row, lCol int, r Row, rCol int) int {
 		return cmpNull(lNull, rNull)
 	}
 	return types.CompareUint64(l.GetUint64(lCol), r.GetUint64(rCol))
-}
-
-func cmpInt64AndUint64(l Row, lCol int, r Row, rCol int) int {
-	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
-	if lNull || rNull {
-		return cmpNull(lNull, rNull)
-	}
-	lVal := l.GetInt64(lCol)
-	rVal := r.GetUint64(rCol)
-	if lVal < 0 {
-		return -1
-	}
-	return types.CompareUint64(uint64(lVal), rVal)
-}
-
-func cmpUint64AndInt64(l Row, lCol int, r Row, rCol int) int {
-	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
-	if lNull || rNull {
-		return cmpNull(lNull, rNull)
-	}
-	lVal := l.GetUint64(lCol)
-	rVal := r.GetInt64(rCol)
-	if rVal < 0 {
-		return 1
-	}
-	return types.CompareUint64(lVal, uint64(rVal))
 }
 
 func cmpString(l Row, lCol int, r Row, rCol int) int {

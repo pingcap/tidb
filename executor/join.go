@@ -49,10 +49,9 @@ type HashJoinExec struct {
 	innerKeys   []*expression.Column
 
 	// concurrency is the number of partition, build and join workers.
-	concurrency     uint
-	hashTable       rowHashTable
-	innerFinished   chan error
-	hashJoinBuffers []*hashJoinBuffer
+	concurrency   uint
+	hashTable     rowHashTable
+	innerFinished chan error
 	// joinWorkerWaitGroup is for sync multiple join workers.
 	joinWorkerWaitGroup sync.WaitGroup
 	finished            atomic.Value
@@ -95,10 +94,6 @@ type hashjoinWorkerResult struct {
 	chk *chunk.Chunk
 	err error
 	src chan<- *chunk.Chunk
-}
-
-type hashJoinBuffer struct {
-	bytes []byte
 }
 
 // Close implements the Executor Close interface.
@@ -176,19 +171,11 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, h ha
 	return false, h.Sum64(), err
 }
 
-func (e *HashJoinExec) matchJoinKey(inner, outer chunk.Row) bool {
-	innerAllTypes := retTypes(e.innerExec)
-	outerAllTypes := retTypes(e.outerExec)
-	for i := range e.innerKeyColIdx {
-		innerIdx := e.innerKeyColIdx[i]
-		outerIdx := e.outerKeyColIdx[i]
-		innerTp := innerAllTypes[innerIdx]
-		outerTp := outerAllTypes[outerIdx]
-		if cmp := chunk.GetCompareFuncWithTypes(innerTp, outerTp); cmp(inner, innerIdx, outer, outerIdx) != 0 {
-			return false
-		}
-	}
-	return true
+func (e *HashJoinExec) matchJoinKey(inner, outer chunk.Row) (ok bool, err error) {
+	innerAllTypes, outerAllTypes := retTypes(e.innerExec), retTypes(e.outerExec)
+	return codec.EqualChunkRow(e.ctx.GetSessionVars().StmtCtx,
+		inner, innerAllTypes, e.innerKeyColIdx,
+		outer, outerAllTypes, e.outerKeyColIdx)
 }
 
 // fetchOuterChunks get chunks from fetches chunks from the big table in a background goroutine
@@ -431,10 +418,19 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 	innerRows := make([]chunk.Row, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
 		matchedInner := e.innerResult.GetRow(ptr)
-		if !e.matchJoinKey(matchedInner, outerRow) {
+		ok, err := e.matchJoinKey(matchedInner, outerRow)
+		if err != nil {
+			joinResult.err = err
+			return false, joinResult
+		}
+		if !ok {
 			continue
 		}
 		innerRows = append(innerRows, matchedInner)
+	}
+	if len(innerRows) == 0 { // TODO(fengliyuan): add test case
+		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
+		return true, joinResult
 	}
 	iter := chunk.NewIterator4Slice(innerRows)
 	hasMatch, hasNull := false, false

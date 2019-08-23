@@ -602,7 +602,6 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 		dataSource1.prepareChunks()
 		dataSource2.prepareChunks()
 
-		total := 0
 		b.StartTimer()
 		if err := exec.Open(tmpCtx); err != nil {
 			b.Fatal(err)
@@ -611,7 +610,6 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			if err := exec.Next(tmpCtx, chk); err != nil {
 				b.Fatal(err)
 			}
-			total += chk.NumRows()
 			if chk.NumRows() == 0 {
 				break
 			}

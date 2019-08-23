@@ -15,7 +15,6 @@ package codec
 
 import (
 	"bytes"
-	"fmt"
 	"hash/crc32"
 	"math"
 	"testing"
@@ -1035,6 +1034,47 @@ func (s *testCodecSuite) TestDecodeRange(c *C) {
 	}
 }
 
+func testHashChunkRowEqual(c *C, a, b interface{}, equal bool) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+
+	tp1 := new(types.FieldType)
+	types.DefaultTypeForValue(a, tp1)
+	chk1 := chunk.New([]*types.FieldType{tp1}, 1, 1)
+	d := types.Datum{}
+	d.SetValue(a)
+	chk1.AppendDatum(0, &d)
+
+	tp2 := new(types.FieldType)
+	types.DefaultTypeForValue(b, tp2)
+	chk2 := chunk.New([]*types.FieldType{tp2}, 1, 1)
+	d = types.Datum{}
+	d.SetValue(b)
+	chk2.AppendDatum(0, &d)
+
+	h := crc32.NewIEEE()
+	err1 := HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0})
+	sum1 := h.Sum32()
+	h.Reset()
+	err2 := HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
+	sum2 := h.Sum32()
+	c.Assert(err1, IsNil)
+	c.Assert(err2, IsNil)
+	if equal {
+		c.Assert(sum1, Equals, sum2)
+	} else {
+		c.Assert(sum1, Not(Equals), sum2)
+	}
+	e, err := EqualChunkRow(sc,
+		chk1.GetRow(0), []*types.FieldType{tp1}, []int{0},
+		chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
+	c.Assert(err, IsNil)
+	if equal {
+		c.Assert(e, IsTrue)
+	} else {
+		c.Assert(e, IsFalse)
+	}
+}
+
 func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	datums, tps := datumsForTest(sc)
@@ -1054,64 +1094,27 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	c.Assert(err1, IsNil)
 	c.Assert(err2, IsNil)
 	c.Assert(sum1, Equals, sum2)
+	e, err := EqualChunkRow(sc,
+		chk.GetRow(0), tps, colIdx,
+		chk.GetRow(0), tps, colIdx)
+	c.Assert(err, IsNil)
+	c.Assert(e, IsTrue)
 
-	// uint64(18446744073709551615) != int64(-1)
-	// uint64(1) == int64(1)
-	tp1 := new(types.FieldType)
-	types.DefaultTypeForValue(uint64(18446744073709551615), tp1)
-	chk1 := chunk.New([]*types.FieldType{tp1}, 1, 1)
-	chk1.AppendUint64(0, 18446744073709551615)
-	chk1.AppendUint64(0, 1)
+	testHashChunkRowEqual(c, uint64(1), int64(1), true)
+	testHashChunkRowEqual(c, uint64(18446744073709551615), int64(-1), false)
 
-	tp2 := new(types.FieldType)
-	types.DefaultTypeForValue(int64(-1), tp2)
-	chk2 := chunk.New([]*types.FieldType{tp2}, 1, 1)
-	chk2.AppendInt64(0, -1)
-	chk2.AppendInt64(0, 1)
+	dec1 := types.NewDecFromStringForTest("1.1")
+	dec2 := types.NewDecFromStringForTest("01.100")
+	testHashChunkRowEqual(c, dec1, dec2, true)
+	dec1 = types.NewDecFromStringForTest("1.1")
+	dec2 = types.NewDecFromStringForTest("01.200")
+	testHashChunkRowEqual(c, dec1, dec2, false)
 
-	h.Reset()
-	err1 = HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0})
-	sum1 = h.Sum32()
-	h.Reset()
-	err2 = HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
-	sum2 = h.Sum32()
-	fmt.Println(sum1, sum2)
-	c.Assert(err1, IsNil)
-	c.Assert(err2, IsNil)
-	c.Assert(sum1, Not(Equals), sum2)
+	testHashChunkRowEqual(c, float32(1.0), float64(1.0), true)
+	testHashChunkRowEqual(c, float32(1.0), float64(1.1), false)
 
-	h.Reset()
-	err1 = HashChunkRow(sc, h, chk1.GetRow(1), []*types.FieldType{tp1}, []int{0})
-	sum1 = h.Sum32()
-	h.Reset()
-	err2 = HashChunkRow(sc, h, chk2.GetRow(1), []*types.FieldType{tp2}, []int{0})
-	sum2 = h.Sum32()
-	c.Assert(err1, IsNil)
-	c.Assert(err2, IsNil)
-	c.Assert(sum1, Equals, sum2)
-
-	// Decimal(1.00) == Decimal(1.000)
-	tp1 = new(types.FieldType)
-	dec := types.NewDecFromStringForTest("1.10")
-	types.DefaultTypeForValue(dec, tp1)
-	chk1 = chunk.New([]*types.FieldType{tp1}, 1, 1)
-	chk1.AppendMyDecimal(0, dec)
-
-	tp2 = new(types.FieldType)
-	dec = types.NewDecFromStringForTest("01.100")
-	types.DefaultTypeForValue(dec, tp2)
-	chk2 = chunk.New([]*types.FieldType{tp2}, 1, 1)
-	chk2.AppendMyDecimal(0, dec)
-
-	h.Reset()
-	err1 = HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0})
-	sum1 = h.Sum32()
-	h.Reset()
-	err2 = HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
-	sum2 = h.Sum32()
-	c.Assert(err1, IsNil)
-	c.Assert(err2, IsNil)
-	c.Assert(sum1, Not(Equals), sum2)
+	testHashChunkRowEqual(c, "x", []byte("x"), true)
+	testHashChunkRowEqual(c, "x", []byte("y"), false)
 }
 
 func (s *testCodecSuite) TestValueSizeOfSignedInt(c *C) {

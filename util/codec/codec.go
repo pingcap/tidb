@@ -14,6 +14,7 @@
 package codec
 
 import (
+	"bytes"
 	"encoding/binary"
 	"io"
 	"time"
@@ -274,52 +275,135 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]by
 	return encode(sc, b, v, false)
 }
 
-func encodeHashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int) (err error) {
-	for _, i := range colIdx {
-		if row.IsNull(i) {
-			_, err = w.Write([]byte{NilFlag})
-			if err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-		ft := allTypes[i]
-		switch ft.Tp {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-			flag := varintFlag
-			if mysql.HasUnsignedFlag(allTypes[i].Flag) {
-				if integer := row.GetInt64(i); integer < 0 {
-					flag = uvarintFlag
-				}
-			}
-			_, err = w.Write([]byte{flag})
-			if err != nil {
-				return errors.Trace(err)
-			}
-			_, err = row.WriteTo(i, w)
-		case mysql.TypeNewDecimal:
-			// If hash is true, we only consider the original value of this decimal and ignore it's precision.
-			dec := row.GetMyDecimal(i)
-			var bin []byte
-			bin, err = dec.ToHashKey()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			_, err = w.Write(bin)
-		default:
-			_, err = row.WriteTo(i, w)
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
+func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, b []byte, row chunk.Row, tp *types.FieldType, idx int) (_ [][]byte, err error) {
+	if row.IsNull(idx) {
+		return [][]byte{{NilFlag}}, nil
 	}
-	return
+	const comparable = false
+	b = b[:0]
+	switch tp.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		if !mysql.HasUnsignedFlag(tp.Flag) {
+			b = encodeSignedInt(b, row.GetInt64(idx), comparable)
+			break
+		}
+		// encode unsigned integers.
+		integer := row.GetInt64(idx)
+		if integer < 0 {
+			b = encodeUnsignedInt(b, uint64(integer), comparable)
+		} else {
+			b = encodeSignedInt(b, integer, comparable)
+		}
+	case mysql.TypeFloat:
+		b = append(b, floatFlag)
+		b = EncodeFloat(b, float64(row.GetFloat32(idx)))
+	case mysql.TypeDouble:
+		b = append(b, floatFlag)
+		b = EncodeFloat(b, row.GetFloat64(idx))
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return [][]byte{
+			{compactBytesFlag},
+			row.GetBytes(idx),
+		}, nil
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		b = append(b, uintFlag)
+		t := row.GetTime(idx)
+		// Encoding timestamp need to consider timezone.
+		// If it's not in UTC, transform to UTC first.
+		if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+			err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
+			if err != nil {
+				return nil, err
+			}
+		}
+		var v uint64
+		v, err = t.ToPackedUint()
+		if err != nil {
+			return nil, err
+		}
+		b = EncodeUint(b, v)
+	case mysql.TypeDuration:
+		// duration may have negative value, so we cannot use String to encode directly.
+		b = append(b, durationFlag)
+		b = EncodeInt(b, int64(row.GetDuration(idx, 0).Duration))
+	case mysql.TypeNewDecimal:
+		// If hash is true, we only consider the original value of this decimal and ignore it's precision.
+		dec := row.GetMyDecimal(idx)
+		bin, err := dec.ToHashKey()
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{
+			{decimalFlag},
+			bin,
+		}, nil
+	case mysql.TypeEnum:
+		b = encodeUnsignedInt(b, uint64(row.GetEnum(idx).ToNumber()), comparable)
+	case mysql.TypeSet:
+		b = encodeUnsignedInt(b, uint64(row.GetSet(idx).ToNumber()), comparable)
+	case mysql.TypeBit:
+		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
+		var val uint64
+		val, err = types.BinaryLiteral(row.GetBytes(idx)).ToInt(sc)
+		terror.Log(errors.Trace(err))
+		b = encodeUnsignedInt(b, val, comparable)
+	case mysql.TypeJSON:
+		return [][]byte{
+			{jsonFlag},
+			row.GetBytes(idx),
+		}, nil
+	default:
+		return nil, errors.Errorf("unsupport column type for encode %d", tp.Tp)
+	}
+	return [][]byte{b}, nil
 }
 
 // HashChunkRow writes the encoded values to w.
 // If two rows are equal, it will generate the same bytes.
 func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int) error {
-	return encodeHashChunkRow(sc, w, row, allTypes, colIdx)
+	var b []byte
+	for _, idx := range colIdx {
+		rets, err := encodeHashChunkRowIdx(sc, b, row, allTypes[idx], idx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, ret := range rets {
+			_, err = w.Write(ret)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
+// EqualChunkRow returns a boolean reporting whether row1 and row2
+// with their types and column index are logically equal.
+func EqualChunkRow(sc *stmtctx.StatementContext,
+	row1 chunk.Row, allTypes1 []*types.FieldType, colIdx1 []int,
+	row2 chunk.Row, allTypes2 []*types.FieldType, colIdx2 []int,
+) (bool, error) {
+	var b1, b2 []byte
+	for i := range colIdx1 {
+		idx1, idx2 := colIdx1[i], colIdx2[i]
+		rets1, err := encodeHashChunkRowIdx(sc, b1, row1, allTypes1[idx1], idx1)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		rets2, err := encodeHashChunkRowIdx(sc, b2, row2, allTypes2[idx2], idx2)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if len(rets1) != len(rets2) {
+			return false, nil
+		}
+		for i := range rets1 {
+			if !bytes.Equal(rets1[i], rets2[i]) {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
 }
 
 // Decode decodes values from a byte slice generated with EncodeKey or EncodeValue

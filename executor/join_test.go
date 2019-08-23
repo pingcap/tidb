@@ -273,6 +273,7 @@ func (s *testSuite2) TestJoin(c *C) {
 
 func (s *testSuite2) TestJoinCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	var result *testkit.Result
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -281,7 +282,7 @@ func (s *testSuite2) TestJoinCast(c *C) {
 	tk.MustExec("create table t1(c1 int unsigned)")
 	tk.MustExec("insert into t values (1)")
 	tk.MustExec("insert into t1 values (1)")
-	result := tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
+	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
 	result.Check(testkit.Rows("1"))
 
 	// int64(-1) != uint64(18446744073709551615)
@@ -292,6 +293,36 @@ func (s *testSuite2) TestJoinCast(c *C) {
 	tk.MustExec("insert into t values (-1)")
 	tk.MustExec("insert into t1 values (18446744073709551615)")
 	result = tk.MustQuery("select * from t , t1 where t.c1 = t1.c1")
+	result.Check(testkit.Rows())
+
+	// float(1) == double(1)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 float)")
+	tk.MustExec("create table t1(c1 double)")
+	tk.MustExec("insert into t values (1.0)")
+	tk.MustExec("insert into t1 values (1.00)")
+	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
+	result.Check(testkit.Rows("1"))
+
+	// varchar("x") == char("x")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 varchar(1))")
+	tk.MustExec("create table t1(c1 char(1))")
+	tk.MustExec(`insert into t values ("x")`)
+	tk.MustExec(`insert into t1 values ("x")`)
+	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
+	result.Check(testkit.Rows("x"))
+
+	// varchar("x") != char("y")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 varchar(1))")
+	tk.MustExec("create table t1(c1 char(1))")
+	tk.MustExec(`insert into t values ("x")`)
+	tk.MustExec(`insert into t1 values ("y")`)
+	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
 	result.Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists t")
