@@ -15,13 +15,14 @@ package oracle
 
 import (
 	"context"
+	pd "github.com/pingcap/pd/client"
 	"time"
 )
 
 // Oracle is the interface that provides strictly ascending timestamps.
 type Oracle interface {
 	GetTimestamp(ctx context.Context) (uint64, error)
-	GetTimestampAsync(ctx context.Context) Future
+	GetTimestampAsync(ctx context.Context, alloc pd.TsoReqAlloc) Future
 	GetLowResolutionTimestamp(ctx context.Context) (uint64, error)
 	GetLowResolutionTimestampAsync(ctx context.Context) Future
 	IsExpired(lockTimestamp uint64, TTL uint64) bool

@@ -15,6 +15,7 @@ package oracles
 
 import (
 	"context"
+	pd "github.com/pingcap/pd/client"
 	"sync"
 	"time"
 
@@ -63,7 +64,7 @@ func (l *localOracle) GetTimestamp(context.Context) (uint64, error) {
 	return ts, nil
 }
 
-func (l *localOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
+func (l *localOracle) GetTimestampAsync(ctx context.Context, alloc pd.TsoReqAlloc) oracle.Future {
 	return &future{
 		ctx: ctx,
 		l:   l,
@@ -75,7 +76,7 @@ func (l *localOracle) GetLowResolutionTimestamp(ctx context.Context) (uint64, er
 }
 
 func (l *localOracle) GetLowResolutionTimestampAsync(ctx context.Context) oracle.Future {
-	return l.GetTimestampAsync(ctx)
+	return l.GetTimestampAsync(ctx, nil)
 }
 
 type future struct {
