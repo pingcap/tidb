@@ -69,10 +69,6 @@ txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
-[tiflash]
-label-key="zone"
-label-value="engine"
-server-port=20171
 `)
 
 	c.Assert(err, IsNil)
@@ -93,9 +89,6 @@ server-port=20171
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
-	c.Assert(conf.TiFlash.LabelKey, Equals, "zone")
-	c.Assert(conf.TiFlash.LabelValue, Equals, "engine")
-	c.Assert(conf.TiFlash.ServerPort, Equals, uint16(20171))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

@@ -82,7 +82,6 @@ type Config struct {
 	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
-	TiFlash             TiFlash           `toml:"tiflash" json:"tiflash"`
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
@@ -315,15 +314,6 @@ type PessimisticTxn struct {
 	TTL string `toml:"ttl" json:"ttl"`
 }
 
-// TiFlash is the config for TiFlash.
-type TiFlash struct {
-	// LabelKey and LabelValue are used to check whether a store is TiFlash.
-	LabelKey   string `toml:"label-key" json:"label-key"`
-	LabelValue string `toml:"label-value" json:"label-value"`
-	// Server port represents the port of TiFlash server.
-	ServerPort uint16 `toml:"server-port" json:"server-port"`
-}
-
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -407,11 +397,6 @@ var defaultConf = Config{
 		OverloadThreshold: 200,
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
-	},
-	TiFlash: TiFlash{
-		LabelKey:   "zone",
-		LabelValue: "engine",
-		ServerPort: 20171,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

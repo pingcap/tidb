@@ -1118,10 +1118,13 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 		(bytes.Compare(key, r.meta.GetEndKey()) <= 0 || len(r.meta.GetEndKey()) == 0)
 }
 
+// StoreType represents the type of a store.
 type StoreType uint8
 
 const (
+	// TiKV means the type of a store is TiKV.
 	TiKV StoreType = iota
+	// TiFlash means the type of a store is TiFlash.
 	TiFlash
 )
 
