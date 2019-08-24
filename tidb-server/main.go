@@ -346,7 +346,7 @@ func loadConfig() string {
 		}
 		terror.MustNil(err)
 	} else {
-		// configCheck should have the config file specified
+		// configCheck should have the config file specified.
 		if *configCheck {
 			fmt.Fprintln(os.Stderr, "config check failed", errors.New("no config file specified for config-check"))
 			os.Exit(1)
