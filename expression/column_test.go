@@ -181,7 +181,7 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 	}
 	result, err := newBuffer(types.ETInt, 1024)
 	c.Assert(err, IsNil)
-	c.Assert(col.VecEval(ctx, input, result), IsNil)
+	c.Assert(col.VecEvalInt(ctx, input, result), IsNil)
 
 	it := chunk.NewIterator4Chunk(input)
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
@@ -199,7 +199,7 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 	}
 	result, err = newBuffer(types.ETString, 1024)
 	c.Assert(err, IsNil)
-	c.Assert(col.VecEval(ctx, input, result), IsNil)
+	c.Assert(col.VecEvalString(ctx, input, result), IsNil)
 
 	it = chunk.NewIterator4Chunk(input)
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
@@ -217,7 +217,7 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 	}
 	result, err = newBuffer(types.ETString, 1024)
 	c.Assert(err, IsNil)
-	c.Assert(col.VecEval(ctx, input, result), IsNil)
+	c.Assert(col.VecEvalString(ctx, input, result), IsNil)
 
 	it = chunk.NewIterator4Chunk(input)
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {

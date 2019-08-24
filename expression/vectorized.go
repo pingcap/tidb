@@ -20,10 +20,9 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) error {
+func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType types.EvalType, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	tp := expr.GetType()
-	switch tp.EvalType() {
+	switch targetType {
 	case types.ETInt:
 		result.ResizeInt64(n)
 		v, isNull, err := expr.EvalInt(ctx, chunk.Row{})
