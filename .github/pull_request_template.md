@@ -39,4 +39,4 @@ Related changes
 
 Release note
 
- - Write release note if need cherry-pick or new feature.
+ - Write release note for bug-fix or new feature.
