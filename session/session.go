@@ -716,7 +716,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			zap.String("label", label),
 			zap.Error(err),
 			zap.String("txn", s.txn.GoString()))
-		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}
