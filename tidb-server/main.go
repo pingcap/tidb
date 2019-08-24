@@ -615,10 +615,9 @@ func flagConfigCheck() {
 	if *configCheck {
 		if *configPath != "" {
 			fmt.Println("config check successful")
-			os.Exit(0)
 		} else {
 			fmt.Fprintln(os.Stderr, "config check failed", errors.New("no config file specified for config-check"))
-			os.Exit(1)
 		}
+		os.Exit(0)
 	}
 }
