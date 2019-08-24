@@ -260,3 +260,21 @@ func (s *testExpressionRewriterSuite) TestPatternLikeToExpression(c *C) {
 	tk.MustQuery("select 0 like '0';").Check(testkit.Rows("1"))
 	tk.MustQuery("select 0.00 like '0.00';").Check(testkit.Rows("1"))
 }
+
+func (s *testExpressionRewriterSuite) TestCheckDecimal(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+
+	err = tk.ExecToErr("select CONVERT( 2, DECIMAL(62,60) )")
+	c.Assert(err.Error(), Equals, "[types:1425]Too big scale 60 specified for column '2'. Maximum is 30.")
+
+	err = tk.ExecToErr("select CONVERT( 2, DECIMAL(66,29) )")
+	c.Assert(err.Error(), Equals, "[types:1426]Too big precision 66 specified for column '2'. Maximum is 65.")
+}
