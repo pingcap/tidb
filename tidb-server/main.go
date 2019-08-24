@@ -156,10 +156,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "invalid config", err)
 		os.Exit(1)
 	}
-	if *configCheck {
-		fmt.Println("config check successful")
-		os.Exit(0)
-	}
+	flagConfigCheck()
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
@@ -611,4 +608,17 @@ func cleanup() {
 	}
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage()
+}
+
+// the flag --config-check should have --config specified first
+func flagConfigCheck() {
+	if *configCheck {
+		if *configPath != "" {
+			fmt.Println("config check successful")
+			os.Exit(0)
+		} else {
+			fmt.Fprintln(os.Stderr, "config check failed", errors.New("no config file specified for config-check"))
+			os.Exit(1)
+		}
+	}
 }
