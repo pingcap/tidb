@@ -886,6 +886,12 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
+		// check the maxDecimalScale and maxDecimalWidth
+		er.err = er.checkDecimal(v.Tp, arg.String())
+		if er.err != nil {
+			return retNode, false
+		}
+
 		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.sctx, arg, v.Tp)
 	case *ast.PatternLikeExpr:
 		er.patternLikeToExpression(v)
@@ -943,6 +949,19 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
 	if ft.EvalType() == types.ETDuration && ft.Decimal > int(types.MaxFsp) {
 		return errTooBigPrecision.GenWithStackByArgs(ft.Decimal, "CAST", types.MaxFsp)
+	}
+	return nil
+}
+
+func (er *expressionRewriter) checkDecimal(ft *types.FieldType, val string) error {
+	if ft.Tp == mysql.TypeNewDecimal {
+		if ft.Decimal > mysql.MaxDecimalScale {
+			return types.ErrTooBigScale.GenWithStackByArgs(ft.Decimal, val, mysql.MaxDecimalScale)
+		}
+
+		if ft.Flen > mysql.MaxDecimalWidth {
+			return types.ErrTooBigPrecision.GenWithStackByArgs(ft.Flen, val, mysql.MaxDecimalWidth)
+		}
 	}
 	return nil
 }
