@@ -180,6 +180,7 @@ type Execute struct {
 	PrepareParams []types.Datum
 	ExecID        uint32
 	Stmt          ast.StmtNode
+	StmtType      string
 	Plan          Plan
 }
 
@@ -193,6 +194,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if !ok {
 		return errors.Trace(ErrStmtNotFound)
 	}
+	vars.StmtCtx.StmtType = prepared.StmtType
 
 	paramLen := len(e.PrepareParams)
 	if paramLen > 0 {
