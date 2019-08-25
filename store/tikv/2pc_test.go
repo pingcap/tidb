@@ -442,6 +442,40 @@ func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
 	c.Assert(totalTime, Less, time.Millisecond*200)
 }
 
+func (s *testCommitterSuite) TestPrewriteTxnSize(c *C) {
+	// Prepare two regions first: (, 100) and [100, )
+	region, _ := s.cluster.GetRegionByKey([]byte{50})
+	newRegionID := s.cluster.AllocID()
+	newPeerID := s.cluster.AllocID()
+	s.cluster.Split(region.Id, newRegionID, []byte{100}, []uint64{newPeerID}, newPeerID)
+
+	txn := s.begin(c)
+	var val [1024]byte
+	for i := byte(50); i < 120; i++ {
+		err := txn.Set([]byte{i}, val[:])
+		c.Assert(err, IsNil)
+	}
+
+	commiter, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	err = commiter.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), commiter.keys)
+	c.Assert(err, IsNil)
+
+	// Check the written locks in the first region (50 keys)
+	for i := byte(50); i < 100; i++ {
+		lock := s.getLockInfo(c, []byte{i})
+		c.Assert(int(lock.TxnSize), Equals, 50)
+	}
+
+	// Check the written locks in the second region (20 keys)
+	for i := byte(100); i < 120; i++ {
+		lock := s.getLockInfo(c, []byte{i})
+		c.Assert(int(lock.TxnSize), Equals, 20)
+	}
+}
+
 func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	// This test checks that the isPessimisticLock field is set in the request even when no keys are pessimistic lock.
 	txn := s.begin(c)
@@ -454,7 +488,7 @@ func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	var batch batchKeys
 	batch.keys = append(batch.keys, []byte("t1"))
 	batch.region = RegionVerID{1, 1, 1}
-	req := commiter.buildPrewriteRequest(batch)
+	req := commiter.buildPrewriteRequest(batch, 1)
 	c.Assert(len(req.Prewrite.IsPessimisticLock), Greater, 0)
 	c.Assert(req.Prewrite.ForUpdateTs, Equals, uint64(100))
 }
@@ -520,7 +554,7 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
 	batch := batchKeys{region: loc.Region, keys: [][]byte{key}}
-	req := commiter.buildPrewriteRequest(batch)
+	req := commiter.buildPrewriteRequest(batch, 1)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Prewrite, NotNil)

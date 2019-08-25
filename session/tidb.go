@@ -275,10 +275,8 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 	}
 	var rows []chunk.Row
 	req := rs.NewChunk()
+	// Must reuse `req` for imitating server.(*clientConn).writeChunks
 	for {
-		// Since we collect all the rows, we can not reuse the chunk.
-		iter := chunk.NewIterator4Chunk(req)
-
 		err := rs.Next(ctx, req)
 		if err != nil {
 			return nil, err
@@ -287,10 +285,10 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 			break
 		}
 
+		iter := chunk.NewIterator4Chunk(req.CopyConstruct())
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			rows = append(rows, row)
 		}
-		req = chunk.Renew(req, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
 }

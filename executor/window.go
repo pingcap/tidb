@@ -62,7 +62,7 @@ func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
-	if e.meetNewGroup && e.remainingRowsInGroup > 0 {
+	if (e.executed || e.meetNewGroup) && e.remainingRowsInGroup > 0 {
 		err := e.appendResult2Chunk(chk)
 		if err != nil {
 			return err
@@ -88,22 +88,16 @@ func (e *WindowExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) erro
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if e.meetNewGroup {
+		if e.meetNewGroup && e.remainingRowsInGroup > 0 {
 			err := e.consumeGroupRows()
 			if err != nil {
 				return errors.Trace(err)
 			}
 			err = e.appendResult2Chunk(chk)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			return err
 		}
 		e.remainingRowsInGroup++
 		e.groupRows = append(e.groupRows, e.inputRow)
-		if e.meetNewGroup {
-			e.inputRow = e.inputIter.Next()
-			return nil
-		}
 	}
 	return nil
 }

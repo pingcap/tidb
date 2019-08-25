@@ -88,26 +88,29 @@ type twoPhaseCommitter struct {
 	mutations map[string]*mutationEx
 	lockTTL   uint64
 	commitTS  uint64
-	mu        struct {
-		sync.RWMutex
-		committed       bool
-		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
-	}
-	priority pb.CommandPri
-	syncLog  bool
-	connID   uint64 // connID is used for log.
-	cleanWg  sync.WaitGroup
+	priority  pb.CommandPri
+	connID    uint64 // connID is used for log.
+	cleanWg   sync.WaitGroup
 	// maxTxnTimeUse represents max time a Txn may use (in ms) from its startTS to commitTS.
 	// We use it to guarantee GC worker will not influence any active txn. The value
 	// should be less than GC life time.
-	maxTxnTimeUse uint64
-	detail        *execdetails.CommitDetails
-	// For pessimistic transaction
-	isPessimistic  bool
+	maxTxnTimeUse  uint64
+	detail         *execdetails.CommitDetails
 	primaryKey     []byte
 	forUpdateTS    uint64
-	isFirstLock    bool
 	pessimisticTTL uint64
+
+	mu struct {
+		sync.RWMutex
+		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
+		committed       bool
+	}
+	syncLog bool
+	// For pessimistic transaction
+	isPessimistic bool
+	isFirstLock   bool
+	// regionTxnSize stores the number of keys involved in each region
+	regionTxnSize map[uint64]int
 }
 
 type mutationEx struct {
@@ -119,10 +122,11 @@ type mutationEx struct {
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
 	return &twoPhaseCommitter{
-		store:   txn.store,
-		txn:     txn,
-		startTS: txn.StartTS(),
-		connID:  connID,
+		store:         txn.store,
+		txn:           txn,
+		startTS:       txn.StartTS(),
+		connID:        connID,
+		regionTxnSize: map[uint64]int{},
 	}, nil
 }
 
@@ -323,6 +327,12 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	var batches []batchKeys
 	var sizeFunc = c.keySize
 	if action == actionPrewrite {
+		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
+		if len(bo.errors) == 0 {
+			for region, keys := range groups {
+				c.regionTxnSize[region.id] = len(keys)
+			}
+		}
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
 	}
@@ -461,7 +471,7 @@ func (c *twoPhaseCommitter) keySize(key []byte) int {
 	return len(key)
 }
 
-func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Request {
+func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64) *tikvrpc.Request {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	var isPessimisticLock []bool
 	if c.isPessimistic {
@@ -483,7 +493,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Reque
 			LockTtl:           c.lockTTL,
 			IsPessimisticLock: isPessimisticLock,
 			ForUpdateTs:       c.forUpdateTS,
-			TxnSize:           uint64(len(batch.keys)),
+			TxnSize:           txnSize,
 		},
 		Context: pb.Context{
 			Priority: c.priority,
@@ -493,7 +503,14 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Reque
 }
 
 func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) error {
-	req := c.buildPrewriteRequest(batch)
+	txnSize := uint64(c.regionTxnSize[batch.region.id])
+	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
+	// to MaxUint64 to avoid unexpected "resolve lock lite".
+	if len(bo.errors) > 0 {
+		txnSize = math.MaxUint64
+	}
+
+	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
