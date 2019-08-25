@@ -400,6 +400,15 @@ type PhysicalTableDual struct {
 	// for data sources like `Show`, if true, the dual plan would be substituted by
 	// `Show` in the final plan.
 	placeHolder bool
+
+	// names is used for OutputNames() method. Dual may be inited when building point get plan.
+	// So it needs to hold names for itself.
+	names []*expression.NamingForMySQLProtocol
+}
+
+// OutputNames returns the outputting names of each column.
+func (p *PhysicalTableDual) OutputNames() []*expression.NamingForMySQLProtocol {
+	return p.names
 }
 
 // PhysicalWindow is the physical operator of window function.

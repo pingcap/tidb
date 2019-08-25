@@ -153,6 +153,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 			}
 			if fp.IsTableDual {
 				tableDual := PhysicalTableDual{}
+				tableDual.names = fp.outputNames
 				tableDual.SetSchema(fp.Schema())
 				return tableDual.Init(ctx, &property.StatsInfo{})
 			}
@@ -503,7 +504,9 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 		return nil
 	}
 	if fastSelect.IsTableDual {
-		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
+		dual := PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
+		dual.names = fastSelect.outputNames
+		return dual
 	}
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true
@@ -572,7 +575,9 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 		return nil
 	}
 	if fastSelect.IsTableDual {
-		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
+		dual := PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
+		dual.names = fastSelect.outputNames
+		return dual
 	}
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true
