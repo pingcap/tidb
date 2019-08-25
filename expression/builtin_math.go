@@ -24,6 +24,7 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -966,7 +967,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bt := bf
 	if len(args) == 0 {
 		seed := time.Now().UnixNano()
-		sig = &builtinRandSig{bt, rand.New(rand.NewSource(seed))}
+		sig = &builtinRandSig{bt, &sync.Mutex{}, rand.New(rand.NewSource(seed))}
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
 		// If an integer argument N is specified, it is used as the seed value:
@@ -979,7 +980,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		if isNull {
 			seed = time.Now().UnixNano()
 		}
-		sig = &builtinRandSig{bt, rand.New(rand.NewSource(seed))}
+		sig = &builtinRandSig{bt, &sync.Mutex{}, rand.New(rand.NewSource(seed))}
 	} else {
 		sig = &builtinRandWithSeedSig{bt}
 	}
@@ -988,11 +989,12 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinRandSig struct {
 	baseBuiltinFunc
+	mu      *sync.Mutex
 	randGen *rand.Rand
 }
 
 func (b *builtinRandSig) Clone() builtinFunc {
-	newSig := &builtinRandSig{randGen: b.randGen}
+	newSig := &builtinRandSig{randGen: b.randGen, mu: b.mu}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -1000,7 +1002,10 @@ func (b *builtinRandSig) Clone() builtinFunc {
 // evalReal evals RAND().
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func (b *builtinRandSig) evalReal(row chunk.Row) (float64, bool, error) {
-	return b.randGen.Float64(), false, nil
+	b.mu.Lock()
+	res := b.randGen.Float64()
+	b.mu.Unlock()
+	return res, false, nil
 }
 
 type builtinRandWithSeedSig struct {

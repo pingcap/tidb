@@ -34,16 +34,28 @@ func boolToInt64(v bool) int64 {
 	return 0
 }
 
-// IsCurrentTimestampExpr returns whether e is CurrentTimestamp expression.
-func IsCurrentTimestampExpr(e ast.ExprNode) bool {
-	if fn, ok := e.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.CurrentTimestamp {
-		return true
+// IsValidCurrentTimestampExpr returns true if exprNode is a valid CurrentTimestamp expression.
+// Here `valid` means it is consistent with the given fieldType's Decimal.
+func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldType) bool {
+	fn, isFuncCall := exprNode.(*ast.FuncCallExpr)
+	if !isFuncCall || fn.FnName.L != ast.CurrentTimestamp {
+		return false
 	}
-	return false
+
+	containsArg := len(fn.Args) > 0
+	// Fsp represents fractional seconds precision.
+	containsFsp := fieldType != nil && fieldType.Decimal > 0
+	var isConsistent bool
+	if containsArg {
+		v, ok := fn.Args[0].(*driver.ValueExpr)
+		isConsistent = ok && fieldType != nil && v.Datum.GetInt64() == int64(fieldType.Decimal)
+	}
+
+	return (containsArg && isConsistent) || (!containsArg && !containsFsp)
 }
 
 // GetTimeValue gets the time value with type tp.
-func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d types.Datum, err error) {
+func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d types.Datum, err error) {
 	value := types.Time{
 		Type: tp,
 		Fsp:  fsp,
@@ -54,11 +66,11 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == strings.ToUpper(ast.CurrentTimestamp) {
-			defaultTime, err := getSystemTimestamp(ctx)
+			defaultTime, err := getStmtTimestamp(ctx)
 			if err != nil {
 				return d, err
 			}
-			value.Time = types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond))
+			value.Time = types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond))
 			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
 				if err != nil {
@@ -120,7 +132,9 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 	return d, nil
 }
 
-func getSystemTimestamp(ctx sessionctx.Context) (time.Time, error) {
+// if timestamp session variable set, use session variable as current time, otherwise use cached time
+// during one sql statement, the "current_time" should be the same
+func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	now := time.Now()
 
 	if ctx == nil {
@@ -133,15 +147,16 @@ func getSystemTimestamp(ctx sessionctx.Context) (time.Time, error) {
 		return now, err
 	}
 
-	if timestampStr == "" {
-		return now, nil
+	if timestampStr != "" {
+		timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if timestamp <= 0 {
+			return now, nil
+		}
+		return time.Unix(timestamp, 0), nil
 	}
-	timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr)
-	if err != nil {
-		return time.Time{}, err
-	}
-	if timestamp <= 0 {
-		return now, nil
-	}
-	return time.Unix(timestamp, 0), nil
+	stmtCtx := ctx.GetSessionVars().StmtCtx
+	return stmtCtx.GetNowTsCached(), nil
 }

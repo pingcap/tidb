@@ -486,7 +486,6 @@ func setGlobalVars() {
 	}
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
-	kv.TxnEntryCountLimit = cfg.Performance.TxnEntryCountLimit
 	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
 
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)

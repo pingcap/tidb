@@ -59,7 +59,7 @@ func (eqh *Handle) Run() {
 		case <-ticker.C:
 			processInfo := eqh.sm.ShowProcessList()
 			for _, info := range processInfo {
-				if info.Info == nil || info.ExceedExpensiveTimeThresh {
+				if len(info.Info) == 0 || info.ExceedExpensiveTimeThresh {
 					continue
 				}
 				costTime := time.Since(info.Time)
@@ -124,17 +124,17 @@ func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
 	if len(info.User) > 0 {
 		logFields = append(logFields, zap.String("user", info.User))
 	}
-	if info.DB != nil && len(info.DB.(string)) > 0 {
-		logFields = append(logFields, zap.String("database", info.DB.(string)))
+	if len(info.DB) > 0 {
+		logFields = append(logFields, zap.String("database", info.DB))
 	}
-	var tableIDs, indexIDs string
+	var tableIDs, indexNames string
 	if len(info.StmtCtx.TableIDs) > 0 {
 		tableIDs = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.TableIDs), " ", ",", -1)
 		logFields = append(logFields, zap.String("table_ids", tableIDs))
 	}
-	if len(info.StmtCtx.IndexIDs) > 0 {
-		indexIDs = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.IndexIDs), " ", ",", -1)
-		logFields = append(logFields, zap.String("index_ids", indexIDs))
+	if len(info.StmtCtx.IndexNames) > 0 {
+		indexNames = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.IndexNames), " ", ",", -1)
+		logFields = append(logFields, zap.String("index_names", indexNames))
 	}
 	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
 	if memTracker := info.StmtCtx.MemTracker; memTracker != nil {
@@ -143,8 +143,8 @@ func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
 
 	const logSQLLen = 1024 * 8
 	var sql string
-	if info.Info != nil {
-		sql = info.Info.(string)
+	if len(info.Info) > 0 {
+		sql = info.Info
 	}
 	if len(sql) > logSQLLen {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))

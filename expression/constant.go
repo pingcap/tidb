@@ -88,6 +88,62 @@ func (c *Constant) GetType() *types.FieldType {
 	return c.RetType
 }
 
+// VecEvalInt evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETInt, input, result)
+	}
+	return c.DeferredExpr.VecEvalInt(ctx, input, result)
+}
+
+// VecEvalReal evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETReal, input, result)
+	}
+	return c.DeferredExpr.VecEvalReal(ctx, input, result)
+}
+
+// VecEvalString evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETString, input, result)
+	}
+	return c.DeferredExpr.VecEvalString(ctx, input, result)
+}
+
+// VecEvalDecimal evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETDecimal, input, result)
+	}
+	return c.DeferredExpr.VecEvalDecimal(ctx, input, result)
+}
+
+// VecEvalTime evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETTimestamp, input, result)
+	}
+	return c.DeferredExpr.VecEvalTime(ctx, input, result)
+}
+
+// VecEvalDuration evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETDecimal, input, result)
+	}
+	return c.DeferredExpr.VecEvalDuration(ctx, input, result)
+}
+
+// VecEvalJSON evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETJson, input, result)
+	}
+	return c.DeferredExpr.VecEvalJSON(ctx, input, result)
+}
+
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 	if c.DeferredExpr != nil {
@@ -276,7 +332,6 @@ func (c *Constant) EvalJSON(ctx sessionctx.Context, _ chunk.Row) (json.BinaryJSO
 		if err != nil {
 			return json.BinaryJSON{}, true, err
 		}
-		fmt.Println("const eval json", val.GetMysqlJSON().String())
 		c.Value.SetMysqlJSON(val.GetMysqlJSON())
 		c.GetType().Tp = mysql.TypeJSON
 	} else {

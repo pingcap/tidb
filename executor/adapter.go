@@ -90,6 +90,15 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 				Name:      origColName,
 			},
 		}
+		// This is for compatibility.
+		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
+		}
+		// Usually the length of O equals the length of L.
+		// Add this len judgement to avoid panic.
+		if len(rf.ColumnAsName.L) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.L = rf.ColumnAsName.L[:mysql.MaxAliasIdentifierLen]
+		}
 		rfs = append(rfs, rf)
 	}
 	return rfs
@@ -137,18 +146,17 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan plannercore.Plan
-	// LowerPriority represents whether to lower the execution priority of a query.
-	LowerPriority bool
-	// Cacheable represents whether the physical plan can be cached.
-	Cacheable bool
 	// Text represents the origin query text.
 	Text string
 
 	StmtNode ast.StmtNode
 
 	Ctx sessionctx.Context
-	// StartTime stands for the starting time when executing the statement.
-	StartTime         time.Time
+
+	// LowerPriority represents whether to lower the execution priority of a query.
+	LowerPriority bool
+	// Cacheable represents whether the physical plan can be cached.
+	Cacheable         bool
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
@@ -181,13 +189,18 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
-func (a *ExecStmt) RebuildPlan() (int64, error) {
+func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
+	startTime := time.Now()
+	defer func() {
+		a.Ctx.GetSessionVars().DurationCompile = time.Since(startTime)
+	}()
+
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
 	}
-	p, err := planner.Optimize(a.Ctx, a.StmtNode, is)
+	p, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
 	if err != nil {
 		return 0, err
 	}
@@ -199,7 +212,6 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
-	a.StartTime = time.Now()
 	sctx := a.Ctx
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
@@ -243,7 +255,9 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		maxExecutionTime := getMaxExecutionTime(sctx, a.StmtNode)
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
-		a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		}
 	}
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
@@ -253,17 +267,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
-	// If the executor doesn't return any result to the client, we execute it without delay.
-	if e.Schema().Len() == 0 {
-		if isPessimistic {
-			return nil, a.handlePessimisticDML(ctx, e)
-		}
-		return a.handleNoDelayExecutor(ctx, e)
-	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
-		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
-		// the Projection has two expressions and two columns in the schema, but we should
-		// not return the result of the two expressions.
-		return a.handleNoDelayExecutor(ctx, e)
+	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled {
+		return result, err
 	}
 
 	var txnStartTS uint64
@@ -279,6 +284,32 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (bool, sqlexec.RecordSet, error) {
+	toCheck := e
+	if explain, ok := e.(*ExplainExec); ok {
+		if explain.analyzeExec != nil {
+			toCheck = explain.analyzeExec
+		}
+	}
+
+	// If the executor doesn't return any result to the client, we execute it without delay.
+	if toCheck.Schema().Len() == 0 {
+		if isPessimistic {
+			return true, nil, a.handlePessimisticDML(ctx, e)
+		}
+		r, err := a.handleNoDelayExecutor(ctx, e)
+		return true, r, err
+	} else if proj, ok := toCheck.(*ProjectionExec); ok && proj.calculateNoDelay {
+		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
+		// the Projection has two expressions and two columns in the schema, but we should
+		// not return the result of the two expressions.
+		r, err := a.handleNoDelayExecutor(ctx, e)
+		return true, r, err
+	}
+
+	return false, nil, nil
 }
 
 // getMaxExecutionTime get the max execution timeout value.
@@ -372,6 +403,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
 	// Check if "tidb_snapshot" is set for the write executors.
@@ -448,10 +480,11 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		logutil.Logger(ctx).Info("single statement deadlock, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("lockTS", deadlock.LockTs),
-			zap.Binary("lockKey", deadlock.LockKey),
+			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, err) {
-		conflictCommitTS := extractConflictCommitTS(err.Error())
+		errStr := err.Error()
+		conflictCommitTS := extractConflictCommitTS(errStr)
 		if conflictCommitTS == 0 {
 			logutil.Logger(ctx).Warn("failed to extract conflictCommitTS from a conflict error")
 		}
@@ -459,7 +492,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("forUpdateTS", forUpdateTS),
-			zap.Uint64("conflictCommitTS", conflictCommitTS))
+			zap.String("err", errStr))
 		if conflictCommitTS > forUpdateTS {
 			newForUpdateTS = conflictCommitTS
 		}
@@ -489,6 +522,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
+	a.Ctx.GetSessionVars().StartTime = time.Now()
+	a.Ctx.GetSessionVars().DurationCompile = time.Duration(0)
+	a.Ctx.GetSessionVars().DurationParse = time.Duration(0)
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -591,7 +627,8 @@ func (a *ExecStmt) logAudit() {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-			audit.OnGeneralEvent(context.Background(), sessVars, plugin.Log, cmd)
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
+			audit.OnGeneralEvent(ctx, sessVars, plugin.Log, cmd)
 		}
 		return nil
 	})
@@ -608,7 +645,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		return
 	}
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(a.StartTime)
+	costTime := time.Since(a.Ctx.GetSessionVars().StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
@@ -619,12 +656,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
 
-	var tableIDs, indexIDs string
+	var tableIDs, indexNames string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
 		tableIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
 	}
-	if len(sessVars.StmtCtx.IndexIDs) > 0 {
-		indexIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
+	if len(sessVars.StmtCtx.IndexNames) > 0 {
+		indexNames = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexNames), " ", ",", -1)
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
@@ -632,10 +669,36 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(&variable.SlowQueryLogItems{
+			TxnTS:       txnTS,
+			SQL:         sql,
+			Digest:      digest,
+			TimeTotal:   costTime,
+			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
+			IndexNames:  indexNames,
+			StatsInfos:  statsInfos,
+			CopTasks:    copTaskInfo,
+			ExecDetail:  execDetail,
+			MemMax:      memMax,
+			Succ:        succ,
+		}))
 	} else {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(&variable.SlowQueryLogItems{
+			TxnTS:       txnTS,
+			SQL:         sql,
+			Digest:      digest,
+			TimeTotal:   costTime,
+			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
+			IndexNames:  indexNames,
+			StatsInfos:  statsInfos,
+			CopTasks:    copTaskInfo,
+			ExecDetail:  execDetail,
+			MemMax:      memMax,
+			Succ:        succ,
+		}))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
@@ -644,19 +707,19 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			userString = sessVars.User.String()
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
-			SQL:      sql,
-			Digest:   digest,
-			Start:    a.StartTime,
-			Duration: costTime,
-			Detail:   sessVars.StmtCtx.GetExecDetails(),
-			Succ:     succ,
-			ConnID:   sessVars.ConnectionID,
-			TxnTS:    txnTS,
-			User:     userString,
-			DB:       sessVars.CurrentDB,
-			TableIDs: tableIDs,
-			IndexIDs: indexIDs,
-			Internal: sessVars.InRestrictedSQL,
+			SQL:        sql,
+			Digest:     digest,
+			Start:      a.Ctx.GetSessionVars().StartTime,
+			Duration:   costTime,
+			Detail:     sessVars.StmtCtx.GetExecDetails(),
+			Succ:       succ,
+			ConnID:     sessVars.ConnectionID,
+			TxnTS:      txnTS,
+			User:       userString,
+			DB:         sessVars.CurrentDB,
+			TableIDs:   tableIDs,
+			IndexNames: indexNames,
+			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
 }

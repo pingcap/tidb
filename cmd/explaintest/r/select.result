@@ -6,6 +6,8 @@ c3 int,
 PRIMARY KEY (c1)
 );
 INSERT INTO t VALUES (1,2,3);
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
 SELECT * from t;
 c1	c2	c3
 1	2	3
@@ -298,9 +300,9 @@ count(a)
 explain select count(a) from t where b>0 group by a, b order by a;
 id	count	task	operator info
 Projection_7	2666.67	root	count(a)
-└─StreamAgg_31	2666.67	root	group by:col_2, col_3, funcs:count(col_0), firstrow(col_1)
+└─StreamAgg_31	2666.67	root	group by:col_2, col_3, funcs:count(col_0), firstrow(col_2)
   └─IndexReader_32	2666.67	root	index:StreamAgg_29
-    └─StreamAgg_29	2666.67	cop	group by:test.t.a, test.t.b, funcs:count(test.t.a), firstrow(test.t.a)
+    └─StreamAgg_29	2666.67	cop	group by:test.t.a, test.t.b, funcs:count(test.t.a)
       └─Selection_23	3333.33	cop	gt(test.t.b, 0)
         └─IndexScan_22	10000.00	cop	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b order by a;
@@ -313,9 +315,9 @@ explain select count(a) from t where b>0 group by a, b order by a limit 1;
 id	count	task	operator info
 Projection_9	1.00	root	count(a)
 └─Limit_15	1.00	root	offset:0, count:1
-  └─StreamAgg_39	1.00	root	group by:col_2, col_3, funcs:count(col_0), firstrow(col_1)
+  └─StreamAgg_39	1.00	root	group by:col_2, col_3, funcs:count(col_0), firstrow(col_2)
     └─IndexReader_40	1.00	root	index:StreamAgg_35
-      └─StreamAgg_35	1.00	cop	group by:test.t.a, test.t.b, funcs:count(test.t.a), firstrow(test.t.a)
+      └─StreamAgg_35	1.00	cop	group by:test.t.a, test.t.b, funcs:count(test.t.a)
         └─Selection_38	1.25	cop	gt(test.t.b, 0)
           └─IndexScan_37	3.75	cop	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b order by a limit 1;
@@ -325,7 +327,7 @@ drop table if exists t;
 create table t (id int primary key, a int, b int);
 explain select * from (t t1 left join t t2 on t1.a = t2.a) left join (t t3 left join t t4 on t3.a = t4.a) on t2.b = 1;
 id	count	task	operator info
-HashLeftJoin_10	155937656.25	root	left outer join, inner:HashLeftJoin_17, left cond:[eq(test.t2.b, 1)]
+HashLeftJoin_10	155937656.25	root	CARTESIAN left outer join, inner:HashLeftJoin_17, left cond:[eq(test.t2.b, 1)]
 ├─HashLeftJoin_11	12487.50	root	left outer join, inner:TableReader_16, equal:[eq(test.t1.a, test.t2.a)]
 │ ├─TableReader_13	10000.00	root	data:TableScan_12
 │ │ └─TableScan_12	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
@@ -381,7 +383,7 @@ create table t(a int, b int);
 explain select a != any (select a from t t2) from t t1;
 id	count	task	operator info
 Projection_9	10000.00	root	and(or(or(gt(col_count, 1), ne(test.t1.a, col_firstrow)), if(ne(agg_col_sum, 0), NULL, 0)), and(ne(agg_col_cnt, 0), if(isnull(test.t1.a), NULL, 1)))
-└─HashLeftJoin_10	10000.00	root	inner join, inner:StreamAgg_17
+└─HashLeftJoin_10	10000.00	root	CARTESIAN inner join, inner:StreamAgg_17
   ├─TableReader_13	10000.00	root	data:TableScan_12
   │ └─TableScan_12	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_17	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(1)
@@ -391,7 +393,7 @@ Projection_9	10000.00	root	and(or(or(gt(col_count, 1), ne(test.t1.a, col_firstro
 explain select a = all (select a from t t2) from t t1;
 id	count	task	operator info
 Projection_9	10000.00	root	or(and(and(le(col_count, 1), eq(test.t1.a, col_firstrow)), if(ne(agg_col_sum, 0), NULL, 1)), or(eq(agg_col_cnt, 0), if(isnull(test.t1.a), NULL, 0)))
-└─HashLeftJoin_10	10000.00	root	inner join, inner:StreamAgg_17
+└─HashLeftJoin_10	10000.00	root	CARTESIAN inner join, inner:StreamAgg_17
   ├─TableReader_13	10000.00	root	data:TableScan_12
   │ └─TableScan_12	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_17	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(1)

@@ -25,13 +25,16 @@ type columnEvaluator struct {
 // run evaluates "Column" expressions.
 // NOTE: It should be called after all the other expressions are evaluated
 //	     since it will change the content of the input Chunk.
-func (e *columnEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chunk) {
+func (e *columnEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chunk) error {
 	for inputIdx, outputIdxes := range e.inputIdxToOutputIdxes {
-		output.SwapColumn(outputIdxes[0], input, inputIdx)
+		if err := output.SwapColumn(outputIdxes[0], input, inputIdx); err != nil {
+			return err
+		}
 		for i, length := 1, len(outputIdxes); i < length; i++ {
 			output.MakeRef(outputIdxes[0], outputIdxes[i])
 		}
 	}
+	return nil
 }
 
 type defaultEvaluator struct {
@@ -117,7 +120,7 @@ func (e *EvaluatorSuite) Run(ctx sessionctx.Context, input, output *chunk.Chunk)
 	}
 
 	if e.columnEvaluator != nil {
-		e.columnEvaluator.run(ctx, input, output)
+		return e.columnEvaluator.run(ctx, input, output)
 	}
 	return nil
 }

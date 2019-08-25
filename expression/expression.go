@@ -36,12 +36,37 @@ const (
 )
 
 // EvalAstExpr evaluates ast expression directly.
-var EvalAstExpr func(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+
+// VecExpr contains all vectorized evaluation methods.
+type VecExpr interface {
+	// VecEvalInt evaluates this expression in a vectorized manner.
+	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalReal evaluates this expression in a vectorized manner.
+	VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalString evaluates this expression in a vectorized manner.
+	VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalDecimal evaluates this expression in a vectorized manner.
+	VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalTime evaluates this expression in a vectorized manner.
+	VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalDuration evaluates this expression in a vectorized manner.
+	VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalJSON evaluates this expression in a vectorized manner.
+	VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+}
 
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
 	goJSON.Marshaler
+	VecExpr
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)

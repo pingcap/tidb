@@ -240,7 +240,7 @@ func (s *testStatisticsSuite) TestMergeCMSketch4IncrementalAnalyze(c *C) {
 		for key, val := range rMap {
 			lMap[key] += val
 		}
-		c.Assert(lSketch.MergeCMSketch4IncrementalAnalyze(rSketch), IsNil)
+		c.Assert(lSketch.MergeCMSketch4IncrementalAnalyze(rSketch, 0), IsNil)
 		avg, err = averageAbsoluteError(lSketch, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)

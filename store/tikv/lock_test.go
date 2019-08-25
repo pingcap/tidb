@@ -109,7 +109,7 @@ func (s *testLockSuite) TestScanLockResolveWithGet(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
-		v, err := txn.Get([]byte{ch})
+		v, err := txn.Get(context.TODO(), []byte{ch})
 		c.Assert(err, IsNil)
 		c.Assert(v, BytesEquals, []byte{ch})
 	}
@@ -158,8 +158,8 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(s.store, ver)
-	m, err := snapshot.BatchGet(keys)
+	snapshot := newTiKVSnapshot(s.store, ver, 0)
+	m, err := snapshot.BatchGet(context.Background(), keys)
 	c.Assert(err, IsNil)
 	c.Assert(len(m), Equals, int('z'-'a'+1))
 	for ch := byte('a'); ch <= byte('z'); ch++ {
@@ -213,20 +213,16 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGet,
-		Get: &kvrpcpb.GetRequest{
-			Key:     key,
-			Version: ver.Ver,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
+		Key:     key,
+		Version: ver.Ver,
+	})
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	cmdGetResp := resp.Get
-	c.Assert(cmdGetResp, NotNil)
-	keyErr := cmdGetResp.GetError()
+	c.Assert(resp.Resp, NotNil)
+	keyErr := resp.Resp.(*kvrpcpb.GetResponse).GetError()
 	c.Assert(keyErr, NotNil)
 	lock, err := extractLockFromKeyErr(keyErr)
 	c.Assert(err, IsNil)
