@@ -137,19 +137,23 @@ func (p *PointGetPlan) ResolveIndices() error {
 	return nil
 }
 
+func (p *PointGetPlan) OutputNames() []*expression.NamingForMySQLProtocol {
+	return p.outputNames
+}
+
 // TryFastPlan tries to use the PointGetPlan for the query.
-func TryFastPlan(ctx sessionctx.Context, node ast.Node) (Plan, []*expression.NamingForMySQLProtocol) {
+func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		fp := tryPointGetPlan(ctx, x)
 		if fp != nil {
 			if checkFastPlanPrivilege(ctx, fp, mysql.SelectPriv) != nil {
-				return nil, nil
+				return nil
 			}
 			if fp.IsTableDual {
 				tableDual := PhysicalTableDual{}
 				tableDual.SetSchema(fp.Schema())
-				return tableDual.Init(ctx, &property.StatsInfo{}), fp.outputNames
+				return tableDual.Init(ctx, &property.StatsInfo{})
 			}
 			if x.LockTp == ast.SelectLockForUpdate {
 				// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
@@ -161,14 +165,14 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (Plan, []*expression.Nam
 					fp.IsForUpdate = true
 				}
 			}
-			return fp, fp.outputNames
+			return fp
 		}
 	case *ast.UpdateStmt:
-		return tryUpdatePointPlan(ctx, x), nil
+		return tryUpdatePointPlan(ctx, x)
 	case *ast.DeleteStmt:
-		return tryDeletePointPlan(ctx, x), nil
+		return tryDeletePointPlan(ctx, x)
 	}
-	return nil, nil
+	return nil
 }
 
 // tryPointGetPlan determine if the SelectStmt can use a PointGetPlan.

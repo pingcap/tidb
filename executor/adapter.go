@@ -64,6 +64,7 @@ type recordSet struct {
 
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
+		// The else branch will be removed after we totally remove the *Name from expression.Column.
 		if len(a.stmt.outputNames) > 0 {
 			a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.outputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 		} else {
@@ -237,11 +238,11 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
 	}
-	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
+	p, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
 	if err != nil {
 		return 0, err
 	}
-	a.outputNames = names
+	a.outputNames = p.OutputNames()
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
 }

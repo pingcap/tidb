@@ -2335,7 +2335,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(ctx, show)
 	}
-	targetPlan, _, err := OptimizeAstNode(ctx, b.ctx, explain.Stmt, b.is)
+	targetPlan, err := OptimizeAstNode(ctx, b.ctx, explain.Stmt, b.is)
 	if err != nil {
 		return nil, err
 	}

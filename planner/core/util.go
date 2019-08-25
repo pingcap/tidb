@@ -113,7 +113,12 @@ func (s *physicalSchemaProducer) SetSchema(schema *expression.Schema) {
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
 type baseSchemaProducer struct {
 	schema *expression.Schema
+	names  []*expression.NamingForMySQLProtocol
 	basePlan
+}
+
+func (s *baseSchemaProducer) OutputNames() []*expression.NamingForMySQLProtocol {
+	return s.names
 }
 
 // Schema implements the Plan.Schema interface.

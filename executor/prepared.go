@@ -274,7 +274,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID
 	}
 	execStmt.BinaryArgs = args
 	is := GetInfoSchema(sctx)
-	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
+	execPlan, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +284,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID
 		Plan:        execPlan,
 		StmtNode:    execStmt,
 		Ctx:         sctx,
-		outputNames: names,
+		outputNames: execPlan.OutputNames(),
 	}
 	if prepared, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		stmt.Text = prepared.Stmt.Text()

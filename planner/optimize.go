@@ -17,7 +17,6 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/cascades"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -27,10 +26,10 @@ import (
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, []*expression.NamingForMySQLProtocol, error) {
-	fp, names := plannercore.TryFastPlan(sctx, node)
+func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
+	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
-		return fp, names, nil
+		return fp, nil
 	}
 
 	// build logical plan
@@ -39,7 +38,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	builder := plannercore.NewPlanBuilder(sctx, is)
 	p, err := builder.Build(ctx, node)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
@@ -49,33 +48,33 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		if err := plannercore.CheckPrivilege(activeRoles, pm, builder.GetVisitInfo()); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 
 	if err := plannercore.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Handle the execute statement.
 	if execPlan, ok := p.(*plannercore.Execute); ok {
 		err := execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		return p, nil, err
+		return p, err
 	}
 
 	// Handle the non-logical plan statement.
 	logic, isLogicalPlan := p.(plannercore.LogicalPlan)
 	if !isLogicalPlan {
-		return p, nil, nil
+		return p, nil
 	}
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if sctx.GetSessionVars().EnableCascadesPlanner {
 		p, err = cascades.FindBestPlan(sctx, logic)
-		return p, nil, err
+		return p, err
 	}
 	p, err = plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
-	return p, nil, err
+	return p, err
 }
 
 func init() {

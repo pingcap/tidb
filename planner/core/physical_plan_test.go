@@ -226,7 +226,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 
 		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
@@ -467,7 +467,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
@@ -541,7 +541,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -598,7 +598,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
@@ -702,7 +702,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		core.Preprocess(se, stmt, s.is)
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -751,7 +751,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
@@ -820,7 +820,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		c.Assert(err, IsNil)
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
 		c.Assert(se.StmtCommit(), IsNil)
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -985,7 +985,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -1213,7 +1213,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(err, IsNil, comment)
 		sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 		sc.IgnoreTruncate = false
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -1284,7 +1284,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		c.Assert(err, IsNil, comment)
 		sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 		sc.IgnoreTruncate = false
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -1321,7 +1321,7 @@ func (s *testPlanSuite) TestRequestTypeSupportedOff(c *C) {
 
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+	p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 	c.Assert(err, IsNil)
 	c.Assert(core.ToString(p), Equals, expect, Commentf("for %s", sql))
 }
@@ -1394,7 +1394,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		c.Assert(err, IsNil)
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
 		c.Assert(se.StmtCommit(), IsNil)
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, tt.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, tt.is)
 		c.Assert(err, IsNil, comment)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
@@ -1425,7 +1425,7 @@ func (s *testPlanSuite) TestDoSubquery(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
@@ -1446,7 +1446,7 @@ func (s *testPlanSuite) TestIndexLookupCartesianJoin(c *C) {
 	sql := "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2"
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+	p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 	c.Assert(err, IsNil)
 	c.Assert(core.ToString(p), Equals, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}")
 	warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -1470,7 +1470,7 @@ func (s *testPlanSuite) TestSemiJoinToInner(c *C) {
 	sql := "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;"
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+	p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 	c.Assert(err, IsNil)
 	c.Assert(core.ToString(p), Equals, "Apply{TableReader(Table(t))->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t3.d,test.t2.g)}->HashAgg")
 }
@@ -1516,7 +1516,7 @@ func (s *testPlanSuite) TestUnmatchedTableInHint(c *C) {
 		se.GetSessionVars().StmtCtx.SetWarnings(nil)
 		stmt, err := s.ParseOneStmt(test.sql, "", "")
 		c.Assert(err, IsNil)
-		_, _, err = planner.Optimize(context.TODO(), se, stmt, s.is)
+		_, err = planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 		if test.warning == "" {
@@ -1570,7 +1570,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		se.GetSessionVars().StmtCtx.SetWarnings(nil)
-		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, test.best)
 
@@ -1642,7 +1642,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		stmt, err := s.ParseOneStmt(test.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, test.best)
 
@@ -1695,9 +1695,9 @@ func (s *testPlanSuite) TestHintAlias(c *C) {
 		stmt2, err := s.ParseOneStmt(tt.sql2, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p1, _, err := planner.Optimize(ctx, se, stmt1, s.is)
+		p1, err := planner.Optimize(ctx, se, stmt1, s.is)
 		c.Assert(err, IsNil)
-		p2, _, err := planner.Optimize(ctx, se, stmt2, s.is)
+		p2, err := planner.Optimize(ctx, se, stmt2, s.is)
 		c.Assert(err, IsNil)
 
 		c.Assert(core.ToString(p1), Equals, core.ToString(p2))

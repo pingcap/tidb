@@ -44,6 +44,8 @@ type Plan interface {
 
 	// property.StatsInfo will return the property.StatsInfo for this plan.
 	statsInfo() *property.StatsInfo
+
+	OutputNames() []*expression.NamingForMySQLProtocol
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
@@ -251,6 +253,10 @@ type basePlan struct {
 	id    int
 	ctx   sessionctx.Context
 	stats *property.StatsInfo
+}
+
+func (p *basePlan) OutputNames() []*expression.NamingForMySQLProtocol {
+	return nil
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {

@@ -596,7 +596,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		id:           v.ExecID,
 		stmt:         v.Stmt,
 		plan:         v.Plan,
-		outputNames:  v.OutputNames,
+		outputNames:  v.OutputNames(),
 	}
 	return e
 }
