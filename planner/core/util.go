@@ -117,6 +117,7 @@ type baseSchemaProducer struct {
 	basePlan
 }
 
+// OutputNames returns the outputting names of each column.
 func (s *baseSchemaProducer) OutputNames() []*expression.NamingForMySQLProtocol {
 	return s.names
 }

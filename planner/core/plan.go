@@ -45,6 +45,7 @@ type Plan interface {
 	// property.StatsInfo will return the property.StatsInfo for this plan.
 	statsInfo() *property.StatsInfo
 
+	// OutputNames returns the outputting names of each column.
 	OutputNames() []*expression.NamingForMySQLProtocol
 }
 
@@ -255,6 +256,7 @@ type basePlan struct {
 	stats *property.StatsInfo
 }
 
+// OutputNames returns the outputting names of each column.
 func (p *basePlan) OutputNames() []*expression.NamingForMySQLProtocol {
 	return nil
 }

@@ -137,6 +137,7 @@ func (p *PointGetPlan) ResolveIndices() error {
 	return nil
 }
 
+// OutputNames returns the outputting names of each column.
 func (p *PointGetPlan) OutputNames() []*expression.NamingForMySQLProtocol {
 	return p.outputNames
 }
