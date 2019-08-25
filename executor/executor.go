@@ -905,7 +905,7 @@ func init() {
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
-			return rows, err
+			return rows, e.err
 		}
 		err = exec.Open(ctx)
 		defer terror.Call(exec.Close)

@@ -24,35 +24,33 @@ type cumeDist struct {
 }
 
 type partialResult4CumeDist struct {
-	curIdx   int
-	lastRank int
-	rows     []chunk.Row
+	partialResult4Rank
+	cum int64
 }
 
 func (r *cumeDist) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4Rank{})
+	return PartialResult(&partialResult4CumeDist{})
 }
 
 func (r *cumeDist) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4Rank)(pr)
-	p.curIdx = 0
-	p.lastRank = 0
-	p.rows = p.rows[:0]
+	p := (*partialResult4CumeDist)(pr)
+	p.partialResult4Rank.reset()
+	p.cum = 0
 }
 
 func (r *cumeDist) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4CumeDist)(pr)
-	p.rows = append(p.rows, rowsInGroup...)
+	p.partialResult4Rank.updatePartialResult(rowsInGroup, false, r.compareRows)
 	return nil
 }
 
 func (r *cumeDist) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CumeDist)(pr)
-	numRows := len(p.rows)
-	for p.lastRank < numRows && r.compareRows(p.rows[p.curIdx], p.rows[p.lastRank]) == 0 {
-		p.lastRank++
+	numRows := int64(len(p.results))
+	for p.cum < numRows && p.results[p.cum] == p.results[p.curIdx] {
+		p.cum++
 	}
 	p.curIdx++
-	chk.AppendFloat64(r.ordinal, float64(p.lastRank)/float64(numRows))
+	chk.AppendFloat64(r.ordinal, float64(p.cum)/float64(numRows))
 	return nil
 }

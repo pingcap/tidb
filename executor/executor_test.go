@@ -4044,6 +4044,16 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 }
 
+func (s *testSuite) TestChangePumpAndDrainer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// change pump or drainer's state need connect to etcd
+	// so will meet error "URL scheme must be http, https, unix, or unixs: /tmp/tidb"
+	err := tk.ExecToErr("change pump to node_state ='paused' for node_id 'pump1'")
+	c.Assert(err, ErrorMatches, "URL scheme must be http, https, unix, or unixs.*")
+	err = tk.ExecToErr("change drainer to node_state ='paused' for node_id 'drainer1'")
+	c.Assert(err, ErrorMatches, "URL scheme must be http, https, unix, or unixs.*")
+}
+
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
