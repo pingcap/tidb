@@ -347,7 +347,7 @@ func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
-		args: aggFuncDesc.Args,
+		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
 	return &varPop4Float64{baseAggFunc: base}
