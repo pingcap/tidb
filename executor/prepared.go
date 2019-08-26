@@ -212,6 +212,7 @@ type ExecuteExec struct {
 	plan          plannercore.Plan
 	id            uint32
 	lowerPriority bool
+	outputNames   []*types.FieldName
 }
 
 // Next implements the Executor Next interface.
@@ -285,10 +286,11 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID
 	}
 
 	stmt := &ExecStmt{
-		InfoSchema: is,
-		Plan:       execPlan,
-		StmtNode:   execStmt,
-		Ctx:        sctx,
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    execStmt,
+		Ctx:         sctx,
+		outputNames: execPlan.OutputNames(),
 	}
 	if prepared, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		stmt.Text = prepared.Stmt.Text()

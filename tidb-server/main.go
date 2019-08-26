@@ -178,15 +178,19 @@ func main() {
 	signal.SetupSignalHandler(serverShutdown)
 	runServer()
 	cleanup()
-	exit()
+	syncLog()
 }
 
 func exit() {
+	syncLog()
+	os.Exit(0)
+}
+
+func syncLog() {
 	if err := log.Sync(); err != nil {
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
 		os.Exit(1)
 	}
-	os.Exit(0)
 }
 
 func setCPUAffinity() {
@@ -345,6 +349,12 @@ func loadConfig() string {
 			return err.Error()
 		}
 		terror.MustNil(err)
+	} else {
+		// configCheck should have the config file specified.
+		if *configCheck {
+			fmt.Fprintln(os.Stderr, "config check failed", errors.New("no config file specified for config-check"))
+			os.Exit(1)
+		}
 	}
 	return ""
 }
