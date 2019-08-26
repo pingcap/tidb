@@ -185,6 +185,26 @@ func (s *testSuite3) TestInsertOnDuplicateKey(c *C) {
 	_, err = tk.Exec(`insert into t1 select a,a from t2 src on duplicate key update a = 100+src.a;`)
 	tk.MustQuery(`select * from t1 order by a;`).Check(testkit.Rows(`2 2`, `101 2`))
 
+	tk.MustExec(`drop table if exists t2;`)
+	tk.MustExec(`create table t2(f1 bigint primary key, f2 bigint);`)
+	tk.MustExec(`insert into t2 values (1, 1);`)
+	for i := 0; i < 3; i++ {
+		_, err = tk.Exec(`insert into t2 (f1, f2) select src.f1 f2, src.f2 f1 from t2 src where src.f2=1 on duplicate key update f1 = 100 + src.f2;`)
+		tk.MustQuery(`select * from t2;`).Check(testkit.Rows(`101 1`))
+	}
+	tk.MustExec(`drop table if exists t2;`)
+	tk.MustExec(`create table t2(f1 bigint primary key, f2 bigint);`)
+	tk.MustExec(`insert into t2 values (1, 1);`)
+	qry := `INSERT INTO t2 (f1, f2) SELECT f2 f1, f1 FROM t2 src ON DUPLICATE KEY UPDATE f1 = 10 + src.f1;`
+	_, err = tk.Exec(qry)
+	tk.MustQuery(`select * from t2;`).Check(testkit.Rows(`11 1`))
+	_, err = tk.Exec(qry)
+	tk.MustQuery(`select * from t2 order by f1 asc;`).Check(testkit.Rows(`11 1`, `1 11`))
+	_, err = tk.Exec(qry)
+	tk.MustQuery(`select * from t2 order by f1 asc;`).Check(testkit.Rows(`11 1`, `21 11`))
+	_, err = tk.Exec(qry)
+	tk.MustQuery(`select * from t2 order by f1 asc;`).Check(testkit.Rows(`31 1`, `21 11`, `1 11`))
+
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(a int primary key, b int);`)
 	tk.MustExec(`insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);`)

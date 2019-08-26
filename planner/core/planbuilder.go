@@ -1816,11 +1816,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
 	for i, selCol := range insertPlan.SelectPlan.Schema().Columns {
 		ordinal := affectedValuesCols[i].Offset
-		schema4NewRow.Columns[ordinal] = &expression.Column{}
-		*schema4NewRow.Columns[ordinal] = *selCol
+		schema4NewRow.Columns[ordinal] = selCol.Clone().(*expression.Column)
+		schema4NewRow.Columns[ordinal].ColName = schema4NewRow.Columns[ordinal].OrigColName
 
-		schema4NewRow.Columns[ordinal].RetType = &types.FieldType{}
-		*schema4NewRow.Columns[ordinal].RetType = affectedValuesCols[i].FieldType
+		schema4NewRow.Columns[ordinal].RetType = affectedValuesCols[i].FieldType.Clone()
+
 	}
 	for i := range schema4NewRow.Columns {
 		if schema4NewRow.Columns[i] == nil {
