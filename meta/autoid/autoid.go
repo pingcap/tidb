@@ -315,11 +315,11 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 
 // NextStep return new auto id step according to previous step and consuming time.
 func NextStep(curStep int64, consumeDur time.Duration) int64 {
-	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("mockAutoIDChange")); ok {
 		if val.(bool) {
-			failpoint.Return(step)
+			return step
 		}
-	})
+	}
 
 	consumeRate := defaultConsumeTime.Seconds() / consumeDur.Seconds()
 	res := int64(float64(curStep) * consumeRate)
@@ -357,6 +357,9 @@ func (alloc *allocator) AllocN(tableID int64, N uint64) ([]int64, error) {
 	if tableID == 0 {
 		return nil, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
+	if N == 0 {
+		return []int64{}, nil
+	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
@@ -367,11 +370,14 @@ func (alloc *allocator) AllocN(tableID int64, N uint64) ([]int64, error) {
 
 func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) {
 	N1 := int64(N)
-	if alloc.base+N1 > alloc.end { // 说明剩余的批量autoID已经不足以支持本次的批量的连续分配
+	// The local rest is not enough for allocN, skip it.
+	if alloc.base+N1 > alloc.end {
 		var newBase, newEnd int64
 		startTime := time.Now()
-		consumeDur := startTime.Sub(alloc.lastAllocTime) // 虽然有一部分被冲掉了，但是目的也是为了放大step
+		// Although it may skip a segment here, we still think it is consumed.
+		consumeDur := startTime.Sub(alloc.lastAllocTime)
 		nextStep := NextStep(alloc.step, consumeDur)
+		// Make sure nextStep is big enough.
 		if nextStep <= N1 {
 			alloc.step = mathutil.MinInt64(N1*2, maxStep)
 		} else {
@@ -380,15 +386,16 @@ func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) 
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
-			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID) //TID也是一种元数据，保存在tikv端
+			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID)
 			if err1 != nil {
 				return err1
 			}
 			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, alloc.step)
-			if tmpStep < N1 { // 剩余的根本不够分配,就免的再去写了，直接err
+			// The global rest is not enough for allocN.
+			if tmpStep < N1 {
 				return ErrAutoincReadFailed
 			}
-			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep) //这边会对TID进行加add step操作，表示批量分配过了
+			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
 			return err1
 		})
 		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -414,13 +421,16 @@ func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) 
 	return resN, nil
 }
 
-func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error) { //signed和unsigned就是max的值不同
+func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error) {
 	N1 := int64(N)
+	// The local rest is not enough for allocN, skip it.
 	if alloc.base+N1 > alloc.end {
 		var newBase, newEnd int64
 		startTime := time.Now()
+		// Although it may skip a segment here, we still think it is consumed.
 		consumeDur := startTime.Sub(alloc.lastAllocTime)
 		nextStep := NextStep(alloc.step, consumeDur)
+		// Make sure nextStep is big enough.
 		if nextStep <= N1 {
 			alloc.step = mathutil.MinInt64(N1*2, maxStep)
 		} else {
@@ -434,6 +444,7 @@ func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error
 				return err1
 			}
 			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(alloc.step)))
+			// The global rest is not enough for allocN.
 			if tmpStep < N1 {
 				return ErrAutoincReadFailed
 			}
@@ -459,7 +470,7 @@ func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error
 	for i := alloc.base + 1; i <= alloc.base+N1; i++ {
 		resN = append(resN, i)
 	}
-	// use uint64 N directly
+	// Use uint64 N directly.
 	alloc.base = int64(uint64(alloc.base) + N)
 	return resN, nil
 }
