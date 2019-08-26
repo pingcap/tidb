@@ -406,11 +406,11 @@ type PhysicalTableDual struct {
 
 	// names is used for OutputNames() method. Dual may be inited when building point get plan.
 	// So it needs to hold names for itself.
-	names []*expression.NamingForMySQLProtocol
+	names []*types.FieldName
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *PhysicalTableDual) OutputNames() []*expression.NamingForMySQLProtocol {
+func (p *PhysicalTableDual) OutputNames() []*types.FieldName {
 	return p.names
 }
 

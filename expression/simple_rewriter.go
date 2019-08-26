@@ -32,7 +32,7 @@ type simpleRewriter struct {
 	schema *Schema
 	err    error
 	ctx    sessionctx.Context
-	names  []*NamingForMySQLProtocol
+	names  []*types.FieldName
 }
 
 // ParseSimpleExprWithTableInfo parses simple expression string to Expression.
@@ -97,7 +97,7 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 }
 
 // RewriteSimpleExprWithNames rewrites simple ast.ExprNode to expression.Expression.
-func RewriteSimpleExprWithNames(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names []*NamingForMySQLProtocol) (Expression, error) {
+func RewriteSimpleExprWithNames(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names []*types.FieldName) (Expression, error) {
 	rewriter := &simpleRewriter{ctx: ctx, schema: schema, names: names}
 	expr.Accept(rewriter)
 	if rewriter.err != nil {
@@ -117,7 +117,7 @@ func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, sche
 }
 
 // FindColName finds the column name from []*namingForMySQLProtocol.
-func FindColName(names []*NamingForMySQLProtocol, astCol *ast.ColumnName) (int, error) {
+func FindColName(names []*types.FieldName, astCol *ast.ColumnName) (int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, name := range names {

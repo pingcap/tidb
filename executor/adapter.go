@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -74,7 +75,7 @@ func (a *recordSet) Fields() []*ast.ResultField {
 	return a.fields
 }
 
-func colNames2ResultFields(schema *expression.Schema, names []*expression.NamingForMySQLProtocol, defaultDB string) []*ast.ResultField {
+func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*ast.ResultField {
 	rfs := make([]*ast.ResultField, 0, schema.Len())
 	defaultDBCIStr := model.NewCIStr(defaultDB)
 	for i := 0; i < schema.Len(); i++ {
@@ -201,7 +202,7 @@ type ExecStmt struct {
 	isSelectForUpdate bool
 	retryCount        uint
 
-	outputNames []*expression.NamingForMySQLProtocol
+	outputNames []*types.FieldName
 }
 
 // OriginText returns original statement as a string.

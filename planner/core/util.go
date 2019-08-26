@@ -16,6 +16,7 @@ package core
 import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/types"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -113,12 +114,12 @@ func (s *physicalSchemaProducer) SetSchema(schema *expression.Schema) {
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
 type baseSchemaProducer struct {
 	schema *expression.Schema
-	names  []*expression.NamingForMySQLProtocol
+	names  []*types.FieldName
 	basePlan
 }
 
 // OutputNames returns the outputting names of each column.
-func (s *baseSchemaProducer) OutputNames() []*expression.NamingForMySQLProtocol {
+func (s *baseSchemaProducer) OutputNames() []*types.FieldName {
 	return s.names
 }
 

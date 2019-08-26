@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -233,26 +232,4 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 // NewSchema returns a schema made by its parameter.
 func NewSchema(cols ...*Column) *Schema {
 	return &Schema{Columns: cols}
-}
-
-// NamingForMySQLProtocol records the names used for mysql protocol.
-type NamingForMySQLProtocol struct {
-	OrigTblName model.CIStr
-	OrigColName model.CIStr
-	DBName      model.CIStr
-	TblName     model.CIStr
-	ColName     model.CIStr
-}
-
-// String implements Stringer interface.
-func (name *NamingForMySQLProtocol) String() string {
-	builder := strings.Builder{}
-	if name.TblName.L != "" {
-		builder.WriteString(name.TblName.L + ".")
-	}
-	if name.DBName.L != "" {
-		builder.WriteString(name.DBName.L + ".")
-	}
-	builder.WriteString(name.ColName.L)
-	return builder.String()
 }

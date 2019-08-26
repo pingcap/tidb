@@ -51,7 +51,7 @@ type PointGetPlan struct {
 	IsTableDual      bool
 	Lock             bool
 	IsForUpdate      bool
-	outputNames      []*expression.NamingForMySQLProtocol
+	outputNames      []*types.FieldName
 }
 
 type nameValuePair struct {
@@ -138,7 +138,7 @@ func (p *PointGetPlan) ResolveIndices() error {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *PointGetPlan) OutputNames() []*expression.NamingForMySQLProtocol {
+func (p *PointGetPlan) OutputNames() []*types.FieldName {
 	return p.outputNames
 }
 
@@ -380,7 +380,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	return nil
 }
 
-func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo, names []*expression.NamingForMySQLProtocol) *PointGetPlan {
+func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
 		basePlan:    newBasePlan(ctx, "Point_Get"),
 		schema:      schema,
@@ -405,9 +405,17 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointGetPlan, chec
 	return nil
 }
 
-func buildSchemaFromFields(dbName model.CIStr, tbl *model.TableInfo, tblName model.CIStr, fields []*ast.SelectField) (*expression.Schema, []*expression.NamingForMySQLProtocol) {
+func buildSchemaFromFields(
+	dbName model.CIStr,
+	tbl *model.TableInfo,
+	tblName model.CIStr,
+	fields []*ast.SelectField,
+) (
+	*expression.Schema,
+	[]*types.FieldName,
+) {
 	columns := make([]*expression.Column, 0, len(tbl.Columns)+1)
-	names := make([]*expression.NamingForMySQLProtocol, 0, len(tbl.Columns)+1)
+	names := make([]*types.FieldName, 0, len(tbl.Columns)+1)
 	if len(fields) > 0 {
 		for _, field := range fields {
 			if field.WildCard != nil {
@@ -415,7 +423,7 @@ func buildSchemaFromFields(dbName model.CIStr, tbl *model.TableInfo, tblName mod
 					return nil, nil
 				}
 				for _, col := range tbl.Columns {
-					names = append(names, &expression.NamingForMySQLProtocol{
+					names = append(names, &types.FieldName{
 						DBName:      dbName,
 						OrigTblName: tbl.Name,
 						TblName:     tblName,
@@ -440,7 +448,7 @@ func buildSchemaFromFields(dbName model.CIStr, tbl *model.TableInfo, tblName mod
 			if field.AsName.L != "" {
 				asName = field.AsName
 			}
-			names = append(names, &expression.NamingForMySQLProtocol{
+			names = append(names, &types.FieldName{
 				DBName:      dbName,
 				OrigTblName: tbl.Name,
 				TblName:     tblName,
@@ -452,7 +460,7 @@ func buildSchemaFromFields(dbName model.CIStr, tbl *model.TableInfo, tblName mod
 	}
 	// fields len is 0 for update and delete.
 	for _, col := range tbl.Columns {
-		names = append(names, &expression.NamingForMySQLProtocol{
+		names = append(names, &types.FieldName{
 			DBName:      dbName,
 			OrigTblName: tbl.Name,
 			TblName:     tblName,
@@ -602,9 +610,9 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 		return nil
 	}
 	if fastSelect.IsTableDual {
-		dual := PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
-		dual.names = fastSelect.outputNames
-		return dual
+		return PhysicalTableDual{
+			names: fastSelect.outputNames,
+		}.Init(ctx, &property.StatsInfo{})
 	}
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true
@@ -673,9 +681,9 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 		return nil
 	}
 	if fastSelect.IsTableDual {
-		dual := PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
-		dual.names = fastSelect.outputNames
-		return dual
+		return PhysicalTableDual{
+			names: fastSelect.outputNames,
+		}.Init(ctx, &property.StatsInfo{})
 	}
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true

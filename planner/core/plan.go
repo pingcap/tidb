@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -46,7 +47,7 @@ type Plan interface {
 	statsInfo() *property.StatsInfo
 
 	// OutputNames returns the outputting names of each column.
-	OutputNames() []*expression.NamingForMySQLProtocol
+	OutputNames() []*types.FieldName
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
@@ -257,7 +258,7 @@ type basePlan struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *basePlan) OutputNames() []*expression.NamingForMySQLProtocol {
+func (p *basePlan) OutputNames() []*types.FieldName {
 	return nil
 }
 
