@@ -66,6 +66,8 @@ const (
 	HintHashAgg = "hash_agg"
 	// HintStreamAgg is hint enforce stream aggregation.
 	HintStreamAgg = "stream_agg"
+	// HintIndex is hint enforce using some indexes.
+	HintIndex = "index"
 )
 
 const (
@@ -166,7 +168,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		case *ast.UnionStmt:
 			p, err = b.buildUnion(ctx, v)
 		case *ast.TableName:
-			p, err = b.buildDataSource(ctx, v)
+			p, err = b.buildDataSource(ctx, v, &x.AsName)
 		default:
 			err = ErrUnsupportedType.GenWithStackByArgs(v)
 		}
@@ -174,10 +176,6 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
-		if ds, ok := p.(*DataSource); ok {
-			ds.TableAsName = &x.AsName
-			ds.setPreferredStoreType(b.TableHints())
-		}
 		for _, col := range p.Schema().Columns {
 			col.OrigTblName = col.TblName
 			if x.AsName.L != "" {
@@ -1970,31 +1968,46 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 }
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
-	var sortMergeTables, INLJTables, hashJoinTables, flashTables []hintTableInfo
-	var preferAggType uint
+	var (
+		sortMergeTables, INLJTables, hashJoinTables, flashTables []hintTableInfo
+		indexHintList                                            []indexHintInfo
+		preferAggType                                            uint
+	)
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
-			sortMergeTables = tableNames2HintTableInfo(hint.Tables)
+			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(hint.Tables)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
-			INLJTables = tableNames2HintTableInfo(hint.Tables)
+			INLJTables = append(INLJTables, tableNames2HintTableInfo(hint.Tables)...)
 		case TiDBHashJoin, HintHJ:
-			hashJoinTables = tableNames2HintTableInfo(hint.Tables)
+			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(hint.Tables)...)
 		case HintHashAgg:
 			preferAggType |= preferHashAgg
 		case HintStreamAgg:
 			preferAggType |= preferStreamAgg
 		case AccessFromFlash:
 			flashTables = tableNames2HintTableInfo(hint.Tables)
+		case HintIndex:
+			if len(hint.Tables) != 0 && len(hint.Indexes) != 0 {
+				indexHintList = append(indexHintList, indexHintInfo{
+					tblName: hint.Tables[0].TableName,
+					indexHint: &ast.IndexHint{
+						IndexNames: hint.Indexes,
+						HintType:   ast.HintUse,
+						HintScope:  ast.HintForScan,
+					},
+				})
+			}
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(flashTables) > 0 || preferAggType != 0 {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList)+len(flashTables) > 0 || preferAggType != 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
+			indexHintList:             indexHintList,
 			preferAggType:             preferAggType,
 			flashTables:               flashTables,
 		})
@@ -2249,7 +2262,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
-func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (LogicalPlan, error) {
+func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	dbName := tn.Schema
 	if dbName.L == "" {
 		dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -2284,7 +2297,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
+	tblName := *asName
+	if tblName.L == "" {
+		tblName = tn.Name
+	}
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, tblName)
 	if err != nil {
 		return nil, err
 	}
@@ -2309,6 +2326,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 
 	ds := DataSource{
 		DBName:              dbName,
+		TableAsName:         asName,
 		table:               tbl,
 		tableInfo:           tableInfo,
 		statisticTable:      statisticTable,

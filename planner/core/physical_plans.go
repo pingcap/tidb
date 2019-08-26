@@ -295,6 +295,9 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
+	// IsPointGetUnion indicates all the children are PointGet and
+	// all of them reference the same table and use the same `unique key`
+	IsPointGetUnion bool
 }
 
 // AggregationType stands for the mode of aggregation plan.

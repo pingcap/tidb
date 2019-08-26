@@ -417,8 +417,8 @@ func (c *RegionCache) GetFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCCon
 // KeyLocation is the region and range that a key is located.
 type KeyLocation struct {
 	Region   RegionVerID
-	StartKey []byte
-	EndKey   []byte
+	StartKey kv.Key
+	EndKey   kv.Key
 }
 
 // Contains checks if key is in [StartKey, EndKey).

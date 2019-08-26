@@ -232,7 +232,8 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 
 func (b *executorBuilder) buildChange(v *plannercore.Change) Executor {
 	return &ChangeExec{
-		ChangeStmt: v.ChangeStmt,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		ChangeStmt:   v.ChangeStmt,
 	}
 }
 
@@ -1300,6 +1301,46 @@ func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Execu
 }
 
 func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executor {
+	if v.IsPointGetUnion {
+		startTS, err := b.getStartTS()
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		children := v.Children()
+		// It's OK to type assert here because `v.IsPointGetUnion == true` only if all children are PointGet
+		pointGet := children[0].(*plannercore.PointGetPlan)
+		e := &BatchPointGetExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			tblInfo:      pointGet.TblInfo,
+			idxInfo:      pointGet.IndexInfo,
+			startTS:      startTS,
+		}
+		if pointGet.IndexInfo != nil {
+			idxVals := make([][]types.Datum, len(children))
+			for i, child := range children {
+				idxVals[i] = child.(*plannercore.PointGetPlan).IndexValues
+			}
+			e.idxVals = idxVals
+		} else {
+			// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
+			handles := make([]int64, 0, len(children))
+			dedup := make(map[int64]struct{}, len(children))
+			for _, child := range children {
+				handle := child.(*plannercore.PointGetPlan).Handle
+				if _, found := dedup[handle]; found {
+					continue
+				}
+				dedup[handle] = struct{}{}
+				handles = append(handles, handle)
+			}
+			e.handles = handles
+		}
+		e.base().initCap = len(children)
+		e.base().maxChunkSize = len(children)
+		return e
+	}
+
 	childExecs := make([]Executor, len(v.Children()))
 	for i, child := range v.Children() {
 		childExecs[i] = b.build(child)
@@ -1890,7 +1931,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	ret.ranges = is.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
+	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	return ret
 }
 
@@ -1969,7 +2010,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	ret.ranges = is.Ranges
 	executorCounterIndexLookUpExecutor.Inc()
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
+	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	return ret
 }

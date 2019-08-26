@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -52,17 +53,17 @@ func (p *mockVecPlusIntBuiltinFunc) releaseBuf(buf *chunk.Column) {
 	}
 }
 
-func (p *mockVecPlusIntBuiltinFunc) vecEval(input *chunk.Chunk, result *chunk.Column) error {
+func (p *mockVecPlusIntBuiltinFunc) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := p.allocBuf(n)
 	if err != nil {
 		return err
 	}
 	defer p.releaseBuf(buf)
-	if err := p.args[0].VecEval(p.ctx, input, result); err != nil {
+	if err := p.args[0].VecEvalInt(p.ctx, input, result); err != nil {
 		return err
 	}
-	if err := p.args[1].VecEval(p.ctx, input, buf); err != nil {
+	if err := p.args[1].VecEvalInt(p.ctx, input, buf); err != nil {
 		return err
 	}
 	dst64s := result.Int64s()
@@ -98,14 +99,14 @@ func genMockVecPlusIntBuiltinFunc() (*mockVecPlusIntBuiltinFunc, *chunk.Chunk, *
 func (s *testEvaluatorSuite) TestMockVecPlusInt(c *C) {
 	plus, input, buf := genMockVecPlusIntBuiltinFunc()
 	plus.enableAlloc = false
-	c.Assert(plus.vecEval(input, buf), IsNil)
+	c.Assert(plus.vecEvalInt(input, buf), IsNil)
 	for i := 0; i < 1024; i++ {
 		c.Assert(buf.IsNull(i), IsFalse)
 		c.Assert(buf.GetInt64(i), Equals, int64(i*2))
 	}
 
 	plus.enableAlloc = true
-	c.Assert(plus.vecEval(input, buf), IsNil)
+	c.Assert(plus.vecEvalInt(input, buf), IsNil)
 	for i := 0; i < 1024; i++ {
 		c.Assert(buf.IsNull(i), IsFalse)
 		c.Assert(buf.GetInt64(i), Equals, int64(i*2))
@@ -121,7 +122,7 @@ func (s *testEvaluatorSuite) TestMockVecPlusIntParallel(c *C) {
 		go func() {
 			result := buf.CopyConstruct(nil)
 			for i := 0; i < 200; i++ {
-				c.Assert(plus.vecEval(input, result), IsNil)
+				c.Assert(plus.vecEvalInt(input, result), IsNil)
 				for i := 0; i < 1024; i++ {
 					c.Assert(result.IsNull(i), IsFalse)
 					c.Assert(result.GetInt64(i), Equals, int64(i*2))
@@ -162,7 +163,7 @@ func BenchmarkPlusIntBufAllocator(b *testing.B) {
 			plus.enableAlloc = enable[i]
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if err := plus.vecEval(input, buf); err != nil {
+				if err := plus.vecEvalInt(input, buf); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -170,11 +171,130 @@ func BenchmarkPlusIntBufAllocator(b *testing.B) {
 	}
 }
 
-type mockRowBuiltinDouble struct {
+type mockBuiltinDouble struct {
 	baseBuiltinFunc
+
+	evalType  types.EvalType
+	enableVec bool
 }
 
-func (p *mockRowBuiltinDouble) evalInt(row chunk.Row) (int64, bool, error) {
+func (p *mockBuiltinDouble) vectorized() bool {
+	return p.enableVec
+}
+
+func (p *mockBuiltinDouble) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := p.args[0].VecEvalInt(p.ctx, input, result); err != nil {
+		return err
+	}
+	i64s := result.Int64s()
+	for i := range i64s {
+		i64s[i] <<= 1
+	}
+	return nil
+}
+
+func (p *mockBuiltinDouble) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := p.args[0].VecEvalReal(p.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := range f64s {
+		f64s[i] *= 2
+	}
+	return nil
+}
+
+func (p *mockBuiltinDouble) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	var buf *chunk.Column
+	var err error
+	if buf, err = p.baseBuiltinFunc.get(p.evalType, input.NumRows()); err != nil {
+		return err
+	}
+	if err := p.args[0].VecEvalString(p.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(input.NumRows())
+	for i := 0; i < input.NumRows(); i++ {
+		str := buf.GetString(i)
+		result.AppendString(str + str)
+	}
+	p.baseBuiltinFunc.put(buf)
+	return nil
+}
+
+func (p *mockBuiltinDouble) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := p.args[0].VecEvalDecimal(p.ctx, input, result); err != nil {
+		return err
+	}
+	ds := result.Decimals()
+	for i := range ds {
+		r := new(types.MyDecimal)
+		if err := types.DecimalAdd(&ds[i], &ds[i], r); err != nil {
+			return err
+		}
+		ds[i] = *r
+	}
+	return nil
+}
+
+func (p *mockBuiltinDouble) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	if err := p.args[0].VecEvalTime(p.ctx, input, result); err != nil {
+		return err
+	}
+	ts := result.Times()
+	for i := range ts {
+		d, err := ts[i].ConvertToDuration()
+		if err != nil {
+			return err
+		}
+		if ts[i], err = ts[i].Add(p.ctx.GetSessionVars().StmtCtx, d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *mockBuiltinDouble) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	if err := p.args[0].VecEvalDuration(p.ctx, input, result); err != nil {
+		return err
+	}
+	ds := result.GoDurations()
+	for i := range ds {
+		ds[i] *= 2
+	}
+	return nil
+}
+
+func (p *mockBuiltinDouble) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+	var buf *chunk.Column
+	var err error
+	if buf, err = p.baseBuiltinFunc.get(p.evalType, input.NumRows()); err != nil {
+		return err
+	}
+	if err := p.args[0].VecEvalJSON(p.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(input.NumRows())
+	for i := 0; i < input.NumRows(); i++ {
+		j := buf.GetJSON(i)
+		path, err := json.ParseJSONPathExpr("$.key")
+		if err != nil {
+			return err
+		}
+		ret, ok := j.Extract([]json.PathExpression{path})
+		if !ok {
+			return errors.Errorf("path not found")
+		}
+		if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, 2*ret.GetInt64()))); err != nil {
+			return err
+		}
+		result.AppendJSON(j)
+	}
+	p.baseBuiltinFunc.put(buf)
+	return nil
+}
+
+func (p *mockBuiltinDouble) evalInt(row chunk.Row) (int64, bool, error) {
 	v, isNull, err := p.args[0].EvalInt(p.ctx, row)
 	if err != nil {
 		return 0, false, err
@@ -182,7 +302,7 @@ func (p *mockRowBuiltinDouble) evalInt(row chunk.Row) (int64, bool, error) {
 	return v * 2, isNull, nil
 }
 
-func (p *mockRowBuiltinDouble) evalReal(row chunk.Row) (float64, bool, error) {
+func (p *mockBuiltinDouble) evalReal(row chunk.Row) (float64, bool, error) {
 	v, isNull, err := p.args[0].EvalReal(p.ctx, row)
 	if err != nil {
 		return 0, false, err
@@ -190,7 +310,7 @@ func (p *mockRowBuiltinDouble) evalReal(row chunk.Row) (float64, bool, error) {
 	return v * 2, isNull, nil
 }
 
-func (p *mockRowBuiltinDouble) evalString(row chunk.Row) (string, bool, error) {
+func (p *mockBuiltinDouble) evalString(row chunk.Row) (string, bool, error) {
 	v, isNull, err := p.args[0].EvalString(p.ctx, row)
 	if err != nil {
 		return "", false, err
@@ -198,7 +318,7 @@ func (p *mockRowBuiltinDouble) evalString(row chunk.Row) (string, bool, error) {
 	return v + v, isNull, nil
 }
 
-func (p *mockRowBuiltinDouble) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
+func (p *mockBuiltinDouble) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	v, isNull, err := p.args[0].EvalDecimal(p.ctx, row)
 	if err != nil {
 		return nil, false, err
@@ -210,7 +330,7 @@ func (p *mockRowBuiltinDouble) evalDecimal(row chunk.Row) (*types.MyDecimal, boo
 	return r, isNull, nil
 }
 
-func (p *mockRowBuiltinDouble) evalTime(row chunk.Row) (types.Time, bool, error) {
+func (p *mockBuiltinDouble) evalTime(row chunk.Row) (types.Time, bool, error) {
 	v, isNull, err := p.args[0].EvalTime(p.ctx, row)
 	if err != nil {
 		return types.Time{}, false, err
@@ -223,7 +343,7 @@ func (p *mockRowBuiltinDouble) evalTime(row chunk.Row) (types.Time, bool, error)
 	return v, isNull, err
 }
 
-func (p *mockRowBuiltinDouble) evalDuration(row chunk.Row) (types.Duration, bool, error) {
+func (p *mockBuiltinDouble) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	v, isNull, err := p.args[0].EvalDuration(p.ctx, row)
 	if err != nil {
 		return types.Duration{}, false, err
@@ -232,7 +352,7 @@ func (p *mockRowBuiltinDouble) evalDuration(row chunk.Row) (types.Duration, bool
 	return v, isNull, err
 }
 
-func (p *mockRowBuiltinDouble) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+func (p *mockBuiltinDouble) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
 	j, isNull, err := p.args[0].EvalJSON(p.ctx, row)
 	if err != nil {
 		return json.BinaryJSON{}, false, err
@@ -274,14 +394,14 @@ func convertETType(eType types.EvalType) (mysqlType byte) {
 	return
 }
 
-func genMockRowDouble(eType types.EvalType) (builtinFunc, *chunk.Chunk, *chunk.Column, error) {
+func genMockRowDouble(eType types.EvalType, enableVec bool) (builtinFunc, *chunk.Chunk, *chunk.Column, error) {
 	mysqlType := convertETType(eType)
 	tp := types.NewFieldType(mysqlType)
 	col1 := newColumn(1)
 	col1.Index = 0
 	col1.RetType = tp
 	bf := newBaseBuiltinFuncWithTp(mock.NewContext(), []Expression{col1}, eType, eType)
-	rowDouble := &mockRowBuiltinDouble{bf}
+	rowDouble := &mockBuiltinDouble{bf, eType, enableVec}
 	input := chunk.New([]*types.FieldType{tp}, 1024, 1024)
 	buf := chunk.NewColumn(types.NewFieldType(convertETType(eType)), 1024)
 	for i := 0; i < 1024; i++ {
@@ -311,7 +431,7 @@ func genMockRowDouble(eType types.EvalType) (builtinFunc, *chunk.Chunk, *chunk.C
 			input.AppendTime(0, types.Time{Time: t, Type: mysqlType})
 		}
 	}
-	return &vecRowConverter{rowDouble}, input, buf, nil
+	return newVecRowConverter(rowDouble), input, buf, nil
 }
 
 func (s *testEvaluatorSuite) checkVecEval(c *C, eType types.EvalType, sel []int, result *chunk.Column) {
@@ -376,13 +496,33 @@ func (s *testEvaluatorSuite) checkVecEval(c *C, eType types.EvalType, sel []int,
 	}
 }
 
+func vecEvalType(f builtinFunc, eType types.EvalType, input *chunk.Chunk, result *chunk.Column) error {
+	switch eType {
+	case types.ETInt:
+		return f.vecEvalInt(input, result)
+	case types.ETReal:
+		return f.vecEvalReal(input, result)
+	case types.ETDecimal:
+		return f.vecEvalDecimal(input, result)
+	case types.ETDuration:
+		return f.vecEvalDuration(input, result)
+	case types.ETString:
+		return f.vecEvalString(input, result)
+	case types.ETDatetime:
+		return f.vecEvalTime(input, result)
+	case types.ETJson:
+		return f.vecEvalJSON(input, result)
+	}
+	panic("not implement")
+}
+
 func (s *testEvaluatorSuite) TestDoubleRow2Vec(c *C) {
 	defer testleak.AfterTest(c)()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
-		rowDouble, input, result, err := genMockRowDouble(eType)
+		rowDouble, input, result, err := genMockRowDouble(eType, false)
 		c.Assert(err, IsNil)
-		c.Assert(rowDouble.vecEval(input, result), IsNil)
+		c.Assert(vecEvalType(rowDouble, eType, input, result), IsNil)
 		s.checkVecEval(c, eType, nil, result)
 
 		sel := []int{0}
@@ -395,9 +535,163 @@ func (s *testEvaluatorSuite) TestDoubleRow2Vec(c *C) {
 			sel = append(sel, end+rand.Intn(gap-1)+1)
 		}
 		input.SetSel(sel)
-		c.Assert(rowDouble.vecEval(input, result), IsNil)
+		c.Assert(vecEvalType(rowDouble, eType, input, result), IsNil)
 
 		s.checkVecEval(c, eType, sel, result)
+	}
+}
+
+func (s *testEvaluatorSuite) TestDoubleVec2Row(c *C) {
+	defer testleak.AfterTest(c)()
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
+	for _, eType := range eTypes {
+		rowDouble, input, result, err := genMockRowDouble(eType, true)
+		result.Reset()
+		c.Assert(err, IsNil)
+		it := chunk.NewIterator4Chunk(input)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			switch eType {
+			case types.ETInt:
+				v, _, err := rowDouble.evalInt(row)
+				c.Assert(err, IsNil)
+				result.AppendInt64(v)
+			case types.ETReal:
+				v, _, err := rowDouble.evalReal(row)
+				c.Assert(err, IsNil)
+				result.AppendFloat64(v)
+			case types.ETDecimal:
+				v, _, err := rowDouble.evalDecimal(row)
+				c.Assert(err, IsNil)
+				result.AppendMyDecimal(v)
+			case types.ETDuration:
+				v, _, err := rowDouble.evalDuration(row)
+				c.Assert(err, IsNil)
+				result.AppendDuration(v)
+			case types.ETString:
+				v, _, err := rowDouble.evalString(row)
+				c.Assert(err, IsNil)
+				result.AppendString(v)
+			case types.ETDatetime:
+				v, _, err := rowDouble.evalTime(row)
+				c.Assert(err, IsNil)
+				result.AppendTime(v)
+			case types.ETJson:
+				v, _, err := rowDouble.evalJSON(row)
+				c.Assert(err, IsNil)
+				result.AppendJSON(v)
+			}
+		}
+		s.checkVecEval(c, eType, nil, result)
+	}
+}
+
+func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, result *chunk.Column, rowDouble builtinFunc) {
+	switch eType {
+	case types.ETInt:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalInt(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendInt64(v)
+				}
+			}
+		}
+	case types.ETReal:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalReal(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendFloat64(v)
+				}
+			}
+		}
+	case types.ETDecimal:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalDecimal(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendMyDecimal(v)
+				}
+			}
+		}
+	case types.ETDuration:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalDuration(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendDuration(v)
+				}
+			}
+		}
+	case types.ETString:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalString(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendString(v)
+				}
+			}
+		}
+	case types.ETDatetime:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalTime(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendTime(v)
+				}
+			}
+		}
+	case types.ETJson:
+		for i := 0; i < b.N; i++ {
+			result.Reset()
+			for r := it.Begin(); r != it.End(); r = it.Next() {
+				v, isNull, err := rowDouble.evalJSON(r)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendJSON(v)
+				}
+			}
+		}
 	}
 }
 
@@ -406,114 +700,24 @@ func BenchmarkMockDoubleRow(b *testing.B) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for i, eType := range eTypes {
 		b.Run(typeNames[i], func(b *testing.B) {
-			rowDouble, input, result, _ := genMockRowDouble(eType)
+			rowDouble, input, result, _ := genMockRowDouble(eType, false)
 			it := chunk.NewIterator4Chunk(input)
 			b.ResetTimer()
-			switch eType {
-			case types.ETInt:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalInt(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendInt64(v)
-						}
-					}
-				}
-			case types.ETReal:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalReal(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendFloat64(v)
-						}
-					}
-				}
-			case types.ETDecimal:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalDecimal(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendMyDecimal(v)
-						}
-					}
-				}
-			case types.ETDuration:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalDuration(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendDuration(v)
-						}
-					}
-				}
-			case types.ETString:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalString(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendString(v)
-						}
-					}
-				}
-			case types.ETDatetime:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalTime(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendTime(v)
-						}
-					}
-				}
-			case types.ETJson:
-				for i := 0; i < b.N; i++ {
-					result.Reset()
-					for r := it.Begin(); r != it.End(); r = it.Next() {
-						v, isNull, err := rowDouble.evalJSON(r)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if isNull {
-							result.AppendNull()
-						} else {
-							result.AppendJSON(v)
-						}
-					}
+			evalRows(b, it, eType, result, rowDouble)
+		})
+	}
+}
+
+func BenchmarkMockDoubleVec(b *testing.B) {
+	typeNames := []string{"Int", "Real", "Decimal", "Duration", "String", "Datetime", "JSON"}
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
+	for i, eType := range eTypes {
+		b.Run(typeNames[i], func(b *testing.B) {
+			rowDouble, input, result, _ := genMockRowDouble(eType, true)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := vecEvalType(rowDouble, eType, input, result); err != nil {
+					b.Fatal(err)
 				}
 			}
 		})
@@ -525,14 +729,26 @@ func BenchmarkMockDoubleRow2Vec(b *testing.B) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for i, eType := range eTypes {
 		b.Run(typeNames[i], func(b *testing.B) {
-			rowDouble, input, result, _ := genMockRowDouble(eType)
+			rowDouble, input, result, _ := genMockRowDouble(eType, false)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				err := rowDouble.vecEval(input, result)
-				if err != nil {
+				if err := vecEvalType(rowDouble, eType, input, result); err != nil {
 					b.Fatal(err)
 				}
 			}
+		})
+	}
+}
+
+func BenchmarkMockDoubleVec2Row(b *testing.B) {
+	typeNames := []string{"Int", "Real", "Decimal", "Duration", "String", "Datetime", "JSON"}
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
+	for i, eType := range eTypes {
+		b.Run(typeNames[i], func(b *testing.B) {
+			rowDouble, input, result, _ := genMockRowDouble(eType, true)
+			it := chunk.NewIterator4Chunk(input)
+			b.ResetTimer()
+			evalRows(b, it, eType, result, rowDouble)
 		})
 	}
 }
