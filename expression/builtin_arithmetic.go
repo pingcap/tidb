@@ -90,10 +90,10 @@ func setFlenDecimal4Int(retTp, a, b *types.FieldType) {
 
 // setFlenDecimal4RealOrDecimal is called to set proper `Flen` and `Decimal` of return
 // type according to the two input parameter's types.
-func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool, isMultipy bool) {
+func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool, isMultiply bool) {
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
 		retTp.Decimal = a.Decimal + b.Decimal
-		if !isMultipy {
+		if !isMultiply {
 			retTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 		}
 		if !isReal && retTp.Decimal > mysql.MaxDecimalScale {
@@ -104,7 +104,7 @@ func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool, isM
 			return
 		}
 		digitsInt := mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal)
-		if isMultipy {
+		if isMultiply {
 			digitsInt = a.Flen - a.Decimal + b.Flen - b.Decimal
 		}
 		retTp.Flen = digitsInt + retTp.Decimal + 3
