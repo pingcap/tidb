@@ -57,6 +57,9 @@ type Allocator interface {
 	End() int64
 	// NextGlobalAutoID returns the next global autoID.
 	NextGlobalAutoID(tableID int64) (int64, error)
+	// AllocN allocates N consecutive autoID for table with tableID. It is used to insert multiple
+	// rows in a statement, cause JDBC will presume the id of these rows are consecutive.
+	AllocN(tableID int64, N uint64) ([]int64, error)
 }
 
 type allocator struct {
@@ -347,4 +350,116 @@ var localSchemaID = int64(math.MaxInt64)
 // GenLocalSchemaID generates a local schema ID.
 func GenLocalSchemaID() int64 {
 	return atomic.AddInt64(&localSchemaID, -1)
+}
+
+// AllocN implements autoid.Allocator Alloc interface.
+func (alloc *allocator) AllocN(tableID int64, N uint64) ([]int64, error) {
+	if tableID == 0 {
+		return nil, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
+	}
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+	if alloc.isUnsigned {
+		return alloc.allocN4Unsigned(tableID, N)
+	}
+	return alloc.allocN4Signed(tableID, N)
+}
+
+func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) {
+	N1 := int64(N)
+	if alloc.base+N1 > alloc.end { // 说明剩余的批量autoID已经不足以支持本次的批量的连续分配
+		var newBase, newEnd int64
+		startTime := time.Now()
+		consumeDur := startTime.Sub(alloc.lastAllocTime) // 虽然有一部分被冲掉了，但是目的也是为了放大step
+		nextStep := NextStep(alloc.step, consumeDur)
+		if nextStep <= N1 {
+			alloc.step = mathutil.MinInt64(N1*2, maxStep)
+		} else {
+			alloc.step = nextStep
+		}
+		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
+			var err1 error
+			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID) //TID也是一种元数据，保存在tikv端
+			if err1 != nil {
+				return err1
+			}
+			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, alloc.step)
+			if tmpStep < N1 { // 剩余的根本不够分配,就免的再去写了，直接err
+				return ErrAutoincReadFailed
+			}
+			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep) //这边会对TID进行加add step操作，表示批量分配过了
+			return err1
+		})
+		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		if err != nil {
+			return nil, err
+		}
+		alloc.lastAllocTime = time.Now()
+		if newBase == math.MaxInt64 {
+			return nil, ErrAutoincReadFailed
+		}
+		alloc.base, alloc.end = newBase, newEnd
+	}
+	logutil.BgLogger().Debug("alloc N signed ID",
+		zap.Uint64("from ID", uint64(alloc.base)),
+		zap.Uint64("to ID", uint64(alloc.base+N1)),
+		zap.Int64("table ID", tableID),
+		zap.Int64("database ID", alloc.dbID))
+	resN := make([]int64, 0, N1)
+	for i := alloc.base + 1; i <= alloc.base+N1; i++ {
+		resN = append(resN, i)
+	}
+	alloc.base += N1
+	return resN, nil
+}
+
+func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error) { //signed和unsigned就是max的值不同
+	N1 := int64(N)
+	if alloc.base+N1 > alloc.end {
+		var newBase, newEnd int64
+		startTime := time.Now()
+		consumeDur := startTime.Sub(alloc.lastAllocTime)
+		nextStep := NextStep(alloc.step, consumeDur)
+		if nextStep <= N1 {
+			alloc.step = mathutil.MinInt64(N1*2, maxStep)
+		} else {
+			alloc.step = nextStep
+		}
+		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
+			var err1 error
+			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID)
+			if err1 != nil {
+				return err1
+			}
+			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(alloc.step)))
+			if tmpStep < N1 {
+				return ErrAutoincReadFailed
+			}
+			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
+			return err1
+		})
+		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		if err != nil {
+			return nil, err
+		}
+		alloc.lastAllocTime = time.Now()
+		if uint64(newBase) == math.MaxUint64 {
+			return nil, ErrAutoincReadFailed
+		}
+		alloc.base, alloc.end = newBase, newEnd
+	}
+	logutil.BgLogger().Debug("alloc unsigned ID",
+		zap.Uint64(" from ID", uint64(alloc.base)),
+		zap.Uint64("to ID", uint64(alloc.base+N1)),
+		zap.Int64("table ID", tableID),
+		zap.Int64("database ID", alloc.dbID))
+	resN := make([]int64, 0, N1)
+	for i := alloc.base + 1; i <= alloc.base+N1; i++ {
+		resN = append(resN, i)
+	}
+	// use uint64 N directly
+	alloc.base = int64(uint64(alloc.base) + N)
+	return resN, nil
 }
