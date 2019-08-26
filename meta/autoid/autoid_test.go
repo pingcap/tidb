@@ -311,8 +311,8 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	idN, err := alloc.AllocN(4, 2)
 	c.Assert(err, IsNil)
 	c.Assert(len(idN), Equals, 2)
-	c.Assert(idN[0], Equals, int64(2))
-	c.Assert(idN[1], Equals, int64(3))
+	c.Assert(idN[0], Equals, int64(1))
+	c.Assert(idN[1], Equals, int64(2))
 
 	err = alloc.Rebase(4, int64(500), true)
 	c.Assert(err, IsNil)
