@@ -8186,6 +8186,10 @@ TraceableStmt:
 |	ReplaceIntoStmt
 |	UnionStmt
 |	LoadDataStmt
+|	BeginTransactionStmt
+|	CommitStmt
+|	RollbackStmt
+|	SetStmt
 
 ExplainableStmt:
 	SelectStmt
