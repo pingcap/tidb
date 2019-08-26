@@ -435,7 +435,7 @@ func (*testExpressionSuite) TestVectorizedConstant(c *C) {
 		}
 		col := chunk.NewColumn(newIntFieldType(), 1024)
 		ctx := mock.NewContext()
-		c.Assert(cst.VecEval(ctx, chk, col), IsNil)
+		c.Assert(cst.VecEvalInt(ctx, chk, col), IsNil)
 		i64s := col.Int64s()
 		c.Assert(len(i64s), Equals, 1024)
 		for _, v := range i64s {
@@ -445,7 +445,7 @@ func (*testExpressionSuite) TestVectorizedConstant(c *C) {
 		// fixed-length type with Sel
 		sel := []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}
 		chk.SetSel(sel)
-		c.Assert(cst.VecEval(ctx, chk, col), IsNil)
+		c.Assert(cst.VecEvalInt(ctx, chk, col), IsNil)
 		i64s = col.Int64s()
 		for i := range sel {
 			c.Assert(i64s[i], Equals, int64(2333))
@@ -464,7 +464,7 @@ func (*testExpressionSuite) TestVectorizedConstant(c *C) {
 		chk.SetSel(nil)
 		col := chunk.NewColumn(newStringFieldType(), 1024)
 		ctx := mock.NewContext()
-		c.Assert(cst.VecEval(ctx, chk, col), IsNil)
+		c.Assert(cst.VecEvalString(ctx, chk, col), IsNil)
 		for i := 0; i < 1024; i++ {
 			c.Assert(col.GetString(i), Equals, "hello")
 		}
@@ -472,7 +472,7 @@ func (*testExpressionSuite) TestVectorizedConstant(c *C) {
 		// var-length type with Sel
 		sel := []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}
 		chk.SetSel(sel)
-		c.Assert(cst.VecEval(ctx, chk, col), IsNil)
+		c.Assert(cst.VecEvalString(ctx, chk, col), IsNil)
 		for i := range sel {
 			c.Assert(col.GetString(i), Equals, "hello")
 		}

@@ -96,7 +96,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err := funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	intSig, ok := bf.(*builtinArithmeticPlusIntSig)
+	intSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusIntSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(intSig, NotNil)
 
@@ -111,7 +111,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok := bf.(*builtinArithmeticPlusRealSig)
+	realSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -126,7 +126,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*builtinArithmeticPlusRealSig)
+	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -141,7 +141,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*builtinArithmeticPlusRealSig)
+	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -158,7 +158,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	intSig, ok = bf.(*builtinArithmeticPlusIntSig)
+	intSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusIntSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(intSig, NotNil)
 
@@ -176,7 +176,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err := funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	intSig, ok := bf.(*builtinArithmeticMinusIntSig)
+	intSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusIntSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(intSig, NotNil)
 
@@ -191,7 +191,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok := bf.(*builtinArithmeticMinusRealSig)
+	realSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -206,7 +206,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
+	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -221,7 +221,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
+	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -236,7 +236,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
+	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -440,6 +440,14 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 		{
 			args:   []interface{}{int64(-9223372036854775808), float64(-1)},
 			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(-9223372036854775808 DIV -1\\)'"},
+		},
+		{
+			args:   []interface{}{uint64(1), float64(-2)},
+			expect: []interface{}{0, nil},
+		},
+		{
+			args:   []interface{}{uint64(1), float64(-1)},
+			expect: []interface{}{nil, "*BIGINT UNSIGNED value is out of range in '\\(1 DIV -1\\)'"},
 		},
 	}
 
