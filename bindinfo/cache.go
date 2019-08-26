@@ -16,7 +16,6 @@ package bindinfo
 import (
 	"unsafe"
 
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -34,7 +33,8 @@ const (
 // BindMeta stores the basic bind info and bindSql astNode.
 type BindMeta struct {
 	*BindRecord
-	Ast ast.StmtNode //ast will be used to do query sql bind check
+	// HintSet stores the set of hints of binding sql.
+	*HintsSet
 }
 
 // cache is a k-v map, key is original sql, value is a slice of BindMeta.
