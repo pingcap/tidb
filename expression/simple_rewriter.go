@@ -32,6 +32,7 @@ type simpleRewriter struct {
 	schema *Schema
 	err    error
 	ctx    sessionctx.Context
+	names  []*types.FieldName
 }
 
 // ParseSimpleExprWithTableInfo parses simple expression string to Expression.
@@ -95,6 +96,16 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 	return exprs, nil
 }
 
+// RewriteSimpleExprWithNames rewrites simple ast.ExprNode to expression.Expression.
+func RewriteSimpleExprWithNames(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names []*types.FieldName) (Expression, error) {
+	rewriter := &simpleRewriter{ctx: ctx, schema: schema, names: names}
+	expr.Accept(rewriter)
+	if rewriter.err != nil {
+		return nil, rewriter.err
+	}
+	return rewriter.pop(), nil
+}
+
 // RewriteSimpleExprWithSchema rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema) (Expression, error) {
 	rewriter := &simpleRewriter{ctx: ctx, schema: schema}
@@ -105,7 +116,32 @@ func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, sche
 	return rewriter.pop(), nil
 }
 
+// FindColName finds the column name from []*namingForMySQLProtocol.
+func FindColName(names []*types.FieldName, astCol *ast.ColumnName) (int, error) {
+	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
+	idx := -1
+	for i, name := range names {
+		if (dbName.L == "" || dbName.L == name.DBName.L) &&
+			(tblName.L == "" || tblName.L == name.TblName.L) &&
+			(colName.L == name.ColName.L) {
+			if idx == -1 {
+				idx = i
+			} else {
+				return -1, errNonUniq.GenWithStackByArgs(name.String(), "field list")
+			}
+		}
+	}
+	return idx, nil
+}
+
 func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
+	if sr.names != nil {
+		idx, err := FindColName(sr.names, nodeColName.Name)
+		if idx >= 0 && err == nil {
+			return sr.schema.Columns[idx], nil
+		}
+		return nil, errBadField.GenWithStackByArgs(nodeColName.Name.Name.O, "expression")
+	}
 	col, err := sr.schema.FindColumn(nodeColName.Name)
 	if col != nil && err == nil {
 		return col, nil
