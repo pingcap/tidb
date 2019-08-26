@@ -3414,6 +3414,10 @@ func (s *testParserSuite) TestExecute(c *C) {
 
 func (s *testParserSuite) TestTrace(c *C) {
 	table := []testCase{
+		{"trace begin", true, "TRACE START TRANSACTION"},
+		{"trace commit", true, "TRACE COMMIT"},
+		{"trace rollback", true, "TRACE ROLLBACK"},
+		{"trace set a = 1", true, "TRACE SET @@SESSION.`a`=1"},
 		{"trace select c1 from t1", true, "TRACE SELECT `c1` FROM `t1`"},
 		{"trace delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true, "TRACE DELETE `t1`,`t2` FROM (`t1` JOIN `t2`) JOIN `t3` WHERE `t1`.`id`=`t2`.`id` AND `t2`.`id`=`t3`.`id`"},
 		{"trace insert into t values (1), (2), (3)", true, "TRACE INSERT INTO `t` VALUES (1),(2),(3)"},
