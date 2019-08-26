@@ -54,37 +54,54 @@ func (a *arena) getFrom(addr arenaAddr) []byte {
 }
 
 func (a *arena) alloc(size int) (arenaAddr, []byte) {
-	if size > a.blockSize {
+	if size >= maxBlockSize {
 		// Use a separate block to store entry which size larger than specified block size.
 		blk := newArenaBlock(size)
-		addr := newArenaAddr(len(a.blocks), 0)
+		blk.length = size
 		a.blocks = append(a.blocks, blk)
+
+		addr := newArenaAddr(len(a.blocks)-1, 0)
 		return addr, blk.buf
 	}
 
-	for {
-		block := &a.blocks[a.availIdx]
-		blockOffset := block.alloc(size)
-		if blockOffset != nullBlockOffset {
-			addr := newArenaAddr(a.availIdx, blockOffset)
-			data := block.buf[blockOffset : int(blockOffset)+size]
+	for i := a.availIdx; i < len(a.blocks); i++ {
+		addr, data := a.allocInBlock(i, size)
+		if !addr.isNull() {
 			return addr, data
 		}
-
-		blockSize := a.blockSize << 1
-		if blockSize <= maxBlockSize {
-			a.blockSize = blockSize
-		}
-		a.blocks = append(a.blocks, newArenaBlock(a.blockSize))
-		a.availIdx = int(uint32(len(a.blocks) - 1))
 	}
+
+	a.enlarge(size)
+	return a.allocInBlock(a.availIdx, size)
+}
+
+func (a *arena) enlarge(size int) {
+	a.blockSize <<= 1
+	for a.blockSize <= size {
+		a.blockSize <<= 1
+	}
+	// Size always less than maxBlockSize.
+	if a.blockSize > maxBlockSize {
+		a.blockSize = maxBlockSize
+	}
+	a.blocks = append(a.blocks, newArenaBlock(a.blockSize))
+	a.availIdx = int(uint32(len(a.blocks) - 1))
+}
+
+func (a *arena) allocInBlock(idx, size int) (arenaAddr, []byte) {
+	offset, data := a.blocks[idx].alloc(size)
+	if offset == nullBlockOffset {
+		return arenaAddr{}, nil
+	}
+	return newArenaAddr(idx, offset), data
 }
 
 func (a *arena) reset() {
 	a.availIdx = 0
 	a.blockSize = len(a.blocks[0].buf)
-	a.blocks = []arenaBlock{a.blocks[0]}
-	a.blocks[0].reset()
+	for i := 0; i < len(a.blocks); i++ {
+		a.blocks[i].reset()
+	}
 }
 
 type arenaBlock struct {
@@ -102,14 +119,14 @@ func (a *arenaBlock) getFrom(offset uint32) []byte {
 	return a.buf[offset:]
 }
 
-func (a *arenaBlock) alloc(size int) uint32 {
+func (a *arenaBlock) alloc(size int) (uint32, []byte) {
 	offset := a.length
 	newLen := offset + size
 	if newLen > len(a.buf) {
-		return nullBlockOffset
+		return nullBlockOffset, nil
 	}
 	a.length = newLen
-	return uint32(offset)
+	return uint32(offset), a.buf[offset : offset+size]
 }
 
 func (a *arenaBlock) reset() {

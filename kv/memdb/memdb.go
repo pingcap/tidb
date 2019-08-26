@@ -47,7 +47,6 @@ func New(initBlockSize int) *DB {
 }
 
 // Reset resets the DB to initial empty state.
-// Release all blocks except the init one.
 func (db *DB) Reset() {
 	db.height = 1
 	db.head.node = new(node)
