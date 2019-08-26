@@ -1839,6 +1839,30 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for current_timestamp, current_timestamp()
 	result = tk.MustQuery(`select current_timestamp() = now(), current_timestamp = now()`)
 	result.Check(testkit.Rows("1 1"))
+
+	// for tidb_parse_tso
+	tk.MustExec("SET time_zone = '+00:00';")
+	result = tk.MustQuery(`select tidb_parse_tso(404411537129996288)`)
+	result.Check(testkit.Rows("2018-11-20 09:53:04.877000"))
+	result = tk.MustQuery(`select tidb_parse_tso("404411537129996288")`)
+	result.Check(testkit.Rows("2018-11-20 09:53:04.877000"))
+	result = tk.MustQuery(`select tidb_parse_tso(1)`)
+	result.Check(testkit.Rows("1970-01-01 00:00:00.000000"))
+	result = tk.MustQuery(`select tidb_parse_tso(0)`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select tidb_parse_tso(-1)`)
+	result.Check(testkit.Rows("<nil>"))
+
+	// fix issue 10308
+	result = tk.MustQuery("select time(\"- -\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '- -'"))
+	result = tk.MustQuery("select time(\"---1\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '---1'"))
+	result = tk.MustQuery("select time(\"-- --1\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '-- --1'"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
