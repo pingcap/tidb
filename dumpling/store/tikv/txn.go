@@ -424,7 +424,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 		err := txn.committer.pessimisticLockKeys(bo, keys)
 		if err != nil {
 			for _, key := range keys {
-				txn.us.DeleteConditionPair(key)
+				txn.us.DeleteKeyExistErrInfo(key)
 			}
 			wg := txn.asyncPessimisticRollback(ctx, keys)
 			if dl, ok := errors.Cause(err).(*ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
