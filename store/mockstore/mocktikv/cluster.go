@@ -271,7 +271,7 @@ func (c *Cluster) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer) 
 }
 
 // ScanRegions returns at most `limit` regions from given `key` and their leaders.
-func (c *Cluster) ScanRegions(key []byte, limit int) ([]*metapb.Region, []*metapb.Peer) {
+func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer) {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -289,10 +289,19 @@ func (c *Cluster) ScanRegions(key []byte, limit int) ([]*metapb.Region, []*metap
 		if len(endKey) == 0 {
 			return true
 		}
-		return bytes.Compare(regions[i].Meta.GetEndKey(), key) > 0
+		return bytes.Compare(regions[i].Meta.GetEndKey(), startKey) > 0
 	})
 	regions = regions[keyLocation:]
-	if len(regions) > limit {
+	if len(endKey) > 0 {
+		var pos int
+		for pos = 1; pos < len(regions); pos++ {
+			if bytes.Compare(regions[pos].Meta.GetStartKey(), endKey) >= 0 {
+				break
+			}
+		}
+		regions = regions[:pos]
+	}
+	if limit > 0 && len(regions) > limit {
 		regions = regions[:limit]
 	}
 
