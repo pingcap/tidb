@@ -202,7 +202,7 @@ func (s testMemDBSuite) TestEmptyDB(c *C) {
 	c.Check(it.Valid(), IsFalse)
 }
 
-func (s testMemDBSuite) TestRest(c *C) {
+func (s testMemDBSuite) TestReset(c *C) {
 	p := s.fillDB(10000)
 	p.Reset()
 	c.Check(p.Get([]byte{0}), IsNil)
@@ -213,6 +213,7 @@ func (s testMemDBSuite) TestRest(c *C) {
 	key := []byte{0}
 	p.Put(key, key)
 	c.Check(p.Get(key), BytesEquals, key)
+	c.Check(p.arena.availIdx, Equals, 0)
 
 	it := p.NewIterator()
 	it.SeekToFirst()

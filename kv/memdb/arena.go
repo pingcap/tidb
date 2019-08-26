@@ -39,13 +39,13 @@ const (
 type arena struct {
 	blockSize int
 	availIdx  int
-	blocks    []*arenaBlock
+	blocks    []arenaBlock
 }
 
 func newArenaLocator(initBlockSize int) *arena {
 	return &arena{
 		blockSize: initBlockSize,
-		blocks:    []*arenaBlock{newArenaBlock(initBlockSize)},
+		blocks:    []arenaBlock{newArenaBlock(initBlockSize)},
 	}
 }
 
@@ -63,7 +63,7 @@ func (a *arena) alloc(size int) (arenaAddr, []byte) {
 	}
 
 	for {
-		block := a.blocks[a.availIdx]
+		block := &a.blocks[a.availIdx]
 		blockOffset := block.alloc(size)
 		if blockOffset != nullBlockOffset {
 			addr := newArenaAddr(a.availIdx, blockOffset)
@@ -83,7 +83,7 @@ func (a *arena) alloc(size int) (arenaAddr, []byte) {
 func (a *arena) reset() {
 	a.availIdx = 0
 	a.blockSize = len(a.blocks[0].buf)
-	a.blocks = []*arenaBlock{a.blocks[0]}
+	a.blocks = []arenaBlock{a.blocks[0]}
 	a.blocks[0].reset()
 }
 
@@ -92,8 +92,8 @@ type arenaBlock struct {
 	length int
 }
 
-func newArenaBlock(blockSize int) *arenaBlock {
-	return &arenaBlock{
+func newArenaBlock(blockSize int) arenaBlock {
+	return arenaBlock{
 		buf: make([]byte, blockSize),
 	}
 }
@@ -104,14 +104,14 @@ func (a *arenaBlock) getFrom(offset uint32) []byte {
 
 func (a *arenaBlock) alloc(size int) uint32 {
 	offset := a.length
-	a.length = offset + size
-	if a.length > len(a.buf) {
+	newLen := offset + size
+	if newLen > len(a.buf) {
 		return nullBlockOffset
 	}
+	a.length = newLen
 	return uint32(offset)
 }
 
 func (a *arenaBlock) reset() {
-	a.buf = a.buf[:0]
 	a.length = 0
 }
