@@ -163,3 +163,56 @@ func columnExpr(columnID int64) *tipb.Expr {
 	expr.Val = codec.EncodeInt(nil, columnID)
 	return expr
 }
+
+func newMyDecimal(c *C, s string) *types.MyDecimal {
+	d := new(types.MyDecimal)
+	c.Assert(d.FromString([]byte(s)), IsNil)
+	return d
+}
+
+func newDuration(dur time.Duration) types.Duration {
+	return types.Duration{
+		Duration: dur,
+		Fsp:      types.DefaultFsp,
+	}
+}
+
+func newDateTime(c *C, s string) types.Time {
+	t, err := types.ParseDate(nil, s)
+	c.Assert(err, IsNil)
+	return t
+}
+
+func newDateFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp: mysql.TypeDate,
+	}
+}
+
+func newDurFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:   mysql.TypeDuration,
+		Flag: types.DefaultFsp,
+	}
+}
+
+func newStringFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:   mysql.TypeVarString,
+		Flen: types.UnspecifiedLength,
+	}
+}
+
+func newRealFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:   mysql.TypeFloat,
+		Flen: types.UnspecifiedLength,
+	}
+}
+
+func newDecimalFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:   mysql.TypeNewDecimal,
+		Flen: types.UnspecifiedLength,
+	}
+}

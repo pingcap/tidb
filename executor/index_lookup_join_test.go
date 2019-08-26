@@ -65,3 +65,44 @@ func (s *testSuite) TestIndexJoinOverflow(c *C) {
 	tk.MustExec(`create table t2(a int unsigned, index idx(a));`)
 	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a;`).Check(testkit.Rows())
 }
+
+func (s *testSuite) TestIndexJoinUnionScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t1(id int primary key, a int)")
+	tk.MustExec("create table t2(id int primary key, a int, b int, key idx_a(a))")
+	tk.MustExec("insert into t2 values (1,1,1),(4,2,4)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(2,2)")
+	tk.MustExec("insert into t2 values(2,2,2), (3,3,3)")
+	// TableScan below UnionScan
+	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ * from t1 join t2 on t1.a = t2.id").Check(testkit.Rows(
+		"2 2 2 2 2",
+	))
+	// IndexLookUp below UnionScan
+	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
+		"2 2 2 2 2",
+		"2 2 4 2 4",
+	))
+	// IndexScan below UnionScan
+	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ t1.a, t2.a from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
+		"2 2",
+		"2 2",
+	))
+	tk.MustExec("rollback")
+}
+
+func (s *testSuite) TestBatchIndexJoinUnionScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t1(id int primary key, a int)")
+	tk.MustExec("create table t2(id int primary key, a int, key idx_a(a))")
+	tk.MustExec("set @@session.tidb_max_chunk_size=1")
+	tk.MustExec("set @@session.tidb_index_join_batch_size=1")
+	tk.MustExec("set @@session.tidb_index_lookup_join_concurrency=4")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(1,1),(2,1),(3,1),(4,1)")
+	tk.MustExec("insert into t2 values(1,1)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ count(*) from t1 join t2 on t1.a = t2.id").Check(testkit.Rows(
+		"4",
+	))
+	tk.MustExec("rollback")
+}

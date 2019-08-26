@@ -68,6 +68,7 @@ var SignedLowerBound = map[byte]int64{
 }
 
 // ConvertFloatToInt converts a float64 value to a int value.
+// `tp` is used in err msg, if there is overflow, this func will report err according to `tp`
 func ConvertFloatToInt(fval float64, lowerBound, upperBound int64, tp byte) (int64, error) {
 	val := RoundFloat(fval)
 	if val < float64(lowerBound) {
@@ -504,10 +505,10 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		if !unsigned {
 			lBound := SignedLowerBound[mysql.TypeLonglong]
 			uBound := SignedUpperBound[mysql.TypeLonglong]
-			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeDouble)
+			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
 		}
 		bound := UnsignedUpperBound[mysql.TypeLonglong]
-		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
+		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeLonglong)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
 		return StrToInt(sc, hack.String(j.GetString()))

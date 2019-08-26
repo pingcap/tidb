@@ -1600,9 +1600,8 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	// If new column is a generated column, do validation.
-	// NOTE: Because now we can only append columns to table,
-	// we dont't need check whether the column refers other
-	// generated columns occurring later in table.
+	// NOTE: we do check whether the column refers other generated
+	// columns occurring later in a table, but we don't handle the col offset.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			referableColNames := make(map[string]struct{}, len(t.Cols()))
@@ -1611,6 +1610,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 			}
 			_, dependColNames := findDependedColumnNames(specNewColumn)
 			if err = columnNamesCover(referableColNames, dependColNames); err != nil {
+				return errors.Trace(err)
+			}
+			// Keep dependColNames unchanged.
+			if err = verifyColumnGenerationSingle(dependColNames, t.Cols(), spec.Position); err != nil {
 				return errors.Trace(err)
 			}
 		}

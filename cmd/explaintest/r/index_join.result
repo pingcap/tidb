@@ -18,5 +18,5 @@ IndexJoin_14	5.00	root	inner join, inner:IndexLookUp_13, outer key:test.t2.a, in
 ├─IndexLookUp_13	5.00	root	
 │ ├─IndexScan_11	5.00	cop	table:t1, index:a, range: decided by [test.t2.a], keep order:false
 │ └─TableScan_12	5.00	cop	table:t1, keep order:false
-└─TableReader_26	1.00	root	data:TableScan_25
-  └─TableScan_25	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
+└─TableReader_28	1.00	root	data:TableScan_27
+  └─TableScan_27	1.00	cop	table:t2, range:[-inf,+inf], keep order:false

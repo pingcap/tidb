@@ -519,7 +519,7 @@ func mergeAddIndexCtxToResult(taskCtx *addIndexTaskContext, result *addIndexResu
 
 func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	rowDecoder := decoder.NewRowDecoder(t.Cols(), decodeColMap)
+	rowDecoder := decoder.NewRowDecoder(t, decodeColMap)
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
@@ -549,7 +549,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
 	sysZone := timeutil.SystemLocation()
-	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, rawRecord, time.UTC, sysZone, w.rowMap)
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, time.UTC, sysZone, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
 	}

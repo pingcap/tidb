@@ -119,6 +119,15 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	autoid.SetStep(s.autoIDStep)
 }
 
+func assertErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {
+	_, err := tk.Exec(sql)
+	c.Assert(err, NotNil)
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
+	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
+}
+
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
 	_, err := s.tk.Exec(sql)
 	c.Assert(err, NotNil)
@@ -4365,7 +4374,14 @@ func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
 	})
 
 	// check records num after drop database.
-	recordsNum = getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
+	for i := 0; i < waitForCleanDataRound; i++ {
+		recordsNum = getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
+		if recordsNum != 0 {
+			time.Sleep(waitForCleanDataInterval)
+		} else {
+			break
+		}
+	}
 	c.Assert(recordsNum, Equals, 0)
 }
 
@@ -4607,6 +4623,22 @@ func (s *testDBSuite) TestAddIndexForGeneratedColumn(c *C) {
 	s.mustExec(c, "delete from t where y = 2155")
 	s.mustExec(c, "alter table t add index idx_y(y1)")
 	s.mustExec(c, "alter table t drop index idx_y")
+
+	// Fix issue 9311.
+	s.tk.MustExec("create table gcai_table (id int primary key);")
+	s.tk.MustExec("insert into gcai_table values(1);")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d date DEFAULT '9999-12-31';")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d1 date as (DATE_SUB(d, INTERVAL 31 DAY));")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx(d1);")
+	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30"))
+	s.tk.MustQuery("select d1 from gcai_table use index(idx)").Check(testkit.Rows("9999-11-30"))
+	s.tk.MustExec("admin check table gcai_table")
+	// The column is PKIsHandle in generated column expression.
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN id1 int as (id+5);")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx1(id1);")
+	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30 6"))
+	s.tk.MustQuery("select id1 from gcai_table use index(idx1)").Check(testkit.Rows("6"))
+	s.tk.MustExec("admin check table gcai_table")
 }
 
 func (s *testDBSuite) TestModifyColumnCharset(c *C) {

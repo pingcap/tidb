@@ -848,7 +848,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test stream agg + index double.
 		{
 			sql:  "select sum(e), avg(b + c) from t where c = 1 and b = 1 group by c",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->Projection->StreamAgg",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->Projection->Projection->StreamAgg",
 		},
 		// Test hash agg + order.
 		{
@@ -858,7 +858,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test stream agg + order.
 		{
 			sql:  "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by c order by k",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->StreamAgg->Sort",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->Projection->StreamAgg->Sort",
 		},
 		// Test agg can't push down.
 		{
@@ -1440,5 +1440,54 @@ func (s *testPlanSuite) TestIndexJoinHint(c *C) {
 			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning)
 			c.Assert(warnings[0].Err.Error(), Equals, test.warning)
 		}
+	}
+}
+
+func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		// Test Index Join + UnionScan + TableScan.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
+			best: "IndexJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(test.t1.a,test.t2.a)",
+		},
+		// Test Index Join + UnionScan + DoubleRead.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
+			best: "IndexJoin{TableReader(Table(t))->UnionScan([])->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->UnionScan([])}(test.t1.a,test.t2.c)",
+		},
+		// Test Index Join + UnionScan + IndexScan.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
+			best: "IndexJoin{TableReader(Table(t))->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(test.t1.a,test.t2.c)->Projection",
+		},
+	}
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		err = se.NewTxn()
+		c.Assert(err, IsNil)
+		// Make txn not read only.
+		txn, err := se.Txn(true)
+		c.Assert(err, IsNil)
+		txn.Set(kv.Key("AAA"), []byte("BBB"))
+		se.StmtCommit()
+		p, err := core.Optimize(se, stmt, s.is)
+		c.Assert(err, IsNil)
+		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
 }
