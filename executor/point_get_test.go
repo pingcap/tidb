@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/sirupsen/logrus"
 )
 
 type testPointGetSuite struct {
@@ -272,7 +273,9 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 	// Test truncate with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
 	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
 	tk.MustIndexLookup(`select * from t where a = "aa";`).Check(testkit.Rows(`aa bb`))
+	logrus.Warning("============================")
 	tk.MustIndexLookup(`select * from t where a = "aab";`).Check(testkit.Rows())
+	logrus.Warning("============================")
 
 	tk.MustExec(`truncate table t;`)
 	tk.MustExec(`insert into t values("a ", "b ");`)
