@@ -399,12 +399,13 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 					errFlag = true
 					mu.Unlock()
 					break
+				} else {
+					m[id] = struct{}{}
 				}
 			}
 			if errFlag {
 				break
 			}
-			m[id] = struct{}{}
 			mu.Unlock()
 		}
 	}
