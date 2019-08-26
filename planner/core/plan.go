@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -44,6 +45,9 @@ type Plan interface {
 
 	// property.StatsInfo will return the property.StatsInfo for this plan.
 	statsInfo() *property.StatsInfo
+
+	// OutputNames returns the outputting names of each column.
+	OutputNames() []*types.FieldName
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
@@ -251,6 +255,11 @@ type basePlan struct {
 	id    int
 	ctx   sessionctx.Context
 	stats *property.StatsInfo
+}
+
+// OutputNames returns the outputting names of each column.
+func (p *basePlan) OutputNames() []*types.FieldName {
+	return nil
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
