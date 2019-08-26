@@ -85,6 +85,7 @@ var (
 	errRunMultiSchemaChanges = terror.ClassDDL.New(codeRunMultiSchemaChanges, "can't run multi schema change")
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
 	errInvalidStoreVer       = terror.ClassDDL.New(codeInvalidStoreVer, "invalid storage current version")
+	errCantDropSysTable      = terror.ClassDDL.New(codeCantDropSysTable, "cannot drop or alter system tables")
 
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex     = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
@@ -660,6 +661,7 @@ const (
 	codeInvalidRanges                        = 13
 	codeReorgWorkerPanic                     = 14
 	codeCantDecodeIndex                      = 15
+	codeCantDropSysTable                     = 16
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101

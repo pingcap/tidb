@@ -97,6 +97,10 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	return errors.Trace(err)
 }
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
+	if util.IsMemOrSysDB(stmt.Name) {
+		return errCantDropSysTable.GenWithStack("cannot alter system database: %s", stmt.Name)
+	}
+
 	// Resolve target charset and collation from options.
 	var toCharset, toCollate string
 	for _, val := range stmt.Options {
@@ -156,6 +160,10 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 }
 
 func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
+	if util.IsMemOrSysDB(schema.L) {
+		return errCantDropSysTable.GenWithStack("cannot drop system database: %s", schema.L)
+	}
+
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	old, ok := is.SchemaByName(schema)
 	if !ok {
@@ -1865,6 +1873,10 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		return errors.Trace(err)
 	}
 
+	if util.IsMemOrSysDB(ident.Schema.L) {
+		return errCantDropSysTable.GenWithStack("cannot alter system table: %s.%s", ident.Schema.L, ident.Name.L)
+	}
+
 	is := d.infoHandle.Get()
 	if is.TableIsView(ident.Schema, ident.Name) {
 		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
@@ -3057,6 +3069,10 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if util.IsMemOrSysDB(ti.Schema.L) {
+		return errCantDropSysTable.GenWithStack("cannot drop system table: %s.%s", ti.Schema.L, ti.Name.L)
 	}
 
 	job := &model.Job{

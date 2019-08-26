@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -39,20 +38,6 @@ type UserPrivileges struct {
 	*Handle
 }
 
-// If one drops these databases or tables by mistake, it's difficult to recover.
-// In the worst case, the whole TiDB cluster fails to bootstrap, so we prevent users from dropping them.
-// DDL in bootstrap will skip privilege verification.
-func sysTableVerification(db string, priv mysql.PrivilegeType) bool {
-	if util.IsMemOrSysDB(strings.ToLower(db)) {
-		switch priv {
-		// MySQL permits DML, so we just skip DML check for now
-		case mysql.DropPriv, mysql.AlterPriv:
-			return false
-		}
-	}
-	return true
-}
-
 // RequestVerification implements the Manager interface.
 func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool {
 	if SkipWithGrant {
@@ -61,10 +46,6 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 
 	if p.user == "" && p.host == "" {
 		return true
-	}
-
-	if !sysTableVerification(db, priv) {
-		return false
 	}
 
 	// Skip check for INFORMATION_SCHEMA database.
@@ -84,10 +65,6 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	}
 
 	if user == nil {
-		return false
-	}
-
-	if !sysTableVerification(db, priv) {
 		return false
 	}
 
