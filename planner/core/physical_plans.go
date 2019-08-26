@@ -296,6 +296,13 @@ type PhysicalUnionAll struct {
 	IsPointGetUnion bool
 }
 
+func (p *PhysicalUnionAll) OutputNames() []*types.FieldName {
+	if p.IsPointGetUnion {
+		return p.children[0].OutputNames()
+	}
+	return p.physicalSchemaProducer.OutputNames()
+}
+
 // AggregationType stands for the mode of aggregation plan.
 type AggregationType int
 
