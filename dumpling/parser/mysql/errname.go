@@ -893,6 +893,7 @@ var MySQLErrName = map[uint16]string{
 	ErrInvalidJSONContainsPathType:                           "The second argument can only be either 'one' or 'all'.",
 	ErrJSONUsedAsKey:                                         "JSON column '%-.192s' cannot be used in key specification.",
 	ErrInvalidJSONPathArrayCell:                              "A path expression is not a path to a cell in an array.",
+	ErrInvalidEncryptionOption:                               "Invalid encryption option.",
 	ErrWindowNoSuchWindow:                                    "Window name '%s' is not defined.",
 	ErrWindowCircularityInWindowGraph:                        "There is a circularity in the window dependency graph.",
 	ErrWindowNoChildPartitioning:                             "A window which depends on another cannot define partitioning.",
