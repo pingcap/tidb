@@ -8422,6 +8422,13 @@ TableOption:
 		yylex.AppendError(yylex.Errorf("The SECONDARY_ENGINE clause is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
 	}
+|	"ENCRYPTION" EqOpt stringLit
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionEncryption, StrValue: $3}
+		yylex.AppendError(yylex.Errorf("The ENCRYPTION clause is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
 
 StatsPersistentVal:
 	"DEFAULT"
