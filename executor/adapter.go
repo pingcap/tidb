@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -64,9 +65,48 @@ type recordSet struct {
 
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
-		a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
+		// The else branch will be removed after we totally remove the *Name from expression.Column.
+		if len(a.stmt.outputNames) > 0 {
+			a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.outputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
+		} else {
+			a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
+		}
 	}
 	return a.fields
+}
+
+func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*ast.ResultField {
+	rfs := make([]*ast.ResultField, 0, schema.Len())
+	defaultDBCIStr := model.NewCIStr(defaultDB)
+	for i := 0; i < schema.Len(); i++ {
+		dbName := names[i].DBName
+		if dbName.L == "" && names[i].TblName.L != "" {
+			dbName = defaultDBCIStr
+		}
+		origColName := names[i].OrigColName
+		if origColName.L == "" {
+			origColName = names[i].ColName
+		}
+		rf := &ast.ResultField{
+			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
+			ColumnAsName: names[i].ColName,
+			Table:        &model.TableInfo{Name: names[i].OrigTblName},
+			TableAsName:  names[i].TblName,
+			DBName:       dbName,
+		}
+		// This is for compatibility.
+		// See issue https://github.com/pingcap/tidb/issues/10513 .
+		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
+		}
+		// Usually the length of O equals the length of L.
+		// Add this len judgement to avoid panic.
+		if len(rf.ColumnAsName.L) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.L = rf.ColumnAsName.L[:mysql.MaxAliasIdentifierLen]
+		}
+		rfs = append(rfs, rf)
+	}
+	return rfs
 }
 
 func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*ast.ResultField) {
@@ -91,6 +131,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 			},
 		}
 		// This is for compatibility.
+		// See issue https://github.com/pingcap/tidb/issues/10513 .
 		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
 			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
 		}
@@ -160,6 +201,8 @@ type ExecStmt struct {
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
+
+	outputNames []*types.FieldName
 }
 
 // OriginText returns original statement as a string.
@@ -204,6 +247,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	a.outputNames = p.OutputNames()
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
 }
@@ -604,6 +648,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		if err != nil {
 			return nil, err
 		}
+		a.outputNames = executorExec.outputNames
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		if executorExec.lowerPriority {
