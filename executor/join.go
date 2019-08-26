@@ -48,7 +48,6 @@ type HashJoinExec struct {
 	outerKeys   []*expression.Column
 	innerKeys   []*expression.Column
 
-	prepared bool
 	// concurrency is the number of partition, build and join workers.
 	concurrency     uint
 	hashTable       *mvmap.MVMap
@@ -58,10 +57,8 @@ type HashJoinExec struct {
 	joinWorkerWaitGroup sync.WaitGroup
 	finished            atomic.Value
 	// closeCh add a lock for closing executor.
-	closeCh  chan struct{}
-	joinType plannercore.JoinType
-
-	isOuterJoin  bool
+	closeCh      chan struct{}
+	joinType     plannercore.JoinType
 	requiredRows int64
 
 	// We build individual joiner for each join worker when use chunk-based
@@ -77,7 +74,9 @@ type HashJoinExec struct {
 	joinResultCh       chan *hashjoinWorkerResult
 	hashTableValBufs   [][][]byte
 
-	memTracker *memory.Tracker // track memory usage.
+	memTracker  *memory.Tracker // track memory usage.
+	prepared    bool
+	isOuterJoin bool
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -542,8 +541,13 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	err := e.buildHashTableForList(innerResultCh)
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
+		close(doneCh)
 	}
-	close(doneCh)
+	// Wait fetchInnerRows be finished.
+	// 1. if buildHashTableForList fails
+	// 2. if outerResult.NumRows() == 0, fetchOutChunks will not wait for inner.
+	for range innerResultCh {
+	}
 }
 
 // buildHashTableForList builds hash table from `list`.
