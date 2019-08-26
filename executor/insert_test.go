@@ -201,7 +201,7 @@ func (s *testSuite3) TestInsertOnDuplicateKey(c *C) {
 	_, err = tk.Exec(qry)
 	tk.MustQuery(`select * from t2 order by f1 desc;`).Check(testkit.Rows(`11 1`, `1 11`))
 	_, err = tk.Exec(qry)
-	tk.MustQuery(`select * from t2 order by f1 desc;`).Check(testkit.Rows(`11 1`, `21 11`))
+	tk.MustQuery(`select * from t2 order by f1 desc;`).Check(testkit.Rows(`21 11`, `11 1`))
 	_, err = tk.Exec(qry)
 	tk.MustQuery(`select * from t2 order by f1 desc;`).Check(testkit.Rows(`31 1`, `21 11`, `1 11`))
 
