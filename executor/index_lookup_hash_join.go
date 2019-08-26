@@ -43,7 +43,7 @@ type indexHashJoinResult struct {
 type outerRowStatusFlag byte
 
 const (
-	outerRowUnmatched outerRowStatusFlag = iota
+	_ outerRowStatusFlag = iota // outerRowUnmatched
 	outerRowMatched
 	outerRowHasNull
 )
@@ -109,7 +109,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 		workerID := i
 		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx) }, e.finishJoinWorkers)
 	}
-	go util.WithRecovery(func() { e.workerWg.Wait() }, e.finishWaiter)
+	go e.wait4JoinWorkers()
 }
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
@@ -119,10 +119,8 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	e.workerWg.Done()
 }
 
-func (e *IndexNestedLoopHashJoin) finishWaiter(r interface{}) {
-	if r != nil {
-		e.resultCh <- &indexHashJoinResult{err: errors.Errorf("%v", r)}
-	}
+func (e *IndexNestedLoopHashJoin) wait4JoinWorkers() {
+	e.workerWg.Wait()
 	close(e.resultCh)
 }
 
@@ -226,7 +224,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 	for _, ran := range e.indexRanges {
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
-	iw := &indexHashJoinInnerWorker{
+	return &indexHashJoinInnerWorker{
 		innerWorker: innerWorker{
 			innerCtx:      e.innerCtx,
 			outerCtx:      e.outerCtx,
@@ -241,13 +239,11 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		resultCh:          e.resultCh,
 		matchedOuterPtrs:  make([][]byte, 0, 8),
 	}
-
-	return iw
 }
 
 func (iw *indexHashJoinInnerWorker) run(ctx context.Context) {
 	var task *indexHashJoinTask
-	ok, joinResult := iw.getNewJoinResult()
+	ok, joinResult := iw.getNewJoinResult(ctx)
 	if !ok {
 		return
 	}
@@ -271,17 +267,23 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context) {
 		}
 	}
 	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		iw.resultCh <- joinResult
+		select {
+		case iw.resultCh <- joinResult:
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
-func (iw *indexHashJoinInnerWorker) getNewJoinResult() (bool, *indexHashJoinResult) {
+func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (bool, *indexHashJoinResult) {
 	joinResult := &indexHashJoinResult{
 		src: iw.joinChkResourceCh,
 	}
 	ok := true
 	select {
 	case joinResult.chk, ok = <-iw.joinChkResourceCh:
+	case <-ctx.Done():
+		return false, nil
 	}
 	return ok, joinResult
 }
@@ -331,7 +333,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	var ok bool
 	iter := chunk.NewIterator4List(task.innerResult)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		ok, joinResult = iw.joinMatchedInnerRow2Chunk(row, task, joinResult)
+		ok, joinResult = iw.joinMatchedInnerRow2Chunk(ctx, row, task, joinResult)
 		if !ok {
 			return errors.New("indexHashJoinInnerWorker.handleTask failed")
 		}
@@ -343,7 +345,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		iw.joiner.onMissMatch(val == outerRowHasNull, task.outerResult.GetRow(rowIdx), joinResult.chk)
 		if joinResult.chk.IsFull() {
 			iw.resultCh <- joinResult
-			ok, joinResult = iw.getNewJoinResult()
+			ok, joinResult = iw.getNewJoinResult(ctx)
 			if !ok {
 				return errors.New("indexHashJoinInnerWorker.handleTask failed")
 			}
@@ -353,7 +355,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 
 }
 
-func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(innerRow chunk.Row, task *indexHashJoinTask,
+func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Context, innerRow chunk.Row, task *indexHashJoinTask,
 	joinResult *indexHashJoinResult) (bool, *indexHashJoinResult) {
 	var err error
 	keyBuf := make([]byte, 0, 64)
@@ -385,7 +387,7 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(innerRow chunk.Row
 		}
 		if joinResult.chk.IsFull() {
 			iw.resultCh <- joinResult
-			ok, joinResult = iw.getNewJoinResult()
+			ok, joinResult = iw.getNewJoinResult(ctx)
 			if !ok {
 				return false, joinResult
 			}

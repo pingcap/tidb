@@ -244,7 +244,8 @@ type PhysicalIndexJoin struct {
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
-	//keepOuterOrder indicate whether index join keep order by outer table or not
+	// KeepOuterOrder indicates whether to keep the order of the join results be
+	// the same as the outer table.
 	KeepOuterOrder bool
 	// IdxColLens stores the length of each index column.
 	IdxColLens []int

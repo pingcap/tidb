@@ -1800,6 +1800,9 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
+	if v.KeepOuterOrder {
+		return e
+	}
 	return &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
 }
 
