@@ -286,7 +286,6 @@ func (c *RPCContext) String() string {
 // must be out of date and already dropped from cache.
 func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32) (*RPCContext, error) {
 	ts := time.Now().Unix()
-
 	cachedRegion := c.getCachedRegionWithRLock(id)
 	if cachedRegion == nil {
 		return nil, nil
@@ -1150,12 +1149,12 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 
 // Store contains a kv process's address.
 type Store struct {
-	addr         string     // loaded store address
-	storeID      uint64     // store's id
-	state        uint64     // unsafe store storeState
-	resolveMutex sync.Mutex // protect pd from concurrent init requests
-	fail         uint32     // store fail count, see RegionStore.storeFails
-	sType        kv.StoreType  // type of the store
+	addr         string       // loaded store address
+	storeID      uint64       // store's id
+	state        uint64       // unsafe store storeState
+	resolveMutex sync.Mutex   // protect pd from concurrent init requests
+	fail         uint32       // store fail count, see RegionStore.storeFails
+	sType        kv.StoreType // type of the store
 }
 
 type resolveState uint64
