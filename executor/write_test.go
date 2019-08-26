@@ -2481,9 +2481,7 @@ func (s *testSuite4) TestDeferConstraintCheckForInsert(c *C) {
 
 	tk.MustExec(`set tidb_constraint_check_in_place = 0;`)
 	tk.MustExec("insert into t values (3, 1)")
-	c.Assert(err, NotNil)
 	tk.MustExec("insert into t values (1, 3)")
-	c.Assert(err, NotNil)
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
 }
