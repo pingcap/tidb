@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"io"
 	"math"
 	"math/rand"
@@ -3533,6 +3534,55 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
+}
+
+func (s *testDBSuite1) TestDDLOnSysDatabase(c *C) {
+	dbs := []string{util.InformationSchemaLowerName, util.PerformanceSchemaLowerName, mysql.SystemDB}
+
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	for _, db := range dbs {
+		// Drop database in lower case
+		_, err := tk.Exec(fmt.Sprintf("drop database %s", db))
+		c.Assert(strings.Contains(err.Error(), "cannot drop system database"), IsTrue)
+
+		// Drop database in upper case
+		_, err = tk.Exec(fmt.Sprintf("drop database %s", strings.ToUpper(db)))
+		c.Assert(strings.Contains(err.Error(), "cannot drop system database"), IsTrue)
+
+		// Alter database in lower case
+		_, err = tk.Exec(fmt.Sprintf("alter database %s CHARACTER SET = utf8mb4", db))
+		c.Assert(strings.Contains(err.Error(), "cannot alter system database"), IsTrue)
+
+		// Show database is allowed
+		tk.MustExec(fmt.Sprintf("show create database %s", db))
+	}
+}
+
+func (s *testDBSuite3) TestDDLOnSysTable(c *C) {
+	dbs := []string{util.InformationSchemaLowerName, util.PerformanceSchemaLowerName, mysql.SystemDB}
+
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	for _, db := range dbs {
+		result := tk.MustQuery(fmt.Sprintf("show tables from %s", db))
+		for _, tableName := range result.Rows() {
+			// Drop table is forbidden
+			_, err := tk.Exec(fmt.Sprintf("drop table %s.%s", db, tableName[0]))
+			c.Assert(strings.Contains(err.Error(), "cannot drop system table"), IsTrue)
+
+			// Alter table is forbidden
+			_, err = tk.Exec(fmt.Sprintf("alter table %s.%s rename to %s.%s_bak",
+				db, tableName[0], db, tableName[0]))
+			c.Assert(strings.Contains(err.Error(), "cannot alter system table"), IsTrue)
+
+			// Show table is allowed
+			tk.MustExec(fmt.Sprintf("show create table %s.%s", db, tableName[0]))
+
+			// Select is allowed
+			tk.MustExec(fmt.Sprintf("select * from %s.%s limit 1", db, tableName[0]))
+		}
+	}
 }
 
 func init() {
