@@ -17,20 +17,22 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
 // BlockHintProcessor processes hints at different level of sql statement.
 type BlockHintProcessor struct {
-	QbNameMap        map[string]int                    // Map from query block name to select stmt offset.
-	QbHints          map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
-	Ctx              sessionctx.Context
-	selectStmtOffset int
+	QbNameMap       map[string]int                    // Map from query block name to select stmt offset.
+	QbHints         map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
+	Ctx             sessionctx.Context
+	maxSelectOffset int
 }
 
 // Enter implements Visitor interface.
@@ -41,9 +43,8 @@ func (p *BlockHintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	case *ast.DeleteStmt:
 		p.checkQueryBlockHints(node.TableHints, 0)
 	case *ast.SelectStmt:
-		p.selectStmtOffset++
-		node.QueryBlockOffset = p.selectStmtOffset
-		p.checkQueryBlockHints(node.TableHints, p.selectStmtOffset)
+		p.maxSelectOffset = mathutil.Max(p.maxSelectOffset, node.QueryBlockOffset)
+		p.checkQueryBlockHints(node.TableHints, node.QueryBlockOffset)
 	}
 	return in, false
 }
@@ -73,7 +74,7 @@ func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHin
 		p.QbNameMap = make(map[string]int)
 	}
 	if _, ok := p.QbNameMap[qbName]; ok {
-		p.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(fmt.Sprintf("Duplicate query block name %s, we will use the first one", qbName)))
+		p.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(fmt.Sprintf("Duplicate query block name %s, only the first one is effective", qbName)))
 	} else {
 		p.QbNameMap[qbName] = offset
 	}
@@ -109,10 +110,10 @@ func (p *BlockHintProcessor) getBlockOffset(blockName model.CIStr, nodeType node
 	if nodeType == typeDelete && blockName.L == defaultDeleteBlockName {
 		return 0
 	}
-	if nodeType == typeSelect && len(blockName.L) >= len(defaultSelectBlockPrefix) {
+	if nodeType == typeSelect && strings.HasPrefix(blockName.L, defaultSelectBlockPrefix) {
 		suffix := blockName.L[len(defaultSelectBlockPrefix):]
 		level, err := strconv.ParseInt(suffix, 10, 64)
-		if err != nil || level > int64(p.selectStmtOffset) {
+		if err != nil || level > int64(p.maxSelectOffset) {
 			return -1
 		}
 		return int(level)
@@ -132,8 +133,8 @@ func (p *BlockHintProcessor) getHintOffset(hint *ast.TableOptimizerHint, nodeTyp
 	if len(hint.Tables) == 0 {
 		return topOffset
 	}
-	// Handle the case of hint_name(t1@sel_1, t2@sel_2), the result offset should be the out most stmt, which has the
-	// smallest block offset.
+	// Handle the join hint cases like SM_JOIN(t1@sel_1, t2@sel_2), t1 is in the first select stmt and t2 is in the second select stmt,
+	// the result offset should be the outer-most select stmt, which has the smallest block offset.
 	minOffset := math.MaxInt64
 	for _, tbl := range hint.Tables {
 		if tbl.QBName.L != "" {
@@ -159,6 +160,13 @@ func (p *BlockHintProcessor) getCurrentStmtHints(hints []*ast.TableOptimizerHint
 		}
 		offset := p.getHintOffset(hint, nodeType, currentOffset)
 		if offset < 0 {
+			var sb strings.Builder
+			ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+			err := hint.Restore(ctx)
+			// There won't be any error for optimizer hint.
+			if err == nil {
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(fmt.Sprintf("Hint %s is ignored due to unknown query block name", sb.String())))
+			}
 			continue
 		}
 		p.QbHints[offset] = append(p.QbHints[offset], hint)
