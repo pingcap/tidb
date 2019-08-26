@@ -1826,17 +1826,17 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		tbl = pt.GetPartition(physicalTableID)
 	}
 	e := &TableReaderExecutor{
-		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		dagPB:           dagReq,
-		table:           tbl,
-		keepOrder:       ts.KeepOrder,
-		desc:            ts.Desc,
-		columns:         ts.Columns,
-		streaming:       streaming,
-		corColInFilter:  b.corColInDistPlan(v.TablePlans),
-		corColInAccess:  b.corColInAccess(v.TablePlans[0]),
-		plans:           v.TablePlans,
-		accessFromFlash: v.AccessFromFlash,
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		dagPB:          dagReq,
+		table:          tbl,
+		keepOrder:      ts.KeepOrder,
+		desc:           ts.Desc,
+		columns:        ts.Columns,
+		streaming:      streaming,
+		corColInFilter: b.corColInDistPlan(v.TablePlans),
+		corColInAccess: b.corColInAccess(v.TablePlans[0]),
+		plans:          v.TablePlans,
+		storeType:      v.StoreType,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)

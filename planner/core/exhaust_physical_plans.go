@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -418,7 +419,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 	}
 	// if DataSource prefer flash, then inner child of index join can't be the index scan.
-	if ds.preferStoreType&preferFlash != 0 {
+	if ds.preferStoreType&preferTiFlash != 0 {
 		return nil
 	}
 
@@ -508,8 +509,11 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 		filterCondition: ds.pushedDownConds,
 		Ranges:          ranges,
 		rangeDecidedBy:  outerJoinKeys,
-		accessFromFlash: ds.preferStoreType&preferFlash != 0,
+		StoreType:       kv.TiKV,
 	}.Init(ds.ctx)
+	if ds.preferStoreType&preferTiFlash != 0 {
+		ts.StoreType = kv.TiFlash
+	}
 	ts.SetSchema(ds.schema)
 	ts.stats = &property.StatsInfo{
 		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.

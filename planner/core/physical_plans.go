@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -59,7 +60,7 @@ type PhysicalTableReader struct {
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
 
-	AccessFromFlash bool
+	StoreType kv.StoreType
 }
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -165,7 +166,7 @@ type PhysicalTableScan struct {
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx int
 
-	accessFromFlash bool
+	StoreType kv.StoreType
 
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool

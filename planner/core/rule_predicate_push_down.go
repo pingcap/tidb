@@ -100,7 +100,7 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression)
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	ds.allConds = predicates
-	if ds.preferStoreType&preferFlash != 0 {
+	if ds.preferStoreType&preferTiFlash != 0 {
 		ds.pushedDownConds, predicates = expression.CheckExprPushFlash(predicates)
 		return predicates, ds
 	}

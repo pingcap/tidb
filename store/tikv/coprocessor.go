@@ -90,7 +90,7 @@ type copTask struct {
 	respChan  chan *copResponse
 	storeAddr string
 	cmdType   tikvrpc.CmdType
-	storeType StoreType
+	storeType kv.StoreType
 }
 
 func (r *copTask) String() string {

@@ -58,8 +58,8 @@ const (
 	HintINLJ = "inl_join"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
-	// AccessFromFlash is hint enforce some tables read from flash.
-	AccessFromFlash = "access_from_flash"
+	// ReadFromStorage is hint enforce some tables read from specific type of storage.
+	ReadFromStorage = "read_from_storage"
 	// HintHJ is hint enforce hash join.
 	HintHJ = "hash_join"
 	// HintHashAgg is hint enforce hash aggregation.
@@ -386,7 +386,7 @@ func (p *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	}
 
 	if hintInfo.ifPreferFlash(alias) {
-		p.preferStoreType |= preferFlash
+		p.preferStoreType |= preferTiFlash
 	}
 }
 
@@ -1985,7 +1985,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 			preferAggType |= preferHashAgg
 		case HintStreamAgg:
 			preferAggType |= preferStreamAgg
-		case AccessFromFlash:
+		case ReadFromStorage:
 			flashTables = tableNames2HintTableInfo(hint.Tables)
 		case HintIndex:
 			if len(hint.Tables) != 0 && len(hint.Indexes) != 0 {

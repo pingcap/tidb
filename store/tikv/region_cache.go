@@ -102,7 +102,7 @@ func (r *RegionStore) follower(seed uint32) int32 {
 		if followerIdx >= r.workStoreIdx {
 			followerIdx++
 		}
-		if r.stores[followerIdx].sType != TiKV {
+		if r.stores[followerIdx].sType != kv.TiKV {
 			continue
 		}
 		if r.storeFails[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].fail) {
@@ -365,7 +365,7 @@ func (c *RegionCache) GetFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCCon
 			c.changeToActiveStore(cachedRegion, store, i)
 		}
 
-		if store.sType != TiFlash {
+		if store.sType != kv.TiFlash {
 			notFlashCnt++
 			continue
 		}
@@ -1148,17 +1148,6 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 		(bytes.Compare(key, r.meta.GetEndKey()) <= 0 || len(r.meta.GetEndKey()) == 0)
 }
 
-// StoreType reperents the type of one storage.
-type StoreType int8
-
-// Store types.
-const (
-	// TiKV means the storage is tikv.
-	TiKV StoreType = iota
-	// TiFlash means the storage is tiflash.
-	TiFlash
-)
-
 // Store contains a kv process's address.
 type Store struct {
 	addr         string     // loaded store address
@@ -1166,7 +1155,7 @@ type Store struct {
 	state        uint64     // unsafe store storeState
 	resolveMutex sync.Mutex // protect pd from concurrent init requests
 	fail         uint32     // store fail count, see RegionStore.storeFails
-	sType        StoreType  // type of the store
+	sType        kv.StoreType  // type of the store
 }
 
 type resolveState uint64
@@ -1214,7 +1203,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		s.addr = addr
 		for _, label := range store.Labels {
 			if label.Key == confTiFlash.LabelKey && label.Value == confTiFlash.LabelValue {
-				s.sType = TiFlash
+				s.sType = kv.TiFlash
 				break
 			}
 		}
@@ -1255,10 +1244,10 @@ func (s *Store) reResolve(c *RegionCache) {
 	}
 
 	confTiFlash := config.GetGlobalConfig().TiFlash
-	storeType := TiKV
+	storeType := kv.TiKV
 	for _, label := range store.Labels {
 		if label.Key == confTiFlash.LabelKey && label.Value == confTiFlash.LabelValue {
-			storeType = TiFlash
+			storeType = kv.TiFlash
 			break
 		}
 	}

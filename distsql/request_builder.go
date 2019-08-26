@@ -127,9 +127,9 @@ func (builder *RequestBuilder) SetKeepOrder(order bool) *RequestBuilder {
 	return builder
 }
 
-// SetSendToFlash sets "SendToFlash" for "kv.Request".
-func (builder *RequestBuilder) SetSendToFlash(sendToFlash bool) *RequestBuilder {
-	builder.Request.SendToFlash = sendToFlash
+// SetStoreType sets "StoreType" for "kv.Request".
+func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuilder {
+	builder.Request.StoreType = storeType
 	return builder
 }
 

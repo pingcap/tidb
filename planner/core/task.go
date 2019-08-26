@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -419,8 +420,8 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		}
 		ts := tp.(*PhysicalTableScan)
 		p := PhysicalTableReader{
-			tablePlan:       t.tablePlan,
-			AccessFromFlash: ts.accessFromFlash,
+			tablePlan: t.tablePlan,
+			StoreType: ts.StoreType,
 		}.Init(ctx)
 		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
@@ -763,7 +764,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		copToFlash := false
 		if cop.tablePlan != nil {
 			if ts, ok := cop.tablePlan.(*PhysicalTableScan); ok {
-				copToFlash = ts.accessFromFlash
+				copToFlash = ts.StoreType == kv.TiFlash
 			}
 		}
 		partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
@@ -831,7 +832,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 		copToFlash := false
 		if cop.tablePlan != nil {
 			if ts, ok := cop.tablePlan.(*PhysicalTableScan); ok {
-				copToFlash = ts.accessFromFlash
+				copToFlash = ts.StoreType == kv.TiFlash
 			}
 		}
 		partialAgg, finalAgg := p.newPartialAggregate(copToFlash)

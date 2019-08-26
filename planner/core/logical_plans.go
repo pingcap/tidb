@@ -99,7 +99,8 @@ const (
 	preferMergeJoin
 	preferHashAgg
 	preferStreamAgg
-	preferFlash
+	preferTiFlash
+	preferTiKV
 )
 
 // LogicalJoin is the logical join plan.

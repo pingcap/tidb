@@ -70,12 +70,12 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, TiKV)
+	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, kv.TiKV)
 	return resp, err
 }
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
-func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, storeType StoreType) (*tikvrpc.Response, *RPCContext, error) {
+func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, storeType kv.StoreType) (*tikvrpc.Response, *RPCContext, error) {
 	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
 		switch val.(string) {
 		case "timeout":
@@ -105,9 +105,9 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		var ctx *RPCContext
 		var err error
 		switch storeType {
-		case TiKV:
+		case kv.TiKV:
 			ctx, err = s.regionCache.GetRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
-		case TiFlash:
+		case kv.TiFlash:
 			ctx, err = s.regionCache.GetFlashRPCContext(bo, regionID)
 		default:
 			return nil, nil, errors.Errorf("TiDB do NOT support that storage type.")
