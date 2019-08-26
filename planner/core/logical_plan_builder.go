@@ -64,6 +64,8 @@ const (
 	HintHashAgg = "hash_agg"
 	// HintStreamAgg is hint enforce stream aggregation.
 	HintStreamAgg = "stream_agg"
+	// HintIndex is hint enforce using some indexes.
+	HintIndex = "index"
 )
 
 const (
@@ -1949,29 +1951,44 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 }
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
-	var sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
-	var preferAggType uint
+	var (
+		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
+		indexHintList                               []indexHintInfo
+		preferAggType                               uint
+	)
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
-			sortMergeTables = tableNames2HintTableInfo(hint.Tables)
+			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(hint.Tables)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
-			INLJTables = tableNames2HintTableInfo(hint.Tables)
+			INLJTables = append(INLJTables, tableNames2HintTableInfo(hint.Tables)...)
 		case TiDBHashJoin, HintHJ:
-			hashJoinTables = tableNames2HintTableInfo(hint.Tables)
+			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(hint.Tables)...)
 		case HintHashAgg:
 			preferAggType |= preferHashAgg
 		case HintStreamAgg:
 			preferAggType |= preferStreamAgg
+		case HintIndex:
+			if len(hint.Tables) != 0 && len(hint.Indexes) != 0 {
+				indexHintList = append(indexHintList, indexHintInfo{
+					tblName: hint.Tables[0].TableName,
+					indexHint: &ast.IndexHint{
+						IndexNames: hint.Indexes,
+						HintType:   ast.HintUse,
+						HintScope:  ast.HintForScan,
+					},
+				})
+			}
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 || preferAggType != 0 {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList) > 0 || preferAggType != 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
+			indexHintList:             indexHintList,
 			preferAggType:             preferAggType,
 		})
 		return true
@@ -2260,7 +2277,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
+	tblName := *asName
+	if tblName.L == "" {
+		tblName = tn.Name
+	}
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, tblName)
 	if err != nil {
 		return nil, err
 	}
