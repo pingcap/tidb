@@ -176,8 +176,8 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(idN), Equals, 3)
 	c.Assert(idN[0], Equals, int64(1001))
-	c.Assert(idN[0], Equals, int64(1002))
-	c.Assert(idN[0], Equals, int64(1003))
+	c.Assert(idN[1], Equals, int64(1002))
+	c.Assert(idN[2], Equals, int64(1003))
 
 	lastRemainOne := alloc.End()
 	err = alloc.Rebase(4, alloc.End()-2, false)
@@ -312,7 +312,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(idN), Equals, 2)
 	c.Assert(idN[0], Equals, int64(2))
-	c.Assert(idN[0], Equals, int64(3))
+	c.Assert(idN[1], Equals, int64(3))
 
 	err = alloc.Rebase(4, int64(500), true)
 	c.Assert(err, IsNil)
@@ -320,7 +320,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(idN), Equals, 2)
 	c.Assert(idN[0], Equals, int64(501))
-	c.Assert(idN[0], Equals, int64(502))
+	c.Assert(idN[1], Equals, int64(502))
 
 	lastRemainOne := alloc.End()
 	err = alloc.Rebase(4, alloc.End()-2, false)
