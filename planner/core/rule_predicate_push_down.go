@@ -219,11 +219,29 @@ func (p *LogicalJoin) updateEQCond() {
 		}
 	}
 	if len(lKeys) > 0 {
-		lProj := p.getProj(0)
-		rProj := p.getProj(1)
+		needLProj, needRProj := false, false
 		for i := range lKeys {
-			lKey := lProj.appendExpr(lKeys[i])
-			rKey := rProj.appendExpr(rKeys[i])
+			_, lOk := lKeys[i].(*expression.Column)
+			_, rOk := rKeys[i].(*expression.Column)
+			needLProj = needLProj || !lOk
+			needRProj = needRProj || !rOk
+		}
+
+		var lProj, rProj *LogicalProjection
+		if needLProj {
+			lProj = p.getProj(0)
+		}
+		if needRProj {
+			rProj = p.getProj(1)
+		}
+		for i := range lKeys {
+			lKey, rKey := lKeys[i], rKeys[i]
+			if lProj != nil {
+				lKey = lProj.appendExpr(lKey)
+			}
+			if rProj != nil {
+				rKey = rProj.appendExpr(rKey)
+			}
 			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 			p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
 		}
