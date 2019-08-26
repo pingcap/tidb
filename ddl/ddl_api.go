@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -98,7 +99,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 }
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// DDL in bootstrap is OK
-	if ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(stmt.Name) {
+	if !privileges.SkipWithGrant && ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(stmt.Name) {
 		return errCantDropSysTable.GenWithStack("cannot alter system database: %s", stmt.Name)
 	}
 
@@ -162,7 +163,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 
 func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
 	// DDL in bootstrap is OK
-	if ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(schema.L) {
+	if !privileges.SkipWithGrant && ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(schema.L) {
 		return errCantDropSysTable.GenWithStack("cannot drop system database: %s", schema.L)
 	}
 
@@ -1876,7 +1877,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	// DDL in bootstrap is OK
-	if ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(ident.Schema.L) {
+	if !privileges.SkipWithGrant && ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(ident.Schema.L) {
 		return errCantDropSysTable.GenWithStack("cannot alter system table: %s.%s", ident.Schema.L, ident.Name.L)
 	}
 
@@ -3075,7 +3076,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	// DDL in bootstrap is OK
-	if ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(ti.Schema.L) {
+	if !privileges.SkipWithGrant && ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(ti.Schema.L) {
 		return errCantDropSysTable.GenWithStack("cannot drop system table: %s.%s", ti.Schema.L, ti.Name.L)
 	}
 
