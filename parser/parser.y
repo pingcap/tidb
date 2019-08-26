@@ -1450,6 +1450,24 @@ AlterTableSpec:
 		yylex.AppendError(yylex.Errorf("The DISCARD PARTITION TABLESPACE clause is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
 	}
+|	"IMPORT" "TABLESPACE"
+    {
+        ret := &ast.AlterTableSpec{
+            Tp: ast.AlterTableImportTablespace,
+        }
+        $$ = ret
+        yylex.AppendError(yylex.Errorf("The IMPORT TABLESPACE clause is parsed but ignored by all storage engines."))
+        parser.lastErrorAsWarn()
+    }
+|	"DISCARD" "TABLESPACE"
+    {
+        ret := &ast.AlterTableSpec{
+            Tp: ast.AlterTableDiscardTablespace,
+        }
+        $$ = ret
+        yylex.AppendError(yylex.Errorf("The DISCARD TABLESPACE clause is parsed but ignored by all storage engines."))
+        parser.lastErrorAsWarn()
+    }
 |	"REBUILD" "PARTITION" NoWriteToBinLogAliasOpt AllOrPartitionNameList
 	{
 		ret := &ast.AlterTableSpec{
