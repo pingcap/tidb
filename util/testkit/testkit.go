@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/sirupsen/logrus"
 )
 
 // TestKit is a utility to run sql test.
@@ -191,13 +190,26 @@ func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
 	hasIndexLookup := false
 	for i := range rs.rows {
-		logrus.Warning(rs.rows[i][0])
 		if strings.Contains(rs.rows[i][0], "IndexLookUp") {
 			hasIndexLookup = true
 			break
 		}
 	}
 	tk.c.Assert(hasIndexLookup, check.IsTrue)
+	return tk.MustQuery(sql, args...)
+}
+
+// MustTableDual checks whether the plan for the sql is TableDual.
+func (tk *TestKit) MustTableDual(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	hasTableDual := false
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], "TableDual") {
+			hasTableDual = true
+			break
+		}
+	}
+	tk.c.Assert(hasTableDual, check.IsTrue)
 	return tk.MustQuery(sql, args...)
 }
 
