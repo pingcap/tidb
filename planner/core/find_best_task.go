@@ -813,6 +813,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}.Init(ds.ctx)
 	if ds.preferStoreType&preferTiFlash != 0 {
 		ts.StoreType = kv.TiFlash
+	} else {
+		ts.StoreType = kv.TiKV
 	}
 	ts.SetSchema(ds.schema)
 	if ts.Table.PKIsHandle {

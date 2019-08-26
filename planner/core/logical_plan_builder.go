@@ -1969,9 +1969,10 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	var (
-		sortMergeTables, INLJTables, hashJoinTables, flashTables []hintTableInfo
-		indexHintList                                            []indexHintInfo
-		preferAggType                                            uint
+		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
+		tiflashTables                               []hintTableInfo
+		indexHintList                               []indexHintInfo
+		preferAggType                               uint
 	)
 	for _, hint := range hints {
 		switch hint.HintName.L {
@@ -1986,7 +1987,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 		case HintStreamAgg:
 			preferAggType |= preferStreamAgg
 		case ReadFromStorage:
-			flashTables = tableNames2HintTableInfo(hint.Tables)
+			if hint.StoreType.L == "tiflash" {
+				tiflashTables = tableNames2HintTableInfo(hint.Tables)
+			}
 		case HintIndex:
 			if len(hint.Tables) != 0 && len(hint.Indexes) != 0 {
 				indexHintList = append(indexHintList, indexHintInfo{
@@ -2002,14 +2005,14 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList)+len(flashTables) > 0 || preferAggType != 0 {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList)+len(tiflashTables) > 0 || preferAggType != 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
 			indexHintList:             indexHintList,
 			preferAggType:             preferAggType,
-			flashTables:               flashTables,
+			flashTables:               tiflashTables,
 		})
 		return true
 	}
@@ -2336,6 +2339,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		partitionNames:      tn.PartitionNames,
 		TblCols:             make([]*expression.Column, 0, len(columns)),
 	}.Init(b.ctx)
+	ds.setPreferredStoreType(b.TableHints())
 
 	var handleCol *expression.Column
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)

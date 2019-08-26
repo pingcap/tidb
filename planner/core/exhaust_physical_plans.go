@@ -513,6 +513,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 	}.Init(ds.ctx)
 	if ds.preferStoreType&preferTiFlash != 0 {
 		ts.StoreType = kv.TiFlash
+	} else {
+		ts.StoreType = kv.TiKV
 	}
 	ts.SetSchema(ds.schema)
 	ts.stats = &property.StatsInfo{
