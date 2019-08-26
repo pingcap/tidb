@@ -74,6 +74,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		Text:          stmtNode.Text(),
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
+		outputNames:   finalPlan.OutputNames(),
 	}, nil
 }
 
