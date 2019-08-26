@@ -352,13 +352,28 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		// date functions.
 		ast.DateFormat,
 		ast.DateAdd,
+		ast.Cast,
 		ast.TimestampDiff:
+		if sf.FuncName.L == ast.Cast {
+			switch sf.Function.PbCode() {
+			case tipb.ScalarFuncSig_CastDecimalAsTime,
+				tipb.ScalarFuncSig_CastStringAsTime,
+				tipb.ScalarFuncSig_CastIntAsTime,
+				tipb.ScalarFuncSig_CastJsonAsTime,
+				tipb.ScalarFuncSig_CastTimeAsDecimal,
+				tipb.ScalarFuncSig_CastTimeAsString,
+				tipb.ScalarFuncSig_CastTimeAsInt,
+				tipb.ScalarFuncSig_CastTimeAsJson,
+				tipb.ScalarFuncSig_CastTimeAsTime,
+				tipb.ScalarFuncSig_CastTimeAsDuration,
+				tipb.ScalarFuncSig_CastTimeAsReal,
+				tipb.ScalarFuncSig_CastDurationAsTime,
+				tipb.ScalarFuncSig_CastRealAsTime:
+				return false
+			}
+		}
 		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
 		return true && !disallowPushdown
-	case ast.Cast:
-		if sf.Function.PbCode() == tipb.ScalarFuncSig_CastDecimalAsDecimal {
-			return true
-		}
 	}
 	return false
 }
