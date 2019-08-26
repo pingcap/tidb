@@ -3747,6 +3747,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_regions1, t_regions")
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	tk.MustExec("create table t_regions1 (a int key, b int, index idx(b))")
 	tk.MustExec("create table t_regions (a int key, b int, index idx(b))")
 
@@ -3780,7 +3781,6 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 
 	re = tk.MustQuery("show table t_regions regions")
 	rows = re.Rows()
-	// The index `idx` of table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 7)
 	// Check the region start key.
 	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
@@ -3828,7 +3828,6 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	re = tk.MustQuery("show table partition_t regions")
 	rows = re.Rows()
-	// Table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][1], Matches, "t_.*")
 
@@ -3843,13 +3842,24 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 			partition p2 values less than (7))`)
 	re = tk.MustQuery("show table partition_t regions")
 	rows = re.Rows()
-	// Table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 3)
 	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
 	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
 	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
+
+	// Test pre-split table region when create table.
+	tk.MustExec("drop table if exists t_pre")
+	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2;")
+	re = tk.MustQuery("show table t_pre regions")
+	rows = re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 4)
+	tbl = testGetTableByName(c, tk.Se, "test", "t_pre")
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 }
 
