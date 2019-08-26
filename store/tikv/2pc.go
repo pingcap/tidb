@@ -438,7 +438,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 			beforeSleep := singleBatchBackoffer.totalSleep
 			ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
 			commitDetail := c.getDetail()
-			if commitDetail != nil {
+			if commitDetail != nil { // lock operations of pessimistic-txn will let commitDetail be nil
 				if delta := singleBatchBackoffer.totalSleep - beforeSleep; delta > 0 {
 					atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(singleBatchBackoffer.totalSleep-beforeSleep)*int64(time.Millisecond))
 					commitDetail.Mu.Lock()
