@@ -296,6 +296,7 @@ type PhysicalUnionAll struct {
 	IsPointGetUnion bool
 }
 
+// OutputNames returns the outputting names of each column.
 func (p *PhysicalUnionAll) OutputNames() []*types.FieldName {
 	if p.IsPointGetUnion {
 		return p.children[0].OutputNames()
