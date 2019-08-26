@@ -27,56 +27,18 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
-// DirtyDB stores uncommitted write operations for a transaction.
-// It is stored and retrieved by context.Value and context.SetValue method.
-type DirtyDB struct {
-	// tables is a map whose key is tableID.
-	tables map[int64]*DirtyTable
-}
-
-// GetDirtyTable gets the DirtyTable by id from the DirtyDB.
-func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
-	dt, ok := udb.tables[tid]
-	if !ok {
-		dt = &DirtyTable{
-			tid:         tid,
-			deletedRows: make(map[int64]struct{}),
-		}
-		udb.tables[tid] = dt
+func getTableDeletedRows(s sessionctx.Context, tid int64) map[int64]struct{} {
+	if s.GetSessionVars().TxnCtx.DeletedTableRows == nil || s.GetSessionVars().TxnCtx.DeletedTableRows[tid] == nil {
+		return make(map[int64]struct{})
 	}
-	return dt
-}
-
-// DirtyTable stores uncommitted write operation for a transaction.
-type DirtyTable struct {
-	tid int64
-	// the key is handle.
-	deletedRows map[int64]struct{}
-}
-
-// DeleteRow deletes a row from the DirtyDB.
-func (dt *DirtyTable) DeleteRow(handle int64) {
-	dt.deletedRows[handle] = struct{}{}
-}
-
-// GetDirtyDB returns the DirtyDB bind to the context.
-func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
-	var udb *DirtyDB
-	x := ctx.GetSessionVars().TxnCtx.DirtyDB
-	if x == nil {
-		udb = &DirtyDB{tables: make(map[int64]*DirtyTable)}
-		ctx.GetSessionVars().TxnCtx.DirtyDB = udb
-	} else {
-		udb = x.(*DirtyDB)
-	}
-	return udb
+	return s.GetSessionVars().TxnCtx.DeletedTableRows[tid]
 }
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
 type UnionScanExec struct {
 	baseExecutor
 
-	dirty *DirtyTable
+	deletedRows map[int64]struct{}
 	// usedIndex is the column offsets of the index which Src executor has used.
 	usedIndex  []int
 	desc       bool
@@ -87,8 +49,8 @@ type UnionScanExec struct {
 	belowHandleIndex int
 
 	addedRows [][]types.Datum
-	// memIdxHandles is uses to store the handle ids that has been read by memIndexReader.
-	memIdxHandles       set.Int64Set
+	// memProcessedHandles is uses to store the handle ids that has been read by memIndexReader.
+	memProcessedHandles set.Int64Set
 	cursor4AddRows      int
 	sortErr             error
 	snapshotRows        [][]types.Datum
@@ -110,7 +72,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	reader := us.children[0]
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
+		us.addedRows, err = buildMemTableReaderWithRange(us, x.kvRanges).getMemRows()
 	case *IndexReaderExecutor:
 		tid := getPhysicalTableID(x.table)
 		if us.ctx.IsUntouchedIndex(tid, x.index.ID) {
@@ -119,7 +81,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		} else {
 			mIdxReader := buildMemIndexReader(us, x)
 			us.addedRows, err = mIdxReader.getMemRows()
-			us.memIdxHandles = mIdxReader.memIdxHandles
+			us.memProcessedHandles = mIdxReader.memProcessedHandles
 		}
 	case *IndexLookUpExecutor:
 		tid := getPhysicalTableID(x.table)
@@ -129,7 +91,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		} else {
 			idxLookup := buildMemIndexLookUpReader(us, x)
 			us.addedRows, err = idxLookup.getMemRows()
-			us.memIdxHandles = idxLookup.idxReader.memIdxHandles
+			us.memProcessedHandles = idxLookup.idxReader.memProcessedHandles
 		}
 	}
 	if err != nil {
@@ -212,10 +174,10 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			snapshotHandle := row.GetInt64(us.belowHandleIndex)
-			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
+			if _, ok := us.deletedRows[snapshotHandle]; ok {
 				continue
 			}
-			if _, ok := us.memIdxHandles[snapshotHandle]; ok {
+			if _, ok := us.memProcessedHandles[snapshotHandle]; ok {
 				continue
 			}
 			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
@@ -286,7 +248,7 @@ func (us *UnionScanExec) buildAndSortAddedRowsFromMemTableReader() error {
 	if err != nil {
 		return err
 	}
-	us.memIdxHandles = tableReaderWithFullRange.memIdxHandles
+	us.memProcessedHandles = tableReaderWithFullRange.memProcessedHandles
 	us.addedRows = make([][]types.Datum, 0, len(rows))
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for _, row := range rows {

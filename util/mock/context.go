@@ -26,11 +26,10 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 var _ sessionctx.Context = (*Context)(nil)
@@ -212,13 +211,15 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return nil
 }
 
-// StmtAddDirtyTableOP implements the sessionctx.Context interface.
-func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
+// StmtDeleteTableRow implements the sessionctx.Context interface.
+func (c *Context) StmtDeleteTableRow(tid int64, handle int64) {
 }
 
+// UpdateStmtUntouchedIndex implements the sessionctx.Context interface.
 func (c *Context) UpdateStmtUntouchedIndex(tid, indexID int64) {
 }
 
+// IsUntouchedIndex implements the sessionctx.Context interface.
 func (c *Context) IsUntouchedIndex(tid, indexID int64) bool {
 	return false
 }
