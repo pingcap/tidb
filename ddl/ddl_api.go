@@ -97,7 +97,8 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	return errors.Trace(err)
 }
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
-	if util.IsMemOrSysDB(stmt.Name) {
+	// DDL in bootstrap is OK
+	if ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(stmt.Name) {
 		return errCantDropSysTable.GenWithStack("cannot alter system database: %s", stmt.Name)
 	}
 
@@ -160,7 +161,8 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 }
 
 func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
-	if util.IsMemOrSysDB(schema.L) {
+	// DDL in bootstrap is OK
+	if ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(schema.L) {
 		return errCantDropSysTable.GenWithStack("cannot drop system database: %s", schema.L)
 	}
 
@@ -1873,7 +1875,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		return errors.Trace(err)
 	}
 
-	if util.IsMemOrSysDB(ident.Schema.L) {
+	// DDL in bootstrap is OK
+	if ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(ident.Schema.L) {
 		return errCantDropSysTable.GenWithStack("cannot alter system table: %s.%s", ident.Schema.L, ident.Name.L)
 	}
 
@@ -3071,7 +3074,8 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 		return errors.Trace(err)
 	}
 
-	if util.IsMemOrSysDB(ti.Schema.L) {
+	// DDL in bootstrap is OK
+	if ctx.GetSessionVars().User != nil && util.IsMemOrSysDB(ti.Schema.L) {
 		return errCantDropSysTable.GenWithStack("cannot drop system table: %s.%s", ti.Schema.L, ti.Name.L)
 	}
 
