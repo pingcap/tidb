@@ -400,7 +400,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 					mu.Unlock()
 					break
 				} else {
-					m[id] = struct{}{}
+					m[idN[i]] = struct{}{}
 				}
 			}
 			if errFlag {
