@@ -395,14 +395,14 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*
 }
 
 func (c *RawKVClient) sendBatchReq(bo *Backoffer, keys [][]byte, cmdType tikvrpc.CmdType) (*tikvrpc.Response, error) { // split the keys
-	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys, nil)
+	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys, nil, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	var batches []batch
 	for regionID, groupKeys := range groups {
-		batches = appendKeyBatches(batches, regionID, groupKeys, rawBatchPairCount)
+		batches = appendKeyBatches(batches, regionID, groupKeys.Keys, rawBatchPairCount)
 	}
 	bo, cancel := bo.Fork()
 	ches := make(chan singleBatchResp, len(batches))
@@ -544,14 +544,14 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 	for i, key := range keys {
 		keyToValue[string(key)] = values[i]
 	}
-	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys, nil)
+	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	var batches []batch
 	// split the keys by size and RegionVerID
 	for regionID, groupKeys := range groups {
-		batches = appendBatches(batches, regionID, groupKeys, keyToValue, rawBatchPutSize)
+		batches = appendBatches(batches, regionID, groupKeys.Keys, keyToValue, rawBatchPutSize)
 	}
 	bo, cancel := bo.Fork()
 	ch := make(chan error, len(batches))

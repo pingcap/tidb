@@ -52,7 +52,7 @@ type CopClient struct {
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
-	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
+	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming, nil)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -87,10 +87,11 @@ type copTask struct {
 	region RegionVerID
 	ranges *copRanges
 
-	respChan  chan *copResponse
-	storeAddr string
-	cmdType   tikvrpc.CmdType
-	storeType StoreType
+	respChan    chan *copResponse
+	storeAddr   string
+	cmdType     tikvrpc.CmdType
+	storeType   StoreType
+	regionToken *RegionToken
 }
 
 func (r *copTask) String() string {
@@ -211,7 +212,7 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, streaming bool) ([]*copTask, error) {
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, streaming bool, tok *RegionToken) ([]*copTask, error) {
 	start := time.Now()
 	rangesLen := ranges.len()
 	cmdType := tikvrpc.CmdCop
@@ -220,7 +221,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	}
 
 	var tasks []*copTask
-	appendTask := func(region RegionVerID, ranges *copRanges) {
+	appendTask := func(region RegionVerID, ranges *copRanges, regionToken *RegionToken) {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
 		// to make sure the message can be sent successfully.
 		rLen := ranges.len()
@@ -231,14 +232,15 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 				ranges: ranges.slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
-				respChan: make(chan *copResponse, 2),
-				cmdType:  cmdType,
+				respChan:    make(chan *copResponse, 2),
+				cmdType:     cmdType,
+				regionToken: regionToken,
 			})
 			i = nextI
 		}
 	}
 
-	err := splitRanges(bo, cache, ranges, appendTask)
+	err := splitRanges(bo, cache, ranges, appendTask, tok)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -256,9 +258,9 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	return tasks, nil
 }
 
-func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(region RegionVerID, ranges *copRanges)) error {
+func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(region RegionVerID, ranges *copRanges, regionToken *RegionToken), tok *RegionToken) error {
 	for ranges.len() > 0 {
-		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
+		loc, err := cache.LocateKeyWithToken(bo, ranges.at(0).StartKey, tok)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -273,7 +275,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 		}
 		// All rest ranges belong to the same region.
 		if i == ranges.len() {
-			fn(loc.Region, ranges)
+			fn(loc.Region, ranges, loc.RegionToken)
 			break
 		}
 
@@ -285,7 +287,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 				StartKey: r.StartKey,
 				EndKey:   loc.EndKey,
 			}
-			fn(loc.Region, taskRanges)
+			fn(loc.Region, taskRanges, loc.RegionToken)
 
 			ranges = ranges.slice(i+1, ranges.len())
 			ranges.first = &kv.KeyRange{
@@ -295,7 +297,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 		} else {
 			// rs[i] is not in the region.
 			taskRanges := ranges.slice(0, i)
-			fn(loc.Region, taskRanges)
+			fn(loc.Region, taskRanges, loc.RegionToken)
 			ranges = ranges.slice(i, ranges.len())
 		}
 	}
@@ -308,13 +310,13 @@ func SplitRegionRanges(bo *Backoffer, cache *RegionCache, keyRanges []kv.KeyRang
 	ranges := copRanges{mid: keyRanges}
 
 	var ret []kv.KeyRange
-	appendRange := func(region RegionVerID, ranges *copRanges) {
+	appendRange := func(region RegionVerID, ranges *copRanges, tok *RegionToken) {
 		for i := 0; i < ranges.len(); i++ {
 			ret = append(ret, ranges.at(i))
 		}
 	}
 
-	err := splitRanges(bo, cache, &ranges, appendRange)
+	err := splitRanges(bo, cache, &ranges, appendRange, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -778,7 +780,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
+		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming, task.regionToken)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		logutil.BgLogger().Debug("coprocessor encounters",
@@ -838,7 +840,7 @@ func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRang
 	if worker.req.Streaming && lastRange != nil {
 		remainedRanges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
 	}
-	return buildCopTasks(bo, worker.store.regionCache, remainedRanges, worker.req.Desc, worker.req.Streaming)
+	return buildCopTasks(bo, worker.store.regionCache, remainedRanges, worker.req.Desc, worker.req.Streaming, task.regionToken)
 }
 
 // calculateRemain splits the input ranges into two, and take one of them according to desc flag.

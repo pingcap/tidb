@@ -65,13 +65,13 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	}
 
 	ctx := context.Background()
-	err = tpc.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), tpc.keys)
+	err = tpc.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), tpc.keys, nil)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
 		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 		c.Assert(err, IsNil)
-		err = tpc.commitKeys(NewBackoffer(ctx, CommitMaxBackoff), [][]byte{primaryKey})
+		err = tpc.commitKeys(NewBackoffer(ctx, CommitMaxBackoff), [][]byte{primaryKey}, nil)
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS
@@ -268,7 +268,7 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys, nil)
 	c.Assert(err, IsNil)
 }
 

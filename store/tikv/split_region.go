@@ -42,14 +42,14 @@ func equalRegionStartKey(key, regionStartKey []byte) bool {
 func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool) (*tikvrpc.Response, error) {
 	// equalRegionStartKey is used to filter split keys.
 	// If the split key is equal to the start key of the region, then the key has been split, we need to skip the split key.
-	groups, _, err := s.regionCache.GroupKeysByRegion(bo, keys, equalRegionStartKey)
+	groups, _, err := s.regionCache.GroupKeysByRegion(bo, keys, equalRegionStartKey, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	var batches []batch
 	for regionID, groupKeys := range groups {
-		batches = appendKeyBatches(batches, regionID, groupKeys, rawBatchPutSize)
+		batches = appendKeyBatches(batches, regionID, groupKeys.Keys, rawBatchPutSize)
 	}
 
 	if len(batches) == 0 {

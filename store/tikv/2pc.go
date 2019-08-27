@@ -367,11 +367,11 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 // doActionOnKeys groups keys into primary batch and secondary batches, if primary batch exists in the key,
 // it does action on primary batch first, then on secondary batches. If action is commit, secondary batches
 // is done in background goroutine.
-func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitAction, keys [][]byte) error {
+func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitAction, keys [][]byte, tok *RegionToken) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys, nil)
+	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys, nil, tok)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -384,17 +384,17 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
 		if len(bo.errors) == 0 {
 			for region, keys := range groups {
-				c.regionTxnSize[region.id] = len(keys)
+				c.regionTxnSize[region.id] = len(keys.Keys)
 			}
 		}
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
 	}
 	// Make sure the group that contains primary key goes first.
-	batches = appendBatchBySize(batches, firstRegion, groups[firstRegion], sizeFunc, txnCommitBatchSize)
+	batches = appendBatchBySize(batches, firstRegion, groups[firstRegion].Keys, sizeFunc, txnCommitBatchSize, groups[firstRegion].Token)
 	delete(groups, firstRegion)
 	for id, g := range groups {
-		batches = appendBatchBySize(batches, id, g, sizeFunc, txnCommitBatchSize)
+		batches = appendBatchBySize(batches, id, g.Keys, sizeFunc, txnCommitBatchSize, g.Token)
 	}
 
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
@@ -533,7 +533,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.prewriteKeys(bo, batch.keys)
+			err = c.prewriteKeys(bo, batch.keys, batch.token)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
@@ -617,7 +617,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticLockKeys(bo, batch.keys)
+			err = c.pessimisticLockKeys(bo, batch.keys, batch.token)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
@@ -678,7 +678,7 @@ func (c *twoPhaseCommitter) pessimisticRollbackSingleBatch(bo *Backoffer, batch 
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticRollbackKeys(bo, batch.keys)
+			err = c.pessimisticRollbackKeys(bo, batch.keys, batch.token)
 			return errors.Trace(err)
 		}
 		return nil
@@ -762,7 +762,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 			return errors.Trace(err)
 		}
 		// re-split keys and commit again.
-		err = c.commitKeys(bo, batch.keys)
+		err = c.commitKeys(bo, batch.keys, batch.token)
 		return errors.Trace(err)
 	}
 	if resp.Resp == nil {
@@ -819,7 +819,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = c.cleanupKeys(bo, batch.keys)
+		err = c.cleanupKeys(bo, batch.keys, batch.token)
 		return errors.Trace(err)
 	}
 	if keyErr := resp.Resp.(*pb.BatchRollbackResponse).GetError(); keyErr != nil {
@@ -832,36 +832,36 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 	return nil
 }
 
-func (c *twoPhaseCommitter) prewriteKeys(bo *Backoffer, keys [][]byte) error {
+func (c *twoPhaseCommitter) prewriteKeys(bo *Backoffer, keys [][]byte, tok *RegionToken) error {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("twoPhaseCommitter.prewriteKeys", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
-	return c.doActionOnKeys(bo, actionPrewrite, keys)
+	return c.doActionOnKeys(bo, actionPrewrite, keys, tok)
 }
 
-func (c *twoPhaseCommitter) commitKeys(bo *Backoffer, keys [][]byte) error {
+func (c *twoPhaseCommitter) commitKeys(bo *Backoffer, keys [][]byte, tok *RegionToken) error {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("twoPhaseCommitter.commitKeys", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
-	return c.doActionOnKeys(bo, actionCommit, keys)
+	return c.doActionOnKeys(bo, actionCommit, keys, tok)
 }
 
-func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionCleanup, keys)
+func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte, tok *RegionToken) error {
+	return c.doActionOnKeys(bo, actionCleanup, keys, tok)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock, keys)
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, keys [][]byte, tok *RegionToken) error {
+	return c.doActionOnKeys(bo, actionPessimisticLock, keys, tok)
 }
 
-func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticRollback, keys)
+func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte, tok *RegionToken) error {
+	return c.doActionOnKeys(bo, actionPessimisticRollback, keys, tok)
 }
 
 func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) error {
@@ -887,7 +887,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			c.cleanWg.Add(1)
 			go func() {
 				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
-				err := c.cleanupKeys(NewBackoffer(cleanupKeysCtx, cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
+				err := c.cleanupKeys(NewBackoffer(cleanupKeysCtx, cleanupMaxBackoff).WithVars(c.txn.vars), c.keys, nil)
 				if err != nil {
 					tikvSecondaryLockCleanupFailureCounterRollback.Inc()
 					logutil.Logger(ctx).Info("2PC cleanup failed",
@@ -905,7 +905,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
-	err := c.prewriteKeys(prewriteBo, c.keys)
+	err := c.prewriteKeys(prewriteBo, c.keys, nil)
 	commitDetail := c.getDetail()
 	commitDetail.PrewriteTime = time.Since(start)
 	if prewriteBo.totalSleep > 0 {
@@ -966,7 +966,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 
 	start = time.Now()
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
-	err = c.commitKeys(commitBo, c.keys)
+	err = c.commitKeys(commitBo, c.keys, nil)
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.totalSleep > 0 {
 		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(commitBo.totalSleep)*int64(time.Millisecond))
@@ -1061,11 +1061,12 @@ const txnCommitBatchSize = 16 * 1024
 type batchKeys struct {
 	region RegionVerID
 	keys   [][]byte
+	token  *RegionToken
 }
 
 // appendBatchBySize appends keys to []batchKeys. It may split the keys to make
 // sure each batch's size does not exceed the limit.
-func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn func([]byte) int, limit int) []batchKeys {
+func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn func([]byte) int, limit int, tok *RegionToken) []batchKeys {
 	var start, end int
 	for start = 0; start < len(keys); start = end {
 		var size int
@@ -1075,6 +1076,7 @@ func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn 
 		b = append(b, batchKeys{
 			region: region,
 			keys:   keys[start:end],
+			token:  tok,
 		})
 	}
 	return b
