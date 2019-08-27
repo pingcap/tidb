@@ -77,10 +77,11 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
-	Region RegionVerID
-	Meta   *metapb.Region
-	Peer   *metapb.Peer
-	Addr   string
+	Region    RegionVerID
+	Meta      *metapb.Region
+	Peer      *metapb.Peer
+	Addr      string
+	StoreFail uint32
 }
 
 // GetStoreID returns StoreID.
@@ -112,7 +113,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	meta, peer := region.meta, region.peer
 	c.mu.RUnlock()
 
-	addr, err := c.GetStoreAddr(bo, peer.GetStoreId())
+	addr, storeFail, err := c.GetStoreAddr(bo, peer.GetStoreId())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -121,11 +122,24 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 		c.DropRegion(id)
 		return nil, nil
 	}
+	if region.storeFail != storeFail {
+		// Store has failed after last seen, both store and region need be reload.
+		_, _, err = c.ReloadStoreAddr(bo, peer.GetStoreId())
+		if err != nil {
+			return nil, err
+		}
+		c.DropRegion(id)
+		logutil.Logger(context.Background()).Error("drop store and region then retry load storeFail mark",
+			zap.Uint32("storeFailCount", storeFail),
+			zap.Uint32("regionFailCount", region.storeFail))
+		return nil, nil
+	}
 	return &RPCContext{
-		Region: id,
-		Meta:   meta,
-		Peer:   peer,
-		Addr:   addr,
+		Region:    id,
+		Meta:      meta,
+		Peer:      peer,
+		Addr:      addr,
+		StoreFail: storeFail,
 	}, nil
 }
 
@@ -320,6 +334,8 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		c.dropRegionFromCache(r.VerID())
+	} else {
+		r.initPeerFailCount(c)
 	}
 }
 
@@ -437,6 +453,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 		if leader != nil {
 			region.SwitchPeer(leader.GetStoreId())
 		}
+		region.initPeerFailCount(c)
 		return region, nil
 	}
 }
@@ -471,36 +488,42 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 		if leader != nil {
 			region.SwitchPeer(leader.GetStoreId())
 		}
+		region.initPeerFailCount(c)
 		return region, nil
 	}
 }
 
 // GetStoreAddr returns a tikv server's address by its storeID. It checks cache
 // first, sends request to pd server when necessary.
-func (c *RegionCache) GetStoreAddr(bo *Backoffer, id uint64) (string, error) {
+func (c *RegionCache) GetStoreAddr(bo *Backoffer, id uint64) (string, uint32, error) {
 	c.storeMu.RLock()
 	if store, ok := c.storeMu.stores[id]; ok {
 		c.storeMu.RUnlock()
-		return store.Addr, nil
+		return store.Addr, atomic.LoadUint32(&store.fail), nil
 	}
 	c.storeMu.RUnlock()
 	return c.ReloadStoreAddr(bo, id)
 }
 
 // ReloadStoreAddr reloads store's address.
-func (c *RegionCache) ReloadStoreAddr(bo *Backoffer, id uint64) (string, error) {
+func (c *RegionCache) ReloadStoreAddr(bo *Backoffer, id uint64) (string, uint32, error) {
 	addr, err := c.loadStoreAddr(bo, id)
 	if err != nil || addr == "" {
-		return "", errors.Trace(err)
+		return "", 0, errors.Trace(err)
 	}
 
 	c.storeMu.Lock()
 	defer c.storeMu.Unlock()
-	c.storeMu.stores[id] = &Store{
+	preStore, preOK := c.storeMu.stores[id]
+	s := &Store{
 		ID:   id,
 		Addr: addr,
 	}
-	return addr, nil
+	if preOK {
+		s.fail = atomic.LoadUint32(&preStore.fail)
+	}
+	c.storeMu.stores[id] = s
+	return addr, s.fail, nil
 }
 
 // ClearStoreByID clears store from cache with storeID.
@@ -545,25 +568,33 @@ func (c *RegionCache) DropStoreOnSendRequestFail(ctx *RPCContext, err error) {
 		c.mu.Unlock()
 		return
 	}
-	for id, r := range c.mu.regions {
-		if r.region.peer.GetStoreId() == failedStoreID {
-			c.dropRegionFromCache(id)
-		}
-	}
+	c.dropRegionFromCache(failedRegionID)
 	c.mu.Unlock()
 
 	// Store's meta may be out of date.
-	var failedStoreAddr string
-	c.storeMu.Lock()
-	store, ok := c.storeMu.stores[failedStoreID]
+	var (
+		failedStoreAddr string
+		store           *Store
+		markSuccess     bool
+	)
+	c.storeMu.RLock()
+	store, ok = c.storeMu.stores[failedStoreID]
 	if ok {
+		markSuccess = atomic.CompareAndSwapUint32(&store.fail, ctx.StoreFail, ctx.StoreFail+1)
 		failedStoreAddr = store.Addr
-		delete(c.storeMu.stores, failedStoreID)
 	}
-	c.storeMu.Unlock()
+	c.storeMu.RUnlock()
+
+	if !markSuccess {
+		return
+	}
+
 	logutil.Logger(context.Background()).Info("drop regions that on the store due to send request fail",
+		zap.Uint64("region", failedRegionID.GetID()),
 		zap.Uint64("store", failedStoreID),
 		zap.String("store addr", failedStoreAddr),
+		zap.Bool("mark delete", markSuccess),
+		zap.Uint32("store fail count", ctx.StoreFail+1),
 		zap.Error(err))
 }
 
@@ -597,6 +628,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 			peer: meta.Peers[0],
 		}
 		region.SwitchPeer(ctx.Peer.GetStoreId())
+		region.initPeerFailCount(c)
 		c.insertRegionToCache(region)
 	}
 	return nil
@@ -632,8 +664,9 @@ func (item *btreeItem) Less(other btree.Item) bool {
 
 // Region stores region's meta and its leader peer.
 type Region struct {
-	meta *metapb.Region
-	peer *metapb.Peer
+	meta      *metapb.Region
+	peer      *metapb.Peer
+	storeFail uint32
 }
 
 // GetID returns id.
@@ -708,6 +741,14 @@ func (r *Region) SwitchPeer(storeID uint64) bool {
 	return false
 }
 
+func (r *Region) initPeerFailCount(c *RegionCache) {
+	c.storeMu.RLock()
+	if store, ok := c.storeMu.stores[r.peer.GetStoreId()]; ok {
+		r.storeFail = atomic.LoadUint32(&store.fail)
+	}
+	c.storeMu.RUnlock()
+}
+
 // Contains checks whether the key is in the region, for the maximum region endKey is empty.
 // startKey <= key < endKey.
 func (r *Region) Contains(key []byte) bool {
@@ -727,4 +768,5 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 type Store struct {
 	ID   uint64
 	Addr string
+	fail uint32
 }
