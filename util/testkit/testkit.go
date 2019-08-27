@@ -199,6 +199,20 @@ func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
 	return tk.MustQuery(sql, args...)
 }
 
+// MustTableDual checks whether the plan for the sql is TableDual.
+func (tk *TestKit) MustTableDual(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	hasTableDual := false
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], "TableDual") {
+			hasTableDual = true
+			break
+		}
+	}
+	tk.c.Assert(hasTableDual, check.IsTrue)
+	return tk.MustQuery(sql, args...)
+}
+
 // MustPointGet checks whether the plan for the sql is Point_Get.
 func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
