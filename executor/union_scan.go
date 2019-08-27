@@ -27,7 +27,14 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
-func getTableDeletedRows(s sessionctx.Context, tid int64) map[int64]struct{} {
+func getTableAddedHandles(s sessionctx.Context, tid int64) map[int64]struct{} {
+	if s.GetSessionVars().TxnCtx.AddedTableRows == nil || s.GetSessionVars().TxnCtx.AddedTableRows[tid] == nil {
+		return make(map[int64]struct{})
+	}
+	return s.GetSessionVars().TxnCtx.AddedTableRows[tid]
+}
+
+func getTableDeletedHandles(s sessionctx.Context, tid int64) map[int64]struct{} {
 	if s.GetSessionVars().TxnCtx.DeletedTableRows == nil || s.GetSessionVars().TxnCtx.DeletedTableRows[tid] == nil {
 		return make(map[int64]struct{})
 	}
@@ -38,7 +45,9 @@ func getTableDeletedRows(s sessionctx.Context, tid int64) map[int64]struct{} {
 type UnionScanExec struct {
 	baseExecutor
 
-	deletedRows map[int64]struct{}
+	txnDeletedHandles map[int64]struct{}
+	txnAddedHandles   map[int64]struct{}
+	needGetMissRows   bool
 	// usedIndex is the column offsets of the index which Src executor has used.
 	usedIndex  []int
 	desc       bool
@@ -75,14 +84,10 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		us.addedRows, err = buildMemTableReaderWithRange(us, x.kvRanges).getMemRows()
 	case *IndexReaderExecutor:
 		tid := getPhysicalTableID(x.table)
-		if us.ctx.IsUntouchedIndex(tid, x.index.ID) {
-			// use full range table scan.
-			err = us.buildAndSortAddedRowsFromMemTableReader()
-		} else {
-			mIdxReader := buildMemIndexReader(us, x)
-			us.addedRows, err = mIdxReader.getMemRows()
-			us.memProcessedHandles = mIdxReader.memProcessedHandles
-		}
+		us.needGetMissRows = us.ctx.IsUntouchedIndex(tid, x.index.ID)
+		mIdxReader := buildMemIndexReader(us, x)
+		us.addedRows, err = mIdxReader.getMemRows()
+		us.memProcessedHandles = mIdxReader.memProcessedHandles
 	case *IndexLookUpExecutor:
 		tid := getPhysicalTableID(x.table)
 		if us.ctx.IsUntouchedIndex(tid, x.index.ID) {
@@ -91,7 +96,6 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		} else {
 			idxLookup := buildMemIndexLookUpReader(us, x)
 			us.addedRows, err = idxLookup.getMemRows()
-			us.memProcessedHandles = idxLookup.idxReader.memProcessedHandles
 		}
 	}
 	if err != nil {
@@ -174,16 +178,48 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			snapshotHandle := row.GetInt64(us.belowHandleIndex)
-			if _, ok := us.deletedRows[snapshotHandle]; ok {
+			if _, ok := us.txnDeletedHandles[snapshotHandle]; ok {
+				err = us.getMissIndexRowsByHandle(ctx, snapshotHandle)
+				if err != nil {
+					return nil, err
+				}
 				continue
 			}
-			if _, ok := us.memProcessedHandles[snapshotHandle]; ok {
+			if _, ok := us.txnAddedHandles[snapshotHandle]; ok {
+				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
+				// commit, but for simplicity, we don't handle it here.
+				err = us.getMissIndexRowsByHandle(ctx, snapshotHandle)
+				if err != nil {
+					return nil, err
+				}
 				continue
 			}
 			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
 		}
 	}
 	return us.snapshotRows[0], nil
+}
+
+// For index reader, update doesn't write index to txn memBuffer when the idx column
+// is unchanged. So the `memIndexReader` can't read the index from txn memBuffer.
+// This function is used to get the missing row by the handle if the handle is in dirtyTable.addedRows.
+func (us *UnionScanExec) getMissIndexRowsByHandle(ctx context.Context, handle int64) error {
+	if !us.needGetMissRows {
+		return nil
+	}
+	if _, ok := us.txnAddedHandles[handle]; !ok {
+		return nil
+	}
+	// Don't miss in memBuffer reader.
+	if _, ok := us.memProcessedHandles[handle]; ok {
+		return nil
+	}
+	memRow, err := us.getMemRow(ctx, handle)
+	if memRow == nil || err != nil {
+		return err
+	}
+	us.snapshotRows = append(us.snapshotRows, memRow)
+	return nil
 }
 
 func (us *UnionScanExec) getAddedRow() []types.Datum {
@@ -241,7 +277,40 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 	return cmp, nil
 }
 
-//TableRangesToKVRanges
+// rowWithColsInTxn gets the row from the transaction buffer.
+func (us *UnionScanExec) rowWithColsInTxn(ctx context.Context, t table.Table, h int64) ([]types.Datum, error) {
+	key := t.RecordKey(h)
+	txn, err := us.ctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	value, err := txn.GetMemBuffer().Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	colIDs := make(map[int64]int)
+	for i, col := range us.columns {
+		colIDs[col.ID] = i
+	}
+	return decodeRowData(us.ctx, us.table.Meta(), us.columns, colIDs, h, []byte{}, value)
+}
+
+func (us *UnionScanExec) getMemRow(ctx context.Context, h int64) ([]types.Datum, error) {
+	data, err := us.rowWithColsInTxn(ctx, us.table, h)
+	if err != nil {
+		return nil, err
+	}
+	us.mutableRow.SetDatums(data...)
+	matched, _, err := expression.EvalBool(us.ctx, us.conditions, us.mutableRow.ToRow())
+	if err != nil {
+		return nil, err
+	}
+	if !matched {
+		return nil, nil
+	}
+	return data, nil
+}
+
 func (us *UnionScanExec) buildAndSortAddedRowsFromMemTableReader() error {
 	tableReaderWithFullRange := buildMemTableReaderWithFullRange(us)
 	rows, err := tableReaderWithFullRange.getMemRows()

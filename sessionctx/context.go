@@ -16,7 +16,6 @@ package sessionctx
 import (
 	"context"
 	"fmt"
-
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -79,8 +78,8 @@ type Context interface {
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
-	// StmtDeleteTableRow records the deleted rows for current statement.
-	StmtDeleteTableRow(tid int64, handle int64)
+	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
+	StmtAddDirtyTableOP(op int, physicalID int64, handle int64)
 	// UpdateStmtUntouchedIndex records the untouched index value when execute update statement.
 	UpdateStmtUntouchedIndex(tid, indexID int64)
 	// IsUntouchedIndex checks whether the table index was untouched when update.

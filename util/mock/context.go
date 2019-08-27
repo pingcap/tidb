@@ -211,8 +211,8 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return nil
 }
 
-// StmtDeleteTableRow implements the sessionctx.Context interface.
-func (c *Context) StmtDeleteTableRow(tid int64, handle int64) {
+// StmtAddDirtyTableOP implements the sessionctx.Context interface.
+func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
 }
 
 // UpdateStmtUntouchedIndex implements the sessionctx.Context interface.

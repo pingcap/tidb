@@ -101,6 +101,7 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 type TransactionContext struct {
 	forUpdateTS          uint64
 	UpdateUntouchedIndex map[TableIndexID]struct{}
+	AddedTableRows       map[int64]map[int64]struct{}
 	DeletedTableRows     map[int64]map[int64]struct{}
 	Binlog               interface{}
 	InfoSchema           interface{}
@@ -144,6 +145,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
 	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
+	tc.AddedTableRows = nil
 	tc.DeletedTableRows = nil
 	tc.UpdateUntouchedIndex = nil
 	tc.Binlog = nil

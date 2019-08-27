@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"strings"
 	"sync/atomic"
 
@@ -27,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -49,6 +50,7 @@ type TxnState struct {
 
 	buf                  kv.MemBuffer
 	mutations            map[int64]*binlog.TableMutation
+	addedTableRows       map[int64][]int64
 	deletedTableRows     map[int64][]int64
 	updateUntouchedIndex map[variable.TableIndexID]struct{}
 
@@ -94,6 +96,9 @@ func (st *TxnState) GoString() string {
 	} else if st.Valid() {
 		s.WriteString("state=valid")
 		fmt.Fprintf(&s, ", txnStartTS=%d", st.Transaction.StartTS())
+		if len(st.addedTableRows) > 0 {
+			fmt.Fprintf(&s, ", len(addedTableRows)=%d, %#v", len(st.addedTableRows), st.addedTableRows)
+		}
 		if len(st.deletedTableRows) > 0 {
 			fmt.Fprintf(&s, ", len(deletedTableRows)=%d, %#v", len(st.deletedTableRows), st.deletedTableRows)
 		}
@@ -169,7 +174,7 @@ func mockAutoIDRetry() bool {
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
-	if len(st.mutations) != 0 || len(st.deletedTableRows) != 0 || len(st.updateUntouchedIndex) != 0 || st.buf.Len() != 0 {
+	if len(st.mutations) != 0 || len(st.deletedTableRows) != 0 || len(st.addedTableRows) != 0 || len(st.updateUntouchedIndex) != 0 || st.buf.Len() != 0 {
 		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Stack("something must be wrong"))
@@ -301,6 +306,7 @@ func (st *TxnState) cleanup() {
 	for key := range st.mutations {
 		delete(st.mutations, key)
 	}
+	st.addedTableRows = nil
 	st.deletedTableRows = nil
 	st.updateUntouchedIndex = nil
 }
@@ -359,20 +365,27 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 	m1.Sequence = append(m1.Sequence, m2.Sequence...)
 }
 
+func mergeToTxnAddedTableRows(s *session, addedTableRows map[int64][]int64) {
+	s.GetSessionVars().TxnCtx.AddedTableRows = mergeMap(addedTableRows, s.GetSessionVars().TxnCtx.AddedTableRows)
+}
+
 func mergeToTxnDeletedTableRows(s *session, deletedTableRows map[int64][]int64) {
-	txnDeletedTableRows := s.GetSessionVars().TxnCtx.DeletedTableRows
-	if txnDeletedTableRows == nil {
-		txnDeletedTableRows = make(map[int64]map[int64]struct{}, len(deletedTableRows))
+	s.GetSessionVars().TxnCtx.DeletedTableRows = mergeMap(deletedTableRows, s.GetSessionVars().TxnCtx.DeletedTableRows)
+}
+
+func mergeMap(child map[int64][]int64, total map[int64]map[int64]struct{}) map[int64]map[int64]struct{} {
+	if total == nil {
+		total = make(map[int64]map[int64]struct{}, len(child))
 	}
-	for tid, rows := range deletedTableRows {
-		if txnDeletedTableRows[tid] == nil {
-			txnDeletedTableRows[tid] = make(map[int64]struct{})
+	for tid, rows := range child {
+		if total[tid] == nil {
+			total[tid] = make(map[int64]struct{})
 		}
 		for _, handle := range rows {
-			txnDeletedTableRows[tid][handle] = struct{}{}
+			total[tid][handle] = struct{}{}
 		}
 	}
-	s.GetSessionVars().TxnCtx.DeletedTableRows = txnDeletedTableRows
+	return total
 }
 
 // txnFuture is a promise, which promises to return a txn in future.
@@ -452,6 +465,10 @@ func (s *session) StmtCommit() error {
 	}
 
 	if len(st.deletedTableRows) > 0 {
+		mergeToTxnAddedTableRows(s, st.addedTableRows)
+	}
+
+	if len(st.deletedTableRows) > 0 {
 		mergeToTxnDeletedTableRows(s, st.deletedTableRows)
 	}
 	if len(st.updateUntouchedIndex) > 0 {
@@ -482,12 +499,22 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return st.mutations[tableID]
 }
 
-// StmtDeleteTableRow implements the sessionctx.Context interface.
-func (s *session) StmtDeleteTableRow(tid int64, handle int64) {
-	if s.txn.deletedTableRows == nil {
-		s.txn.deletedTableRows = make(map[int64][]int64)
+// StmtAddDirtyTableOP implements the sessionctx.Context interface.
+func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
+	switch op {
+	case table.DirtyTableAddRow:
+		s.txn.addedTableRows = mergeRow(s.txn.addedTableRows, tid, handle)
+	case table.DirtyTableDeleteRow:
+		s.txn.deletedTableRows = mergeRow(s.txn.deletedTableRows, tid, handle)
 	}
-	s.txn.deletedTableRows[tid] = append(s.txn.deletedTableRows[tid], handle)
+}
+
+func mergeRow(rows map[int64][]int64, tid int64, handle int64) map[int64][]int64 {
+	if rows == nil {
+		rows = make(map[int64][]int64)
+	}
+	rows[tid] = append(rows[tid], handle)
+	return rows
 }
 
 func (s *session) UpdateStmtUntouchedIndex(tid, indexID int64) {
