@@ -440,3 +440,8 @@ func (c *Constant) ResolveIndices(_ *Schema) (Expression, error) {
 func (c *Constant) resolveIndices(_ *Schema) error {
 	return nil
 }
+
+// Vectorized returns if this expression supports vectorized evaluation.
+func (c *Constant) Vectorized() bool {
+	return true
+}

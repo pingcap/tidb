@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/atomic"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -37,6 +38,8 @@ type baseBuiltinFunc struct {
 	ctx    sessionctx.Context
 	tp     *types.FieldType
 	pbCode tipb.ScalarFuncSig
+
+	vectorizedAllFlag atomic.Uint32 // 0 unknown, 1 vectorized, 2 not vectorized
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -237,6 +240,21 @@ func (b *baseBuiltinFunc) vectorized() bool {
 	return false
 }
 
+func (b *baseBuiltinFunc) vectorizedChildren() bool {
+	flag := b.vectorizedAllFlag.Load()
+	if flag == 0 {
+		flag = 1
+		for _, arg := range b.args {
+			if !arg.Vectorized() {
+				flag = 2
+				break
+			}
+		}
+		b.vectorizedAllFlag.Store(flag)
+	}
+	return flag == 1
+}
+
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	switch b.tp.EvalType() {
 	case types.ETString:
@@ -318,8 +336,11 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 type vecBuiltinFunc interface {
 	columnBufferAllocator
 
-	// vectorized returns if this builtin function supports vectorized evaluation.
+	// vectorized returns if this builtin function itself supports vectorized evaluation.
 	vectorized() bool
+
+	// vectorizedChildren returns if its all children support vectorized evaluation.
+	vectorizedChildren() bool
 
 	// vecEvalInt evaluates this builtin function in a vectorized manner.
 	vecEvalInt(input *chunk.Chunk, result *chunk.Column) error
@@ -400,12 +421,6 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
-}
-
-func init() {
-	for k, v := range funcs {
-		funcs[k] = &vecRowConvertFuncClass{v}
-	}
 }
 
 // funcs holds all registered builtin functions. When new function is added,
