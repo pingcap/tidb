@@ -466,3 +466,23 @@ func (s *testSuite) TestErrorBind(c *C) {
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
 }
+
+func (s *testSuite) TestPreparedStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec(`prepare stmt1 from 'select * from t'`)
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+
+	tk.MustExec("create binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx")
+
+	tk.MustExec("drop binding for select * from t")
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+}

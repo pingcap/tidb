@@ -16,11 +16,11 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -96,7 +96,7 @@ type twoPhaseCommitter struct {
 	// We use it to guarantee GC worker will not influence any active txn. The value
 	// should be less than GC life time.
 	maxTxnTimeUse uint64
-	detail        *execdetails.CommitDetails
+	detail        unsafe.Pointer
 
 	primaryKey     []byte
 	forUpdateTS    uint64
@@ -156,7 +156,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
 			op := pb.Op_Put
-			if c := txn.us.LookupConditionPair(k); c != nil && c.ShouldNotExist() {
+			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
 				op = pb.Op_Insert
 			}
 			mutations[string(k)] = &mutationEx{
@@ -274,7 +274,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = getTxnPriority(txn)
 	c.syncLog = getTxnSyncLog(txn)
-	c.detail = commitDetail
+	c.setDetail(commitDetail)
 	return nil
 }
 
@@ -335,7 +335,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 			}
 		}
 		sizeFunc = c.keyValueSize
-		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
+		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
 	}
 	// Make sure the group that contains primary key goes first.
 	batches = appendBatchBySize(batches, firstRegion, groups[firstRegion], sizeFunc, txnCommitBatchSize)
@@ -419,6 +419,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 
 		batch := batch1
 		go func() {
+			var singleBatchBackoffer *Backoffer
 			if action == actionCommit {
 				// Because the secondary batches of the commit actions are implemented to be
 				// committed asynchronously in background goroutines, we should not
@@ -427,12 +428,22 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				// Here we makes a new clone of the original backoffer for this goroutine
 				// exclusively to avoid the data race when using the same backoffer
 				// in concurrent goroutines.
-				singleBatchBackoffer := backoffer.Clone()
-				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
+				singleBatchBackoffer = backoffer.Clone()
 			} else {
-				singleBatchBackoffer, singleBatchCancel := backoffer.Fork()
+				var singleBatchCancel context.CancelFunc
+				singleBatchBackoffer, singleBatchCancel = backoffer.Fork()
 				defer singleBatchCancel()
-				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
+			}
+			beforeSleep := singleBatchBackoffer.totalSleep
+			ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
+			commitDetail := c.getDetail()
+			if commitDetail != nil { // lock operations of pessimistic-txn will let commitDetail be nil
+				if delta := singleBatchBackoffer.totalSleep - beforeSleep; delta > 0 {
+					atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(singleBatchBackoffer.totalSleep-beforeSleep)*int64(time.Millisecond))
+					commitDetail.Mu.Lock()
+					commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, singleBatchBackoffer.types...)
+					commitDetail.Mu.Unlock()
+				}
 			}
 		}()
 	}
@@ -536,14 +547,11 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				conditionPair := c.txn.us.LookupConditionPair(key)
-				if conditionPair == nil {
-					return errors.Errorf("conn%d, conditionPair for key:%s should not be nil", c.connID, key)
+				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
+				if existErrInfo == nil {
+					return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
 				}
-				logutil.BgLogger().Debug("key already exists",
-					zap.Uint64("conn", c.connID),
-					zap.Stringer("key", kv.Key(key)))
-				return errors.Trace(conditionPair.Err())
+				return existErrInfo.Err()
 			}
 
 			// Extract lock from key error
@@ -561,7 +569,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		atomic.AddInt64(&c.detail.ResolveLockTime, int64(time.Since(start)))
+		atomic.AddInt64(&c.getDetail().ResolveLockTime, int64(time.Since(start)))
 		if msBeforeExpired > 0 {
 			err = bo.BackoffWithMaxSleep(BoTxnLock, int(msBeforeExpired), errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
@@ -578,8 +586,8 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			Op:  pb.Op_PessimisticLock,
 			Key: k,
 		}
-		conditionPair := c.txn.us.LookupConditionPair(k)
-		if conditionPair != nil && conditionPair.ShouldNotExist() {
+		existErr := c.txn.us.GetKeyExistErrInfo(k)
+		if existErr != nil {
 			mut.Assertion = pb.Assertion_NotExist
 		}
 		mutations[i] = mut
@@ -623,11 +631,11 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				conditionPair := c.txn.us.LookupConditionPair(key)
-				if conditionPair == nil {
-					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
+				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
+				if existErrInfo == nil {
+					return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
 				}
-				return errors.Trace(conditionPair.Err())
+				return existErrInfo.Err()
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
 				return &ErrDeadlock{Deadlock: deadlock}
@@ -697,6 +705,14 @@ func kvPriorityToCommandPri(pri int) pb.CommandPri {
 		return pb.CommandPri_High
 	}
 	return pb.CommandPri_Normal
+}
+
+func (c *twoPhaseCommitter) setDetail(d *execdetails.CommitDetails) {
+	atomic.StorePointer(&c.detail, unsafe.Pointer(d))
+}
+
+func (c *twoPhaseCommitter) getDetail() *execdetails.CommitDetails {
+	return (*execdetails.CommitDetails)(atomic.LoadPointer(&c.detail))
 }
 
 func (c *twoPhaseCommitter) setUndeterminedErr(err error) {
@@ -805,7 +821,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		return errors.Trace(err)
 	}
 	if keyErr := resp.Resp.(*pb.BatchRollbackResponse).GetError(); keyErr != nil {
-		err = errors.Errorf("conn%d 2PC cleanup failed: %s", c.connID, keyErr)
+		err = errors.Errorf("conn %d 2PC cleanup failed: %s", c.connID, keyErr)
 		logutil.BgLogger().Debug("2PC failed cleanup key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
@@ -888,8 +904,14 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	prewriteBo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
 	err := c.prewriteKeys(prewriteBo, c.keys)
-	c.detail.PrewriteTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(prewriteBo.totalSleep) * time.Millisecond
+	commitDetail := c.getDetail()
+	commitDetail.PrewriteTime = time.Since(start)
+	if prewriteBo.totalSleep > 0 {
+		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(prewriteBo.totalSleep)*int64(time.Millisecond))
+		commitDetail.Mu.Lock()
+		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, prewriteBo.types...)
+		commitDetail.Mu.Unlock()
+	}
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
@@ -912,13 +934,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			zap.Uint64("txnStartTS", c.startTS))
 		return errors.Trace(err)
 	}
-	c.detail.GetCommitTsTime = time.Since(start)
+	commitDetail.GetCommitTsTime = time.Since(start)
 	logutil.Event(ctx, "finish get commit ts")
 	logutil.SetTag(ctx, "commitTs", commitTS)
 
 	// check commitTS
 	if commitTS <= c.startTS {
-		err = errors.Errorf("conn%d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
+		err = errors.Errorf("conn %d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
 			c.connID, c.startTS, commitTS)
 		logutil.BgLogger().Error("invalid transaction", zap.Error(err))
 		return errors.Trace(err)
@@ -935,7 +957,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	})
 
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
-		err = errors.Errorf("conn%d txn takes too much time, txnStartTS: %d, comm: %d",
+		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err
 	}
@@ -943,8 +965,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	start = time.Now()
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
 	err = c.commitKeys(commitBo, c.keys)
-	c.detail.CommitTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(commitBo.totalSleep) * time.Millisecond
+	commitDetail.CommitTime = time.Since(start)
+	if commitBo.totalSleep > 0 {
+		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(commitBo.totalSleep)*int64(time.Millisecond))
+		commitDetail.Mu.Lock()
+		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, commitBo.types...)
+		commitDetail.Mu.Unlock()
+	}
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
 			logutil.Logger(ctx).Error("2PC commit result undetermined",
