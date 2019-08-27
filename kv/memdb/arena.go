@@ -64,11 +64,9 @@ func (a *arena) alloc(size int) (arenaAddr, []byte) {
 		return addr, blk.buf
 	}
 
-	for i := a.availIdx; i < len(a.blocks); i++ {
-		addr, data := a.allocInBlock(i, size)
-		if !addr.isNull() {
-			return addr, data
-		}
+	addr, data := a.allocInBlock(a.availIdx, size)
+	if !addr.isNull() {
+		return addr, data
 	}
 
 	a.enlarge(size)
@@ -99,9 +97,8 @@ func (a *arena) allocInBlock(idx, size int) (arenaAddr, []byte) {
 func (a *arena) reset() {
 	a.availIdx = 0
 	a.blockSize = len(a.blocks[0].buf)
-	for i := 0; i < len(a.blocks); i++ {
-		a.blocks[i].reset()
-	}
+	a.blocks = []arenaBlock{a.blocks[0]}
+	a.blocks[0].reset()
 }
 
 type arenaBlock struct {

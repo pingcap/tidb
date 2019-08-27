@@ -229,25 +229,6 @@ func (s testMemDBSuite) TestReset(c *C) {
 	c.Check(it.Valid(), IsFalse)
 }
 
-func (s testMemDBSuite) TestMemReuse(c *C) {
-	p := New(256)
-	p.Put(make([]byte, 257), nil)
-	p.Reset()
-
-	p.Put(make([]byte, 257), nil)
-	c.Check(len(p.arena.blocks), Equals, 2)
-	c.Check(p.arena.availIdx, Equals, 0)
-	p.Put(make([]byte, 12), nil)
-	c.Check(len(p.arena.blocks), Equals, 2)
-	c.Check(p.arena.blocks[0].length, Greater, 0)
-	p.Put(make([]byte, 128<<20), nil)
-	c.Check(len(p.arena.blocks), Equals, 3)
-	c.Check(p.arena.blocks[0].length, Greater, 0)
-	p.Put(make([]byte, 2048), nil)
-	c.Check(len(p.arena.blocks), Equals, 4)
-	c.Check(p.arena.availIdx, Equals, 3)
-}
-
 func (s testMemDBSuite) TestRandom(c *C) {
 	const cnt = 500000
 	keys := make([][]byte, cnt)
