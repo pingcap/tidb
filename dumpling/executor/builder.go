@@ -677,15 +677,16 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	baseExec.initCap = chunk.ZeroCapacity
 
 	ivs := &InsertValues{
-		baseExecutor: baseExec,
-		Table:        v.Table,
-		Columns:      v.Columns,
-		Lists:        v.Lists,
-		SetList:      v.SetList,
-		GenColumns:   v.GenCols.Columns,
-		GenExprs:     v.GenCols.Exprs,
-		hasRefCols:   v.NeedFillDefaultValue,
-		SelectExec:   selectExec,
+		baseExecutor:              baseExec,
+		Table:                     v.Table,
+		Columns:                   v.Columns,
+		Lists:                     v.Lists,
+		SetList:                   v.SetList,
+		GenColumns:                v.GenCols.Columns,
+		GenExprs:                  v.GenCols.Exprs,
+		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
+		hasRefCols:                v.NeedFillDefaultValue,
+		SelectExec:                selectExec,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
@@ -1399,10 +1400,11 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	updateExec := &UpdateExec{
-		baseExecutor:   base,
-		OrderedList:    v.OrderedList,
-		tblID2table:    tblID2table,
-		tblColPosInfos: v.TblColPosInfos,
+		baseExecutor:              base,
+		OrderedList:               v.OrderedList,
+		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
+		tblID2table:               tblID2table,
+		tblColPosInfos:            v.TblColPosInfos,
 	}
 	return updateExec
 }

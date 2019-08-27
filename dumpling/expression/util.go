@@ -546,20 +546,17 @@ func DatumToConstant(d types.Datum, tp byte) *Constant {
 	return &Constant{Value: d, RetType: types.NewFieldType(tp)}
 }
 
-// GetParamExpression generate a getparam function expression.
-func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expression, error) {
+// ParamMarkerExpression generate a getparam function expression.
+func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expression, error) {
 	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	tp := types.NewFieldType(mysql.TypeUnspecified)
 	types.DefaultParamTypeForValue(v.GetValue(), tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
 	if useCache {
-		f, err := NewFunctionBase(ctx, ast.GetParam, &v.Type,
-			DatumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
-		if err != nil {
-			return nil, err
+		value.ParamMarker = &ParamMarker{
+			order: v.Order,
+			ctx:   ctx,
 		}
-		f.GetType().Tp = v.Type.Tp
-		value.DeferredExpr = f
 	}
 	return value, nil
 }
@@ -590,7 +587,7 @@ func PosFromPositionExpr(ctx sessionctx.Context, v *ast.PositionExpr) (int, bool
 	if v.P == nil {
 		return v.N, false, nil
 	}
-	value, err := GetParamExpression(ctx, v.P.(*driver.ParamMarkerExpr))
+	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr))
 	if err != nil {
 		return 0, true, err
 	}
@@ -680,7 +677,9 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 		return 0, false, false
 	}
 	dt := con.Value
-	if con.DeferredExpr != nil {
+	if con.ParamMarker != nil {
+		dt = con.ParamMarker.GetUserVar()
+	} else if con.DeferredExpr != nil {
 		var err error
 		dt, err = con.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
