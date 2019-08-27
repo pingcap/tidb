@@ -81,6 +81,11 @@ func (sf *ScalarFunction) GetArgs() []Expression {
 	return sf.Function.getArgs()
 }
 
+// Vectorized returns if this expression supports vectorized evaluation.
+func (sf *ScalarFunction) Vectorized() bool {
+	return sf.Function.vectorized() && sf.Function.isChildrenVectorized()
+}
+
 // GetCtx gets the context of function.
 func (sf *ScalarFunction) GetCtx() sessionctx.Context {
 	return sf.Function.getCtx()
