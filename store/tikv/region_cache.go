@@ -331,6 +331,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID, replicaRead k
 
 // KeyLocation is the region and range that a key is located.
 type KeyLocation struct {
+	*RegionToken
 	Region   RegionVerID
 	StartKey kv.Key
 	EndKey   kv.Key
@@ -344,50 +345,53 @@ func (l *KeyLocation) Contains(key []byte) bool {
 
 // LocateKey searches for the region and range that the key is located.
 func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
-	r, err := c.findRegionByKey(bo, key, false)
+	return c.LocateKeyWithToken(bo, key, nil)
+}
+
+// LocateKeyWithToken searches for the region and range that the key is located with token.
+func (c *RegionCache) LocateKeyWithToken(bo *Backoffer, key []byte, token *RegionToken) (*KeyLocation, error) {
+	r, tok, err := c.findRegionByKey(bo, key, false, token)
 	if err != nil {
 		return nil, err
 	}
 	return &KeyLocation{
-		Region:   r.VerID(),
-		StartKey: r.StartKey(),
-		EndKey:   r.EndKey(),
+		RegionToken: tok,
+		Region:      r.VerID(),
+		StartKey:    r.StartKey(),
+		EndKey:      r.EndKey(),
 	}, nil
-}
-
-func (c *RegionCache) loadAndInsertRegion(bo *Backoffer, key []byte) (*Region, error) {
-	r, err := c.loadRegion(bo, key, false)
-	if err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	c.insertRegionToCache(r)
-	c.mu.Unlock()
-	return r, nil
 }
 
 // LocateEndKey searches for the region and range that the key is located.
 // Unlike LocateKey, start key of a region is exclusive and end key is inclusive.
 func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
-	r, err := c.findRegionByKey(bo, key, true)
+	return c.LocateEndKeyWithToken(bo, key, nil)
+}
+
+// LocateEndKeyWithToken searches for the region and range that the key is located with token.
+// Unlike LocateKey, start key of a region is exclusive and end key is inclusive.
+func (c *RegionCache) LocateEndKeyWithToken(bo *Backoffer, key []byte, token *RegionToken) (*KeyLocation, error) {
+	r, tok, err := c.findRegionByKey(bo, key, true, token)
 	if err != nil {
 		return nil, err
 	}
 	return &KeyLocation{
-		Region:   r.VerID(),
-		StartKey: r.StartKey(),
-		EndKey:   r.EndKey(),
+		RegionToken: tok,
+		Region:      r.VerID(),
+		StartKey:    r.StartKey(),
+		EndKey:      r.EndKey(),
 	}, nil
 }
 
-func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) (r *Region, err error) {
+func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool, token *RegionToken) (r *Region, tok *RegionToken, err error) {
+	var lr *Region
 	r = c.searchCachedRegion(key, isEndKey)
 	if r == nil {
 		// load region when it is not exists or expired.
-		lr, err := c.loadRegion(bo, key, isEndKey)
+		lr, tok, err = c.loadRegionWithToken(bo, key, isEndKey, token)
 		if err != nil {
 			// no region data, return error if failure.
-			return nil, err
+			return nil, tok, err
 		}
 		logutil.Eventf(bo.ctx, "load region %d from pd, due to cache-miss", lr.GetID())
 		r = lr
@@ -396,7 +400,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 		c.mu.Unlock()
 	} else if r.needReload() {
 		// load region when it be marked as need reload.
-		lr, err := c.loadRegion(bo, key, isEndKey)
+		lr, tok, err = c.loadRegionWithToken(bo, key, isEndKey, &RegionToken{r.meta})
 		if err != nil {
 			// ignore error and use old region info.
 			logutil.Logger(bo.ctx).Error("load region failure",
@@ -409,7 +413,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 			c.mu.Unlock()
 		}
 	}
-	return r, nil
+	return r, tok, nil
 }
 
 // OnSendFail handles send request fail logic.
@@ -470,17 +474,23 @@ func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLoca
 	}, nil
 }
 
+// GroupKeys holds group's region token and its keys.
+type GroupKeys struct {
+	Keys  [][]byte
+	Token *RegionToken
+}
+
 // GroupKeysByRegion separates keys into groups by their belonging Regions.
 // Specially it also returns the first key's region which may be used as the
 // 'PrimaryLockKey' and should be committed ahead of others.
-func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
-	groups := make(map[RegionVerID][][]byte)
+func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte, tok *RegionToken) (map[RegionVerID]GroupKeys, RegionVerID, error) {
+	groups := make(map[RegionVerID]GroupKeys)
 	var first RegionVerID
 	var lastLoc *KeyLocation
 	for i, k := range keys {
 		if lastLoc == nil || !lastLoc.Contains(k) {
 			var err error
-			lastLoc, err = c.LocateKey(bo, k)
+			lastLoc, err = c.LocateKeyWithToken(bo, k, tok)
 			if err != nil {
 				return nil, first, errors.Trace(err)
 			}
@@ -489,7 +499,10 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[Regio
 		if i == 0 {
 			first = id
 		}
-		groups[id] = append(groups[id], k)
+		g := groups[id]
+		g.Keys = append(g.Keys, k)
+		g.Token = lastLoc.RegionToken
+		groups[id] = g
 	}
 	return groups, first, nil
 }
@@ -642,26 +655,32 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 	return nil
 }
 
-// loadRegion loads region from pd client, and picks the first peer as leader.
-// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful
-// when processing in reverse order.
-func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Region, error) {
+func (c *RegionCache) loadRegionWithToken(bo *Backoffer, key []byte, isEndKey bool, token *RegionToken) (*Region, *RegionToken, error) {
+	findKey := key
+	if token != nil {
+		if isEndKey {
+			findKey = token.EndKey
+		} else {
+			findKey = token.StartKey
+		}
+	}
+
 	var backoffErr error
 	searchPrev := false
 	for {
 		if backoffErr != nil {
 			err := bo.Backoff(BoPDRPC, backoffErr)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, errors.Trace(err)
 			}
 		}
 		var meta *metapb.Region
 		var leader *metapb.Peer
 		var err error
 		if searchPrev {
-			meta, leader, err = c.pdClient.GetPrevRegion(bo.ctx, key)
+			meta, leader, err = c.pdClient.GetPrevRegion(bo.ctx, findKey)
 		} else {
-			meta, leader, err = c.pdClient.GetRegion(bo.ctx, key)
+			meta, leader, err = c.pdClient.GetRegion(bo.ctx, findKey)
 		}
 		if err != nil {
 			tikvRegionCacheCounterWithGetRegionError.Inc()
@@ -669,18 +688,24 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 			tikvRegionCacheCounterWithGetRegionOK.Inc()
 		}
 		if err != nil {
-			backoffErr = errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err)
+			backoffErr = errors.Errorf("loadRegion from PD failed, key: %q, err: %v", findKey, err)
 			continue
 		}
 		if meta == nil {
-			backoffErr = errors.Errorf("region not found for key %q", key)
+			backoffErr = errors.Errorf("region not found for key %q", findKey)
 			continue
 		}
 		if len(meta.Peers) == 0 {
-			return nil, errors.New("receive Region with no peer")
+			return nil, nil, errors.New("receive Region with no peer")
 		}
-		if isEndKey && !searchPrev && bytes.Equal(meta.StartKey, key) && len(meta.StartKey) != 0 {
+		if isEndKey && !searchPrev && bytes.Equal(meta.StartKey, findKey) && len(meta.StartKey) != 0 {
 			searchPrev = true
+			continue
+		}
+		if !token.containKey(key) {
+			// using token find a region but that region didn't contains target key.
+			// retry with target key, this happens when region split, half of region need take retry.
+			findKey = key
 			continue
 		}
 		region := &Region{meta: meta}
@@ -688,8 +713,30 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 		if leader != nil {
 			c.switchToPeer(region, leader.StoreId)
 		}
-		return region, nil
+		return region, &RegionToken{region.meta}, nil
 	}
+}
+
+// RegionToken holds previous region info.
+// this helps deduplicate pd request during retry operation.
+type RegionToken struct {
+	*metapb.Region
+}
+
+func (t *RegionToken) containKey(key []byte) bool {
+	if t == nil {
+		return true
+	}
+	return bytes.Compare(t.GetStartKey(), key) <= 0 &&
+		(bytes.Compare(key, t.GetEndKey()) < 0 || len(t.GetEndKey()) == 0)
+}
+
+// loadRegion loads region from pd client, and picks the first peer as leader.
+// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful
+// when processing in reverse order.
+func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Region, error) {
+	r, _, err := c.loadRegionWithToken(bo, key, isEndKey, nil)
+	return r, err
 }
 
 // loadRegionByID loads region from pd client, and picks the first peer as leader.

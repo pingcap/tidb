@@ -100,7 +100,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		mu.Lock()
 		m[string(k)] = v
 		mu.Unlock()
-	})
+	}, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -113,8 +113,8 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 	return m, nil
 }
 
-func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
-	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys)
+func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte), tok *RegionToken) error {
+	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, tok)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -123,7 +123,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 
 	var batches []batchKeys
 	for id, g := range groups {
-		batches = appendBatchBySize(batches, id, g, func([]byte) int { return 1 }, batchGetSize)
+		batches = appendBatchBySize(batches, id, g.Keys, func([]byte) int { return 1 }, batchGetSize, g.Token)
 	}
 
 	if len(batches) == 0 {
@@ -177,7 +177,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = s.batchGetKeysByRegions(bo, pending, collectF)
+			err = s.batchGetKeysByRegions(bo, pending, collectF, batch.token)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
