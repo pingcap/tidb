@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"math"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -54,11 +56,17 @@ func (s *tikvStore) spliteBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter 
 			backoffer, cancel := bo.Fork()
 			defer cancel()
 
-			select {
-			case ch <- s.batchSendSingleRegion(backoffer, batch, scatter):
-			case <-bo.ctx.Done():
-				ch <- singleBatchResp{err: bo.ctx.Err()}
-			}
+			util.WithRecovery(func() {
+				select {
+				case ch <- s.batchSendSingleRegion(backoffer, batch, scatter):
+				case <-bo.ctx.Done():
+					ch <- singleBatchResp{err: bo.ctx.Err()}
+				}
+			}, func(r interface{}) {
+				if r != nil {
+					ch <- singleBatchResp{err: errors.Errorf("%v", r)}
+				}
+			})
 		}()
 	}
 
@@ -76,6 +84,8 @@ func (s *tikvStore) spliteBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter 
 
 		spResp := batchResp.resp.Resp.(*kvrpcpb.SplitRegionResponse)
 		regions := spResp.GetRegions()
+		// Divide a region into n, one can not need to be scattered,
+		// so n-1 needs to be scattered to other storage servers.
 		srResp.Regions = append(srResp.Regions, regions[:len(regions)-1]...)
 	}
 	return &tikvrpc.Response{Resp: srResp}, errors.Trace(err)
@@ -125,6 +135,8 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	if left != nil {
 		spResp.Regions = []*metapb.Region{left}
 	} else if len(regions) > 0 {
+		// Divide a region into n, one can not need to be scattered,
+		// so n-1 needs to be scattered to other storage servers.
 		spResp.Regions = regions[:len(regions)-1]
 	}
 	if !scatter {
@@ -161,10 +173,10 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	return batchResp
 }
 
-// SplitRegions splits regions contains splitKeys into some egions.
+// SplitRegions splits regions contains splitKeys into some regions.
 func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool) (regionIDs []uint64, err error) {
-	// TODO: DO we need update this backoff?
-	bo := NewBackoffer(ctx, splitRegionBackoff)
+	splitRegionsBo := splitRegionBackoff * math.Min(float64(len(splitKeys)), 10)
+	bo := NewBackoffer(ctx, int(splitRegionsBo))
 	resp, err := s.spliteBatchRegionsReq(bo, splitKeys, scatter)
 	regionIDs = make([]uint64, 0, len(splitKeys))
 	if resp != nil && resp.Resp != nil {
