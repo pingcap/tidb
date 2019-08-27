@@ -39,7 +39,7 @@ type baseBuiltinFunc struct {
 	tp     *types.FieldType
 	pbCode tipb.ScalarFuncSig
 
-	childrenVectorizedOnce sync.Once
+	childrenVectorizedOnce *sync.Once
 	childrenVectorized     bool
 }
 
@@ -65,7 +65,8 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 		panic("ctx should not be nil")
 	}
 	return baseBuiltinFunc{
-		columnBufferAllocator: newLocalSliceBuffer(len(args)),
+		columnBufferAllocator:  newLocalSliceBuffer(len(args)),
+		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
@@ -169,7 +170,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 	return baseBuiltinFunc{
-		columnBufferAllocator: newLocalSliceBuffer(len(args)),
+		columnBufferAllocator:  newLocalSliceBuffer(len(args)),
+		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
