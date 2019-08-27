@@ -18,6 +18,8 @@
 package expression
 
 import (
+	"sync"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -28,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
-	"sync"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
