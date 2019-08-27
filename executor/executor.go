@@ -1386,16 +1386,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		sc.MemTracker.SetActionOnExceed(action)
 	}
-
-	// execute missed stmtID uses empty sql
-	sc.OriginalSQL = s.Text()
-
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		s, err = getPreparedStmt(execStmt, vars)
 		if err != nil {
 			return
 		}
 	}
+	// execute missed stmtID uses empty sql
+	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
 		sc.CastStrToIntStrict = true
