@@ -71,7 +71,7 @@ func (dt *DirtyTable) DeleteRow(handle int64) {
 	dt.deletedRows[handle] = struct{}{}
 }
 
-// AddUntouchedIndex adds a row to the DirtyDB.
+// AddUntouchedIndex adds a untouched index ID to the DirtyDB.
 func (dt *DirtyTable) AddUntouchedIndex(indexID int64) {
 	dt.untouchedIndex[indexID] = struct{}{}
 }
@@ -89,7 +89,7 @@ func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
 	return udb
 }
 
-func (dt *DirtyTable) isUntouchedIndex(tid, indexID int64) bool {
+func (dt *DirtyTable) isUntouchedIndex(indexID int64) bool {
 	_, ok := dt.untouchedIndex[indexID]
 	return ok
 }
@@ -135,13 +135,13 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	case *TableReaderExecutor:
 		us.addedRows, err = buildMemTableReader(us, x.kvRanges).getMemRows()
 	case *IndexReaderExecutor:
-		us.needGetMissRows = us.dirty.isUntouchedIndex(getPhysicalTableID(x.table), x.index.ID)
+		us.needGetMissRows = us.dirty.isUntouchedIndex(x.index.ID)
 		mIdxReader := buildMemIndexReader(us, x)
 		us.addedRows, err = mIdxReader.getMemRows()
 		us.memIdxHandles = mIdxReader.memIdxHandles
 	case *IndexLookUpExecutor:
-		if us.dirty.isUntouchedIndex(getPhysicalTableID(x.table), x.index.ID) {
-			err = us.buildAndSortAddedRowsFromMemTableReader()
+		if us.dirty.isUntouchedIndex(x.index.ID) {
+			err = us.buildAndSortAddedRows()
 		} else {
 			idxLookup := buildMemIndexLookUpReader(us, x)
 			us.addedRows, err = idxLookup.getMemRows()
@@ -360,7 +360,7 @@ func (us *UnionScanExec) getMemRow(ctx context.Context, h int64) ([]types.Datum,
 	return data, nil
 }
 
-func (us *UnionScanExec) buildAndSortAddedRowsFromMemTableReader() error {
+func (us *UnionScanExec) buildAndSortAddedRows() error {
 	tableReaderWithFullRange := buildMemTableReaderWithFullRange(us)
 	rows, err := tableReaderWithFullRange.getMemRows()
 	if err != nil {

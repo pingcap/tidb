@@ -372,7 +372,7 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		table:            idxLookUpReader.table.Meta(),
 		kvRanges:         kvRanges,
 		desc:             idxLookUpReader.desc,
-		addedRows:        make([][]types.Datum, 0, 2),
+		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
 		retFieldTypes:    retTypes(us),
 		outputOffset:     outputOffset,
 		handleBytes:      make([]byte, 0, 16),
@@ -388,8 +388,7 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		desc:          idxLookUpReader.desc,
 		conditions:    us.conditions,
 		retFieldTypes: retTypes(us),
-
-		idxReader: memIdxReader,
+		idxReader:     memIdxReader,
 	}
 }
 
@@ -399,8 +398,8 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		return nil, err
 	}
 
-	tblKvRanges := distsql.TableHandlesToKVRanges(getPhysicalTableID(m.table), handles)
-	colIDs := make(map[int64]int)
+	tblKVRanges := distsql.TableHandlesToKVRanges(getPhysicalTableID(m.table), handles)
+	colIDs := make(map[int64]int, len(m.columns))
 	for i, col := range m.columns {
 		colIDs[col.ID] = i
 	}
@@ -409,7 +408,7 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		ctx:           m.ctx,
 		table:         m.table.Meta(),
 		columns:       m.columns,
-		kvRanges:      tblKvRanges,
+		kvRanges:      tblKVRanges,
 		conditions:    m.conditions,
 		addedRows:     make([][]types.Datum, 0, len(handles)),
 		retFieldTypes: m.retFieldTypes,
