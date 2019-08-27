@@ -1036,8 +1036,8 @@ func (s *testCodecSuite) TestDecodeRange(c *C) {
 
 func testHashChunkRowEqual(c *C, a, b interface{}, equal bool) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	buf1 := make([]byte, 0, 64)
-	buf2 := make([]byte, 0, 64)
+	buf1 := make([]byte, 1)
+	buf2 := make([]byte, 1)
 
 	tp1 := new(types.FieldType)
 	types.DefaultTypeForValue(a, tp1)
@@ -1079,7 +1079,7 @@ func testHashChunkRowEqual(c *C, a, b interface{}, equal bool) {
 
 func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	buf := make([]byte, 0, 64)
+	buf := make([]byte, 1)
 	datums, tps := datumsForTest(sc)
 	chk := chunkForTest(c, sc, datums, tps, 1)
 
