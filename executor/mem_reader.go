@@ -331,7 +331,7 @@ func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
 	}
 	handles := make([]int64, 0, cap(m.addedRows))
 	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
-		handle, err := m.decodeIndexHandle(key, value, pkTp)
+		handle, err := tablecodec.DecodeIndexHandle(key, value, len(m.index.Columns), pkTp)
 		if err != nil {
 			return err
 		}
@@ -349,25 +349,6 @@ func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
 		}
 	}
 	return handles, nil
-}
-
-func (m *memIndexReader) decodeIndexHandle(key, value []byte, pkTp *types.FieldType) (int64, error) {
-	_, b, err := tablecodec.CutIndexKeyNew(key, len(m.index.Columns))
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if len(b) > 0 {
-		d, err := tablecodec.DecodeColumnValue(b, pkTp, m.ctx.GetSessionVars().TimeZone)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		return d.GetInt64(), nil
-
-	} else if len(value) >= 8 {
-		return tablecodec.DecodeIndexValueAsHandle(value)
-	}
-	// Should never execute to here.
-	return 0, errors.Errorf("no handle in index key: %v, value: %v", key, value)
 }
 
 type memIndexLookUpReader struct {

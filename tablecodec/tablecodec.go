@@ -560,6 +560,25 @@ func DecodeIndexKV(key, value []byte, colsLen int, pkStatus PrimaryKeyStatus) ([
 	return values, nil
 }
 
+func DecodeIndexHandle(key, value []byte,colsLen int, pkTp *types.FieldType) (int64, error) {
+	_, b, err := CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		d, err := DecodeColumnValue(b, pkTp, nil)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return d.GetInt64(), nil
+
+	} else if len(value) >= 8 {
+		return DecodeIndexValueAsHandle(value)
+	}
+	// Should never execute to here.
+	return 0, errors.Errorf("no handle in index key: %v, value: %v", key, value)
+}
+
 // DecodeIndexValueAsHandle uses to decode index value as handle id.
 func DecodeIndexValueAsHandle(data []byte) (int64, error) {
 	var h int64
