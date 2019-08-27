@@ -143,7 +143,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.joinKeyBuf = make([][]byte, e.concurrency)
 	for i := range e.joinKeyBuf {
-		e.joinKeyBuf[i] = make([]byte, 0, 1000)
+		e.joinKeyBuf[i] = make([]byte, 1)
 	}
 
 	e.closeCh = make(chan struct{})
@@ -568,7 +568,7 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 		hasNull bool
 		err     error
 		key     uint64
-		buf     = make([]byte, 0, 64)
+		buf     = make([]byte, 1)
 	)
 
 	h := fnv.New64()

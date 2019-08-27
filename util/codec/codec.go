@@ -355,18 +355,21 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 // HashChunkRow writes the encoded values to w.
 // If two rows are logically equal, it will generate the same bytes.
 func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {
-	buf = buf[:0]
-	var flag byte
 	var b []byte
 	for _, idx := range colIdx {
-		flag, b, err = encodeHashChunkRowIdx(sc, row, allTypes[idx], idx)
+		buf[0], b, err = encodeHashChunkRowIdx(sc, row, allTypes[idx], idx)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		buf = append(buf, flag)
-		buf = append(buf, b...)
+		_, err = w.Write(buf)
+		if err != nil {
+			return
+		}
+		_, err = w.Write(b)
+		if err != nil {
+			return
+		}
 	}
-	_, err = w.Write(buf)
 	return err
 }
 
