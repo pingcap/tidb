@@ -15,7 +15,6 @@ package core
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 
@@ -123,31 +122,10 @@ func (p *BlockHintProcessor) getBlockOffset(blockName model.CIStr, nodeType node
 
 // getHintOffset gets the offset of stmt that the hints take effects.
 func (p *BlockHintProcessor) getHintOffset(hint *ast.TableOptimizerHint, nodeType nodeType, currentOffset int) int {
-	topOffset := currentOffset
 	if hint.QBName.L != "" {
-		topOffset = p.getBlockOffset(hint.QBName, nodeType)
-		if topOffset < 0 {
-			return -1
-		}
+		return p.getBlockOffset(hint.QBName, nodeType)
 	}
-	if len(hint.Tables) == 0 {
-		return topOffset
-	}
-	// Handle the join hint cases like SM_JOIN(t1@sel_1, t2@sel_2), t1 is in the first select stmt and t2 is in the second select stmt,
-	// the result offset should be the outer-most select stmt, which has the smallest block offset.
-	minOffset := math.MaxInt64
-	for _, tbl := range hint.Tables {
-		if tbl.QBName.L != "" {
-			level := p.getBlockOffset(tbl.QBName, nodeType)
-			if level < 0 {
-				return -1
-			}
-			minOffset = mathutil.Min(minOffset, level)
-		} else {
-			minOffset = mathutil.Min(minOffset, topOffset)
-		}
-	}
-	return minOffset
+	return currentOffset
 }
 
 func (p *BlockHintProcessor) getCurrentStmtHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentOffset int) []*ast.TableOptimizerHint {
