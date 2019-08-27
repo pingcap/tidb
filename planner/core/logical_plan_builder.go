@@ -593,7 +593,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		}
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
-			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil {
+			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil || ret {
 					continue
@@ -1047,7 +1047,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 		if !v.InExecute {
 			return 0, false, true
 		}
-		param, err := expression.GetParamExpression(ctx, v)
+		param, err := expression.ParamMarkerExpression(ctx, v)
 		if err != nil {
 			return 0, false, false
 		}
@@ -2723,14 +2723,15 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	var updateTableList []*ast.TableName
 	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
-	orderedList, np, err := b.buildUpdateLists(ctx, updateTableList, update.List, p)
+	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updateTableList, update.List, p)
 	if err != nil {
 		return nil, err
 	}
 	p = np
 
 	updt := Update{
-		OrderedList: orderedList,
+		OrderedList:               orderedList,
+		AllAssignmentsAreConstant: allAssignmentsAreConstant,
 	}.Init(b.ctx)
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved.
@@ -2754,13 +2755,22 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	return updt, err
 }
 
-func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan, error) {
+func (b *PlanBuilder) buildUpdateLists(
+	ctx context.Context,
+	tableList []*ast.TableName,
+	list []*ast.Assignment,
+	p LogicalPlan,
+) (newList []*expression.Assignment,
+	po LogicalPlan,
+	allAssignmentsAreConstant bool,
+	error error,
+) {
 	b.curClause = fieldList
 	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
 	for _, assign := range list {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName.L)
 		modifyColumns[columnFullName] = struct{}{}
@@ -2776,7 +2786,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		tableInfo := tn.TableInfo
 		tableVal, found := b.is.TableByID(tableInfo.ID)
 		if !found {
-			return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
+			return nil, nil, false, infoschema.ErrTableNotExists.GenWithStackByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
 		}
 		for i, colInfo := range tableInfo.Columns {
 			if !colInfo.IsGenerated() {
@@ -2784,7 +2794,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
 			if _, ok := modifyColumns[columnFullName]; ok {
-				return nil, nil, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
+				return nil, nil, false, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
 			for _, asName := range tableAsName[tableInfo] {
 				virtualAssignments = append(virtualAssignments, &ast.Assignment{
@@ -2795,12 +2805,13 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		}
 	}
 
-	newList := make([]*expression.Assignment, 0, p.Schema().Len())
+	allAssignmentsAreConstant = true
+	newList = make([]*expression.Assignment, 0, p.Schema().Len())
 	allAssignments := append(list, virtualAssignments...)
 	for i, assign := range allAssignments {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		var newExpr expression.Expression
 		var np LogicalPlan
@@ -2823,9 +2834,12 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess)
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
+		if _, isConst := newExpr.(*expression.Constant); !isConst {
+			allAssignmentsAreConstant = false
+		}
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col, Expr: newExpr})
 	}
@@ -2847,7 +2861,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, col.OrigTblName.L, "", nil)
 	}
-	return newList, p, nil
+	return newList, p, allAssignmentsAreConstant, nil
 }
 
 // extractTableAsNameForUpdate extracts tables' alias names for update.
