@@ -50,7 +50,8 @@ type HashJoinExec struct {
 
 	// concurrency is the number of partition, build and join workers.
 	concurrency   uint
-	hashTable     rowHashTable
+	hashTable     *rowHashMap
+	joinKeyBuf    [][]byte
 	innerFinished chan error
 	// joinWorkerWaitGroup is for sync multiple join workers.
 	joinWorkerWaitGroup sync.WaitGroup
@@ -71,7 +72,6 @@ type HashJoinExec struct {
 	outerResultChs     []chan *chunk.Chunk
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
-	hashTableValBufs   [][][]byte
 
 	memTracker  *memory.Tracker // track memory usage.
 	prepared    bool
@@ -141,8 +141,10 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-
-	e.hashTableValBufs = make([][][]byte, e.concurrency)
+	e.joinKeyBuf = make([][]byte, e.concurrency)
+	for i := range e.joinKeyBuf {
+		e.joinKeyBuf[i] = make([]byte, 0, 1000)
+	}
 
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
@@ -150,7 +152,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, h hash.Hash64) (hasNull bool, key uint64, err error) {
+func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, h hash.Hash64, buf []byte) (hasNull bool, key uint64, err error) {
 	var keyColIdx []int
 	var allTypes []*types.FieldType
 	if isOuterKey {
@@ -167,7 +169,7 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, h ha
 		}
 	}
 	h.Reset()
-	err = codec.HashChunkRow(e.ctx.GetSessionVars().StmtCtx, h, row, allTypes, keyColIdx)
+	err = codec.HashChunkRow(e.ctx.GetSessionVars().StmtCtx, h, row, allTypes, keyColIdx, buf)
 	return false, h.Sum64(), err
 }
 
@@ -401,7 +403,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 
 func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row,
 	joinResult *hashjoinWorkerResult, h hash.Hash64) (bool, *hashjoinWorkerResult) {
-	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, h)
+	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, h, e.joinKeyBuf[workerID])
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -540,7 +542,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	doneCh := make(chan struct{})
 	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 
-	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
+	// TODO: Parallel build hash table. Currently not support because `rowHashMap` is not thread-safe.
 	err := e.buildHashTableForList(innerResultCh)
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
@@ -557,7 +559,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) error {
-	e.hashTable = newRowHashTable()
+	e.hashTable = newRowHashMap()
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
 		e.innerKeyColIdx[i] = e.innerKeys[i].Index
@@ -566,6 +568,7 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 		hasNull bool
 		err     error
 		key     uint64
+		buf     = make([]byte, 0, 64)
 	)
 
 	h := fnv.New64()
@@ -576,7 +579,7 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 		}
 		numRows := chk.NumRows()
 		for j := 0; j < numRows; j++ {
-			hasNull, key, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), h)
+			hasNull, key, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), h, buf)
 			if err != nil {
 				return errors.Trace(err)
 			}

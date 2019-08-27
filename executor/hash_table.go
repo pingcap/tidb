@@ -17,20 +17,83 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-// TODO: Consider using a fix-sized hash table.
-type rowHashTable map[uint64][]chunk.RowPtr
+const maxEntrySliceLen = 8 * 1024
 
-func newRowHashTable() rowHashTable {
-	t := make(rowHashTable)
-	return t
+type entry struct {
+	ptr  chunk.RowPtr
+	next entryAddr
 }
 
-func (t rowHashTable) Put(key uint64, rowPtr chunk.RowPtr) {
-	t[key] = append(t[key], rowPtr)
+type entryStore struct {
+	slices   [][]entry
+	sliceIdx uint32
+	sliceLen uint32
 }
 
-func (t rowHashTable) Get(key uint64) []chunk.RowPtr {
-	return t[key]
+func (es *entryStore) put(e entry) entryAddr {
+	if es.sliceLen == maxEntrySliceLen {
+		es.slices = append(es.slices, make([]entry, 0, maxEntrySliceLen))
+		es.sliceLen = 0
+		es.sliceIdx++
+	}
+	addr := entryAddr{sliceIdx: es.sliceIdx, offset: es.sliceLen}
+	slice := es.slices[es.sliceIdx]
+	slice = append(slice, e)
+	es.slices[es.sliceIdx] = slice
+	es.sliceLen++
+	return addr
 }
 
-func (t rowHashTable) Len() int { return len(t) }
+func (es *entryStore) get(addr entryAddr) entry {
+	return es.slices[addr.sliceIdx][addr.offset]
+}
+
+type entryAddr struct {
+	sliceIdx uint32
+	offset   uint32
+}
+
+var nullEntryAddr = entryAddr{}
+
+type rowHashMap struct {
+	entryStore entryStore
+	hashTable  map[uint64]entryAddr
+	length     int
+}
+
+func newRowHashMap() *rowHashMap {
+	m := new(rowHashMap)
+	m.hashTable = make(map[uint64]entryAddr)
+	m.entryStore.slices = [][]entry{make([]entry, 0, 64)}
+	// Reserve the first empty entry, so entryAddr{} can represent nullEntryAddr.
+	m.entryStore.put(entry{})
+	return m
+}
+
+func (m *rowHashMap) Put(hashKey uint64, rowPtr chunk.RowPtr) {
+	oldEntryAddr := m.hashTable[hashKey]
+	e := entry{
+		ptr:  rowPtr,
+		next: oldEntryAddr,
+	}
+	newEntryAddr := m.entryStore.put(e)
+	m.hashTable[hashKey] = newEntryAddr
+	m.length++
+}
+
+func (m *rowHashMap) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+	entryAddr := m.hashTable[hashKey]
+	for entryAddr != nullEntryAddr {
+		e := m.entryStore.get(entryAddr)
+		entryAddr = e.next
+		rowPtrs = append(rowPtrs, e.ptr)
+	}
+	// Keep the order of input.
+	for i := 0; i < len(rowPtrs)/2; i++ {
+		j := len(rowPtrs) - 1 - i
+		rowPtrs[i], rowPtrs[j] = rowPtrs[j], rowPtrs[i]
+	}
+	return
+}
+
+func (m *rowHashMap) Len() int { return m.length }

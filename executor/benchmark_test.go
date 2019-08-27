@@ -634,3 +634,60 @@ func BenchmarkHashJoinExec(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})
 }
+
+func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(casTest.columns()...),
+		rows:   casTest.rows,
+		ctx:    casTest.ctx,
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+			switch typ.Tp {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				return int64(row)
+			case mysql.TypeVarString:
+				return rawData
+			default:
+				panic("not implement")
+			}
+		},
+	}
+	dataSource1 := buildMockDataSource(opt)
+	dataSource2 := buildMockDataSource(opt)
+
+	dataSource1.prepareChunks()
+	exec := prepare4Join(casTest, dataSource1, dataSource2)
+	tmpCtx := context.Background()
+	if err := exec.Open(tmpCtx); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		innerResultCh := make(chan *chunk.Chunk, 1)
+		go func() {
+			for _, chk := range dataSource1.genData {
+				innerResultCh <- chk
+			}
+			close(innerResultCh)
+		}()
+
+		b.StartTimer()
+		if err := exec.buildHashTableForList(innerResultCh); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+	}
+}
+
+func BenchmarkBuildHashTableForList(b *testing.B) {
+	b.ReportAllocs()
+	cas := defaultHashJoinTestCase()
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkBuildHashTableForList(b, cas)
+	})
+
+	cas.keyIdx = []int{0}
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkBuildHashTableForList(b, cas)
+	})
+}

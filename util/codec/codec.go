@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"io"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -275,106 +276,98 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]by
 	return encode(sc, b, v, false)
 }
 
-func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, b []byte, row chunk.Row, tp *types.FieldType, idx int) (_ [][]byte, err error) {
+func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *types.FieldType, idx int) (flag byte, b []byte, err error) {
 	if row.IsNull(idx) {
-		return [][]byte{{NilFlag}}, nil
+		flag = NilFlag
+		return
 	}
-	const comparable = false
-	b = b[:0]
 	switch tp.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		if !mysql.HasUnsignedFlag(tp.Flag) {
-			b = encodeSignedInt(b, row.GetInt64(idx), comparable)
-			break
+		flag = varintFlag
+		if mysql.HasUnsignedFlag(tp.Flag) {
+			if integer := row.GetInt64(idx); integer < 0 {
+				flag = uvarintFlag
+			}
 		}
-		// encode unsigned integers.
-		integer := row.GetInt64(idx)
-		if integer < 0 {
-			b = encodeUnsignedInt(b, uint64(integer), comparable)
-		} else {
-			b = encodeSignedInt(b, integer, comparable)
-		}
+		b = row.GetRaw(idx)
 	case mysql.TypeFloat:
-		b = append(b, floatFlag)
-		b = EncodeFloat(b, float64(row.GetFloat32(idx)))
+		flag = floatFlag
+		f := float64(row.GetFloat32(idx))
+		b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
 	case mysql.TypeDouble:
-		b = append(b, floatFlag)
-		b = EncodeFloat(b, row.GetFloat64(idx))
+		flag = floatFlag
+		b = row.GetRaw(idx)
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		return [][]byte{
-			{compactBytesFlag},
-			row.GetBytes(idx),
-		}, nil
+		flag = compactBytesFlag
+		b = row.GetBytes(idx)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		b = append(b, uintFlag)
+		flag = uintFlag
 		t := row.GetTime(idx)
 		// Encoding timestamp need to consider timezone.
 		// If it's not in UTC, transform to UTC first.
 		if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
 			err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
 			if err != nil {
-				return nil, err
+				return
 			}
 		}
 		var v uint64
 		v, err = t.ToPackedUint()
 		if err != nil {
-			return nil, err
+			return
 		}
-		b = EncodeUint(b, v)
+		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
 	case mysql.TypeDuration:
+		flag = durationFlag
 		// duration may have negative value, so we cannot use String to encode directly.
-		b = append(b, durationFlag)
-		b = EncodeInt(b, int64(row.GetDuration(idx, 0).Duration))
+		b = row.GetRaw(idx)
 	case mysql.TypeNewDecimal:
+		flag = decimalFlag
 		// If hash is true, we only consider the original value of this decimal and ignore it's precision.
 		dec := row.GetMyDecimal(idx)
-		bin, err := dec.ToHashKey()
+		b, err = dec.ToHashKey()
 		if err != nil {
-			return nil, err
+			return
 		}
-		return [][]byte{
-			{decimalFlag},
-			bin,
-		}, nil
 	case mysql.TypeEnum:
-		b = encodeUnsignedInt(b, uint64(row.GetEnum(idx).ToNumber()), comparable)
+		flag = uvarintFlag
+		v := uint64(row.GetEnum(idx).ToNumber())
+		b = (*[8]byte)(unsafe.Pointer(&v))[:]
 	case mysql.TypeSet:
-		b = encodeUnsignedInt(b, uint64(row.GetSet(idx).ToNumber()), comparable)
+		flag = uvarintFlag
+		v := uint64(row.GetSet(idx).ToNumber())
+		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
 	case mysql.TypeBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-		var val uint64
-		val, err = types.BinaryLiteral(row.GetBytes(idx)).ToInt(sc)
-		terror.Log(errors.Trace(err))
-		b = encodeUnsignedInt(b, val, comparable)
+		flag = uvarintFlag
+		v, err1 := types.BinaryLiteral(row.GetBytes(idx)).ToInt(sc)
+		terror.Log(errors.Trace(err1))
+		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
 	case mysql.TypeJSON:
-		return [][]byte{
-			{jsonFlag},
-			row.GetBytes(idx),
-		}, nil
+		flag = jsonFlag
+		b = row.GetBytes(idx)
 	default:
-		return nil, errors.Errorf("unsupport column type for encode %d", tp.Tp)
+		return 0, nil, errors.Errorf("unsupport column type for encode %d", tp.Tp)
 	}
-	return [][]byte{b}, nil
+	return
 }
 
 // HashChunkRow writes the encoded values to w.
-// If two rows are equal, it will generate the same bytes.
-func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int) error {
+// If two rows are logically equal, it will generate the same bytes.
+func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {
+	buf = buf[:0]
+	var flag byte
 	var b []byte
 	for _, idx := range colIdx {
-		rets, err := encodeHashChunkRowIdx(sc, b, row, allTypes[idx], idx)
+		flag, b, err = encodeHashChunkRowIdx(sc, row, allTypes[idx], idx)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for _, ret := range rets {
-			_, err = w.Write(ret)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
+		buf = append(buf, flag)
+		buf = append(buf, b...)
 	}
-	return nil
+	_, err = w.Write(buf)
+	return err
 }
 
 // EqualChunkRow returns a boolean reporting whether row1 and row2
@@ -383,24 +376,18 @@ func EqualChunkRow(sc *stmtctx.StatementContext,
 	row1 chunk.Row, allTypes1 []*types.FieldType, colIdx1 []int,
 	row2 chunk.Row, allTypes2 []*types.FieldType, colIdx2 []int,
 ) (bool, error) {
-	var b1, b2 []byte
 	for i := range colIdx1 {
 		idx1, idx2 := colIdx1[i], colIdx2[i]
-		rets1, err := encodeHashChunkRowIdx(sc, b1, row1, allTypes1[idx1], idx1)
+		flag1, b1, err := encodeHashChunkRowIdx(sc, row1, allTypes1[idx1], idx1)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		rets2, err := encodeHashChunkRowIdx(sc, b2, row2, allTypes2[idx2], idx2)
+		flag2, b2, err := encodeHashChunkRowIdx(sc, row2, allTypes2[idx2], idx2)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		if len(rets1) != len(rets2) {
+		if !(flag1 == flag2 && bytes.Equal(b1, b2)) {
 			return false, nil
-		}
-		for i := range rets1 {
-			if !bytes.Equal(rets1[i], rets2[i]) {
-				return false, nil
-			}
 		}
 	}
 	return true, nil

@@ -1036,6 +1036,8 @@ func (s *testCodecSuite) TestDecodeRange(c *C) {
 
 func testHashChunkRowEqual(c *C, a, b interface{}, equal bool) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	buf1 := make([]byte, 0, 64)
+	buf2 := make([]byte, 0, 64)
 
 	tp1 := new(types.FieldType)
 	types.DefaultTypeForValue(a, tp1)
@@ -1052,10 +1054,10 @@ func testHashChunkRowEqual(c *C, a, b interface{}, equal bool) {
 	chk2.AppendDatum(0, &d)
 
 	h := crc32.NewIEEE()
-	err1 := HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0})
+	err1 := HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0}, buf1)
 	sum1 := h.Sum32()
 	h.Reset()
-	err2 := HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
+	err2 := HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0}, buf2)
 	sum2 := h.Sum32()
 	c.Assert(err1, IsNil)
 	c.Assert(err2, IsNil)
@@ -1077,6 +1079,7 @@ func testHashChunkRowEqual(c *C, a, b interface{}, equal bool) {
 
 func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	buf := make([]byte, 0, 64)
 	datums, tps := datumsForTest(sc)
 	chk := chunkForTest(c, sc, datums, tps, 1)
 
@@ -1085,10 +1088,10 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 		colIdx[i] = i
 	}
 	h := crc32.NewIEEE()
-	err1 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx)
+	err1 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx, buf)
 	sum1 := h.Sum32()
 	h.Reset()
-	err2 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx)
+	err2 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx, buf)
 	sum2 := h.Sum32()
 
 	c.Assert(err1, IsNil)
