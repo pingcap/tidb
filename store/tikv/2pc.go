@@ -123,6 +123,7 @@ type batchExecutor struct {
 	action      twoPhaseCommitAction // the work action type
 	procFn      procOneBatchFn       // injected proc batch function
 	backoffer   *Backoffer           // Backoffer
+	threshold   time.Duration        // get token observe threshold
 }
 
 type procOneBatchFn func(bo *Backoffer, batch batchKeys) error
@@ -392,6 +393,20 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	singleBatchActionFunc, err := c.getProcFuncByType(action)
 	if err != nil {
 		return err
+	}
+	if len(batches) == 0 {
+		return nil
+	}
+	if len(batches) == 1 {
+		e := singleBatchActionFunc(bo, batches[0])
+		if e != nil {
+			logutil.BgLogger().Debug("2PC doActionOnBatches failed",
+				zap.Uint64("conn", c.connID),
+				zap.Stringer("action type", action),
+				zap.Error(e),
+				zap.Uint64("txnStartTS", c.startTS))
+		}
+		return errors.Trace(e)
 	}
 	rateLim := len(batches) // this will be used for LargeTxn, set rateLim here
 	batchExecutor := newBatchExecutor(rateLim, c, action, singleBatchActionFunc, bo)
@@ -1029,7 +1044,7 @@ func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn 
 func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
 	action twoPhaseCommitAction, procFn procOneBatchFn, backoffer *Backoffer) *batchExecutor {
 	return &batchExecutor{rateLimit, nil, committer,
-		action, procFn, backoffer}
+		action, procFn, backoffer, time.Duration(1 * time.Millisecond)}
 }
 
 // initUtils do initialize batchExecutor related policies like rateLimit util
@@ -1042,7 +1057,12 @@ func (batchExe *batchExecutor) initUtils() error {
 // startWork concurrently do the work for each batch considering rate limit
 func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, batches []batchKeys) {
 	for idx, batch1 := range batches {
+		waitStart := time.Now()
 		if exit := batchExe.rateLimiter.getToken(exitCh); !exit {
+			tokenWaitDuration := time.Since(waitStart)
+			if tokenWaitDuration > batchExe.threshold {
+				metrics.TiKVTokenWaitDuration.Observe(float64(tokenWaitDuration))
+			}
 			batch := batch1
 			go func() {
 				var singleBatchBackoffer *Backoffer
@@ -1084,20 +1104,6 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 // process will start worker routine and collect results
 func (batchExe *batchExecutor) process(batches []batchKeys) error {
 	var err error
-	if len(batches) == 0 {
-		return nil
-	}
-	if len(batches) == 1 {
-		e := batchExe.procFn(batchExe.backoffer, batches[0])
-		if e != nil {
-			logutil.BgLogger().Debug("2PC doActionOnBatches failed",
-				zap.Uint64("conn", batchExe.committer.connID),
-				zap.Stringer("action type", batchExe.action),
-				zap.Error(e),
-				zap.Uint64("txnStartTS", batchExe.committer.startTS))
-		}
-		return errors.Trace(e)
-	}
 	err = batchExe.initUtils()
 	if err != nil {
 		logutil.Logger(batchExe.backoffer.ctx).Error("batchExecutor initUtils failed", zap.Error(err))

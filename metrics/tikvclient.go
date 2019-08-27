@@ -223,4 +223,12 @@ var (
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 20),
 			Help:    "duration to push sub tasks to range task workers",
 		}, []string{LblType})
+	TiKVTokenWaitDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_executor_token_wait_duration",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1ns ~ 1s
+			Help:      "tidb txn token wait duration to process batches",
+		})
 )
