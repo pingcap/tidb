@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/atomic"
+	"sync"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -39,7 +39,8 @@ type baseBuiltinFunc struct {
 	tp     *types.FieldType
 	pbCode tipb.ScalarFuncSig
 
-	vectorizedAllFlag atomic.Uint32 // 0 unknown, 1 vectorized, 2 not vectorized
+	childrenVectorizedOnce sync.Once
+	childrenVectorized     bool
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -240,19 +241,17 @@ func (b *baseBuiltinFunc) vectorized() bool {
 	return false
 }
 
-func (b *baseBuiltinFunc) vectorizedChildren() bool {
-	flag := b.vectorizedAllFlag.Load()
-	if flag == 0 {
-		flag = 1
+func (b *baseBuiltinFunc) isChildrenVectorized() bool {
+	b.childrenVectorizedOnce.Do(func() {
+		b.childrenVectorized = true
 		for _, arg := range b.args {
 			if !arg.Vectorized() {
-				flag = 2
+				b.childrenVectorized = false
 				break
 			}
 		}
-		b.vectorizedAllFlag.Store(flag)
-	}
-	return flag == 1
+	})
+	return b.childrenVectorized
 }
 
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
@@ -339,8 +338,8 @@ type vecBuiltinFunc interface {
 	// vectorized returns if this builtin function itself supports vectorized evaluation.
 	vectorized() bool
 
-	// vectorizedChildren returns if its all children support vectorized evaluation.
-	vectorizedChildren() bool
+	// isChildrenVectorized returns if its all children support vectorized evaluation.
+	isChildrenVectorized() bool
 
 	// vecEvalInt evaluates this builtin function in a vectorized manner.
 	vecEvalInt(input *chunk.Chunk, result *chunk.Column) error
