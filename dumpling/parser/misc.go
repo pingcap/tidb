@@ -428,6 +428,7 @@ var tokenMap = map[string]int{
 	"OUTER":                    outer,
 	"PACK_KEYS":                packKeys,
 	"PAGE":                     pageSym,
+	"PARSER":                   parser,
 	"PARTIAL":                  partial,
 	"PARTITION":                partition,
 	"PARTITIONING":             partitioning,
