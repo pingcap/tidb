@@ -1346,12 +1346,18 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	default:
 		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
 	}
-
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		s, err = getPreparedStmt(execStmt, vars)
 		if err != nil {
 			return
 		}
+	}
+	// execute missed stmtID uses empty sql
+	sc.OriginalSQL = s.Text()
+	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
+		sc.InExplainStmt = true
+		sc.CastStrToIntStrict = true
+		s = explainStmt.Stmt
 	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
