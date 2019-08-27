@@ -851,7 +851,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStack = append(er.ctxStack, value)
 	case *driver.ParamMarkerExpr:
 		var value expression.Expression
-		value, er.err = expression.GetParamExpression(er.sctx, v)
+		value, er.err = expression.ParamMarkerExpression(er.sctx, v)
 		if er.err != nil {
 			return retNode, false
 		}
@@ -999,8 +999,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		return
 	}
 	e := expression.DatumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
-	e.RetType.Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
-	e.RetType.Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
+	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
+	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStack = append(er.ctxStack, e)
 }
 

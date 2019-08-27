@@ -194,7 +194,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		}
 	case *driver.ParamMarkerExpr:
 		var value Expression
-		value, sr.err = GetParamExpression(sr.ctx, v)
+		value, sr.err = ParamMarkerExpression(sr.ctx, v)
 		if sr.err != nil {
 			return retNode, false
 		}
