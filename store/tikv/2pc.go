@@ -379,6 +379,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			PrimaryLock:  c.primary(),
 			StartVersion: c.startTS,
 			LockTtl:      c.lockTTL,
+			TxnSize:      uint64(len(batch.keys)),
 		},
 		Context: pb.Context{
 			Priority: c.priority,
