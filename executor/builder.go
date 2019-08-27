@@ -862,8 +862,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		// goroutines write empty DirtyTable to DirtyDB for this table concurrently. Thus we don't use lock
 		// to synchronize here.
 		physicalTableID := getPhysicalTableID(x.table)
-		us.txnAddedHandles = getTableAddedHandles(b.ctx, physicalTableID)
-		us.txnDeletedHandles = getTableDeletedHandles(b.ctx, physicalTableID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		us.table = x.table
@@ -878,8 +877,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 			}
 		}
 		physicalTableID := getPhysicalTableID(x.table)
-		us.txnAddedHandles = getTableAddedHandles(b.ctx, physicalTableID)
-		us.txnDeletedHandles = getTableDeletedHandles(b.ctx, physicalTableID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		us.table = x.table
@@ -894,8 +892,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 			}
 		}
 		physicalTableID := getPhysicalTableID(x.table)
-		us.txnAddedHandles = getTableAddedHandles(b.ctx, physicalTableID)
-		us.txnDeletedHandles = getTableDeletedHandles(b.ctx, physicalTableID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		us.table = x.table

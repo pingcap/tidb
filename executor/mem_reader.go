@@ -43,8 +43,8 @@ type memIndexReader struct {
 	outputOffset  []int
 	// cache for decode handle.
 	handleBytes []byte
-	// memProcessedHandles is uses to store the handle ids that has been processed by memIndexReader.
-	memProcessedHandles set.Int64Set
+	// memIdxHandles is uses to store the handle ids that has been processed by memIndexReader.
+	memIdxHandles set.Int64Set
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 }
@@ -56,18 +56,18 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		outputOffset = append(outputOffset, col.Index)
 	}
 	return &memIndexReader{
-		ctx:                 us.ctx,
-		index:               idxReader.index,
-		table:               idxReader.table.Meta(),
-		kvRanges:            kvRanges,
-		desc:                us.desc,
-		conditions:          us.conditions,
-		addedRows:           make([][]types.Datum, 0, 2),
-		retFieldTypes:       retTypes(us),
-		outputOffset:        outputOffset,
-		handleBytes:         make([]byte, 0, 16),
-		memProcessedHandles: set.NewInt64Set(),
-		belowHandleIndex:    us.belowHandleIndex,
+		ctx:              us.ctx,
+		index:            idxReader.index,
+		table:            idxReader.table.Meta(),
+		kvRanges:         kvRanges,
+		desc:             us.desc,
+		conditions:       us.conditions,
+		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		retFieldTypes:    retTypes(us),
+		outputOffset:     outputOffset,
+		handleBytes:      make([]byte, 0, 16),
+		memIdxHandles:    set.NewInt64Set(),
+		belowHandleIndex: us.belowHandleIndex,
 	}
 }
 
@@ -96,7 +96,7 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 			return err
 		}
 		handle := data[m.belowHandleIndex].GetInt64()
-		m.memProcessedHandles.Insert(handle)
+		m.memIdxHandles.Insert(handle)
 
 		mutableRow.SetDatums(data...)
 		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
@@ -139,39 +139,36 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 }
 
 type memTableReader struct {
-	ctx        sessionctx.Context
-	table      *model.TableInfo
-	columns    []*model.ColumnInfo
-	kvRanges   []kv.KeyRange
-	desc       bool
-	conditions []expression.Expression
-	addedRows  [][]types.Datum
-	// memProcessedHandles is uses to store the handle ids that has been processed.
-	memProcessedHandles set.Int64Set
-	retFieldTypes       []*types.FieldType
-	colIDs              map[int64]int
+	ctx           sessionctx.Context
+	table         *model.TableInfo
+	columns       []*model.ColumnInfo
+	kvRanges      []kv.KeyRange
+	desc          bool
+	conditions    []expression.Expression
+	addedRows     [][]types.Datum
+	retFieldTypes []*types.FieldType
+	colIDs        map[int64]int
 	// cache for decode handle.
 	handleBytes []byte
 }
 
-func buildMemTableReaderWithRange(us *UnionScanExec, kvRanges []kv.KeyRange) *memTableReader {
+func buildMemTableReader(us *UnionScanExec, kvRanges []kv.KeyRange) *memTableReader {
 	colIDs := make(map[int64]int)
 	for i, col := range us.columns {
 		colIDs[col.ID] = i
 	}
 
 	return &memTableReader{
-		ctx:                 us.ctx,
-		table:               us.table.Meta(),
-		columns:             us.columns,
-		kvRanges:            kvRanges,
-		desc:                us.desc,
-		conditions:          us.conditions,
-		addedRows:           make([][]types.Datum, 0, 2),
-		memProcessedHandles: set.NewInt64Set(),
-		retFieldTypes:       retTypes(us),
-		colIDs:              colIDs,
-		handleBytes:         make([]byte, 0, 16),
+		ctx:           us.ctx,
+		table:         us.table.Meta(),
+		columns:       us.columns,
+		kvRanges:      kvRanges,
+		desc:          us.desc,
+		conditions:    us.conditions,
+		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		retFieldTypes: retTypes(us),
+		colIDs:        colIDs,
+		handleBytes:   make([]byte, 0, 16),
 	}
 }
 
@@ -183,7 +180,7 @@ func buildMemTableReaderWithFullRange(us *UnionScanExec) *memTableReader {
 		}
 	}
 	fullTableRange := distsql.TableRangesToKVRanges(getPhysicalTableID(us.table), ranger.FullIntRange(pkIsUnsigned), nil)
-	return buildMemTableReaderWithRange(us, fullTableRange)
+	return buildMemTableReader(us, fullTableRange)
 }
 
 // TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.
@@ -218,9 +215,6 @@ func (m *memTableReader) decodeRecordKeyValue(key, value []byte) ([]types.Datum,
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if m.memProcessedHandles != nil {
-		m.memProcessedHandles.Insert(handle)
 	}
 	return decodeRowData(m.ctx, m.table, m.columns, m.colIDs, handle, m.handleBytes, value)
 }
@@ -342,7 +336,7 @@ func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
 			return err
 		}
 		handles = append(handles, handle)
-		m.memProcessedHandles[handle] = struct{}{}
+		m.memIdxHandles.Insert(handle)
 		return nil
 	})
 	if err != nil {
@@ -392,17 +386,17 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 	kvRanges := idxLookUpReader.kvRanges
 	outputOffset := []int{len(idxLookUpReader.index.Columns)}
 	memIdxReader := &memIndexReader{
-		ctx:                 us.ctx,
-		index:               idxLookUpReader.index,
-		table:               idxLookUpReader.table.Meta(),
-		kvRanges:            kvRanges,
-		desc:                idxLookUpReader.desc,
-		addedRows:           make([][]types.Datum, 0, 2),
-		retFieldTypes:       retTypes(us),
-		outputOffset:        outputOffset,
-		handleBytes:         make([]byte, 0, 16),
-		memProcessedHandles: make(map[int64]struct{}, 2),
-		belowHandleIndex:    us.belowHandleIndex,
+		ctx:              us.ctx,
+		index:            idxLookUpReader.index,
+		table:            idxLookUpReader.table.Meta(),
+		kvRanges:         kvRanges,
+		desc:             idxLookUpReader.desc,
+		addedRows:        make([][]types.Datum, 0, 2),
+		retFieldTypes:    retTypes(us),
+		outputOffset:     outputOffset,
+		handleBytes:      make([]byte, 0, 16),
+		memIdxHandles:    set.NewInt64Set(),
+		belowHandleIndex: us.belowHandleIndex,
 	}
 
 	return &memIndexLookUpReader{

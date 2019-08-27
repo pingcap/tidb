@@ -99,17 +99,15 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
-	forUpdateTS          uint64
-	UpdateUntouchedIndex map[TableIndexID]struct{}
-	AddedTableRows       map[int64]map[int64]struct{}
-	DeletedTableRows     map[int64]map[int64]struct{}
-	Binlog               interface{}
-	InfoSchema           interface{}
-	History              interface{}
-	SchemaVersion        int64
-	StartTS              uint64
-	Shard                *int64
-	TableDeltaMap        map[int64]TableDelta
+	forUpdateTS   uint64
+	DirtyDB       interface{}
+	Binlog        interface{}
+	InfoSchema    interface{}
+	History       interface{}
+	SchemaVersion int64
+	StartTS       uint64
+	Shard         *int64
+	TableDeltaMap map[int64]TableDelta
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
@@ -117,12 +115,6 @@ type TransactionContext struct {
 	ForUpdate      bool
 	CouldRetry     bool
 	IsPessimistic  bool
-}
-
-// TableIndexID is used to represent the unique index ID between multi-tables.
-type TableIndexID struct {
-	TableID int64
-	IndexID int64
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -145,9 +137,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
 	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
-	tc.AddedTableRows = nil
-	tc.DeletedTableRows = nil
-	tc.UpdateUntouchedIndex = nil
+	tc.DirtyDB = nil
 	tc.Binlog = nil
 	tc.History = nil
 	tc.TableDeltaMap = nil

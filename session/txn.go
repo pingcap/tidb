@@ -23,14 +23,13 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -48,11 +47,11 @@ type TxnState struct {
 	kv.Transaction
 	txnFuture *txnFuture
 
-	buf                  kv.MemBuffer
-	mutations            map[int64]*binlog.TableMutation
-	addedTableRows       map[int64][]int64
-	deletedTableRows     map[int64][]int64
-	updateUntouchedIndex map[variable.TableIndexID]struct{}
+	buf          kv.MemBuffer
+	mutations    map[int64]*binlog.TableMutation
+	dirtyTableOP []dirtyTableOperation
+	// updateUntouchedIndex records the untouched index when update. the key is table ID and index ID.
+	updateUntouchedIndex map[int64]map[int64]struct{}
 
 	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	// doNotCommit flag may be set when StmtCommit fail.
@@ -96,14 +95,8 @@ func (st *TxnState) GoString() string {
 	} else if st.Valid() {
 		s.WriteString("state=valid")
 		fmt.Fprintf(&s, ", txnStartTS=%d", st.Transaction.StartTS())
-		if len(st.addedTableRows) > 0 {
-			fmt.Fprintf(&s, ", len(addedTableRows)=%d, %#v", len(st.addedTableRows), st.addedTableRows)
-		}
-		if len(st.deletedTableRows) > 0 {
-			fmt.Fprintf(&s, ", len(deletedTableRows)=%d, %#v", len(st.deletedTableRows), st.deletedTableRows)
-		}
-		if len(st.updateUntouchedIndex) > 0 {
-			fmt.Fprintf(&s, ", len(updateUntouchedIndex)=%d, %#v", len(st.updateUntouchedIndex), st.updateUntouchedIndex)
+		if len(st.dirtyTableOP) > 0 {
+			fmt.Fprintf(&s, ", len(dirtyTable)=%d, %#v", len(st.dirtyTableOP), st.dirtyTableOP)
 		}
 		if len(st.mutations) > 0 {
 			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(st.mutations), st.mutations)
@@ -158,7 +151,6 @@ type dirtyTableOperation struct {
 	kind   int
 	tid    int64
 	handle int64
-	row    []types.Datum
 }
 
 var hasMockAutoIDRetry = int64(0)
@@ -174,7 +166,7 @@ func mockAutoIDRetry() bool {
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
-	if len(st.mutations) != 0 || len(st.deletedTableRows) != 0 || len(st.addedTableRows) != 0 || len(st.updateUntouchedIndex) != 0 || st.buf.Len() != 0 {
+	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
 		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Stack("something must be wrong"))
@@ -306,8 +298,13 @@ func (st *TxnState) cleanup() {
 	for key := range st.mutations {
 		delete(st.mutations, key)
 	}
-	st.addedTableRows = nil
-	st.deletedTableRows = nil
+	if st.dirtyTableOP != nil {
+		empty := dirtyTableOperation{}
+		for i := 0; i < len(st.dirtyTableOP); i++ {
+			st.dirtyTableOP[i] = empty
+		}
+		st.dirtyTableOP = st.dirtyTableOP[:0]
+	}
 	st.updateUntouchedIndex = nil
 }
 
@@ -365,27 +362,23 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 	m1.Sequence = append(m1.Sequence, m2.Sequence...)
 }
 
-func mergeToTxnAddedTableRows(s *session, addedTableRows map[int64][]int64) {
-	s.GetSessionVars().TxnCtx.AddedTableRows = mergeMap(addedTableRows, s.GetSessionVars().TxnCtx.AddedTableRows)
+func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
+	dt := dirtyDB.GetDirtyTable(op.tid)
+	switch op.kind {
+	case table.DirtyTableAddRow:
+		dt.AddRow(op.handle)
+	case table.DirtyTableDeleteRow:
+		dt.DeleteRow(op.handle)
+	}
 }
 
-func mergeToTxnDeletedTableRows(s *session, deletedTableRows map[int64][]int64) {
-	s.GetSessionVars().TxnCtx.DeletedTableRows = mergeMap(deletedTableRows, s.GetSessionVars().TxnCtx.DeletedTableRows)
-}
-
-func mergeMap(child map[int64][]int64, total map[int64]map[int64]struct{}) map[int64]map[int64]struct{} {
-	if total == nil {
-		total = make(map[int64]map[int64]struct{}, len(child))
-	}
-	for tid, rows := range child {
-		if total[tid] == nil {
-			total[tid] = make(map[int64]struct{})
-		}
-		for _, handle := range rows {
-			total[tid][handle] = struct{}{}
+func mergeUntouchedIndexToDirtyDB(dirtyDB *executor.DirtyDB, untouchedIndex map[int64]map[int64]struct{}) {
+	for tid, idxs := range untouchedIndex {
+		dt := dirtyDB.GetDirtyTable(tid)
+		for idxID := range idxs {
+			dt.AddUntouchedIndex(idxID)
 		}
 	}
-	return total
 }
 
 // txnFuture is a promise, which promises to return a txn in future.
@@ -464,19 +457,13 @@ func (s *session) StmtCommit() error {
 		mergeToMutation(mutation, delta)
 	}
 
-	if len(st.deletedTableRows) > 0 {
-		mergeToTxnAddedTableRows(s, st.addedTableRows)
-	}
-
-	if len(st.deletedTableRows) > 0 {
-		mergeToTxnDeletedTableRows(s, st.deletedTableRows)
-	}
-	if len(st.updateUntouchedIndex) > 0 {
-		if s.sessionVars.TxnCtx.UpdateUntouchedIndex == nil {
-			s.sessionVars.TxnCtx.UpdateUntouchedIndex = make(map[variable.TableIndexID]struct{})
+	if len(st.dirtyTableOP) > 0 {
+		dirtyDB := executor.GetDirtyDB(s)
+		for _, op := range st.dirtyTableOP {
+			mergeToDirtyDB(dirtyDB, op)
 		}
-		for k := range st.updateUntouchedIndex {
-			s.sessionVars.TxnCtx.UpdateUntouchedIndex[k] = struct{}{}
+		if len(st.updateUntouchedIndex) > 0 {
+			mergeUntouchedIndexToDirtyDB(dirtyDB, st.updateUntouchedIndex)
 		}
 	}
 	st.ConfirmAssertions(true)
@@ -499,35 +486,16 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return st.mutations[tableID]
 }
 
-// StmtAddDirtyTableOP implements the sessionctx.Context interface.
 func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
-	switch op {
-	case table.DirtyTableAddRow:
-		s.txn.addedTableRows = mergeRow(s.txn.addedTableRows, tid, handle)
-	case table.DirtyTableDeleteRow:
-		s.txn.deletedTableRows = mergeRow(s.txn.deletedTableRows, tid, handle)
-	}
-}
-
-func mergeRow(rows map[int64][]int64, tid int64, handle int64) map[int64][]int64 {
-	if rows == nil {
-		rows = make(map[int64][]int64)
-	}
-	rows[tid] = append(rows[tid], handle)
-	return rows
+	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
 }
 
 func (s *session) UpdateStmtUntouchedIndex(tid, indexID int64) {
 	if s.txn.updateUntouchedIndex == nil {
-		s.txn.updateUntouchedIndex = make(map[variable.TableIndexID]struct{})
+		s.txn.updateUntouchedIndex = make(map[int64]map[int64]struct{})
 	}
-	s.txn.updateUntouchedIndex[variable.TableIndexID{TableID: tid, IndexID: indexID}] = struct{}{}
-}
-
-func (s *session) IsUntouchedIndex(tid, indexID int64) bool {
-	if s.sessionVars.TxnCtx.UpdateUntouchedIndex == nil {
-		return false
+	if s.txn.updateUntouchedIndex[tid] == nil {
+		s.txn.updateUntouchedIndex[tid] = make(map[int64]struct{})
 	}
-	_, ok := s.sessionVars.TxnCtx.UpdateUntouchedIndex[variable.TableIndexID{TableID: tid, IndexID: indexID}]
-	return ok
+	s.txn.updateUntouchedIndex[tid][indexID] = struct{}{}
 }

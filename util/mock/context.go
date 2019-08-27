@@ -219,11 +219,6 @@ func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
 func (c *Context) UpdateStmtUntouchedIndex(tid, indexID int64) {
 }
 
-// IsUntouchedIndex implements the sessionctx.Context interface.
-func (c *Context) IsUntouchedIndex(tid, indexID int64) bool {
-	return false
-}
-
 // AddTableLock implements the sessionctx.Context interface.
 func (c *Context) AddTableLock(_ []model.TableLockTpInfo) {
 }

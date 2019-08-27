@@ -27,27 +27,79 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
-func getTableAddedHandles(s sessionctx.Context, tid int64) map[int64]struct{} {
-	if s.GetSessionVars().TxnCtx.AddedTableRows == nil || s.GetSessionVars().TxnCtx.AddedTableRows[tid] == nil {
-		return make(map[int64]struct{})
-	}
-	return s.GetSessionVars().TxnCtx.AddedTableRows[tid]
+// DirtyDB stores uncommitted write operations for a transaction.
+// It is stored and retrieved by context.Value and context.SetValue method.
+type DirtyDB struct {
+	// tables is a map whose key is tableID.
+	tables map[int64]*DirtyTable
 }
 
-func getTableDeletedHandles(s sessionctx.Context, tid int64) map[int64]struct{} {
-	if s.GetSessionVars().TxnCtx.DeletedTableRows == nil || s.GetSessionVars().TxnCtx.DeletedTableRows[tid] == nil {
-		return make(map[int64]struct{})
+// GetDirtyTable gets the DirtyTable by id from the DirtyDB.
+func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
+	dt, ok := udb.tables[tid]
+	if !ok {
+		dt = &DirtyTable{
+			tid:            tid,
+			addedRows:      make(map[int64]struct{}),
+			deletedRows:    make(map[int64]struct{}),
+			untouchedIndex: make(map[int64]struct{}),
+		}
+		udb.tables[tid] = dt
 	}
-	return s.GetSessionVars().TxnCtx.DeletedTableRows[tid]
+	return dt
+}
+
+// DirtyTable stores uncommitted write operation for a transaction.
+type DirtyTable struct {
+	tid int64
+	// addedRows ...
+	// the key is handle.
+	addedRows   map[int64]struct{}
+	deletedRows map[int64]struct{}
+	// untouchedIndex is the untouched index when update. The key is index ID.
+	untouchedIndex map[int64]struct{}
+}
+
+// AddRow adds a row to the DirtyDB.
+func (dt *DirtyTable) AddRow(handle int64) {
+	dt.addedRows[handle] = struct{}{}
+}
+
+// DeleteRow deletes a row from the DirtyDB.
+func (dt *DirtyTable) DeleteRow(handle int64) {
+	delete(dt.addedRows, handle)
+	dt.deletedRows[handle] = struct{}{}
+}
+
+// AddUntouchedIndex adds a row to the DirtyDB.
+func (dt *DirtyTable) AddUntouchedIndex(indexID int64) {
+	dt.untouchedIndex[indexID] = struct{}{}
+}
+
+// GetDirtyDB returns the DirtyDB bind to the context.
+func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
+	var udb *DirtyDB
+	x := ctx.GetSessionVars().TxnCtx.DirtyDB
+	if x == nil {
+		udb = &DirtyDB{tables: make(map[int64]*DirtyTable)}
+		ctx.GetSessionVars().TxnCtx.DirtyDB = udb
+	} else {
+		udb = x.(*DirtyDB)
+	}
+	return udb
+}
+
+func (dt *DirtyTable) isUntouchedIndex(tid, indexID int64) bool {
+	_, ok := dt.untouchedIndex[indexID]
+	return ok
 }
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
 type UnionScanExec struct {
 	baseExecutor
 
-	txnDeletedHandles map[int64]struct{}
-	txnAddedHandles   map[int64]struct{}
-	needGetMissRows   bool
+	dirty           *DirtyTable
+	needGetMissRows bool
 	// usedIndex is the column offsets of the index which Src executor has used.
 	usedIndex  []int
 	desc       bool
@@ -58,8 +110,8 @@ type UnionScanExec struct {
 	belowHandleIndex int
 
 	addedRows [][]types.Datum
-	// memProcessedHandles is uses to store the handle ids that has been read by memIndexReader.
-	memProcessedHandles set.Int64Set
+	// memIdxHandles is uses to store the handle ids that has been read by memIndexReader.
+	memIdxHandles       set.Int64Set
 	cursor4AddRows      int
 	sortErr             error
 	snapshotRows        [][]types.Datum
@@ -81,17 +133,14 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	reader := us.children[0]
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		us.addedRows, err = buildMemTableReaderWithRange(us, x.kvRanges).getMemRows()
+		us.addedRows, err = buildMemTableReader(us, x.kvRanges).getMemRows()
 	case *IndexReaderExecutor:
-		tid := getPhysicalTableID(x.table)
-		us.needGetMissRows = us.ctx.IsUntouchedIndex(tid, x.index.ID)
+		us.needGetMissRows = us.dirty.isUntouchedIndex(getPhysicalTableID(x.table), x.index.ID)
 		mIdxReader := buildMemIndexReader(us, x)
 		us.addedRows, err = mIdxReader.getMemRows()
-		us.memProcessedHandles = mIdxReader.memProcessedHandles
+		us.memIdxHandles = mIdxReader.memIdxHandles
 	case *IndexLookUpExecutor:
-		tid := getPhysicalTableID(x.table)
-		if us.ctx.IsUntouchedIndex(tid, x.index.ID) {
-			// use full range table scan.
+		if us.dirty.isUntouchedIndex(getPhysicalTableID(x.table), x.index.ID) {
 			err = us.buildAndSortAddedRowsFromMemTableReader()
 		} else {
 			idxLookup := buildMemIndexLookUpReader(us, x)
@@ -178,14 +227,14 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			snapshotHandle := row.GetInt64(us.belowHandleIndex)
-			if _, ok := us.txnDeletedHandles[snapshotHandle]; ok {
+			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
 				err = us.getMissIndexRowsByHandle(ctx, snapshotHandle)
 				if err != nil {
 					return nil, err
 				}
 				continue
 			}
-			if _, ok := us.txnAddedHandles[snapshotHandle]; ok {
+			if _, ok := us.dirty.addedRows[snapshotHandle]; ok {
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.
 				err = us.getMissIndexRowsByHandle(ctx, snapshotHandle)
@@ -207,11 +256,11 @@ func (us *UnionScanExec) getMissIndexRowsByHandle(ctx context.Context, handle in
 	if !us.needGetMissRows {
 		return nil
 	}
-	if _, ok := us.txnAddedHandles[handle]; !ok {
+	if _, ok := us.dirty.addedRows[handle]; !ok {
 		return nil
 	}
 	// Don't miss in memBuffer reader.
-	if _, ok := us.memProcessedHandles[handle]; ok {
+	if us.memIdxHandles.Exist(handle) {
 		return nil
 	}
 	memRow, err := us.getMemRow(ctx, handle)
@@ -317,7 +366,6 @@ func (us *UnionScanExec) buildAndSortAddedRowsFromMemTableReader() error {
 	if err != nil {
 		return err
 	}
-	us.memProcessedHandles = tableReaderWithFullRange.memProcessedHandles
 	us.addedRows = make([][]types.Datum, 0, len(rows))
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for _, row := range rows {
@@ -331,7 +379,6 @@ func (us *UnionScanExec) buildAndSortAddedRowsFromMemTableReader() error {
 		}
 		us.addedRows = append(us.addedRows, row)
 	}
-
 	if us.desc {
 		sort.Sort(sort.Reverse(us))
 	} else {

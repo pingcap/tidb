@@ -16,6 +16,7 @@ package sessionctx
 import (
 	"context"
 	"fmt"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -82,8 +83,6 @@ type Context interface {
 	StmtAddDirtyTableOP(op int, physicalID int64, handle int64)
 	// UpdateStmtUntouchedIndex records the untouched index value when execute update statement.
 	UpdateStmtUntouchedIndex(tid, indexID int64)
-	// IsUntouchedIndex checks whether the table index was untouched when update.
-	IsUntouchedIndex(tid, indexID int64) bool
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.
