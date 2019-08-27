@@ -117,13 +117,13 @@ type twoPhaseCommitter struct {
 
 // batchExecutor is txn controller providing rate control like utils
 type batchExecutor struct {
-	rateLim     int                  // concurrent worker numbers
-	rateLimiter *rateLimit           // rate limiter for concurrency control, maybe more strategies
-	committer   *twoPhaseCommitter   // here maybe more different type committer in the future
-	action      twoPhaseCommitAction // the work action type
-	procFn      procOneBatchFn       // injected proc batch function
-	backoffer   *Backoffer           // Backoffer
-	threshold   time.Duration        // get token observe threshold
+	rateLim           int                  // concurrent worker numbers
+	rateLimiter       *rateLimit           // rate limiter for concurrency control, maybe more strategies
+	committer         *twoPhaseCommitter   // here maybe more different type committer in the future
+	action            twoPhaseCommitAction // the work action type
+	procFn            procOneBatchFn       // injected proc batch function
+	backoffer         *Backoffer           // Backoffer
+	tokenWaitDuration time.Duration        // get token wait time
 }
 
 type procOneBatchFn func(bo *Backoffer, batch batchKeys) error
@@ -1059,10 +1059,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 	for idx, batch1 := range batches {
 		waitStart := time.Now()
 		if exit := batchExe.rateLimiter.getToken(exitCh); !exit {
-			tokenWaitDuration := time.Since(waitStart)
-			if tokenWaitDuration > batchExe.threshold {
-				metrics.TiKVTokenWaitDuration.Observe(float64(tokenWaitDuration))
-			}
+			batchExe.tokenWaitDuration += time.Since(waitStart)
 			batch := batch1
 			go func() {
 				var singleBatchBackoffer *Backoffer
@@ -1143,5 +1140,6 @@ func (batchExe *batchExecutor) process(batches []batchKeys) error {
 		}
 	}
 	close(exitCh)
+	metrics.TiKVTokenWaitDuration.Observe(float64(batchExe.tokenWaitDuration))
 	return err
 }
