@@ -1,3 +1,16 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package executor
 
 import (
@@ -11,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/atomic"
+	"sync"
 )
 
 //IndexNestedLoopHashJoin is the hash join executor
@@ -32,6 +47,8 @@ type indexHashJoinInnerWorker struct {
 	joinChkResourceCh chan *chunk.Chunk
 	resultCh          chan *indexHashJoinResult
 	taskCh            <-chan *indexHashJoinTask
+	wg                *sync.WaitGroup
+	finished          atomic.Value
 }
 
 type indexHashJoinResult struct {
@@ -224,7 +241,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 	for _, ran := range e.indexRanges {
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
-	return &indexHashJoinInnerWorker{
+	iw := &indexHashJoinInnerWorker{
 		innerWorker: innerWorker{
 			innerCtx:      e.innerCtx,
 			outerCtx:      e.outerCtx,
@@ -239,11 +256,13 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		resultCh:          e.resultCh,
 		matchedOuterPtrs:  make([][]byte, 0, 8),
 	}
+	iw.finished.Store(false)
+	return iw
 }
 
 func (iw *indexHashJoinInnerWorker) run(ctx context.Context) {
 	var task *indexHashJoinTask
-	ok, joinResult := iw.getNewJoinResult(ctx)
+	joinResult, ok := iw.getNewJoinResult(ctx)
 	if !ok {
 		return
 	}
@@ -275,7 +294,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context) {
 	}
 }
 
-func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (bool, *indexHashJoinResult) {
+func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*indexHashJoinResult, bool) {
 	joinResult := &indexHashJoinResult{
 		src: iw.joinChkResourceCh,
 	}
@@ -283,14 +302,17 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (bool,
 	select {
 	case joinResult.chk, ok = <-iw.joinChkResourceCh:
 	case <-ctx.Done():
-		return false, nil
+		return nil, false
 	}
-	return ok, joinResult
+	return joinResult, ok
 }
 
-func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(task *indexHashJoinTask) (err error) {
-	keyBuf := make([]byte, 0, 64)
-	valBuf := make([]byte, 8)
+func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, task *indexHashJoinTask) {
+	var (
+		keyBuf = make([]byte, 0, 64)
+		valBuf = make([]byte, 8)
+		err    error
+	)
 	for rowIdx, numRows := 0, task.outerResult.NumRows(); rowIdx < numRows; rowIdx++ {
 		var hasNull bool
 		if task.outerMatch != nil && !task.outerMatch[rowIdx] {
@@ -309,27 +331,58 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(task *indexHash
 		}
 		keyBuf, err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, keyBuf[:0], row, iw.outerCtx.rowTypes, keyColIdx)
 		if err != nil {
-			break
+			iw.finished.Store(true)
+			result, ok := iw.getNewJoinResult(ctx)
+			if !ok {
+				return
+			}
+			result.err = err
+			select {
+			case iw.resultCh <- result:
+			case <-ctx.Done():
+			}
 		}
 		*(*int)(unsafe.Pointer(&valBuf[0])) = rowIdx
 		task.lookupMap.Put(keyBuf, valBuf)
 	}
-	return err
+	return
 }
 
-func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult) error {
-	err := iw.buildHashTableForOuterResult(task)
-	if err != nil {
-		return err
-	}
-	lookUpContents, err := iw.constructLookupContent(task.lookUpJoinTask)
+func (iw *indexHashJoinInnerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTask) error {
+	lookUpContents, err := iw.constructLookupContent(task)
 	if err != nil {
 		return err
 	}
 	lookUpContents = iw.sortAndDedupLookUpContents(lookUpContents)
-	if err = iw.fetchInnerResults(ctx, task.lookUpJoinTask, lookUpContents); err != nil {
+	if iw.finished.Load().(bool) {
+		return nil
+	}
+	return iw.innerWorker.fetchInnerResults(ctx, task, lookUpContents)
+}
+
+func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(r interface{}) {
+	if r != nil {
+		iw.resultCh <- &indexHashJoinResult{err: errors.Errorf("%v", r)}
+	}
+	iw.wg.Done()
+}
+
+func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult) error {
+	iw.wg = &sync.WaitGroup{}
+	iw.wg.Add(1)
+	go util.WithRecovery(func() { iw.buildHashTableForOuterResult(ctx, task) }, iw.handleHashJoinInnerWorkerPanic)
+	err := iw.fetchInnerResults(ctx, task.lookUpJoinTask)
+	if err != nil {
 		return err
 	}
+	iw.wg.Wait()
+	if iw.finished.Load().(bool) {
+		return nil
+	}
+	return iw.doJoin(ctx, task, joinResult)
+}
+
+func (iw *indexHashJoinInnerWorker) doJoin(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult) error {
 	var ok bool
 	iter := chunk.NewIterator4List(task.innerResult)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -345,14 +398,13 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		iw.joiner.onMissMatch(val == outerRowHasNull, task.outerResult.GetRow(rowIdx), joinResult.chk)
 		if joinResult.chk.IsFull() {
 			iw.resultCh <- joinResult
-			ok, joinResult = iw.getNewJoinResult(ctx)
+			joinResult, ok = iw.getNewJoinResult(ctx)
 			if !ok {
 				return errors.New("indexHashJoinInnerWorker.handleTask failed")
 			}
 		}
 	}
 	return nil
-
 }
 
 func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Context, innerRow chunk.Row, task *indexHashJoinTask,
@@ -387,7 +439,7 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 		}
 		if joinResult.chk.IsFull() {
 			iw.resultCh <- joinResult
-			ok, joinResult = iw.getNewJoinResult(ctx)
+			joinResult, ok = iw.getNewJoinResult(ctx)
 			if !ok {
 				return false, joinResult
 			}
