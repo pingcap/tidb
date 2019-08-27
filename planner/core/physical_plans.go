@@ -296,6 +296,14 @@ type PhysicalUnionAll struct {
 	IsPointGetUnion bool
 }
 
+// OutputNames returns the outputting names of each column.
+func (p *PhysicalUnionAll) OutputNames() []*types.FieldName {
+	if p.IsPointGetUnion {
+		return p.children[0].OutputNames()
+	}
+	return p.physicalSchemaProducer.OutputNames()
+}
+
 // AggregationType stands for the mode of aggregation plan.
 type AggregationType int
 
@@ -403,6 +411,15 @@ type PhysicalTableDual struct {
 	// for data sources like `Show`, if true, the dual plan would be substituted by
 	// `Show` in the final plan.
 	placeHolder bool
+
+	// names is used for OutputNames() method. Dual may be inited when building point get plan.
+	// So it needs to hold names for itself.
+	names []*types.FieldName
+}
+
+// OutputNames returns the outputting names of each column.
+func (p *PhysicalTableDual) OutputNames() []*types.FieldName {
+	return p.names
 }
 
 // PhysicalWindow is the physical operator of window function.

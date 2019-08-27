@@ -237,7 +237,7 @@ type Backoffer struct {
 	maxSleep   int
 	totalSleep int
 	errors     []error
-	types      []backoffType
+	types      []fmt.Stringer
 	vars       *kv.Variables
 	noop       bool
 }
@@ -292,6 +292,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	default:
 	}
 
+	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	b.types = append(b.types, typ)
 	if b.noop || (b.maxSleep > 0 && b.totalSleep >= b.maxSleep) {
 		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
@@ -303,7 +304,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		}
 		logutil.BgLogger().Warn(errMsg)
 		// Use the first backoff type to generate a MySQL error.
-		return b.types[0].TError()
+		return b.types[0].(backoffType).TError()
 	}
 
 	backoffCounter, backoffDuration := typ.metric()
@@ -332,8 +333,6 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		zap.Int("maxSleep", b.maxSleep),
 		zap.Stringer("type", typ),
 		zap.Reflect("txnStartTS", startTs))
-
-	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	return nil
 }
 
