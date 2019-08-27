@@ -470,3 +470,4 @@ func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
 func (m *MockExpr) ExplainInfo() string                               { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
+func (m *MockExpr) Vectorized() bool                                  { return false }
