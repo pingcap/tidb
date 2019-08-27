@@ -1386,12 +1386,18 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		sc.MemTracker.SetActionOnExceed(action)
 	}
-
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		s, err = getPreparedStmt(execStmt, vars)
 		if err != nil {
 			return
 		}
+	}
+	// execute missed stmtID uses empty sql
+	sc.OriginalSQL = s.Text()
+	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
+		sc.InExplainStmt = true
+		sc.CastStrToIntStrict = true
+		s = explainStmt.Stmt
 	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
@@ -1454,9 +1460,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		}
 		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
 		sc.CastStrToIntStrict = true
-	case *ast.ExplainStmt:
-		sc.InExplainStmt = true
-		sc.CastStrToIntStrict = true
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
@@ -1500,8 +1503,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if err != nil {
 		return err
 	}
-	// execute missed stmtID uses empty sql
-	sc.OriginalSQL = s.Text()
 	vars.StmtCtx = sc
 	return
 }
