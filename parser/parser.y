@@ -1699,6 +1699,14 @@ AlterTableSpec:
 		yylex.AppendError(yylex.Errorf("The DROP CHECK clause is parsed but not implemented yet."))
 		parser.lastErrorAsWarn()
 	}
+|	"ALTER" "INDEX" Identifier IndexInvisible
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:               ast.AlterTableIndexInvisible,
+			Name:             $3,
+			Visibility:       $4.(ast.IndexVisibility),
+		}
+	}
 
 ReorganizePartitionRuleOpt:
 	/* empty */ %prec lowerThanRemove

@@ -1918,6 +1918,7 @@ const (
 	AlterTableDropCheck
 	AlterTableImportTablespace
 	AlterTableDiscardTablespace
+	AlterTableIndexInvisible
 	// TODO: Add more actions
 )
 
@@ -2010,6 +2011,7 @@ type AlterTableSpec struct {
 	PartDefinitions []*PartitionDefinition
 	WithValidation  bool
 	Num             uint64
+	Visibility      IndexVisibility
 }
 
 // Restore implements Node interface.
@@ -2378,6 +2380,15 @@ func (n *AlterTableSpec) Restore(ctx *RestoreCtx) error {
 		ctx.WriteKeyWord("IMPORT TABLESPACE")
 	case AlterTableDiscardTablespace:
 		ctx.WriteKeyWord("DISCARD TABLESPACE")
+	case AlterTableIndexInvisible:
+		ctx.WriteKeyWord("ALTER INDEX ")
+		ctx.WriteName(n.Name)
+		switch n.Visibility {
+		case IndexVisibilityVisible:
+			ctx.WriteKeyWord(" VISIBLE")
+		case IndexVisibilityInvisible:
+			ctx.WriteKeyWord(" INVISIBLE")
+		}
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)
