@@ -422,6 +422,17 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a float)")
+	tk.MustExec("insert into t values(1000000)")
+	rs, err = tk.Exec("select exp(a) from t")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(err, NotNil)
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	c.Assert(err.Error(), Equals, "[types:1690]DOUBLE value is out of range in 'exp(test.t.a)'")
+	c.Assert(rs.Close(), IsNil)
 
 	// for conv
 	result = tk.MustQuery("SELECT CONV('a', 16, 2);")
