@@ -356,7 +356,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select * from t use index(b) where b = 1 order by a",
-			best: "IndexLookUp(Index(t.b)[[1,1]], Table(t))->Sort",
+			best: "IndexLookUp(Index(t.b)[[1,1]], Table(t))",
 		},
 		// test datetime
 		{
@@ -1001,19 +1001,19 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	tk.MustExec("set session tidb_opt_correlation_exp_factor = 0")
 	// Pseudo stats.
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─IndexScan_14 10.00 cop table:t, index:b, range:[2,2], keep order:false, stats:pseudo",
+		"Limit_11 1.00 root offset:0, count:1",
+		"└─IndexReader_21 1.00 root index:Limit_20",
+		"  └─Limit_20 1.00 cop offset:0, count:1",
+		"    └─IndexScan_19 1.00 cop table:t, index:b, range:[2,2], keep order:true, stats:pseudo",
 	))
 	// Positive correlation.
 	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, range:[2,2], keep order:false",
+		"Limit_11 1.00 root offset:0, count:1",
+		"└─IndexReader_21 1.00 root index:Limit_20",
+		"  └─Limit_20 1.00 cop offset:0, count:1",
+		"    └─IndexScan_19 1.00 cop table:t, index:b, range:[2,2], keep order:true",
 	))
 	// Negative correlation.
 	tk.MustExec("truncate table t")
@@ -1041,10 +1041,10 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 2),(8, 2),(9, 2),(10, 2),(11, 2),(12, 2),(13, 2),(14, 2),(15, 2),(16, 2),(17, 2),(18, 2),(19, 2),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 1 ORDER BY a desc limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:desc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop test.t.a:desc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, range:[1,1], keep order:false",
+		"Limit_11 1.00 root offset:0, count:1",
+		"└─IndexReader_21 1.00 root index:Limit_20",
+		"  └─Limit_20 1.00 cop offset:0, count:1",
+		"    └─IndexScan_19 1.00 cop table:t, index:b, range:[1,1], keep order:true, desc",
 	))
 	// Correlation threshold not met.
 	tk.MustExec("truncate table t")
@@ -1052,17 +1052,16 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1").Check(testkit.Rows(
 		"Limit_11 1.00 root offset:0, count:1",
-		"└─TableReader_22 1.00 root data:Limit_21",
-		"  └─Limit_21 1.00 cop offset:0, count:1",
-		"    └─Selection_20 1.00 cop eq(test.t.b, 2)",
-		"      └─TableScan_19 4.17 cop table:t, range:[-inf,+inf], keep order:true",
+		"└─IndexReader_21 1.00 root index:Limit_20",
+		"  └─Limit_20 1.00 cop offset:0, count:1",
+		"    └─IndexScan_19 1.00 cop table:t, index:b, range:[2,2], keep order:true",
 	))
 	tk.MustExec("set session tidb_opt_correlation_exp_factor = 1")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, range:[2,2], keep order:false",
+		"Limit_11 1.00 root offset:0, count:1",
+		"└─IndexReader_21 1.00 root index:Limit_20",
+		"  └─Limit_20 1.00 cop offset:0, count:1",
+		"    └─IndexScan_19 1.00 cop table:t, index:b, range:[2,2], keep order:true",
 	))
 	tk.MustExec("set session tidb_opt_correlation_exp_factor = 0")
 	// TableScan has access conditions, but correlation is 1.
@@ -1070,10 +1069,10 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─IndexScan_14 7.50 cop table:t, index:b, range:(2 0,2 +inf], keep order:false",
+		"Limit_11 1.00 root offset:0, count:1",
+		"└─IndexReader_21 1.00 root index:Limit_20",
+		"  └─Limit_20 1.00 cop offset:0, count:1",
+		"    └─IndexScan_19 1.25 cop table:t, index:b, range:(2 0,2 +inf], keep order:true",
 	))
 	// Multi-column filter.
 	tk.MustExec("drop table t")

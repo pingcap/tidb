@@ -148,18 +148,18 @@ func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 
 	cols := []*Column{col0}
-	resCols, lengths := IndexInfo2Cols(cols, indexInfo)
+	resCols, lengths := IndexInfo2PrefixCols(cols, indexInfo)
 	c.Assert(len(resCols), Equals, 1)
 	c.Assert(len(lengths), Equals, 1)
 	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
 
 	cols = []*Column{col1}
-	resCols, lengths = IndexInfo2Cols(cols, indexInfo)
+	resCols, lengths = IndexInfo2PrefixCols(cols, indexInfo)
 	c.Assert(len(resCols), Equals, 0)
 	c.Assert(len(lengths), Equals, 0)
 
 	cols = []*Column{col0, col1}
-	resCols, lengths = IndexInfo2Cols(cols, indexInfo)
+	resCols, lengths = IndexInfo2PrefixCols(cols, indexInfo)
 	c.Assert(len(resCols), Equals, 2)
 	c.Assert(len(lengths), Equals, 2)
 	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
