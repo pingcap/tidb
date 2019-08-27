@@ -585,10 +585,6 @@ func (c *RegionCache) DropStoreOnSendRequestFail(ctx *RPCContext, err error) {
 	}
 	c.storeMu.RUnlock()
 
-	if !markSuccess {
-		return
-	}
-
 	logutil.Logger(context.Background()).Info("drop regions that on the store due to send request fail",
 		zap.Uint64("region", failedRegionID.GetID()),
 		zap.Uint64("store", failedStoreID),
