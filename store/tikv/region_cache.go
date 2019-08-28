@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,8 +30,10 @@ import (
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -196,8 +199,10 @@ type RegionCache struct {
 		sync.RWMutex
 		stores map[uint64]*Store
 	}
-	notifyCheckCh chan struct{}
-	closeCh       chan struct{}
+	notifyCheckCh     chan struct{}
+	closeCh           chan struct{}
+	regionLookupGroup singleflight.Group
+	storeLookupGroup  singleflight.Group
 }
 
 // NewRegionCache creates a RegionCache.
@@ -463,9 +468,6 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool, 
 		}
 		logutil.Eventf(bo.ctx, "load region %d from pd, due to cache-miss", lr.GetID())
 		r = lr
-		c.mu.Lock()
-		c.insertRegionToCache(r)
-		c.mu.Unlock()
 	} else if r.needReload() {
 		// load region when it be marked as need reload.
 		lr, tok, err = c.loadRegionWithToken(bo, key, isEndKey, token)
@@ -476,9 +478,6 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool, 
 		} else {
 			logutil.Eventf(bo.ctx, "load region %d from pd, due to need-reload", lr.GetID())
 			r = lr
-			c.mu.Lock()
-			c.insertRegionToCache(r)
-			c.mu.Unlock()
 		}
 	}
 	return r, tok, nil
@@ -734,15 +733,59 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 func (c *RegionCache) loadRegionWithToken(bo *Backoffer, key []byte, isEndKey bool, token *RegionToken) (*Region, *RegionToken, error) {
 	findKey := key
 	if token != nil {
-		if isEndKey {
-			findKey = token.EndKey
-		} else {
+		if !isEndKey {
 			findKey = token.StartKey
 		}
 	}
-
-	var backoffErr error
 	searchPrev := false
+	for {
+		r, err := c.syncRegionFromPD(bo, findKey, searchPrev)
+		if err != nil {
+			return nil, nil, err
+		}
+		meta := r.meta
+		if isEndKey && !searchPrev && bytes.Equal(meta.StartKey, findKey) && len(meta.StartKey) != 0 {
+			searchPrev = true
+			continue
+		}
+		if !isEndKey && !containKey(meta, key) {
+			// using token find a region but that region didn't contains target key.
+			// retry with target key, this happens when region split, half of region need take retry.
+			findKey = key
+			continue
+		}
+		return r, &RegionToken{StartKey: meta.StartKey, EndKey: meta.EndKey}, nil
+	}
+}
+
+func (c *RegionCache) syncRegionFromPD(bo *Backoffer, findKey []byte, searchPrev bool) (*Region, error) {
+	r, err, _ := c.regionLookupGroup.Do(string(hack.String(findKey))+":"+strconv.FormatBool(searchPrev),
+		func() (i interface{}, e error) {
+			meta, leader, err := c.loadRegionMeta(bo, findKey, searchPrev)
+			if err != nil {
+				e = err
+				return
+			}
+			region := &Region{meta: meta}
+			region.init(c)
+			if leader != nil {
+				c.switchToPeer(region, leader.StoreId)
+			}
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.insertRegionToCache(region)
+			i = region
+			return
+		})
+	if err != nil {
+		return nil, err
+	}
+	region := r.(*Region)
+	return region, nil
+}
+
+func (c *RegionCache) loadRegionMeta(bo *Backoffer, findKey []byte, searchPrev bool) (*metapb.Region, *metapb.Peer, error) {
+	var backoffErr error
 	for {
 		if backoffErr != nil {
 			err := bo.Backoff(BoPDRPC, backoffErr)
@@ -774,22 +817,7 @@ func (c *RegionCache) loadRegionWithToken(bo *Backoffer, key []byte, isEndKey bo
 		if len(meta.Peers) == 0 {
 			return nil, nil, errors.New("receive Region with no peer")
 		}
-		if isEndKey && !searchPrev && bytes.Equal(meta.StartKey, findKey) && len(meta.StartKey) != 0 {
-			searchPrev = true
-			continue
-		}
-		if !containKey(meta, key) {
-			// using token find a region but that region didn't contains target key.
-			// retry with target key, this happens when region split, half of region need take retry.
-			findKey = key
-			continue
-		}
-		region := &Region{meta: meta}
-		region.init(c)
-		if leader != nil {
-			c.switchToPeer(region, leader.StoreId)
-		}
-		return region, &RegionToken{StartKey: meta.StartKey, EndKey: meta.EndKey}, nil
+		return meta, leader, nil
 	}
 }
 
@@ -1295,17 +1323,21 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 // reResolve try to resolve addr for store that need check.
 func (s *Store) reResolve(c *RegionCache) {
 	var addr string
-	store, err := c.pdClient.GetStore(context.Background(), s.storeID)
-	if err != nil {
-		tikvRegionCacheCounterWithGetStoreError.Inc()
-	} else {
-		tikvRegionCacheCounterWithGetStoreOK.Inc()
-	}
+	i, err, _ := c.storeLookupGroup.Do(strconv.FormatUint(s.storeID, 10), func() (i interface{}, e error) {
+		store, err := c.pdClient.GetStore(context.Background(), s.storeID)
+		if err != nil {
+			tikvRegionCacheCounterWithGetStoreError.Inc()
+		} else {
+			tikvRegionCacheCounterWithGetStoreOK.Inc()
+		}
+		return store, err
+	})
 	if err != nil {
 		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
 		return
 	}
+	store := i.(*metapb.Store)
 	if store == nil {
 		// store has be removed in PD, we should invalidate all regions using those store.
 		logutil.BgLogger().Info("invalidate regions in removed store",
