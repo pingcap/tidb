@@ -1074,10 +1074,12 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.Logger(ctx).Error("process routine panicked", zap.Stack("stack"))
+			logutil.Logger(ctx).Error("process routine panicked",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
 		}
 		if err != nil || r != nil {
-			loadDataInfo.ForceQuitCommit()
+			loadDataInfo.ForceQuit()
 		} else {
 			loadDataInfo.CloseTaskQueue()
 		}
@@ -1097,7 +1099,7 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 			}
 		}
 		select {
-		case <-loadDataInfo.QuitProcess:
+		case <-loadDataInfo.QuitCh:
 			err = errors.New("processStream forced to quit")
 		default:
 		}
@@ -1141,6 +1143,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 
 	loadDataInfo.InitQueues()
 	loadDataInfo.SetMaxRowsInBatch(uint64(loadDataInfo.Ctx.GetSessionVars().DMLBatchSize))
+	loadDataInfo.StartStopWatcher()
 	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return err

@@ -121,10 +121,9 @@ type LoadDataInfo struct {
 	Ctx         sessionctx.Context
 	rows        [][]types.Datum
 
-	// these fields are used for pipeline data prepare and commit
 	commitTaskQueue chan CommitTask
-	QuitCommit      chan struct{}
-	QuitProcess     chan struct{}
+	StopCh          chan struct{}
+	QuitCh          chan struct{}
 }
 
 // GetRows getter for rows
@@ -145,18 +144,21 @@ func (e *LoadDataInfo) CloseTaskQueue() {
 // InitQueues initialize task queue and error report queue
 func (e *LoadDataInfo) InitQueues() {
 	e.commitTaskQueue = make(chan CommitTask, taskQueueSize)
-	e.QuitCommit = make(chan struct{})
-	e.QuitProcess = make(chan struct{})
+	e.StopCh = make(chan struct{}, 2)
+	e.QuitCh = make(chan struct{})
 }
 
-// ForceQuitCommit let commit quit directly
-func (e *LoadDataInfo) ForceQuitCommit() {
-	close(e.QuitCommit)
+// StartStopWatcher monitor StopCh to force quit
+func (e *LoadDataInfo) StartStopWatcher() {
+	go func() {
+		<-e.StopCh
+		close(e.QuitCh)
+	}()
 }
 
-// ForceQuitProcess let process quit directly
-func (e *LoadDataInfo) ForceQuitProcess() {
-	close(e.QuitProcess)
+// ForceQuit let commit quit directly
+func (e *LoadDataInfo) ForceQuit() {
+	e.StopCh <- struct{}{}
 }
 
 // MakeCommitTask produce commit task with data in LoadDataInfo.rows LoadDataInfo.curBatchCnt
@@ -173,7 +175,7 @@ func (e *LoadDataInfo) EnqOneTask(ctx context.Context) error {
 			select {
 			case e.commitTaskQueue <- e.MakeCommitTask():
 				sendOk = true
-			case <-e.QuitProcess:
+			case <-e.QuitCh:
 				err = errors.New("EnqOneTask forced to quit")
 				logutil.Logger(ctx).Error("EnqOneTask forced to quit, possible commitWork error")
 				return err
@@ -217,10 +219,11 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 		r := recover()
 		if r != nil {
 			logutil.Logger(ctx).Error("CommitWork panicked",
+				zap.Reflect("r", r),
 				zap.Stack("stack"))
 		}
 		if err != nil || r != nil {
-			e.ForceQuitProcess()
+			e.ForceQuit()
 		}
 		if err != nil {
 			e.ctx.StmtRollback()
@@ -230,7 +233,7 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 	var end = false
 	for !end {
 		select {
-		case <-e.QuitCommit:
+		case <-e.QuitCh:
 			err = errors.New("commit forced to quit")
 			logutil.Logger(ctx).Error("commit forced to quit, possible preparation failed")
 			break
@@ -247,6 +250,7 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 			}
 		}
 		if err != nil {
+			logutil.Logger(ctx).Error("load data commit work error", zap.Error(err))
 			break
 		}
 	}
