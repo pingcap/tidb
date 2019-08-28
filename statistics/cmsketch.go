@@ -450,7 +450,7 @@ func decodeCMSketch(data []byte, topN []*TopNMeta) (*CMSketch, error) {
 // LoadCMSketchWithTopN loads the CM sketch with topN from storage.
 func LoadCMSketchWithTopN(exec sqlexec.RestrictedSQLExecutor, tableID, isIndex, histID int64, cms []byte) (*CMSketch, error) {
 	sql := fmt.Sprintf("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, histID)
-	topNRows, _, err := exec.ExecRestrictedSQL(nil, sql)
+	topNRows, _, err := exec.ExecRestrictedSQL(sql)
 	if err != nil {
 		return nil, err
 	}
