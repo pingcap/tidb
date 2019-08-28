@@ -22,7 +22,6 @@
 package expression
 
 import (
-	"fmt"
 	"math"
 	"strconv"
 	"strings"
