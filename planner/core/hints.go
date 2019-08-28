@@ -53,11 +53,13 @@ func (p *BlockHintProcessor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
+const hintQBName = "qb_name"
+
 // checkQueryBlockHints checks the validity of query blocks and records the map of query block name to select offset.
 func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHint, offset int) {
 	var qbName string
 	for _, hint := range hints {
-		if hint.HintName.L != "qb_name" {
+		if hint.HintName.L != hintQBName {
 			continue
 		}
 		if qbName != "" {
@@ -128,12 +130,13 @@ func (p *BlockHintProcessor) getHintOffset(hint *ast.TableOptimizerHint, nodeTyp
 	return currentOffset
 }
 
+// getCurrentStmtHints extracts all hints that take effects at current stmt.
 func (p *BlockHintProcessor) getCurrentStmtHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentOffset int) []*ast.TableOptimizerHint {
 	if p.QbHints == nil {
 		p.QbHints = make(map[int][]*ast.TableOptimizerHint)
 	}
 	for _, hint := range hints {
-		if hint.HintName.L == "qb_name" {
+		if hint.HintName.L == hintQBName {
 			continue
 		}
 		offset := p.getHintOffset(hint, nodeType, currentOffset)
