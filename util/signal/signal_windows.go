@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

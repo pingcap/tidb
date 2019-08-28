@@ -220,8 +220,8 @@ type checkRequestClient struct {
 func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
-		if resp.Get != nil {
-			resp.Get.Error = &pb.KeyError{
+		if resp.Resp != nil {
+			(resp.Resp.(*pb.GetResponse)).Error = &pb.KeyError{
 				Abort: "request check error",
 			}
 		}
@@ -250,13 +250,13 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	c.Assert(err, IsNil)
 	client.priority = pb.CommandPri_Low
 	txn.SetOption(kv.Priority, kv.PriorityLow)
-	_, err = txn.Get([]byte("key"))
+	_, err = txn.Get(context.TODO(), []byte("key"))
 	c.Assert(err, IsNil)
 
 	// A counter example.
 	client.priority = pb.CommandPri_Low
 	txn.SetOption(kv.Priority, kv.PriorityNormal)
-	_, err = txn.Get([]byte("key"))
+	_, err = txn.Get(context.TODO(), []byte("key"))
 	// err is translated to "try again later" by backoffer, so doesn't check error value here.
 	c.Assert(err, NotNil)
 

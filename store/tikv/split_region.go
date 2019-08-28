@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -29,53 +28,57 @@ import (
 
 // SplitRegion splits the region contains splitKey into 2 regions: [start,
 // splitKey) and [splitKey, end).
-func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
-	_, err := s.splitRegion(splitKey)
-	return err
-}
-
-func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
+func (s *tikvStore) SplitRegion(splitKey kv.Key, scatter bool) (regionID uint64, err error) {
 	logutil.BgLogger().Info("start split region",
-		zap.Binary("at", splitKey))
+		zap.Stringer("at", splitKey))
 	bo := NewBackoffer(context.Background(), splitRegionBackoff)
 	sender := NewRegionRequestSender(s.regionCache, s.client)
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdSplitRegion,
-		SplitRegion: &kvrpcpb.SplitRegionRequest{
-			SplitKey: splitKey,
-		},
-	}
-	req.Context.Priority = kvrpcpb.CommandPri_Normal
+	req := tikvrpc.NewRequest(tikvrpc.CmdSplitRegion, &kvrpcpb.SplitRegionRequest{
+		SplitKey: splitKey,
+	}, kvrpcpb.Context{
+		Priority: kvrpcpb.CommandPri_Normal,
+	})
 	for {
 		loc, err := s.regionCache.LocateKey(bo, splitKey)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		if bytes.Equal(splitKey, loc.StartKey) {
 			logutil.BgLogger().Info("skip split region",
-				zap.Binary("at", splitKey))
-			return nil, nil
+				zap.Stringer("at", splitKey))
+			return 0, nil
 		}
 		res, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		regionErr, err := res.GetRegionError()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		if regionErr != nil {
 			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 			continue
 		}
+		splitRegion := res.Resp.(*kvrpcpb.SplitRegionResponse)
 		logutil.BgLogger().Info("split region complete",
-			zap.Binary("at", splitKey),
-			zap.Stringer("new region left", res.SplitRegion.GetLeft()),
-			zap.Stringer("new region right", res.SplitRegion.GetRight()))
-		return res.SplitRegion.GetLeft(), nil
+			zap.Stringer("at", splitKey),
+			zap.Stringer("new region left", logutil.Hex(splitRegion.GetLeft())),
+			zap.Stringer("new region right", logutil.Hex(splitRegion.GetRight())))
+		left := splitRegion.GetLeft()
+		if left == nil {
+			return 0, nil
+		}
+		if scatter {
+			err = s.scatterRegion(left.Id)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+		}
+		return left.Id, nil
 	}
 }
 
@@ -99,10 +102,16 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 	return nil
 }
 
-func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
+// WaitScatterRegionFinish implements SplitableStore interface.
+// backOff is the back off time of the wait scatter region.(Milliseconds)
+// if backOff <= 0, the default wait scatter back off time will be used.
+func (s *tikvStore) WaitScatterRegionFinish(regionID uint64, backOff int) error {
 	logutil.BgLogger().Info("wait scatter region",
 		zap.Uint64("regionID", regionID))
-	bo := NewBackoffer(context.Background(), waitScatterRegionFinishBackoff)
+	if backOff <= 0 {
+		backOff = waitScatterRegionFinishBackoff
+	}
+	bo := NewBackoffer(context.Background(), backOff)
 	logFreq := 0
 	for {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
@@ -129,20 +138,25 @@ func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
 			return errors.Trace(err)
 		}
 	}
-
 }
 
-func (s *tikvStore) SplitRegionAndScatter(splitKey kv.Key) (uint64, error) {
-	left, err := s.splitRegion(splitKey)
-	if err != nil {
-		return 0, err
+// CheckRegionInScattering uses to check whether scatter region finished.
+func (s *tikvStore) CheckRegionInScattering(regionID uint64) (bool, error) {
+	bo := NewBackoffer(context.Background(), locateRegionMaxBackoff)
+	for {
+		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
+		if err == nil && resp != nil {
+			if !bytes.Equal(resp.Desc, []byte("scatter-region")) || resp.Status != pdpb.OperatorStatus_RUNNING {
+				return false, nil
+			}
+		}
+		if err != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(err.Error()))
+		} else {
+			return true, nil
+		}
+		if err != nil {
+			return true, errors.Trace(err)
+		}
 	}
-	if left == nil {
-		return 0, nil
-	}
-	err = s.scatterRegion(left.Id)
-	if err != nil {
-		return 0, err
-	}
-	return left.Id, nil
 }

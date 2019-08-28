@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -52,31 +55,43 @@ func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Con
 type TableReaderExecutor struct {
 	baseExecutor
 
-	table     table.Table
-	keepOrder bool
-	desc      bool
-	ranges    []*ranger.Range
-	dagPB     *tipb.DAGRequest
+	table  table.Table
+	ranges []*ranger.Range
+	// kvRanges are only use for union scan.
+	kvRanges []kv.KeyRange
+	dagPB    *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
-	streaming     bool
 	feedback      *statistics.QueryFeedback
+	plans         []plannercore.PhysicalPlan
 
+	memTracker       *memory.Tracker
+	selectResultHook // for testing
+
+	keepOrder bool
+	desc      bool
+	streaming bool
 	// corColInFilter tells whether there's correlated column in filter.
 	corColInFilter bool
 	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
-	plans          []plannercore.PhysicalPlan
-
-	selectResultHook // for testing
 }
 
 // Open initialzes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("TableReaderExecutor.Open", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaDistSQL)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	var err error
 	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
@@ -130,6 +145,13 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	logutil.Eventf(ctx, "table scan table: %s, range: %v", stringutil.MemoizeStr(func() string {
+		var tableName string
+		if meta := e.table.Meta(); meta != nil {
+			tableName = meta.Name.L
+		}
+		return tableName
+	}), e.ranges)
 	if err := e.resultHandler.nextChunk(ctx, req); err != nil {
 		e.feedback.Invalidate()
 		return err
@@ -139,7 +161,10 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	err := e.resultHandler.Close()
+	var err error
+	if e.resultHandler != nil {
+		err = e.resultHandler.Close()
+	}
 	if e.runtimeStats != nil {
 		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
 		copStats.SetRowNum(e.feedback.Actual())
@@ -147,8 +172,6 @@ func (e *TableReaderExecutor) Close() error {
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
-
-var tableReaderDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("TableReaderDistSQLTracker")
 
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
@@ -160,11 +183,12 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, tableReaderDistSQLTrackerLabel).
+		SetMemTracker(e.memTracker).
 		Build()
 	if err != nil {
 		return nil, err
 	}
+	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, err

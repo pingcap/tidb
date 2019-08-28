@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 )
 
 var (
@@ -96,8 +97,8 @@ type InfoSchema interface {
 
 // Information Schema Name.
 const (
-	Name      = "INFORMATION_SCHEMA"
-	LowerName = "information_schema"
+	Name      = util.InformationSchemaName
+	LowerName = util.InformationSchemaLowerName
 )
 
 type sortedTables []table.Table
@@ -409,4 +410,14 @@ func IsMemoryDB(dbName string) bool {
 		}
 	}
 	return false
+}
+
+// HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
+func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
+	for _, col := range tbInfo.Columns {
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			return true, col.Name.L
+		}
+	}
+	return false, ""
 }

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 )
 
@@ -167,6 +167,22 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		sr.rowToScalarFunc(v)
 	case *ast.ParenthesesExpr:
 	case *ast.ColumnName:
+	// TODO: Perhaps we don't need to transcode these back to generic integers/strings
+	case *ast.TrimDirectionExpr:
+		sr.push(&Constant{
+			Value:   types.NewIntDatum(int64(v.Direction)),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		})
+	case *ast.TimeUnitExpr:
+		sr.push(&Constant{
+			Value:   types.NewStringDatum(v.Unit.String()),
+			RetType: types.NewFieldType(mysql.TypeVarchar),
+		})
+	case *ast.GetFormatSelectorExpr:
+		sr.push(&Constant{
+			Value:   types.NewStringDatum(v.Selector.String()),
+			RetType: types.NewFieldType(mysql.TypeVarchar),
+		})
 	default:
 		sr.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -468,10 +484,15 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 		return
 	}
 	leftEt := leftFt.EvalType()
+
 	if leftEt == types.ETInt {
 		for i := 0; i < len(elems); i++ {
 			if c, ok := elems[i].(*Constant); ok {
-				elems[i], _ = RefineComparedConstant(sr.ctx, mysql.HasUnsignedFlag(leftFt.Flag), c, opcode.EQ)
+				var isExceptional bool
+				elems[i], isExceptional = RefineComparedConstant(sr.ctx, *leftFt, c, opcode.EQ)
+				if isExceptional {
+					elems[i] = c
+				}
 			}
 		}
 	}

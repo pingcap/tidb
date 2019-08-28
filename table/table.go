@@ -18,6 +18,9 @@
 package table
 
 import (
+	"context"
+
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -164,9 +167,6 @@ type Table interface {
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error
 
-	// AllocAutoIncrementValue allocates an auto_increment value for a new row.
-	AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error)
-
 	// AllocHandle allocates a handle for a new row.
 	AllocHandle(ctx sessionctx.Context) (int64, error)
 
@@ -186,6 +186,15 @@ type Table interface {
 
 	// Type returns the type of table
 	Type() Type
+}
+
+// AllocAutoIncrementValue allocates an auto_increment value for a new row.
+func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context) (int64, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("table.AllocAutoIncrementValue", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+	return t.Allocator(sctx).Alloc(t.Meta().ID)
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.

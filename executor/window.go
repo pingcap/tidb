@@ -52,7 +52,7 @@ func (e *WindowExec) Close() error {
 // Next implements the Executor Next interface.
 func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.meetNewGroup && e.remainingRowsInGroup > 0 {
+	if (e.executed || e.meetNewGroup) && e.remainingRowsInGroup > 0 {
 		err := e.appendResult2Chunk(chk)
 		if err != nil {
 			return err
@@ -78,22 +78,16 @@ func (e *WindowExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) erro
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if e.meetNewGroup {
+		if e.meetNewGroup && e.remainingRowsInGroup > 0 {
 			err := e.consumeGroupRows()
 			if err != nil {
 				return errors.Trace(err)
 			}
 			err = e.appendResult2Chunk(chk)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			return err
 		}
 		e.remainingRowsInGroup++
 		e.groupRows = append(e.groupRows, e.inputRow)
-		if e.meetNewGroup {
-			e.inputRow = e.inputIter.Next()
-			return nil
-		}
 	}
 	return nil
 }
@@ -140,7 +134,9 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk
 
 // appendResult2Chunk appends result of the window function to the result chunk.
 func (e *WindowExec) appendResult2Chunk(chk *chunk.Chunk) (err error) {
-	e.copyChk(chk)
+	if err := e.copyChk(chk); err != nil {
+		return err
+	}
 	remained := mathutil.Min(e.remainingRowsInChunk, e.remainingRowsInGroup)
 	e.groupRows, err = e.processor.appendResult2Chunk(e.ctx, e.groupRows, chk, remained)
 	if err != nil {
@@ -155,17 +151,20 @@ func (e *WindowExec) appendResult2Chunk(chk *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (e *WindowExec) copyChk(chk *chunk.Chunk) {
+func (e *WindowExec) copyChk(chk *chunk.Chunk) error {
 	if len(e.childResults) == 0 || chk.NumRows() > 0 {
-		return
+		return nil
 	}
 	childResult := e.childResults[0]
 	e.childResults = e.childResults[1:]
 	e.remainingRowsInChunk = childResult.NumRows()
 	columns := e.Schema().Columns[:len(e.Schema().Columns)-e.numWindowFuncs]
 	for i, col := range columns {
-		chk.MakeRefTo(i, childResult, col.Index)
+		if err := chk.MakeRefTo(i, childResult, col.Index); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // windowProcessor is the interface for processing different kinds of windows.

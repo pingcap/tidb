@@ -15,6 +15,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -74,9 +75,10 @@ type ShowNextRowID struct {
 type CheckTable struct {
 	baseSchemaProducer
 
-	Tables []*ast.TableName
-
-	GenExprs map[model.TableColumnID]expression.Expression
+	DBName             string
+	TblInfo            *model.TableInfo
+	Indices            []table.Index
+	IndexLookUpReaders []*PhysicalIndexLookUpReader
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
@@ -133,6 +135,11 @@ type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer
 }
 
+// ReloadOptRuleBlacklist reloads the data from opt_rule_blacklist table.
+type ReloadOptRuleBlacklist struct {
+	baseSchemaProducer
+}
+
 // AdminPluginsAction indicate action will be taken on plugins.
 type AdminPluginsAction int
 
@@ -173,12 +180,13 @@ type Execute struct {
 	PrepareParams []types.Datum
 	ExecID        uint32
 	Stmt          ast.StmtNode
+	StmtType      string
 	Plan          Plan
 }
 
 // OptimizePreparedPlan optimizes the prepared statement.
-func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
-	vars := ctx.GetSessionVars()
+func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
+	vars := sctx.GetSessionVars()
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
 	}
@@ -186,6 +194,7 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	if !ok {
 		return errors.Trace(ErrStmtNotFound)
 	}
+	vars.StmtCtx.StmtType = prepared.StmtType
 
 	paramLen := len(e.PrepareParams)
 	if paramLen > 0 {
@@ -220,13 +229,13 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		err := Preprocess(ctx, prepared.Stmt, is, InPrepare)
+		err := Preprocess(sctx, prepared.Stmt, is, InPrepare)
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
-	p, err := e.getPhysicalPlan(ctx, is, prepared)
+	p, err := e.getPhysicalPlan(ctx, sctx, is, prepared)
 	if err != nil {
 		return err
 	}
@@ -235,13 +244,13 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) (Plan, error) {
+func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) (Plan, error) {
 	var cacheKey kvcache.Key
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := sctx.GetSessionVars()
 	sessionVars.StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
-		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
+		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if metrics.ResettablePlanCacheCounterFortTest {
 				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 			} else {
@@ -255,20 +264,20 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			return plan, nil
 		}
 	}
-	p, err := OptimizeAstNode(ctx, prepared.Stmt, is)
+	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return nil, err
 	}
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
+		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
 }
 
 func (e *Execute) rebuildRange(p Plan) error {
-	sctx := p.context()
-	sc := p.context().GetSessionVars().StmtCtx
+	sctx := p.SCtx()
+	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
 	case *PhysicalTableReader:
@@ -357,19 +366,18 @@ type Deallocate struct {
 
 // Show represents a show plan.
 type Show struct {
-	baseSchemaProducer
+	physicalSchemaProducer
 
 	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName      string
 	Table       *ast.TableName  // Used for showing columns.
 	Column      *ast.ColumnName // Used for `desc table column`.
-	Flag        int             // Some flag parsed from sql, such as FULL.
-	Full        bool
+	IndexName   model.CIStr
+	Flag        int                  // Some flag parsed from sql, such as FULL.
 	User        *auth.UserIdentity   // Used for show grants.
 	Roles       []*auth.RoleIdentity // Used for show grants.
-	IfNotExists bool                 // Used for `show create database if not exists`
-
-	Conditions []expression.Expression
+	Full        bool
+	IfNotExists bool // Used for `show create database if not exists`
 
 	GlobalScope bool // Used by show variables
 }
@@ -449,16 +457,19 @@ type Update struct {
 	OrderedList []*expression.Assignment
 
 	SelectPlan PhysicalPlan
+
+	TblColPosInfos TblColPosInfoSlice
 }
 
 // Delete represents a delete plan.
 type Delete struct {
 	baseSchemaProducer
 
-	Tables       []*ast.TableName
 	IsMultiTable bool
 
 	SelectPlan PhysicalPlan
+
+	TblColPosInfos TblColPosInfoSlice
 }
 
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.
@@ -490,9 +501,9 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	baseSchemaProducer
 
-	ColTasks      []AnalyzeColumnsTask
-	IdxTasks      []AnalyzeIndexTask
-	MaxNumBuckets uint64
+	ColTasks []AnalyzeColumnsTask
+	IdxTasks []AnalyzeIndexTask
+	Opts     map[ast.AnalyzeOptionType]uint64
 }
 
 // LoadData represents a loaddata plan.
@@ -530,6 +541,14 @@ type SplitRegion struct {
 	ValueLists [][]types.Datum
 }
 
+// SplitRegionStatus represents a split regions status plan.
+type SplitRegionStatus struct {
+	baseSchemaProducer
+
+	Table     table.Table
+	IndexInfo *model.IndexInfo
+}
+
 // DDL represents a DDL statement plan.
 type DDL struct {
 	baseSchemaProducer
@@ -556,7 +575,7 @@ func (e *Explain) prepareSchema() error {
 	case ast.ExplainFormatROW:
 		retFields := []string{"id", "count", "task", "operator info"}
 		if e.Analyze {
-			retFields = append(retFields, "execution info")
+			retFields = append(retFields, "execution info", "memory")
 		}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		for _, fieldName := range retFields {
@@ -635,6 +654,13 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 			row = append(row, runtimeStatsColl.GetRootStats(explainID).String())
 		} else {
 			row = append(row, "time:0ns, loops:0, rows:0")
+		}
+
+		tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+		if tracker != nil {
+			row = append(row, tracker.BytesToString(tracker.MaxConsumed()))
+		} else {
+			row = append(row, "N/A")
 		}
 	}
 	e.Rows = append(e.Rows, row)

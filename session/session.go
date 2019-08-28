@@ -134,10 +134,8 @@ var (
 )
 
 type stmtRecord struct {
-	stmtID  uint32
 	st      sqlexec.Statement
 	stmtCtx *stmtctx.StatementContext
-	params  []interface{}
 }
 
 // StmtHistory holds all histories of statements in a txn.
@@ -146,12 +144,10 @@ type StmtHistory struct {
 }
 
 // Add appends a stmt to history list.
-func (h *StmtHistory) Add(stmtID uint32, st sqlexec.Statement, stmtCtx *stmtctx.StatementContext, params ...interface{}) {
+func (h *StmtHistory) Add(st sqlexec.Statement, stmtCtx *stmtctx.StatementContext) {
 	s := &stmtRecord{
-		stmtID:  stmtID,
 		st:      st,
 		stmtCtx: stmtCtx,
-		params:  append(([]interface{})(nil), params...),
 	}
 	h.history = append(h.history, s)
 }
@@ -187,6 +183,9 @@ type session struct {
 	ddlOwnerChecker owner.DDLOwnerChecker
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables map[int64]model.TableLockTpInfo
+
+	// shared coprocessor client per session
+	client kv.Client
 }
 
 // AddTableLock adds table lock to the session lock map.
@@ -448,17 +447,16 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		txnSize = s.txn.Size()
 		isPessimistic = s.txn.IsPessimistic()
 	}
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.doCommitWitRetry", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 	err := s.doCommit(ctx)
 	if err != nil {
 		commitRetryLimit := s.sessionVars.RetryLimit
-		if s.sessionVars.DisableTxnAutoRetry && !s.sessionVars.InRestrictedSQL {
-			// Do not retry non-autocommit transactions.
-			// For autocommit single statement transactions, the history count is always 1.
-			// For explicit transactions, the statement count is more than 1.
-			history := GetHistory(s)
-			if history.Count() > 1 {
-				commitRetryLimit = 0
-			}
+		if !s.sessionVars.TxnCtx.CouldRetry {
+			commitRetryLimit = 0
 		}
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
@@ -509,6 +507,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.CommitTxn", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
 	var commitDetail *execdetails.CommitDetails
@@ -517,6 +516,13 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
+
+	failpoint.Inject("keepHistory", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(err)
+		}
+	})
+
 	s.sessionVars.TxnCtx.Cleanup()
 	s.recordTransactionCounter(err)
 	return err
@@ -543,7 +549,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 }
 
 func (s *session) GetClient() kv.Client {
-	return s.store.GetClient()
+	return s.client
 }
 
 func (s *session) String() string {
@@ -628,7 +634,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	connID := s.sessionVars.ConnectionID
 	s.sessionVars.RetryInfo.Retrying = true
 	if s.sessionVars.TxnCtx.ForUpdate {
-		err = errForUpdateCantRetry.GenWithStackByArgs(connID)
+		err = ErrForUpdateCantRetry.GenWithStackByArgs(connID)
 		return err
 	}
 
@@ -643,9 +649,12 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StartTime = time.Now()
+			s.sessionVars.DurationCompile = time.Duration(0)
+			s.sessionVars.DurationParse = time.Duration(0)
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
-			schemaVersion, err = st.RebuildPlan()
+			schemaVersion, err = st.RebuildPlan(ctx)
 			if err != nil {
 				return err
 			}
@@ -965,23 +974,14 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
-	var db interface{}
-	if len(s.sessionVars.CurrentDB) > 0 {
-		db = s.sessionVars.CurrentDB
-	}
-
-	var info interface{}
-	if len(sql) > 0 {
-		info = sql
-	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
-		DB:               db,
+		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
 		Plan:             s.currentPlan,
 		Time:             t,
 		State:            s.Status(),
-		Info:             info,
+		Info:             sql,
 		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
@@ -994,7 +994,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet) ([]sqlexec.RecordSet, error) {
+func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
 	s.SetValue(sessionctx.QueryString, stmt.OriginText())
 	if _, ok := stmtNode.(ast.DDLNode); ok {
 		s.SetValue(sessionctx.LastExecuteDDL, true)
@@ -1019,6 +1019,16 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	}
 
+	if inMulitQuery && recordSet == nil {
+		recordSet = &multiQueryNoDelayRecordSet{
+			affectedRows: s.AffectedRows(),
+			lastMessage:  s.LastMessage(),
+			warnCount:    s.sessionVars.StmtCtx.WarningCount(),
+			lastInsertID: s.sessionVars.StmtCtx.LastInsertID,
+			status:       s.sessionVars.Status,
+		}
+	}
+
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
 	}
@@ -1029,6 +1039,8 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.Execute", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 	if recordSets, err = s.execute(ctx, sql); err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
@@ -1048,6 +1060,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	startTS := time.Now()
+	s.GetSessionVars().StartTime = startTS
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1056,15 +1069,18 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("sql", sql))
 		return nil, util.SyntaxError(err)
 	}
+	durParse := time.Since(startTS)
+	s.GetSessionVars().DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
-		sessionExecuteParseDurationInternal.Observe(time.Since(startTS).Seconds())
+		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
-		sessionExecuteParseDurationGeneral.Observe(time.Since(startTS).Seconds())
+		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
 	}
 
 	var tempStmtNodes []ast.StmtNode
 	compiler := executor.Compiler{Ctx: s}
+	multiQuery := len(stmtNodes) > 1
 	for idx, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
 
@@ -1093,15 +1109,17 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			}
 			s.handleInvalidBindRecord(ctx, stmtNode)
 		}
+		durCompile := time.Since(startTS)
+		s.GetSessionVars().DurationCompile = durCompile
 		if isInternal {
-			sessionExecuteCompileDurationInternal.Observe(time.Since(startTS).Seconds())
+			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
 		} else {
-			sessionExecuteCompileDurationGeneral.Observe(time.Since(startTS).Seconds())
+			sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
 		}
 		s.currentPlan = stmt.Plan
 
 		// Step3: Execute the physical plan.
-		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
+		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets, multiQuery); err != nil {
 			return nil, err
 		}
 	}
@@ -1209,7 +1227,8 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
 	s.PrepareTxnCtx(ctx)
-	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args)
+	s.sessionVars.StartTime = time.Now()
+	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1247,8 +1266,49 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
+		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
+		if s.sessionVars.ReplicaRead.IsFollowerRead() {
+			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		}
 	}
 	return &s.txn, nil
+}
+
+// isTxnRetryable (if returns true) means the transaction could retry.
+// If the transaction is in pessimistic mode, do not retry.
+// If the session is already in transaction, enable retry or internal SQL could retry.
+// If not, the transaction could always retry, because it should be auto committed transaction.
+// Anyway the retry limit is 0, the transaction could not retry.
+func (s *session) isTxnRetryable() bool {
+	sessVars := s.sessionVars
+
+	// The pessimistic transaction no need to retry.
+	if sessVars.TxnCtx.IsPessimistic {
+		return false
+	}
+
+	// If retry limit is 0, the transaction could not retry.
+	if sessVars.RetryLimit == 0 {
+		return false
+	}
+
+	// If the session is not InTxn, it is an auto-committed transaction.
+	// The auto-committed transaction could always retry.
+	if !sessVars.InTxn() {
+		return true
+	}
+
+	// The internal transaction could always retry.
+	if sessVars.InRestrictedSQL {
+		return true
+	}
+
+	// If the retry is enabled, the transaction could retry.
+	if !sessVars.DisableTxnAutoRetry {
+		return true
+	}
+
+	return false
 }
 
 func (s *session) NewTxn(ctx context.Context) error {
@@ -1270,6 +1330,9 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	txn.SetCap(s.getMembufCap())
 	txn.SetVars(s.sessionVars.KVVars)
+	if s.GetSessionVars().ReplicaRead.IsFollowerRead() {
+		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
@@ -1317,6 +1380,10 @@ func (s *session) Close() {
 	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
+	}
+	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
+	if bindValue != nil {
+		bindValue.(*bindinfo.SessionHandle).Close()
 	}
 	ctx := context.TODO()
 	s.RollbackTxn(ctx)
@@ -1491,6 +1558,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	err = executor.LoadOptRuleBlacklist(se)
+	if err != nil {
+		return nil, err
+	}
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -1553,6 +1625,7 @@ func createSession(store kv.Storage) (*session, error) {
 		parser:          parser.New(),
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
+		client:          store.GetClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -1577,6 +1650,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
+		client:      store.GetClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -1593,7 +1667,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 33
+	currentBootstrapVersion = 35
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1916,4 +1990,48 @@ func (s *session) recordTransactionCounter(err error) {
 			transactionCounterGeneralOK.Inc()
 		}
 	}
+}
+
+type multiQueryNoDelayRecordSet struct {
+	affectedRows uint64
+	lastMessage  string
+	status       uint16
+	warnCount    uint16
+	lastInsertID uint64
+}
+
+func (c *multiQueryNoDelayRecordSet) Fields() []*ast.ResultField {
+	panic("unsupported method")
+}
+
+func (c *multiQueryNoDelayRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+	panic("unsupported method")
+}
+
+func (c *multiQueryNoDelayRecordSet) NewChunk() *chunk.Chunk {
+	panic("unsupported method")
+}
+
+func (c *multiQueryNoDelayRecordSet) Close() error {
+	return nil
+}
+
+func (c *multiQueryNoDelayRecordSet) AffectedRows() uint64 {
+	return c.affectedRows
+}
+
+func (c *multiQueryNoDelayRecordSet) LastMessage() string {
+	return c.lastMessage
+}
+
+func (c *multiQueryNoDelayRecordSet) WarnCount() uint16 {
+	return c.warnCount
+}
+
+func (c *multiQueryNoDelayRecordSet) Status() uint16 {
+	return c.status
+}
+
+func (c *multiQueryNoDelayRecordSet) LastInsertID() uint64 {
+	return c.lastInsertID
 }

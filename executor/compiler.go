@@ -64,6 +64,7 @@ func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
 	if !skipBind {
@@ -75,7 +76,7 @@ func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind 
 		return nil, err
 	}
 
-	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema)
+	finalPlan, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -404,6 +405,7 @@ func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt as
 			return stmt
 		}
 		if bindRecord.Status == bindinfo.Using {
+			metrics.BindUsageCounter.WithLabelValues(metrics.ScopeSession).Inc()
 			return bindinfo.BindHint(stmt, bindRecord.Ast)
 		}
 	}
@@ -413,6 +415,7 @@ func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt as
 		bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
 	}
 	if bindRecord != nil {
+		metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Inc()
 		return bindinfo.BindHint(stmt, bindRecord.Ast)
 	}
 	return stmt
