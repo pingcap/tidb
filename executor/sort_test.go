@@ -44,3 +44,22 @@ func (s *testSuite4) TestSortRand(c *C) {
 		"      └─TableScan_6 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
+
+func (s *testSuite4) TestSortCorrelatedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int, b int);")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2(a int, b int);")
+
+	tk.MustQuery("explain select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b);").Check(testkit.Rows(
+		"Apply_11 9990.00 root semi join, inner:TableReader_19, equal:[eq(test.t1.a, test.t2.a)]",
+		"├─TableReader_14 9990.00 root data:Selection_13",
+		"│ └─Selection_13 9990.00 cop not(isnull(test.t1.a))",
+		"│   └─TableScan_12 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_19 7992.00 root data:Selection_18",
+		"  └─Selection_18 7992.00 cop gt(test.t2.b, test.t1.b), not(isnull(test.t2.a))",
+		"    └─TableScan_17 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+}
