@@ -196,7 +196,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// If it is not a select statement, we record its slow log here,
 		// then it could include the transaction commit time.
 		if rs == nil {
-			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err != nil)
+			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil)
 		}
 	}()
 
