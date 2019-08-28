@@ -14,6 +14,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/pingcap/tidb/expression"
@@ -137,12 +138,13 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	}
 	p.replaceExprColumns(replace)
 	if len(p.Children()) > 0 {
-		if child, ok := p.Children()[0].(*LogicalProjection); isProj && ok && canProjectionBeEliminatedLoose(child) {
-			for _, expr := range proj.Exprs {
-				expr = replaceColumnOfExpr(expr, replace)
+		if child, ok := p.Children()[0].(*LogicalProjection); isProj && ok {
+			if len(proj.Exprs) == len(child.Exprs) {
+				for i := range proj.Exprs {
+					proj.Exprs[i] = replaceColumnOfExpr(proj.Exprs[i], child)
+				}
+				p.Children()[0] = child.Children()[0]
 			}
-			p.Children()[0] = p.Children()[0].Children()[0]
-			return p
 		}
 	}
 
@@ -156,13 +158,17 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	return p.Children()[0]
 }
 
-func replaceColumnOfExpr(expr expression.Expression, replace map[string]*expression.Column) expression.Expression {
+func replaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection) expression.Expression {
 	switch v := expr.(type) {
 	case *expression.Column:
-		return replace[string(v.HashCode(nil))]
+		for i := range proj.Schema().Columns {
+			if bytes.Equal(proj.Schema().Columns[i].HashCode(nil), v.HashCode(nil)) {
+				return proj.Exprs[i]
+			}
+		}
 	case *expression.ScalarFunction:
 		for i := range v.GetArgs() {
-			v.GetArgs()[i] = replaceColumnOfExpr(v.GetArgs()[i], replace)
+			v.GetArgs()[i] = replaceColumnOfExpr(v.GetArgs()[i], proj)
 		}
 	}
 	return expr
