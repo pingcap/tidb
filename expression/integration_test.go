@@ -422,6 +422,17 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a float)")
+	tk.MustExec("insert into t values(1000000)")
+	rs, err = tk.Exec("select exp(a) from t")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(err, NotNil)
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	c.Assert(err.Error(), Equals, "[types:1690]DOUBLE value is out of range in 'exp(test.t.a)'")
+	c.Assert(rs.Close(), IsNil)
 
 	// for conv
 	result = tk.MustQuery("SELECT CONV('a', 16, 2);")
@@ -2036,6 +2047,17 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select tidb_parse_tso(-1)`)
 	result.Check(testkit.Rows("<nil>"))
+
+	// fix issue 10308
+	result = tk.MustQuery("select time(\"- -\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '- -'"))
+	result = tk.MustQuery("select time(\"---1\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '---1'"))
+	result = tk.MustQuery("select time(\"-- --1\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '-- --1'"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {

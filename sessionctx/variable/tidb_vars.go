@@ -340,8 +340,8 @@ const (
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBTxnMode                     = ""
-	DefTiDBDDLReorgWorkerCount         = 16
-	DefTiDBDDLReorgBatchSize           = 1024
+	DefTiDBDDLReorgWorkerCount         = 4
+	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBHashAggPartialConcurrency   = 4

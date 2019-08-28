@@ -40,6 +40,9 @@ var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, e
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
+	// Vectorized returns if this expression supports vectorized evaluation.
+	Vectorized() bool
+
 	// VecEvalInt evaluates this expression in a vectorized manner.
 	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
 

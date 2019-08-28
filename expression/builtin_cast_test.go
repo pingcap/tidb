@@ -1375,3 +1375,30 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsJSON(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(output, Equals, input)
 }
+
+func (s *testEvaluatorSuite) TestCastIntAsIntVec(c *C) {
+	cast, input, result := genCastIntAsInt()
+	c.Assert(cast.vecEvalInt(input, result), IsNil)
+	i64s := result.Int64s()
+	it := chunk.NewIterator4Chunk(input)
+	i := 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		v, _, err := cast.evalInt(row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, i64s[i])
+		i++
+	}
+
+	cast.inUnion = true
+	cast.getRetTp().Flag |= mysql.UnsignedFlag
+	c.Assert(cast.vecEvalInt(input, result), IsNil)
+	i64s = result.Int64s()
+	it = chunk.NewIterator4Chunk(input)
+	i = 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		v, _, err := cast.evalInt(row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, i64s[i])
+		i++
+	}
+}
