@@ -274,5 +274,5 @@ func (s *testExpressionRewriterSuite) TestCheckDecimal(c *C) {
 	err = tk.ExecToErr("select CONVERT( 2, DECIMAL(62,60) )")
 	c.Assert(err.Error(), Equals, "[types:1425]Too big scale 60 specified for column '2'. Maximum is 30.")
 	err = tk.ExecToErr("select CONVERT( 2, DECIMAL(66,29) )")
-	c.Assert(err.Error(), Equals, "[types:1426]Too big precision 66 specified for column '2'. Maximum is 65.")
+	c.Assert(err.Error(), Equals, "[types:1426]Too-big precision 66 specified for '2'. Maximum is 65.")
 }
