@@ -131,7 +131,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 			batchResp.err = errors.Trace(err)
 			return batchResp
 		}
-		resp, err = s.spliteBatchRegionsReq(bo, batch.keys, scatter)
+		resp, err = s.splitBatchRegionsReq(bo, batch.keys, scatter)
 		batchResp.resp = resp
 		batchResp.err = err
 		return batchResp
@@ -182,7 +182,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool) (regionIDs []uint64, err error) {
 	splitRegionsBo := splitRegionBackoff * math.Min(float64(len(splitKeys)), 10)
 	bo := NewBackoffer(ctx, int(splitRegionsBo))
-	resp, err := s.spliteBatchRegionsReq(bo, splitKeys, scatter)
+	resp, err := s.splitBatchRegionsReq(bo, splitKeys, scatter)
 	regionIDs = make([]uint64, 0, len(splitKeys))
 	if resp != nil && resp.Resp != nil {
 		spResp := resp.Resp.(*kvrpcpb.SplitRegionResponse)
