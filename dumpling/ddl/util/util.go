@@ -158,7 +158,7 @@ func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 			nameList += fmt.Sprintf("'%s'", name)
 		}
 		sql := fmt.Sprintf(loadGlobalVarsSQL, nameList)
-		rows, _, err := sctx.ExecRestrictedSQL(ctx, sql)
+		rows, _, err := sctx.ExecRestrictedSQL(sql)
 		if err != nil {
 			return errors.Trace(err)
 		}
