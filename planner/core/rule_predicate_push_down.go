@@ -545,7 +545,7 @@ func (p *LogicalWindow) getPartitionByCols() []*expression.Column {
 func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
-	partitionCols := expression.NewSchema(p.getPartitionByCols() ...)
+	partitionCols := expression.NewSchema(p.getPartitionByCols()...)
 	for _, cond := range predicates {
 		canPush := true
 		extractedCols := expression.ExtractColumns(cond)
