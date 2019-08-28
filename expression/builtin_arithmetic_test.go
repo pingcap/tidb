@@ -96,7 +96,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err := funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	intSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusIntSig)
+	intSig, ok := bf.(*builtinArithmeticPlusIntSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(intSig, NotNil)
 
@@ -111,7 +111,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusRealSig)
+	realSig, ok := bf.(*builtinArithmeticPlusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -126,7 +126,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusRealSig)
+	realSig, ok = bf.(*builtinArithmeticPlusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -141,7 +141,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusRealSig)
+	realSig, ok = bf.(*builtinArithmeticPlusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -158,7 +158,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	intSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusIntSig)
+	intSig, ok = bf.(*builtinArithmeticPlusIntSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(intSig, NotNil)
 
@@ -176,7 +176,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err := funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	intSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusIntSig)
+	intSig, ok := bf.(*builtinArithmeticMinusIntSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(intSig, NotNil)
 
@@ -191,7 +191,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
+	realSig, ok := bf.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -206,7 +206,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
+	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -221,7 +221,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
+	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -236,7 +236,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
+	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 

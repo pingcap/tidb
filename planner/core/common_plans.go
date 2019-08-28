@@ -451,6 +451,8 @@ type Insert struct {
 	GenCols InsertGeneratedColumns
 
 	SelectPlan PhysicalPlan
+
+	AllAssignmentsAreConstant bool
 }
 
 // Update represents Update plan.
@@ -458,6 +460,8 @@ type Update struct {
 	baseSchemaProducer
 
 	OrderedList []*expression.Assignment
+
+	AllAssignmentsAreConstant bool
 
 	SelectPlan PhysicalPlan
 

@@ -1726,11 +1726,17 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 		}
 	}
 
+	insertPlan.AllAssignmentsAreConstant = true
 	for i, assign := range insert.Setlist {
 		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
 		}
+		if insertPlan.AllAssignmentsAreConstant {
+			_, isConstant := expr.(*expression.Constant)
+			insertPlan.AllAssignmentsAreConstant = isConstant
+		}
+
 		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
 			Col:  exprCols[i],
 			Expr: expr,
@@ -1761,6 +1767,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 		}
 	}
 
+	insertPlan.AllAssignmentsAreConstant = true
 	totalTableCols := insertPlan.Table.Cols()
 	for i, valuesItem := range insert.Lists {
 		// The length of all the value_list should be the same.
@@ -1792,6 +1799,10 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 			}
 			if err != nil {
 				return err
+			}
+			if insertPlan.AllAssignmentsAreConstant {
+				_, isConstant := expr.(*expression.Constant)
+				insertPlan.AllAssignmentsAreConstant = isConstant
 			}
 			exprList = append(exprList, expr)
 		}
