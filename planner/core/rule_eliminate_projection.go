@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
+// canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
+// returns true if every expression is a single column.
 func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 	for _, expr := range p.Exprs {
 		_, ok := expr.(*expression.Column)
@@ -30,7 +32,6 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 	return true
 }
 
-//
 // canProjectionBeEliminatedStrict checks whether a projection can be
 // eliminated, returns true if the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
