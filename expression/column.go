@@ -447,6 +447,11 @@ func (col *Column) resolveIndices(schema *Schema) error {
 	return nil
 }
 
+// Vectorized returns if this expression supports vectorized evaluation.
+func (col *Column) Vectorized() bool {
+	return true
+}
+
 // Column2Exprs will transfer column slice to expression slice.
 func Column2Exprs(cols []*Column) []Expression {
 	result := make([]Expression, 0, len(cols))
