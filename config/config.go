@@ -96,6 +96,7 @@ type Config struct {
 	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
 	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
+	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 }
 
 // Log is the log section of config.
@@ -316,6 +317,12 @@ type PessimisticTxn struct {
 	TTL string `toml:"ttl" json:"ttl"`
 }
 
+type StmtSummary struct {
+	Enable bool `toml:"enable" json:"enable"`
+	// How many statements can be kept in the table
+	MaxStmtCount uint16 `toml:"max-stmt-count" json:"max-stmt-count"`
+}
+
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -409,6 +416,10 @@ var defaultConf = Config{
 		Enable:        true,
 		MaxRetryCount: 256,
 		TTL:           "40s",
+	},
+	StmtSummary: StmtSummary{
+		Enable:       false,
+		MaxStmtCount: 100,
 	},
 }
 

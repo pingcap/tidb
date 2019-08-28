@@ -39,6 +39,7 @@ var perfSchemaTables = []string{
 	tableStagesCurrent,
 	tableStagesHistory,
 	tableStagesHistoryLong,
+	tableEventsStatementsSummaryByDigest,
 }
 
 // tableGlobalStatus contains the column name definitions for table global_status, same as MySQL.
@@ -374,3 +375,7 @@ const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema.ev
 	"WORK_ESTIMATED	BIGINT(20) UNSIGNED," +
 	"NESTING_EVENT_ID		BIGINT(20) UNSIGNED," +
 	"NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));"
+
+const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_statements_summary_by_digest (" +
+	"SCHEMA_NAME varchar(64) DEFAULT NULL," +
+	"DIGEST varchar(64) DEFAULT NULL);"

@@ -315,3 +315,10 @@ max-retry-count = 256
 # default TTL in milliseconds for pessimistic lock.
 # The value must between "15s" and "120s".
 ttl = "40s"
+
+[stmt-summary]
+# enable statement summary.
+enable = false
+
+# max count of statement summary kept in memory.
+max-stmt-count = 100
