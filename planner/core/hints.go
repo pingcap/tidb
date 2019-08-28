@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
@@ -28,10 +27,10 @@ import (
 
 // BlockHintProcessor processes hints at different level of sql statement.
 type BlockHintProcessor struct {
-	QbNameMap       map[string]int                    // Map from query block name to select stmt offset.
-	QbHints         map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
-	Ctx             sessionctx.Context
-	maxSelectOffset int
+	QbNameMap        map[string]int                    // Map from query block name to select stmt offset.
+	QbHints          map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
+	Ctx              sessionctx.Context
+	selectStmtOffset int
 }
 
 // Enter implements Visitor interface.
@@ -42,7 +41,8 @@ func (p *BlockHintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	case *ast.DeleteStmt:
 		p.checkQueryBlockHints(node.TableHints, 0)
 	case *ast.SelectStmt:
-		p.maxSelectOffset = mathutil.Max(p.maxSelectOffset, node.QueryBlockOffset)
+		p.selectStmtOffset++
+		node.QueryBlockOffset = p.selectStmtOffset
 		p.checkQueryBlockHints(node.TableHints, node.QueryBlockOffset)
 	}
 	return in, false
@@ -112,7 +112,7 @@ func (p *BlockHintProcessor) getBlockOffset(blockName model.CIStr, nodeType node
 	if nodeType == typeSelect && strings.HasPrefix(blockName.L, defaultSelectBlockPrefix) {
 		suffix := blockName.L[len(defaultSelectBlockPrefix):]
 		level, err := strconv.ParseInt(suffix, 10, 64)
-		if err != nil || level > int64(p.maxSelectOffset) {
+		if err != nil || level > int64(p.selectStmtOffset) {
 			return -1
 		}
 		return int(level)
