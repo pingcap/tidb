@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/parser/mysql"
@@ -29,7 +30,7 @@ func genCastIntAsInt() (builtinFunc, *chunk.Chunk, *chunk.Column) {
 	cast := &builtinCastIntAsIntSig{baseCast}
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
 	for i := 0; i < 1024; i++ {
-		input.AppendInt64(0, int64(i))
+		input.AppendInt64(0, rand.Int63())
 	}
 	result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
 	return cast, input, result
