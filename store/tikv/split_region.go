@@ -31,7 +31,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (s *tikvStore) spliteBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool) (*tikvrpc.Response, error) {
+func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool) (*tikvrpc.Response, error) {
 	groups, _, err := s.regionCache.GroupKeysByRegion(bo, keys)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -44,6 +44,14 @@ func (s *tikvStore) spliteBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter 
 
 	if len(batches) == 0 {
 		return nil, nil
+	}
+	// The first time it enters this function.
+	if bo.totalSleep == 0 {
+		logutil.BgLogger().Info("split batch regions request",
+			zap.Int("split key count", len(keys)),
+			zap.Int("batch count", len(batches)),
+			zap.Uint64("first batch, region ID", batches[0].regionID.id),
+			zap.Stringer("first split key", kv.Key(batches[0].keys[0])))
 	}
 	if len(batches) == 1 {
 		resp := s.batchSendSingleRegion(bo, batches[0], scatter)
@@ -130,11 +138,8 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	}
 
 	spResp := resp.Resp.(*kvrpcpb.SplitRegionResponse)
-	left := spResp.GetLeft()
 	regions := spResp.GetRegions()
-	if left != nil {
-		spResp.Regions = []*metapb.Region{left}
-	} else if len(regions) > 0 {
+	if len(regions) > 0 {
 		// Divide a region into n, one can not need to be scattered,
 		// so n-1 needs to be scattered to other storage servers.
 		spResp.Regions = regions[:len(regions)-1]
