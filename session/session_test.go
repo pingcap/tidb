@@ -684,7 +684,7 @@ func (s *testSessionSuite) TestDatabase(c *C) {
 
 func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	r, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(tk.Se, "select 1;")
+	r, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select 1;")
 	c.Assert(err, IsNil)
 	c.Assert(len(r), Equals, 1)
 }
