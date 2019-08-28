@@ -98,6 +98,7 @@ var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
+var _ = Suite(&testBatchPointGetSuite{})
 var _ = Suite(&testRecoverTable{})
 var _ = Suite(&testFlushSuite{})
 
@@ -197,6 +198,16 @@ func (s *testSuiteP1) TestChange(c *C) {
 	tk.MustExec("alter table t change a b int")
 	tk.MustExec("alter table t change b c bigint")
 	c.Assert(tk.ExecToErr("alter table t change c d varchar(100)"), NotNil)
+}
+
+func (s *testSuiteP1) TestChangePumpAndDrainer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// change pump or drainer's state need connect to etcd
+	// so will meet error "URL scheme must be http, https, unix, or unixs: /tmp/tidb"
+	err := tk.ExecToErr("change pump to node_state ='paused' for node_id 'pump1'")
+	c.Assert(err, ErrorMatches, "URL scheme must be http, https, unix, or unixs.*")
+	err = tk.ExecToErr("change drainer to node_state ='paused' for node_id 'drainer1'")
+	c.Assert(err, ErrorMatches, "URL scheme must be http, https, unix, or unixs.*")
 }
 
 func (s *testSuiteP1) TestLoadStats(c *C) {
@@ -2105,6 +2116,40 @@ func (s *testSuiteP1) TestPointGetRepeatableRead(c *C) {
 	<-updateWaitCh // Wait `POINT GET` first time `get`
 	c.Assert(failpoint.Disable(step1), IsNil)
 	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
+	c.Assert(failpoint.Disable(step2), IsNil)
+}
+
+func (s *testSuiteP1) TestBatchPointGetRepeatableRead(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec(`create table batch_point_get (a int, b int, c int, unique key k_b(a, b, c))`)
+	tk1.MustExec("insert into batch_point_get values (1, 1, 1), (2, 3, 4), (3, 4, 5)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	var (
+		step1 = "github.com/pingcap/tidb/executor/batchPointGetRepeatableReadTest-step1"
+		step2 = "github.com/pingcap/tidb/executor/batchPointGetRepeatableReadTest-step2"
+	)
+
+	c.Assert(failpoint.Enable(step1, "return"), IsNil)
+	c.Assert(failpoint.Enable(step2, "pause"), IsNil)
+
+	updateWaitCh := make(chan struct{})
+	go func() {
+		ctx := context.WithValue(context.Background(), "batchPointGetRepeatableReadTest", updateWaitCh)
+		ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
+			return fpname == step1 || fpname == step2
+		})
+		rs, err := tk1.Se.Execute(ctx, "select c from batch_point_get where (a, b, c) in ((1, 1, 1))")
+		c.Assert(err, IsNil)
+		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+		result.Check(testkit.Rows("1"))
+	}()
+
+	<-updateWaitCh // Wait `POINT GET` first time `get`
+	c.Assert(failpoint.Disable(step1), IsNil)
+	tk2.MustExec("update batch_point_get set b = 2, c = 2 where a = 1")
 	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
@@ -4090,28 +4135,28 @@ func (s *testSuiteP1) TestSplitRegion(c *C) {
 func (s *testSuite) TestShowTableRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_regions1, t_regions")
-	tk.MustExec("create table t_regions1 (a int key, b int, index idx(b))")
-	tk.MustExec("create table t_regions (a int key, b int, index idx(b))")
+	tk.MustExec("drop table if exists t_regions")
+	tk.MustExec("create table t_regions (a int key, b int, c int, index idx(b), index idx2(c))")
 
 	// Test show table regions.
-	tk.MustExec(`split table t_regions1 by (0)`)
-	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("3 1"))
+	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
 	re := tk.MustQuery("show table t_regions regions")
 	rows := re.Rows()
-	// Table t_regions should have 4 regions now.
-	c.Assert(len(rows), Equals, 4)
+	// Table t_regions should have 5 regions now.
+	// 4 regions to store record data.
+	// 1 region to store index data.
+	c.Assert(len(rows), Equals, 5)
 	c.Assert(len(rows[0]), Equals, 7)
-	tbl1 := testGetTableByName(c, tk.Se, "test", "t_regions1")
 	tbl := testGetTableByName(c, tk.Se, "test", "t_regions")
 	// Check the region start key.
-	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", tbl1.Meta().ID))
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
+	c.Assert(rows[4][2], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 
 	// Test show table index regions.
-	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("4 1"))
+	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("5 1"))
 	re = tk.MustQuery("show table t_regions index idx regions")
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
@@ -4124,16 +4169,21 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 
 	re = tk.MustQuery("show table t_regions regions")
 	rows = re.Rows()
-	// The index `idx` of table t_regions should have 4 regions now.
-	c.Assert(len(rows), Equals, 7)
+	// The index `idx` of table t_regions should have 9 regions now.
+	// 4 regions to store record data.
+	// 4 region to store index idx data.
+	// 1 region to store index idx2 data.
+	c.Assert(len(rows), Equals, 9)
 	// Check the region start key.
-	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
 	c.Assert(rows[4][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[7][2], Equals, fmt.Sprintf("t_%d_i_2_", tbl.Meta().ID))
+	c.Assert(rows[8][2], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 
 	// Test unsigned primary key and wait scatter finish.
 	tk.MustExec("drop table if exists t_regions")
@@ -4172,7 +4222,6 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	re = tk.MustQuery("show table partition_t regions")
 	rows = re.Rows()
-	// Table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][1], Matches, "t_.*")
 
@@ -4183,13 +4232,24 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	re = tk.MustQuery("show table partition_t regions")
 	rows = re.Rows()
-	// Table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 3)
 	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
 	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
 	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
+
+	// Test pre-split table region when create table.
+	tk.MustExec("drop table if exists t_pre")
+	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2;")
+	re = tk.MustQuery("show table t_pre regions")
+	rows = re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 4)
+	tbl = testGetTableByName(c, tk.Se, "test", "t_pre")
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 }
 

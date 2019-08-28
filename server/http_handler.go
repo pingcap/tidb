@@ -158,12 +158,13 @@ func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error
 	return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data, RegionID: regionID}, err
 }
 
-func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*mvccKV, error) {
+func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*mvccKV, error) {
 	bo := tikv.NewBackoffer(context.Background(), 5000)
 	for {
 		curRegion, err := t.RegionCache.LocateKey(bo, startKey)
 		if err != nil {
-			logutil.BgLogger().Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS), zap.Binary("startKey", startKey), zap.Error(err))
+			logutil.BgLogger().Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 
@@ -175,10 +176,10 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		if err != nil {
 			logutil.BgLogger().Error("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
-				zap.Binary("startKey", startKey),
+				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Binary("curRegion startKey", curRegion.StartKey),
-				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion startKey", curRegion.StartKey),
+				zap.Stringer("curRegion endKey", curRegion.EndKey),
 				zap.Reflect("kvResp", kvResp),
 				zap.Error(err))
 			return nil, errors.Trace(err)
@@ -187,10 +188,10 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		if err := data.GetRegionError(); err != nil {
 			logutil.BgLogger().Warn("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
-				zap.Binary("startKey", startKey),
+				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Binary("curRegion startKey", curRegion.StartKey),
-				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion startKey", curRegion.StartKey),
+				zap.Stringer("curRegion endKey", curRegion.EndKey),
 				zap.Reflect("kvResp", kvResp),
 				zap.Stringer("error", err))
 			continue
@@ -199,10 +200,10 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		if len(data.GetError()) > 0 {
 			logutil.BgLogger().Error("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
-				zap.Binary("startKey", startKey),
+				zap.Stringer("startKey", startKey),
 				zap.Reflect("region", curRegion.Region),
-				zap.Binary("curRegion startKey", curRegion.StartKey),
-				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Stringer("curRegion startKey", curRegion.StartKey),
+				zap.Stringer("curRegion endKey", curRegion.EndKey),
 				zap.Reflect("kvResp", kvResp),
 				zap.String("error", data.GetError()))
 			return nil, errors.New(data.GetError())
