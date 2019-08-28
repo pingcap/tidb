@@ -37,9 +37,7 @@ func (es *entryStore) put(e entry) entryAddr {
 		es.sliceIdx++
 	}
 	addr := entryAddr{sliceIdx: es.sliceIdx, offset: es.sliceLen}
-	slice := es.slices[es.sliceIdx]
-	slice = append(slice, e)
-	es.slices[es.sliceIdx] = slice
+	es.slices[es.sliceIdx] = append(es.slices[es.sliceIdx], e)
 	es.sliceLen++
 	return addr
 }
