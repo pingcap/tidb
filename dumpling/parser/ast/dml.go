@@ -764,6 +764,8 @@ type SelectStmt struct {
 	IsAfterUnionDistinct bool
 	// IsInBraces indicates whether it's a stmt in brace.
 	IsInBraces bool
+	// QueryBlockOffset indicates the order of this SelectStmt if counted from left to right in the sql text.
+	QueryBlockOffset int
 }
 
 // Restore implements Node interface.
@@ -906,6 +908,14 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 		n.TableHints = newHints
 	}
 
+	if n.Fields != nil {
+		node, ok := n.Fields.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Fields = node.(*FieldList)
+	}
+
 	if n.From != nil {
 		node, ok := n.From.Accept(v)
 		if !ok {
@@ -920,14 +930,6 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Where = node.(ExprNode)
-	}
-
-	if n.Fields != nil {
-		node, ok := n.Fields.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Fields = node.(*FieldList)
 	}
 
 	if n.GroupBy != nil {
