@@ -617,7 +617,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true
 	}
-	orderedList := buildOrderedList(ctx, fastSelect, updateStmt.List)
+	orderedList, allAssignmentsAreConstant := buildOrderedList(ctx, fastSelect, updateStmt.List)
 	if orderedList == nil {
 		return nil
 	}
@@ -633,16 +633,19 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 				HandleOrdinal: handleCol.Index,
 			},
 		},
+		AllAssignmentsAreConstant: allAssignmentsAreConstant,
 	}.Init(ctx)
 	return updatePlan
 }
 
-func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*ast.Assignment) []*expression.Assignment {
-	orderedList := make([]*expression.Assignment, 0, len(list))
+func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*ast.Assignment,
+) (orderedList []*expression.Assignment, allAssignmentsAreConstant bool) {
+	orderedList = make([]*expression.Assignment, 0, len(list))
+	allAssignmentsAreConstant = true
 	for _, assign := range list {
 		idx, err := expression.FindColName(fastSelect.outputNames, assign.Column)
 		if idx == -1 || err != nil {
-			return nil
+			return nil, true
 		}
 		col := fastSelect.schema.Columns[idx]
 		newAssign := &expression.Assignment{
@@ -650,16 +653,21 @@ func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*
 		}
 		expr, err := expression.RewriteSimpleExprWithNames(ctx, assign.Expr, fastSelect.schema, fastSelect.outputNames)
 		if err != nil {
-			return nil
+			return nil, true
 		}
 		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
+		if allAssignmentsAreConstant {
+			_, isConst := expr.(*expression.Constant)
+			allAssignmentsAreConstant = isConst
+		}
+
 		newAssign.Expr, err = expr.ResolveIndices(fastSelect.schema)
 		if err != nil {
-			return nil
+			return nil, true
 		}
 		orderedList = append(orderedList, newAssign)
 	}
-	return orderedList
+	return orderedList, allAssignmentsAreConstant
 }
 
 func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
