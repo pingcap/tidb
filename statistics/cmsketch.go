@@ -83,7 +83,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 			onlyOnceItems++
 		}
 	}
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[i].cnt })
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
 
 	var (
 		// last is the last element in top N index should occurres atleast `last` times.
