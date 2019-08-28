@@ -64,6 +64,100 @@ func VectorizedExecute(ctx sessionctx.Context, exprs []Expression, iterator *chu
 	return nil
 }
 
+func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, output *chunk.Chunk, colIdx int) error {
+	ft := expr.GetType()
+	result := output.GetOrNewColumn(colIdx, ft, input.NumRows())
+	switch ft.EvalType() {
+	case types.ETInt:
+		if err := expr.VecEvalInt(ctx, input, result); err != nil {
+			return err
+		}
+		if ft.Tp == mysql.TypeBit {
+			i64s := result.Int64s()
+			buf := chunk.NewColumn(ft, input.NumRows())
+			buf.ReserveBytes(input.NumRows())
+			uintBuf := make([]byte, 8)
+			for i := range i64s {
+				if result.IsNull(i) {
+					buf.AppendNull()
+				} else {
+					buf.AppendBytes(strconv.AppendUint(uintBuf[:0], uint64(i64s[i]), 10))
+				}
+			}
+			// TODO: recycle all old Columns returned here.
+			output.SetCol(colIdx, buf)
+		} else if mysql.HasUnsignedFlag(ft.Flag) {
+			i64s := result.Int64s()
+			buf := chunk.NewColumn(ft, input.NumRows())
+			buf.ResizeUint64(input.NumRows())
+			for i := range i64s {
+				if result.IsNull(i) {
+					buf.SetNull(i, true)
+				} else {
+					buf.AppendUint64(uint64(i64s[i]))
+				}
+			}
+			output.SetCol(colIdx, buf)
+		}
+	case types.ETReal:
+		if err := expr.VecEvalReal(ctx, input, result); err != nil {
+			return err
+		}
+		if ft.Tp == mysql.TypeFloat {
+			f64s := result.Float64s()
+			buf := chunk.NewColumn(ft, input.NumRows())
+			buf.ResizeFloat32(input.NumRows())
+			f32s := buf.Float32s()
+			for i := range f64s {
+				if result.IsNull(i) {
+					buf.SetNull(i, true)
+				} else {
+					f32s[i] = float32(f64s[i])
+				}
+			}
+			output.SetCol(colIdx, buf)
+		}
+	case types.ETDecimal:
+		return expr.VecEvalDecimal(ctx, input, result)
+	case types.ETDatetime, types.ETTimestamp:
+		return expr.VecEvalTime(ctx, input, result)
+	case types.ETDuration:
+		return expr.VecEvalDuration(ctx, input, result)
+	case types.ETJson:
+		return expr.VecEvalJSON(ctx, input, result)
+	case types.ETString:
+		if err := expr.VecEvalString(ctx, input, result); err != nil {
+			return err
+		}
+		if ft.Tp == mysql.TypeEnum {
+			n := input.NumRows()
+			buf := chunk.NewColumn(ft, n)
+			buf.ReserveEnum(n)
+			for i := 0; i < n; i++ {
+				if result.IsNull(i) {
+					buf.AppendNull()
+				} else {
+					buf.AppendEnum(types.Enum{Value: 0, Name: result.GetString(i)})
+				}
+			}
+			output.SetCol(colIdx, buf)
+		} else if ft.Tp == mysql.TypeSet {
+			n := input.NumRows()
+			buf := chunk.NewColumn(ft, n)
+			buf.ReserveSet(n)
+			for i := 0; i < n; i++ {
+				if result.IsNull(i) {
+					buf.AppendNull()
+				} else {
+					buf.AppendSet(types.Set{Value: 0, Name: result.GetString(i)})
+				}
+			}
+			output.SetCol(colIdx, buf)
+		}
+	}
+	return nil
+}
+
 func evalOneColumn(ctx sessionctx.Context, expr Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk, colID int) (err error) {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
