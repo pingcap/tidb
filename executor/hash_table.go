@@ -55,14 +55,19 @@ type entryAddr struct {
 
 var nullEntryAddr = entryAddr{}
 
+// rowHashMap stores multiple rowPtr of rows for a given key with minimum GC overhead.
+// A given key can store multiple values.
+// It is not thread-safe, should only be used in one goroutine.
 type rowHashMap struct {
 	entryStore entryStore
 	hashTable  map[uint64]entryAddr
 	length     int
 }
 
+// newRowHashMap creates a new rowHashMap.
 func newRowHashMap() *rowHashMap {
 	m := new(rowHashMap)
+	// TODO(fengliyuan): initialize the size of map from the estimated row count for better performance.
 	m.hashTable = make(map[uint64]entryAddr)
 	m.entryStore.slices = [][]entry{make([]entry, 0, 64)}
 	// Reserve the first empty entry, so entryAddr{} can represent nullEntryAddr.
@@ -70,6 +75,7 @@ func newRowHashMap() *rowHashMap {
 	return m
 }
 
+// Put puts the key/rowPtr pairs to the rowHashMap, multiple rowPtrs are stored in a list.
 func (m *rowHashMap) Put(hashKey uint64, rowPtr chunk.RowPtr) {
 	oldEntryAddr := m.hashTable[hashKey]
 	e := entry{
@@ -81,6 +87,7 @@ func (m *rowHashMap) Put(hashKey uint64, rowPtr chunk.RowPtr) {
 	m.length++
 }
 
+// Get gets the values of the "key" and appends them to "values".
 func (m *rowHashMap) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 	entryAddr := m.hashTable[hashKey]
 	for entryAddr != nullEntryAddr {
@@ -96,4 +103,6 @@ func (m *rowHashMap) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 	return
 }
 
+// Len returns the number of rowPtrs in the rowHashMap, the number of keys may be less than Len
+// if the same key is put more than once.
 func (m *rowHashMap) Len() int { return m.length }
