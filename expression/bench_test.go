@@ -232,7 +232,6 @@ func eType2FieldType(eType types.EvalType) *types.FieldType {
 	}
 	// TODO: support all EvalTypes later.
 	panic(fmt.Sprintf("EvalType=%v is not supported.", eType))
-	return nil
 }
 
 func genVecExprBenchCase(ctx sessionctx.Context, testCase vecExprBenchCase) (Expression, *chunk.Chunk, *chunk.Chunk) {
