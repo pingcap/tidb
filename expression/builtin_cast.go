@@ -435,6 +435,10 @@ func (b *builtinCastIntAsIntSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinCastIntAsIntSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinCastIntAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
@@ -444,6 +448,23 @@ func (b *builtinCastIntAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool,
 		res = 0
 	}
 	return
+}
+
+func (b *builtinCastIntAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) {
+		i64s := result.Int64s()
+		// the null array of result is set by its child args[0],
+		// so we can skip it here to make this loop simpler to improve its performance.
+		for i := range i64s {
+			if i64s[i] < 0 {
+				i64s[i] = 0
+			}
+		}
+	}
+	return nil
 }
 
 type builtinCastIntAsRealSig struct {
