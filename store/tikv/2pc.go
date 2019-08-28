@@ -16,11 +16,11 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -96,7 +96,7 @@ type twoPhaseCommitter struct {
 	// We use it to guarantee GC worker will not influence any active txn. The value
 	// should be less than GC life time.
 	maxTxnTimeUse uint64
-	detail        *execdetails.CommitDetails
+	detail        unsafe.Pointer
 
 	primaryKey     []byte
 	forUpdateTS    uint64
@@ -114,6 +114,19 @@ type twoPhaseCommitter struct {
 	// regionTxnSize stores the number of keys involved in each region
 	regionTxnSize map[uint64]int
 }
+
+// batchExecutor is txn controller providing rate control like utils
+type batchExecutor struct {
+	rateLim           int                  // concurrent worker numbers
+	rateLimiter       *rateLimit           // rate limiter for concurrency control, maybe more strategies
+	committer         *twoPhaseCommitter   // here maybe more different type committer in the future
+	action            twoPhaseCommitAction // the work action type
+	procFn            procOneBatchFn       // injected proc batch function
+	backoffer         *Backoffer           // Backoffer
+	tokenWaitDuration time.Duration        // get token wait time
+}
+
+type procOneBatchFn func(bo *Backoffer, batch batchKeys) error
 
 type mutationEx struct {
 	pb.Mutation
@@ -156,7 +169,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
 			op := pb.Op_Put
-			if c := txn.us.LookupConditionPair(k); c != nil && c.ShouldNotExist() {
+			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
 				op = pb.Op_Insert
 			}
 			mutations[string(k)] = &mutationEx{
@@ -274,7 +287,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = getTxnPriority(txn)
 	c.syncLog = getTxnSyncLog(txn)
-	c.detail = commitDetail
+	c.setDetail(commitDetail)
 	return nil
 }
 
@@ -335,7 +348,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 			}
 		}
 		sizeFunc = c.keyValueSize
-		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
+		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
 	}
 	// Make sure the group that contains primary key goes first.
 	batches = appendBatchBySize(batches, firstRegion, groups[firstRegion], sizeFunc, txnCommitBatchSize)
@@ -377,21 +390,12 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 
 // doActionOnBatches does action to batches in parallel.
 func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseCommitAction, batches []batchKeys) error {
+	singleBatchActionFunc, err := c.getProcFuncByType(action)
+	if err != nil {
+		return err
+	}
 	if len(batches) == 0 {
 		return nil
-	}
-	var singleBatchActionFunc func(bo *Backoffer, batch batchKeys) error
-	switch action {
-	case actionPrewrite:
-		singleBatchActionFunc = c.prewriteSingleBatch
-	case actionCommit:
-		singleBatchActionFunc = c.commitSingleBatch
-	case actionCleanup:
-		singleBatchActionFunc = c.cleanupSingleBatch
-	case actionPessimisticLock:
-		singleBatchActionFunc = c.pessimisticLockSingleBatch
-	case actionPessimisticRollback:
-		singleBatchActionFunc = c.pessimisticRollbackSingleBatch
 	}
 	if len(batches) == 1 {
 		e := singleBatchActionFunc(bo, batches[0])
@@ -404,60 +408,29 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		}
 		return errors.Trace(e)
 	}
-
-	// For prewrite, stop sending other requests after receiving first error.
-	backoffer := bo
-	var cancel context.CancelFunc
-	if action == actionPrewrite {
-		backoffer, cancel = bo.Fork()
-		defer cancel()
-	}
-
-	// Concurrently do the work for each batch.
-	ch := make(chan error, len(batches))
-	for _, batch1 := range batches {
-
-		batch := batch1
-		go func() {
-			if action == actionCommit {
-				// Because the secondary batches of the commit actions are implemented to be
-				// committed asynchronously in background goroutines, we should not
-				// fork a child context and call cancel() while the foreground goroutine exits.
-				// Otherwise the background goroutines will be canceled execeptionally.
-				// Here we makes a new clone of the original backoffer for this goroutine
-				// exclusively to avoid the data race when using the same backoffer
-				// in concurrent goroutines.
-				singleBatchBackoffer := backoffer.Clone()
-				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
-			} else {
-				singleBatchBackoffer, singleBatchCancel := backoffer.Fork()
-				defer singleBatchCancel()
-				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
-			}
-		}()
-	}
-	var err error
-	for i := 0; i < len(batches); i++ {
-		if e := <-ch; e != nil {
-			logutil.BgLogger().Debug("2PC doActionOnBatches failed",
-				zap.Uint64("conn", c.connID),
-				zap.Stringer("action type", action),
-				zap.Error(e),
-				zap.Uint64("txnStartTS", c.startTS))
-			// Cancel other requests and return the first error.
-			if cancel != nil {
-				logutil.BgLogger().Debug("2PC doActionOnBatches to cancel other actions",
-					zap.Uint64("conn", c.connID),
-					zap.Stringer("action type", action),
-					zap.Uint64("txnStartTS", c.startTS))
-				cancel()
-			}
-			if err == nil {
-				err = e
-			}
-		}
-	}
+	rateLim := len(batches) // this will be used for LargeTxn, set rateLim here
+	batchExecutor := newBatchExecutor(rateLim, c, action, singleBatchActionFunc, bo)
+	err = batchExecutor.process(batches)
 	return errors.Trace(err)
+}
+
+func (c *twoPhaseCommitter) getProcFuncByType(action twoPhaseCommitAction) (procOneBatchFn, error) {
+	var singleBatchActionFunc procOneBatchFn
+	switch action {
+	case actionPrewrite:
+		singleBatchActionFunc = c.prewriteSingleBatch
+	case actionCommit:
+		singleBatchActionFunc = c.commitSingleBatch
+	case actionCleanup:
+		singleBatchActionFunc = c.cleanupSingleBatch
+	case actionPessimisticLock:
+		singleBatchActionFunc = c.pessimisticLockSingleBatch
+	case actionPessimisticRollback:
+		singleBatchActionFunc = c.pessimisticRollbackSingleBatch
+	default:
+		return nil, errors.Errorf("invalid action type=%v", action)
+	}
+	return singleBatchActionFunc, nil
 }
 
 func (c *twoPhaseCommitter) keyValueSize(key []byte) int {
@@ -536,14 +509,11 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				conditionPair := c.txn.us.LookupConditionPair(key)
-				if conditionPair == nil {
-					return errors.Errorf("conn%d, conditionPair for key:%s should not be nil", c.connID, key)
+				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
+				if existErrInfo == nil {
+					return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
 				}
-				logutil.BgLogger().Debug("key already exists",
-					zap.Uint64("conn", c.connID),
-					zap.Stringer("key", kv.Key(key)))
-				return errors.Trace(conditionPair.Err())
+				return existErrInfo.Err()
 			}
 
 			// Extract lock from key error
@@ -561,7 +531,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		atomic.AddInt64(&c.detail.ResolveLockTime, int64(time.Since(start)))
+		atomic.AddInt64(&c.getDetail().ResolveLockTime, int64(time.Since(start)))
 		if msBeforeExpired > 0 {
 			err = bo.BackoffWithMaxSleep(BoTxnLock, int(msBeforeExpired), errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
@@ -578,8 +548,8 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			Op:  pb.Op_PessimisticLock,
 			Key: k,
 		}
-		conditionPair := c.txn.us.LookupConditionPair(k)
-		if conditionPair != nil && conditionPair.ShouldNotExist() {
+		existErr := c.txn.us.GetKeyExistErrInfo(k)
+		if existErr != nil {
 			mut.Assertion = pb.Assertion_NotExist
 		}
 		mutations[i] = mut
@@ -623,11 +593,11 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				conditionPair := c.txn.us.LookupConditionPair(key)
-				if conditionPair == nil {
-					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
+				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
+				if existErrInfo == nil {
+					return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
 				}
-				return errors.Trace(conditionPair.Err())
+				return existErrInfo.Err()
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
 				return &ErrDeadlock{Deadlock: deadlock}
@@ -697,6 +667,14 @@ func kvPriorityToCommandPri(pri int) pb.CommandPri {
 		return pb.CommandPri_High
 	}
 	return pb.CommandPri_Normal
+}
+
+func (c *twoPhaseCommitter) setDetail(d *execdetails.CommitDetails) {
+	atomic.StorePointer(&c.detail, unsafe.Pointer(d))
+}
+
+func (c *twoPhaseCommitter) getDetail() *execdetails.CommitDetails {
+	return (*execdetails.CommitDetails)(atomic.LoadPointer(&c.detail))
 }
 
 func (c *twoPhaseCommitter) setUndeterminedErr(err error) {
@@ -805,7 +783,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		return errors.Trace(err)
 	}
 	if keyErr := resp.Resp.(*pb.BatchRollbackResponse).GetError(); keyErr != nil {
-		err = errors.Errorf("conn%d 2PC cleanup failed: %s", c.connID, keyErr)
+		err = errors.Errorf("conn %d 2PC cleanup failed: %s", c.connID, keyErr)
 		logutil.BgLogger().Debug("2PC failed cleanup key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
@@ -888,8 +866,14 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	prewriteBo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
 	err := c.prewriteKeys(prewriteBo, c.keys)
-	c.detail.PrewriteTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(prewriteBo.totalSleep) * time.Millisecond
+	commitDetail := c.getDetail()
+	commitDetail.PrewriteTime = time.Since(start)
+	if prewriteBo.totalSleep > 0 {
+		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(prewriteBo.totalSleep)*int64(time.Millisecond))
+		commitDetail.Mu.Lock()
+		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, prewriteBo.types...)
+		commitDetail.Mu.Unlock()
+	}
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
@@ -912,13 +896,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			zap.Uint64("txnStartTS", c.startTS))
 		return errors.Trace(err)
 	}
-	c.detail.GetCommitTsTime = time.Since(start)
+	commitDetail.GetCommitTsTime = time.Since(start)
 	logutil.Event(ctx, "finish get commit ts")
 	logutil.SetTag(ctx, "commitTs", commitTS)
 
 	// check commitTS
 	if commitTS <= c.startTS {
-		err = errors.Errorf("conn%d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
+		err = errors.Errorf("conn %d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
 			c.connID, c.startTS, commitTS)
 		logutil.BgLogger().Error("invalid transaction", zap.Error(err))
 		return errors.Trace(err)
@@ -935,7 +919,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	})
 
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
-		err = errors.Errorf("conn%d txn takes too much time, txnStartTS: %d, comm: %d",
+		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err
 	}
@@ -943,8 +927,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	start = time.Now()
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
 	err = c.commitKeys(commitBo, c.keys)
-	c.detail.CommitTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(commitBo.totalSleep) * time.Millisecond
+	commitDetail.CommitTime = time.Since(start)
+	if commitBo.totalSleep > 0 {
+		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(commitBo.totalSleep)*int64(time.Millisecond))
+		commitDetail.Mu.Lock()
+		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, commitBo.types...)
+		commitDetail.Mu.Unlock()
+	}
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
 			logutil.Logger(ctx).Error("2PC commit result undetermined",
@@ -1049,4 +1038,108 @@ func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn 
 		})
 	}
 	return b
+}
+
+// newBatchExecutor create processor to handle concurrent batch works(prewrite/commit etc)
+func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
+	action twoPhaseCommitAction, procFn procOneBatchFn, backoffer *Backoffer) *batchExecutor {
+	return &batchExecutor{rateLimit, nil, committer,
+		action, procFn, backoffer, time.Duration(1 * time.Millisecond)}
+}
+
+// initUtils do initialize batchExecutor related policies like rateLimit util
+func (batchExe *batchExecutor) initUtils() error {
+	// init rateLimiter by injected rate limit number
+	batchExe.rateLimiter = newRateLimit(batchExe.rateLim)
+	return nil
+}
+
+// startWork concurrently do the work for each batch considering rate limit
+func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, batches []batchKeys) {
+	for idx, batch1 := range batches {
+		waitStart := time.Now()
+		if exit := batchExe.rateLimiter.getToken(exitCh); !exit {
+			batchExe.tokenWaitDuration += time.Since(waitStart)
+			batch := batch1
+			go func() {
+				var singleBatchBackoffer *Backoffer
+				if batchExe.action == actionCommit {
+					// Because the secondary batches of the commit actions are implemented to be
+					// committed asynchronously in background goroutines, we should not
+					// fork a child context and call cancel() while the foreground goroutine exits.
+					// Otherwise the background goroutines will be canceled execeptionally.
+					// Here we makes a new clone of the original backoffer for this goroutine
+					// exclusively to avoid the data race when using the same backoffer
+					// in concurrent goroutines.
+					singleBatchBackoffer = batchExe.backoffer.Clone()
+				} else {
+					var singleBatchCancel context.CancelFunc
+					singleBatchBackoffer, singleBatchCancel = batchExe.backoffer.Fork()
+					defer singleBatchCancel()
+				}
+				beforeSleep := singleBatchBackoffer.totalSleep
+				ch <- batchExe.procFn(singleBatchBackoffer, batch)
+				commitDetail := batchExe.committer.getDetail()
+				if commitDetail != nil { // lock operations of pessimistic-txn will let commitDetail be nil
+					if delta := singleBatchBackoffer.totalSleep - beforeSleep; delta > 0 {
+						atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(singleBatchBackoffer.totalSleep-beforeSleep)*int64(time.Millisecond))
+						commitDetail.Mu.Lock()
+						commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, singleBatchBackoffer.types...)
+						commitDetail.Mu.Unlock()
+					}
+				}
+			}()
+		} else {
+			logutil.Logger(batchExe.backoffer.ctx).Info("break startWorker",
+				zap.Stringer("action", batchExe.action), zap.Int("batch size", len(batches)),
+				zap.Int("index", idx))
+			break
+		}
+	}
+}
+
+// process will start worker routine and collect results
+func (batchExe *batchExecutor) process(batches []batchKeys) error {
+	var err error
+	err = batchExe.initUtils()
+	if err != nil {
+		logutil.Logger(batchExe.backoffer.ctx).Error("batchExecutor initUtils failed", zap.Error(err))
+		return err
+	}
+
+	// For prewrite, stop sending other requests after receiving first error.
+	backoffer := batchExe.backoffer
+	var cancel context.CancelFunc
+	if batchExe.action == actionPrewrite {
+		backoffer, cancel = batchExe.backoffer.Fork()
+		defer cancel()
+	}
+	// concurrently do the work for each batch.
+	ch := make(chan error, len(batches))
+	exitCh := make(chan struct{})
+	go batchExe.startWorker(exitCh, ch, batches)
+	// check results
+	for i := 0; i < len(batches); i++ {
+		if e := <-ch; e != nil {
+			logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatches failed",
+				zap.Uint64("conn", batchExe.committer.connID),
+				zap.Stringer("action type", batchExe.action),
+				zap.Error(e),
+				zap.Uint64("txnStartTS", batchExe.committer.startTS))
+			// Cancel other requests and return the first error.
+			if cancel != nil {
+				logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatches to cancel other actions",
+					zap.Uint64("conn", batchExe.committer.connID),
+					zap.Stringer("action type", batchExe.action),
+					zap.Uint64("txnStartTS", batchExe.committer.startTS))
+				cancel()
+			}
+			if err == nil {
+				err = e
+			}
+		}
+	}
+	close(exitCh)
+	metrics.TiKVTokenWaitDuration.Observe(float64(batchExe.tokenWaitDuration))
+	return err
 }
