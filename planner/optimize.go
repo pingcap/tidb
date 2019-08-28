@@ -27,23 +27,24 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
+func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
-		return fp, nil
+		return fp, fp.OutputNames(), nil
 	}
 
 	var oriHint *bindinfo.HintsSet
 	if stmtNode, ok := node.(ast.StmtNode); ok {
 		oriHint = addHint(sctx, stmtNode)
 	}
-	plan, err := optimize(ctx, sctx, node, is)
+	plan, names, err := optimize(ctx, sctx, node, is)
 	// Restore the original hint in case of prepare stmt.
 	if oriHint != nil {
 		node = bindinfo.BindHint(node.(ast.StmtNode), oriHint)
@@ -52,20 +53,20 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 	if err == nil || oriHint == nil {
-		return plan, err
+		return plan, names, err
 	}
 	// Reoptimize after restore the original hint.
 	return optimize(ctx, sctx, node, is)
 }
 
-func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
+func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
 	builder := plannercore.NewPlanBuilder(sctx, is)
 	p, err := builder.Build(ctx, node)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
@@ -75,31 +76,35 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		if err := plannercore.CheckPrivilege(activeRoles, pm, builder.GetVisitInfo()); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	if err := plannercore.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Handle the execute statement.
 	if execPlan, ok := p.(*plannercore.Execute); ok {
 		err := execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		return p, err
+		return p, p.OutputNames(), err
 	}
+
+	names := p.OutputNames()
 
 	// Handle the non-logical plan statement.
 	logic, isLogicalPlan := p.(plannercore.LogicalPlan)
 	if !isLogicalPlan {
-		return p, nil
+		return p, names, nil
 	}
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if sctx.GetSessionVars().EnableCascadesPlanner {
-		return cascades.FindBestPlan(sctx, logic)
+		finalPlan, err := cascades.FindBestPlan(sctx, logic)
+		return finalPlan, names, err
 	}
-	return plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
+	finalPlan, err := plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
+	return finalPlan, names, err
 }
 
 func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, string, string) {

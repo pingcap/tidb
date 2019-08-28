@@ -182,12 +182,13 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		param.InExecute = false
 	}
 	var p plannercore.Plan
-	p, err = plannercore.BuildLogicalPlan(ctx, e.ctx, stmt, e.is)
+	var names types.NameSlice
+	p, names, err = plannercore.BuildLogicalPlan(ctx, e.ctx, stmt, e.is)
 	if err != nil {
 		return err
 	}
 	if _, ok := stmt.(*ast.SelectStmt); ok {
-		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
+		e.Fields = colNames2ResultFields(p.Schema(), names, vars.CurrentDB)
 	}
 	if e.ID == 0 {
 		e.ID = vars.GetNextPreparedStmtID()
@@ -280,7 +281,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID
 	}
 	execStmt.BinaryArgs = args
 	is := GetInfoSchema(sctx)
-	execPlan, err := planner.Optimize(ctx, sctx, execStmt, is)
+	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +291,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID
 		Plan:        execPlan,
 		StmtNode:    execStmt,
 		Ctx:         sctx,
-		outputNames: execPlan.OutputNames(),
+		outputNames: names,
 	}
 	if prepared, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		stmt.Text = prepared.Stmt.Text()

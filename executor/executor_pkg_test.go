@@ -19,7 +19,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
@@ -119,7 +118,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	for i := range names {
 		col := &expression.Column{
-			ColName: model.NewCIStr(names[i]),
+			UniqueID: int64(i),
 		}
 		// User varchar as the default return column type.
 		tp := mysql.TypeVarchar

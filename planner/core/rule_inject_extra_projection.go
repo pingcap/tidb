@@ -14,9 +14,6 @@
 package core
 
 import (
-	"fmt"
-
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
@@ -100,7 +97,6 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 			projExprs = append(projExprs, arg)
 			newArg := &expression.Column{
 				RetType: arg.GetType(),
-				ColName: model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
 				Index:   cursor,
 			}
 			projSchemaCols = append(projSchemaCols, newArg)
@@ -117,7 +113,6 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 		newArg := &expression.Column{
 			UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
 			RetType:  item.GetType(),
-			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
 			Index:    cursor,
 		}
 		projSchemaCols = append(projSchemaCols, newArg)
@@ -187,7 +182,6 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 		newArg := &expression.Column{
 			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 			RetType:  itemExpr.GetType(),
-			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(bottomProjSchemaCols))),
 			Index:    len(bottomProjSchemaCols),
 		}
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)

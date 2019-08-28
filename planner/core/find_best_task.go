@@ -566,7 +566,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, idxExprCol
 			indexCols = append(indexCols, idxExprCols[i])
 		} else {
 			indexCols = append(indexCols, &expression.Column{
-				ColName:  idx.Columns[i].Name,
+				ID:       is.Table.Columns[idx.Columns[i].Offset].ID,
 				RetType:  &is.Table.Columns[idx.Columns[i].Offset].FieldType,
 				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 			})
@@ -585,7 +585,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, idxExprCol
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, ColName: model.ExtraHandleName, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()})
+		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }

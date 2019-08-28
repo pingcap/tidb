@@ -297,11 +297,17 @@ type PhysicalUnionAll struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *PhysicalUnionAll) OutputNames() []*types.FieldName {
+func (p *PhysicalUnionAll) OutputNames() types.NameSlice {
 	if p.IsPointGetUnion {
 		return p.children[0].OutputNames()
 	}
 	return p.physicalSchemaProducer.OutputNames()
+}
+
+func (p *PhysicalUnionAll) SetOutputNames(names types.NameSlice) {
+	if p.IsPointGetUnion {
+		p.children[0].(*PointGetPlan).SetOutputNames(names)
+	}
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -418,8 +424,12 @@ type PhysicalTableDual struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *PhysicalTableDual) OutputNames() []*types.FieldName {
+func (p *PhysicalTableDual) OutputNames() types.NameSlice {
 	return p.names
+}
+
+func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
+	p.names = names
 }
 
 // PhysicalWindow is the physical operator of window function.

@@ -114,6 +114,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	defer func() {
 		if p != nil {
 			rewriter.schema = p.Schema()
+			rewriter.names = p.OutputNames()
 		}
 	}()
 
@@ -131,11 +132,24 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	rewriter.insertPlan = nil
 	rewriter.disableFoldCounter = 0
 	rewriter.ctxStack = rewriter.ctxStack[:0]
+	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
 	return
 }
 
 func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
+	if rewriter.p != nil {
+		curColLen := rewriter.p.Schema().Len()
+		defer func() {
+			names := rewriter.p.OutputNames()
+			names = names[:curColLen]
+			for i := curColLen; i < rewriter.p.Schema().Len(); i++ {
+				names = append(names, types.EmptyName)
+			}
+			// After rewriting finished, only old columns are visible.
+			rewriter.p.SetOutputNames(names)
+		}()
+	}
 	exprNode.Accept(rewriter)
 	if rewriter.err != nil {
 		return nil, nil, errors.Trace(rewriter.err)
@@ -154,15 +168,17 @@ func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast
 }
 
 type expressionRewriter struct {
-	ctxStack  []expression.Expression
-	p         LogicalPlan
-	schema    *expression.Schema
-	err       error
-	aggrMap   map[*ast.AggregateFuncExpr]int
-	windowMap map[*ast.WindowFuncExpr]int
-	b         *PlanBuilder
-	sctx      sessionctx.Context
-	ctx       context.Context
+	ctxStack   []expression.Expression
+	ctxNameStk []*types.FieldName
+	p          LogicalPlan
+	schema     *expression.Schema
+	names      []*types.FieldName
+	err        error
+	aggrMap    map[*ast.AggregateFuncExpr]int
+	windowMap  map[*ast.WindowFuncExpr]int
+	b          *PlanBuilder
+	sctx       sessionctx.Context
+	ctx        context.Context
 
 	// asScalar indicates the return value must be a scalar value.
 	// NOTE: This value can be changed during expression rewritten.
@@ -241,7 +257,11 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 	if er.schema != nil {
 		outerSchema := er.schema.Clone()
 		er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
-		defer func() { er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1] }()
+		er.b.outerNames = append(er.b.outerNames, er.names)
+		defer func() {
+			er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1]
+			er.b.outerNames = er.b.outerNames[0 : len(er.b.outerNames)-1]
+		}()
 	}
 
 	np, err := er.b.buildResultSetNode(ctx, subq.Query)
@@ -266,10 +286,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			return inNode, true
 		}
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
+		er.ctxNameStk = append(er.ctxNameStk, er.names[index])
 		return inNode, true
 	case *ast.ColumnNameExpr:
 		if index, ok := er.b.colMapper[v]; ok {
 			er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
+			er.ctxNameStk = append(er.ctxNameStk, er.names[index])
 			return inNode, true
 		}
 	case *ast.CompareSubqueryExpr:
@@ -301,23 +323,26 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		return er.handleScalarSubquery(er.ctx, v)
 	case *ast.ParenthesesExpr:
 	case *ast.ValuesExpr:
-		schema := er.schema
+		schema, names := er.schema, er.names
 		// NOTE: "er.insertPlan != nil" means that we are rewriting the
 		// expressions inside the assignment of "INSERT" statement. we have to
 		// use the "tableSchema" of that "insertPlan".
 		if er.insertPlan != nil {
 			schema = er.insertPlan.tableSchema
+			names = er.insertPlan.tableColNames
 		}
-		col, err := schema.FindColumn(v.Column.Name)
+		idx, err := expression.FindFieldName(names, v.Column.Name)
 		if err != nil {
 			er.err = err
 			return inNode, false
 		}
-		if col == nil {
+		if idx < 0 {
 			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Column.Name.OrigColName(), "field list")
 			return inNode, false
 		}
+		col := schema.Columns[idx]
 		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(er.sctx, col.Index, col.RetType))
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 		return inNode, true
 	case *ast.WindowFuncExpr:
 		index, ok := -1, false
@@ -329,6 +354,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			return inNode, true
 		}
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
+		er.ctxNameStk = append(er.ctxNameStk, er.names[index])
 		return inNode, true
 	case *ast.FuncCallExpr:
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
@@ -433,6 +459,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	if er.asScalar {
 		// The parent expression only use the last column in schema, which represents whether the condition is matched.
 		er.ctxStack[len(er.ctxStack)-1] = er.p.Schema().Columns[er.p.Schema().Len()-1]
+		er.ctxNameStk[len(er.ctxNameStk)-1] = er.p.OutputNames()[er.p.Schema().Len()-1]
 	}
 	return v, true
 }
@@ -456,12 +483,12 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 
 	// Create a column and append it to the schema of that aggregation.
 	colMaxOrMin := &expression.Column{
-		ColName:  model.NewCIStr("agg_Col_0"),
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  funcMaxOrMin.RetTp,
 	}
 	schema := expression.NewSchema(colMaxOrMin)
 
+	plan4Agg.names = append(plan4Agg.names, nil)
 	plan4Agg.SetSchema(schema)
 	plan4Agg.AggFuncs = []*aggregation.AggFuncDesc{funcMaxOrMin}
 
@@ -480,7 +507,6 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 		return
 	}
 	colSum := &expression.Column{
-		ColName:  model.NewCIStr("agg_col_sum"),
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  funcSum.RetTp,
 	}
@@ -495,7 +521,6 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 		return
 	}
 	colCount := &expression.Column{
-		ColName:  model.NewCIStr("agg_col_cnt"),
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  funcCount.RetTp,
 	}
@@ -538,14 +563,15 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	proj := LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
 	}.Init(er.sctx)
+	proj.names = make([]*types.FieldName, outerSchemaLen, outerSchemaLen+1)
+	copy(proj.names, er.p.OutputNames())
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
-		ColName:      model.NewCIStr("aux_col"),
-		UniqueID:     er.sctx.GetSessionVars().AllocPlanColumnID(),
-		IsReferenced: true,
-		RetType:      cond.GetType(),
+		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  cond.GetType(),
 	})
+	proj.names = append(proj.names, nil)
 	proj.SetChildren(er.p)
 	er.p = proj
 }
@@ -569,15 +595,14 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	}.Init(er.sctx)
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
-		ColName:  model.NewCIStr("col_firstRow"),
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
 	}
 	count := &expression.Column{
-		ColName:  model.NewCIStr("col_count"),
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
+	plan4Agg.names = append(plan4Agg.names, nil, nil)
 	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
 	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.One)
 	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
@@ -602,13 +627,13 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.sctx)
 	plan4Agg.SetChildren(np)
+	plan4Agg.names = append(plan4Agg.names, nil)
 	firstRowResultCol := &expression.Column{
-		ColName:  model.NewCIStr("col_firstRow"),
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
 	}
+	plan4Agg.names = append(plan4Agg.names, nil)
 	count := &expression.Column{
-		ColName:  model.NewCIStr("col_count"),
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
@@ -637,6 +662,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 			return v, true
 		}
 		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
+		er.ctxNameStk = append(er.ctxNameStk, er.p.OutputNames()[er.p.Schema().Len()-1])
 	} else {
 		physicalPlan, err := DoOptimize(ctx, er.b.optFlag, np)
 		if err != nil {
@@ -650,8 +676,10 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		}
 		if (len(rows) > 0 && !v.Not) || (len(rows) == 0 && v.Not) {
 			er.ctxStack = append(er.ctxStack, expression.One.Clone())
+			er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 		} else {
 			er.ctxStack = append(er.ctxStack, expression.Zero.Clone())
+			er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 		}
 	}
 	return v, true
@@ -748,13 +776,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 			er.err = err
 			return v, true
 		}
-		for _, col := range agg.schema.Columns {
-			col.IsReferenced = true
-		}
 		// Build inner join above the aggregation.
 		join := LogicalJoin{JoinType: InnerJoin}.Init(er.sctx)
 		join.SetChildren(er.p, agg)
 		join.SetSchema(expression.MergeSchema(er.p.Schema(), agg.schema))
+		join.names = make([]*types.FieldName, er.p.Schema().Len()+agg.Schema().Len())
+		copy(join.names, er.p.OutputNames())
+		copy(join.names[er.p.Schema().Len():], agg.OutputNames())
 		join.attachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {
@@ -771,8 +799,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	if asScalar {
 		col := er.p.Schema().Columns[er.p.Schema().Len()-1]
 		er.ctxStack[len(er.ctxStack)-1] = col
+		er.ctxNameStk[len(er.ctxNameStk)-1] = er.p.OutputNames()[er.p.Schema().Len()-1]
 	} else {
 		er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
+		er.ctxNameStk = er.ctxNameStk[:len(er.ctxNameStk)-1]
 	}
 	return v, true
 }
@@ -797,8 +827,10 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 				return v, true
 			}
 			er.ctxStack = append(er.ctxStack, expr)
+			er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 		} else {
 			er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
+			er.ctxNameStk = append(er.ctxNameStk, er.p.OutputNames()[er.p.Schema().Len()-1])
 		}
 		return v, true
 	}
@@ -825,11 +857,13 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 			return v, true
 		}
 		er.ctxStack = append(er.ctxStack, expr)
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 	} else {
 		er.ctxStack = append(er.ctxStack, &expression.Constant{
 			Value:   rows[0][0],
 			RetType: np.Schema().Columns[0].GetType(),
 		})
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 	}
 	return v, true
 }
@@ -849,6 +883,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *driver.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 	case *driver.ParamMarkerExpr:
 		var value expression.Expression
 		value, er.err = expression.ParamMarkerExpression(er.sctx, v)
@@ -856,6 +891,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 		er.ctxStack = append(er.ctxStack, value)
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
 	case *ast.FuncCallExpr:
@@ -887,6 +923,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 
 		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.sctx, arg, v.Tp)
+		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.PatternLikeExpr:
 		er.patternLikeToExpression(v)
 	case *ast.PatternRegexpExpr:
@@ -911,16 +948,19 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			Value:   types.NewIntDatum(int64(v.Direction)),
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		})
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 	case *ast.TimeUnitExpr:
 		er.ctxStack = append(er.ctxStack, &expression.Constant{
 			Value:   types.NewStringDatum(v.Unit.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		})
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 	case *ast.GetFormatSelectorExpr:
 		er.ctxStack = append(er.ctxStack, &expression.Constant{
 			Value:   types.NewStringDatum(v.Selector.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		})
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -961,6 +1001,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				er.ctxStack[stkLen-1].GetType(),
 				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
 				er.ctxStack[stkLen-1])
+			er.ctxNameStk[stkLen-1] = types.EmptyName
 			return
 		}
 		f, err := er.newFunction(ast.GetVar,
@@ -972,6 +1013,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			return
 		}
 		er.ctxStack = append(er.ctxStack, f)
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 		return
 	}
 	var val string
@@ -1002,6 +1044,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStack = append(er.ctxStack, e)
+	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 }
 
 func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
@@ -1026,6 +1069,7 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		return
 	}
 	er.ctxStack[stkLen-1], er.err = er.newFunction(op, &v.Type, er.ctxStack[stkLen-1])
+	er.ctxNameStk[stkLen-1] = types.EmptyName
 }
 
 func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
@@ -1048,7 +1092,9 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		return
 	}
 	er.ctxStack = er.ctxStack[:stkLen-2]
+	er.ctxNameStk = er.ctxNameStk[:stkLen-2]
 	er.ctxStack = append(er.ctxStack, function)
+	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 }
 
 func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.FieldType,
@@ -1078,7 +1124,9 @@ func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 	}
 	function := er.notToExpression(v.Not, ast.IsNull, &v.Type, er.ctxStack[stkLen-1])
 	er.ctxStack = er.ctxStack[:stkLen-1]
+	er.ctxNameStk = er.ctxNameStk[:stkLen-1]
 	er.ctxStack = append(er.ctxStack, function)
+	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 }
 
 func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
@@ -1095,11 +1143,13 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 			}
 			pos = intNum
 			er.ctxStack = er.ctxStack[:stkLen-1]
+			er.ctxNameStk = er.ctxNameStk[:stkLen-1]
 		}
 		er.err = err
 	}
 	if er.err == nil && pos > 0 && pos <= er.schema.Len() {
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[pos-1])
+		er.ctxNameStk = append(er.ctxNameStk, er.names[pos-1])
 	} else {
 		er.err = ErrUnknownColumn.GenWithStackByArgs(str, clauseMsg[er.b.curClause])
 	}
@@ -1117,7 +1167,9 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	}
 	function := er.notToExpression(v.Not, op, &v.Type, er.ctxStack[stkLen-1])
 	er.ctxStack = er.ctxStack[:stkLen-1]
+	er.ctxNameStk = er.ctxNameStk[:stkLen-1]
 	er.ctxStack = append(er.ctxStack, function)
+	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 }
 
 // inToExpression converts in expression to a scalar function. The argument lLen means the length of in list.
@@ -1137,7 +1189,9 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	leftEt, leftIsNull := leftFt.EvalType(), leftFt.Tp == mysql.TypeNull
 	if leftIsNull {
 		er.ctxStack = er.ctxStack[:stkLen-lLen-1]
+		er.ctxNameStk = er.ctxNameStk[:stkLen-lLen-1]
 		er.ctxStack = append(er.ctxStack, expression.Null.Clone())
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 		return
 	}
 	if leftEt == types.ETInt {
@@ -1182,7 +1236,9 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		}
 	}
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
+	er.ctxNameStk = er.ctxNameStk[:stkLen-lLen-1]
 	er.ctxStack = append(er.ctxStack, function)
+	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 }
 
 func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
@@ -1233,7 +1289,9 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		return
 	}
 	er.ctxStack = er.ctxStack[:stkLen-argsLen]
+	er.ctxNameStk = er.ctxNameStk[:stkLen-argsLen]
 	er.ctxStack = append(er.ctxStack, function)
+	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 }
 
 func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
@@ -1275,7 +1333,9 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	}
 
 	er.ctxStack = er.ctxStack[:l-2]
+	er.ctxNameStk = er.ctxNameStk[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
+	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 }
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
@@ -1286,7 +1346,9 @@ func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
 	}
 	function := er.notToExpression(v.Not, ast.Regexp, &v.Type, er.ctxStack[l-2], er.ctxStack[l-1])
 	er.ctxStack = er.ctxStack[:l-2]
+	er.ctxNameStk = er.ctxNameStk[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
+	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 }
 
 func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
@@ -1297,12 +1359,14 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 		rows = append(rows, er.ctxStack[i])
 	}
 	er.ctxStack = er.ctxStack[:stkLen-length]
+	er.ctxNameStk = er.ctxNameStk[:stkLen-length]
 	function, err := er.newFunction(ast.RowFunc, rows[0].GetType(), rows...)
 	if err != nil {
 		er.err = err
 		return
 	}
 	er.ctxStack = append(er.ctxStack, function)
+	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 }
 
 func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
@@ -1343,7 +1407,9 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		}
 	}
 	er.ctxStack = er.ctxStack[:stkLen-3]
+	er.ctxNameStk = er.ctxNameStk[:stkLen-3]
 	er.ctxStack = append(er.ctxStack, function)
+	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 }
 
 // rewriteFuncCall handles a FuncCallExpr and generates a customized function.
@@ -1363,10 +1429,12 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		// if expr1 is a column and column has not null flag, then we can eliminate ifnull on
 		// this column.
 		if isColumn && mysql.HasNotNullFlag(col.RetType.Flag) {
+			name := er.ctxNameStk[stackLen-2]
 			newCol := col.Clone().(*expression.Column)
-			newCol.IsReferenced = true
 			er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
+			er.ctxNameStk = er.ctxNameStk[:stackLen-len(v.Args)]
 			er.ctxStack = append(er.ctxStack, newCol)
+			er.ctxNameStk = append(er.ctxNameStk, name)
 			return true
 		}
 
@@ -1399,7 +1467,9 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			return true
 		}
 		er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
+		er.ctxNameStk = er.ctxNameStk[:stackLen-len(v.Args)]
 		er.ctxStack = append(er.ctxStack, funcIf)
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 		return true
 	default:
 		return false
@@ -1420,31 +1490,38 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 
 	var function expression.Expression
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
+	er.ctxNameStk = er.ctxNameStk[:stackLen-len(v.Args)]
 	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
 		function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, &v.Type, args...)
 		c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType().Clone(), DeferredExpr: function}
 		er.ctxStack = append(er.ctxStack, c)
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 	} else {
 		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
 		er.ctxStack = append(er.ctxStack, function)
+		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 	}
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
-	column, err := er.schema.FindColumn(v)
+	idx, err := expression.FindFieldName(er.names, v)
 	if err != nil {
 		er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
 		return
 	}
-	if column != nil {
+	if idx >= 0 {
+		column := er.schema.Columns[idx]
 		er.ctxStack = append(er.ctxStack, column)
+		er.ctxNameStk = append(er.ctxNameStk, er.names[idx])
 		return
 	}
 	for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
-		outerSchema := er.b.outerSchemas[i]
-		column, err = outerSchema.FindColumn(v)
-		if column != nil {
+		outerSchema, outerName := er.b.outerSchemas[i], er.b.outerNames[i]
+		idx, err = expression.FindFieldName(outerName, v)
+		if idx >= 0 {
+			column := outerSchema.Columns[idx]
 			er.ctxStack = append(er.ctxStack, &expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)})
+			er.ctxNameStk = append(er.ctxNameStk, outerName[idx])
 			return
 		}
 		if err != nil {
@@ -1453,13 +1530,14 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		}
 	}
 	if join, ok := er.p.(*LogicalJoin); ok && join.redundantSchema != nil {
-		column, err := join.redundantSchema.FindColumn(v)
+		idx, err := expression.FindFieldName(join.redundantNames, v)
 		if err != nil {
 			er.err = err
 			return
 		}
-		if column != nil {
-			er.ctxStack = append(er.ctxStack, column)
+		if idx >= 0 {
+			er.ctxStack = append(er.ctxStack, join.redundantSchema.Columns[idx])
+			er.ctxNameStk = append(er.ctxNameStk, join.redundantNames[idx])
 			return
 		}
 	}
@@ -1475,43 +1553,45 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 
 func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	stkLen := len(er.ctxStack)
-	var colExpr *expression.Column
-	switch c := er.ctxStack[stkLen-1].(type) {
+	name := er.ctxNameStk[stkLen-1]
+	switch er.ctxStack[stkLen-1].(type) {
 	case *expression.Column:
-		colExpr = c
 	case *expression.CorrelatedColumn:
-		colExpr = &c.Column
 	default:
-		colExpr, er.err = er.schema.FindColumn(v.Name)
+		idx, err := expression.FindFieldName(er.names, v.Name)
+		if err != nil {
+			er.err = err
+			return
+		}
 		if er.err != nil {
 			return
 		}
-		if colExpr == nil {
+		if idx < 0 {
 			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), "field_list")
 			return
 		}
 	}
-	dbName := colExpr.DBName
+	dbName := name.DBName
 	if dbName.O == "" {
 		// if database name is not specified, use current database name
 		dbName = model.NewCIStr(er.sctx.GetSessionVars().CurrentDB)
 	}
-	if colExpr.OrigTblName.O == "" {
+	if name.OrigTblName.O == "" {
 		// column is evaluated by some expressions, for example:
 		// `select default(c) from (select (a+1) as c from t) as t0`
 		// in such case, a 'no default' error is returned
-		er.err = table.ErrNoDefaultValue.GenWithStackByArgs(colExpr.ColName)
+		er.err = table.ErrNoDefaultValue.GenWithStackByArgs(name.ColName)
 		return
 	}
 	var tbl table.Table
-	tbl, er.err = er.b.is.TableByName(dbName, colExpr.OrigTblName)
+	tbl, er.err = er.b.is.TableByName(dbName, name.OrigTblName)
 	if er.err != nil {
 		return
 	}
-	colName := colExpr.OrigColName.O
+	colName := name.OrigColName.O
 	if colName == "" {
 		// in some cases, OrigColName is empty, use ColName instead
-		colName = colExpr.ColName.O
+		colName = name.ColName.O
 	}
 	col := table.FindCol(tbl.Cols(), colName)
 	if col == nil {
@@ -1543,7 +1623,9 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		return
 	}
 	er.ctxStack = er.ctxStack[:stkLen-1]
+	er.ctxNameStk = er.ctxNameStk[:stkLen-1]
 	er.ctxStack = append(er.ctxStack, val)
+	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
 }
 
 // hasCurrentDatetimeDefault checks if column has current_timestamp default value

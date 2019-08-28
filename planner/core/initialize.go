@@ -267,7 +267,7 @@ func (p Insert) Init(ctx sessionctx.Context) *Insert {
 
 // Init initializes Show.
 func (p Show) Init(ctx sessionctx.Context) *Show {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeShow, &p)
+	p.basePlan = newBasePlan(ctx, TypeShow)
 	// Just use pseudo stats to avoid panic.
 	p.stats = &property.StatsInfo{RowCount: 1}
 	return &p

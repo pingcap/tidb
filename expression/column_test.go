@@ -128,13 +128,13 @@ func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
 	defer testleak.AfterTest(c)()
 
-	col0, col1 := &Column{ColName: model.NewCIStr("col0")}, &Column{ColName: model.NewCIStr("col1")}
+	col0, col1 := &Column{ID: 0}, &Column{ID: 1}
 	cols := []*Column{col0, col1}
-	colInfo := &model.ColumnInfo{Name: model.NewCIStr("col1")}
+	colInfo := &model.ColumnInfo{ID: 0}
 	res := ColInfo2Col(cols, colInfo)
 	c.Assert(res.Equal(nil, col1), IsTrue)
 
-	colInfo.Name = model.NewCIStr("col2")
+	colInfo.ID = 3
 	res = ColInfo2Col(cols, colInfo)
 	c.Assert(res, IsNil)
 }
@@ -142,13 +142,16 @@ func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
 func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 	defer testleak.AfterTest(c)()
 
-	col0 := &Column{ColName: model.NewCIStr("col0"), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	col1 := &Column{ColName: model.NewCIStr("col1"), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col0 := &Column{ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col1 := &Column{ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("col0")}
+	colInfo1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("col1")}
+	colInfos := []*model.ColumnInfo{colInfo0, colInfo1}
 	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("col0")}, &model.IndexColumn{Name: model.NewCIStr("col1")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 
 	cols := []*Column{col0}
-	resCols, lengths := IndexInfo2PrefixCols(cols, indexInfo)
+	resCols, lengths := IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	c.Assert(len(resCols), Equals, 1)
 	c.Assert(len(lengths), Equals, 1)
 	c.Assert(resCols[0].Equal(nil, col0), IsTrue)

@@ -19,7 +19,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -68,27 +67,22 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 	defer testleak.AfterTest(c)()
 	totalSchema := expression.NewSchema()
 	totalSchema.Append(&expression.Column{
-		ColName:  model.NewCIStr("col1"),
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	totalSchema.Append(&expression.Column{
-		ColName:  model.NewCIStr("col2"),
 		UniqueID: 2,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	totalSchema.Append(&expression.Column{
-		ColName:  model.NewCIStr("col3"),
 		UniqueID: 3,
 		RetType:  s.newTypeWithFlen(mysql.TypeVarchar, 10),
 	})
 	totalSchema.Append(&expression.Column{
-		ColName:  model.NewCIStr("col4"),
 		UniqueID: 4,
 		RetType:  s.newTypeWithFlen(mysql.TypeVarchar, 10),
 	})
 	totalSchema.Append(&expression.Column{
-		ColName:  model.NewCIStr("col5"),
 		UniqueID: 5,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})

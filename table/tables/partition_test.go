@@ -265,8 +265,7 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 		PartitionExpr() *tables.PartitionExpr
 	}
 	pe := tbl.(partitionExpr).PartitionExpr()
-	c.Assert(pe.Column.TblName.L, Equals, "t1")
-	c.Assert(pe.Column.ColName.L, Equals, "id")
+	c.Assert(pe.Column.ID, Equals, 0)
 
 	ranges := []string{
 		"or(lt(t1.id, 4), isnull(t1.id))",

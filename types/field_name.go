@@ -26,11 +26,18 @@ type FieldName struct {
 	DBName      model.CIStr
 	TblName     model.CIStr
 	ColName     model.CIStr
+
+	Hidden bool
 }
+
+const emptyName = "EMPTY_NAME"
 
 // String implements Stringer interface.
 func (name *FieldName) String() string {
 	builder := strings.Builder{}
+	if name.Hidden {
+		return emptyName
+	}
 	if name.TblName.L != "" {
 		builder.WriteString(name.TblName.L + ".")
 	}
@@ -40,3 +47,13 @@ func (name *FieldName) String() string {
 	builder.WriteString(name.ColName.L)
 	return builder.String()
 }
+
+type NameSlice []*FieldName
+
+func (s NameSlice) Shallow() NameSlice {
+	ret := make(NameSlice, len(s))
+	copy(ret, s)
+	return ret
+}
+
+var EmptyName = &FieldName{Hidden: true}

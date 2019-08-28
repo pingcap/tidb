@@ -265,11 +265,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			return nil
 		}
 	}
-	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+	p, names, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return err
 	}
-	e.names = p.OutputNames()
+	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
@@ -349,7 +349,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
-	idxCols, colLengths := expression.IndexInfo2PrefixCols(is.schema.Columns, is.Index)
+	idxCols, colLengths := expression.IndexInfo2PrefixCols(is.Columns, is.schema.Columns, is.Index)
 	if len(idxCols) == 0 {
 		return ranger.FullRange(), nil
 	}
@@ -383,6 +383,16 @@ type Show struct {
 	IfNotExists bool // Used for `show create database if not exists`
 
 	GlobalScope bool // Used by show variables
+
+	names types.NameSlice
+}
+
+func (p *Show) OutputNames() types.NameSlice {
+	return p.names
+}
+
+func (p *Show) SetOutputNames(names types.NameSlice) {
+	p.names = names
 }
 
 // Set represents a plan for set stmt.
@@ -434,14 +444,16 @@ type InsertGeneratedColumns struct {
 type Insert struct {
 	baseSchemaProducer
 
-	Table       table.Table
-	tableSchema *expression.Schema
-	Columns     []*ast.ColumnName
-	Lists       [][]expression.Expression
-	SetList     []*expression.Assignment
+	Table         table.Table
+	tableSchema   *expression.Schema
+	tableColNames []*types.FieldName
+	Columns       []*ast.ColumnName
+	Lists         [][]expression.Expression
+	SetList       []*expression.Assignment
 
 	OnDuplicate        []*expression.Assignment
 	Schema4OnDuplicate *expression.Schema
+	names4OnDuplicate  types.NameSlice
 
 	IsReplace bool
 
@@ -584,18 +596,26 @@ func (e *Explain) prepareSchema() error {
 		if e.Analyze {
 			retFields = append(retFields, "execution info", "memory")
 		}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		cwn := &columnsWithNames{
+			cols:  make([]*expression.Column, 0, len(retFields)),
+			names: make([]*types.FieldName, 0, len(retFields)),
 		}
-		e.SetSchema(schema)
+		for _, fieldName := range retFields {
+			cwn.Append(buildColumnWithName("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		}
+		e.SetSchema(cwn.col2Schema())
+		e.names = cwn.names
 	case ast.ExplainFormatDOT:
 		retFields := []string{"dot contents"}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		cwn := &columnsWithNames{
+			cols:  make([]*expression.Column, 0, len(retFields)),
+			names: make([]*types.FieldName, 0, len(retFields)),
 		}
-		e.SetSchema(schema)
+		for _, fieldName := range retFields {
+			cwn.Append(buildColumnWithName("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		}
+		e.SetSchema(cwn.col2Schema())
+		e.names = cwn.names
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}

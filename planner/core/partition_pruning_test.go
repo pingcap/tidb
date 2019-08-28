@@ -45,17 +45,17 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 	// SELECT * FROM t1 WHERE recdate > '2018-03-08 00:00:00';
 
 	ctx := mock.NewContext()
-	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Columns)
+	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Columns)
 	schema := expression.NewSchema(columns...)
-	partitionExpr, err := expression.ParseSimpleExprsWithSchema(ctx, "to_days(d) < to_days('2007-03-08') and to_days(d) >= to_days('2007-03-07')", schema)
+	partitionExpr, err := expression.ParseSimpleExprsWithNames(ctx, "to_days(d) < to_days('2007-03-08') and to_days(d) >= to_days('2007-03-07')", schema, names)
 	c.Assert(err, IsNil)
-	queryExpr, err := expression.ParseSimpleExprsWithSchema(ctx, "d < '2000-03-08 00:00:00'", schema)
+	queryExpr, err := expression.ParseSimpleExprsWithNames(ctx, "d < '2000-03-08 00:00:00'", schema, names)
 	c.Assert(err, IsNil)
 	succ, err := s.canBePruned(ctx, nil, partitionExpr[0], queryExpr)
 	c.Assert(err, IsNil)
 	c.Assert(succ, IsTrue)
 
-	queryExpr, err = expression.ParseSimpleExprsWithSchema(ctx, "d > '2018-03-08 00:00:00'", schema)
+	queryExpr, err = expression.ParseSimpleExprsWithNames(ctx, "d > '2018-03-08 00:00:00'", schema, names)
 	c.Assert(err, IsNil)
 	succ, err = s.canBePruned(ctx, nil, partitionExpr[0], queryExpr)
 	c.Assert(err, IsNil)

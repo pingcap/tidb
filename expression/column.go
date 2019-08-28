@@ -199,10 +199,6 @@ type Column struct {
 
 	hashcode []byte
 
-	// IsReferenced means if this column is referenced to an Aggregation column, or a Subquery column,
-	// or an argument column of function IfNull.
-	// If so, this column's name will be the plain sql text.
-	IsReferenced bool
 	// InOperand indicates whether this column is the inner operand of column equal condition converted
 	// from `[not] in (subq)`.
 	InOperand bool
@@ -290,16 +286,13 @@ func (col *Column) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 	return nil
 }
 
+const columnPrefix = "Column#"
+
 // String implements Stringer interface.
 func (col *Column) String() string {
-	result := col.ColName.L
-	if col.TblName.L != "" {
-		result = col.TblName.L + "." + result
-	}
-	if col.DBName.L != "" {
-		result = col.DBName.L + "." + result
-	}
-	return result
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
+	return builder.String()
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -464,7 +457,7 @@ func Column2Exprs(cols []*Column) []Expression {
 // ColInfo2Col finds the corresponding column of the ColumnInfo in a column slice.
 func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 	for _, c := range cols {
-		if c.ColName.L == col.Name.L {
+		if c.ID == col.ID {
 			return c
 		}
 	}
@@ -472,10 +465,10 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 }
 
 // indexCol2Col finds the corresponding column of the IndexColumn in a column slice.
-func indexCol2Col(cols []*Column, col *model.IndexColumn) *Column {
-	for _, c := range cols {
-		if c.ColName.L == col.Name.L {
-			return c
+func indexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
+	for i, info := range colInfos {
+		if info.Name.L == col.Name.L {
+			return cols[i]
 		}
 	}
 	return nil
@@ -486,11 +479,11 @@ func indexCol2Col(cols []*Column, col *model.IndexColumn) *Column {
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
 // the return value will be only the 1st corresponding *Column and its length.
 // TODO: Use a struct to represent {*Column, int}. And merge IndexInfo2PrefixCols and IndexInfo2Cols.
-func IndexInfo2PrefixCols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 	retCols := make([]*Column, 0, len(index.Columns))
 	lengths := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := indexCol2Col(cols, c)
+		col := indexCol2Col(colInfos, cols, c)
 		if col == nil {
 			return retCols, lengths
 		}
@@ -508,11 +501,11 @@ func IndexInfo2PrefixCols(cols []*Column, index *model.IndexInfo) ([]*Column, []
 // together with a []int containing their lengths.
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
 // the return value will be [col1, nil, col2].
-func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 	retCols := make([]*Column, 0, len(index.Columns))
 	lens := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := indexCol2Col(cols, c)
+		col := indexCol2Col(colInfos, cols, c)
 		if col == nil {
 			retCols = append(retCols, col)
 			lens = append(lens, types.UnspecifiedLength)
