@@ -60,6 +60,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
 	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogPrevStmt, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 }
 
@@ -87,6 +88,7 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, error) {
 	var rows [][]types.Datum
 	startFlag := false
+	prevStmtPrefix := variable.SlowLogPrevStmt + variable.SlowLogSpaceMarkStr
 	var st *slowQueryTuple
 	for {
 		lineByte, err := getOneLine(reader)
@@ -112,15 +114,19 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 			// Parse slow log field.
 			if strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 				line = line[len(variable.SlowLogRowPrefixStr):]
-				fieldValues := strings.Split(line, " ")
-				for i := 0; i < len(fieldValues)-1; i += 2 {
-					field := fieldValues[i]
-					if strings.HasSuffix(field, ":") {
-						field = field[:len(field)-1]
-					}
-					err = st.setFieldValue(tz, field, fieldValues[i+1])
-					if err != nil {
-						return rows, err
+				if strings.HasPrefix(line, prevStmtPrefix) {
+					st.prevStmt = line[len(prevStmtPrefix):]
+				} else {
+					fieldValues := strings.Split(line, " ")
+					for i := 0; i < len(fieldValues)-1; i += 2 {
+						field := fieldValues[i]
+						if strings.HasSuffix(field, ":") {
+							field = field[:len(field)-1]
+						}
+						err = st.setFieldValue(tz, field, fieldValues[i+1])
+						if err != nil {
+							return rows, err
+						}
 					}
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
@@ -195,6 +201,7 @@ type slowQueryTuple struct {
 	maxWaitTime       float64
 	maxWaitAddress    string
 	memMax            int64
+	prevStmt          string
 	sql               string
 	isInternal        bool
 	succ              bool
@@ -313,6 +320,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	} else {
 		record = append(record, types.NewIntDatum(0))
 	}
+	record = append(record, types.NewStringDatum(st.prevStmt))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
 }
