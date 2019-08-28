@@ -86,8 +86,6 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
 
 	var (
-		// last is the last element in top N index should occurres atleast `last` times.
-		last      uint64
 		sumTopN   uint64
 		sampleNDV = uint32(len(sorted))
 	)
@@ -98,13 +96,12 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 	// error is relatively small compared with 1/2.
 	var actualNumTop uint32
 	for ; actualNumTop < sampleNDV && actualNumTop < numTop*2; actualNumTop++ {
-		if actualNumTop >= numTop && sorted[actualNumTop].cnt*3 < sorted[numTop-1].cnt*2 && last != sorted[actualNumTop].cnt {
+		if actualNumTop >= numTop && sorted[actualNumTop].cnt*3 < sorted[numTop-1].cnt*2 {
 			break
 		}
 		if sorted[actualNumTop].cnt == 1 {
 			break
 		}
-		last = sorted[actualNumTop].cnt
 		sumTopN += sorted[actualNumTop].cnt
 	}
 
