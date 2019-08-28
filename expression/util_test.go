@@ -195,6 +195,14 @@ func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
 	con.DeferredExpr = &Constant{Value: types.NewIntDatum(1)}
 	num, _, _ = GetUint64FromConstant(con)
 	c.Assert(num, check.Equals, uint64(1))
+
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{
+		types.NewUintDatum(100),
+	}
+	con.ParamMarker = &ParamMarker{order: 0, ctx: ctx}
+	num, _, _ = GetUint64FromConstant(con)
+	c.Assert(num, check.Equals, uint64(100))
 }
 
 func (s *testUtilSuite) TestSetExprColumnInOperand(c *check.C) {
@@ -462,3 +470,4 @@ func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
 func (m *MockExpr) ExplainInfo() string                               { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
+func (m *MockExpr) Vectorized() bool                                  { return false }
