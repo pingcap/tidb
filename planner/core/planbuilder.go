@@ -1804,7 +1804,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 			if col.IsGenerated() {
 				// but there is one exception: it is allowed to insert the `default` value into a generated column
 				if generatedColumnWithDefaultExpr {
-					break
+					continue
 				}
 				return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 			}

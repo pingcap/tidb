@@ -116,9 +116,6 @@ func (e *InsertValues) initInsertColumns() error {
 		for _, v := range e.Columns {
 			columns = append(columns, v.Name.O)
 		}
-		for _, v := range e.GenColumns {
-			columns = append(columns, v.Name.O)
-		}
 		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if err != nil {
 			return errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
@@ -135,6 +132,10 @@ func (e *InsertValues) initInsertColumns() error {
 			e.hasExtraHandle = true
 			break
 		}
+		if col.IsGenerated() {
+			continue
+		}
+		e.insertColumns = append(e.insertColumns, col)
 	}
 
 	// Check column whether is specified only once.
@@ -142,7 +143,6 @@ func (e *InsertValues) initInsertColumns() error {
 	if err != nil {
 		return err
 	}
-	e.insertColumns = cols
 	return nil
 }
 
