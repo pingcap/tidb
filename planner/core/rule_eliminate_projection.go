@@ -19,8 +19,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-// canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
-// returns true if every expression is a single column.
 func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 	for _, expr := range p.Exprs {
 		_, ok := expr.(*expression.Column)
@@ -31,6 +29,7 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 	return true
 }
 
+//
 // canProjectionBeEliminatedStrict checks whether a projection can be
 // eliminated, returns true if the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
@@ -137,6 +136,15 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		}
 	}
 	p.replaceExprColumns(replace)
+	if len(p.Children()) > 0 {
+		if child, ok := p.Children()[0].(*LogicalProjection); isProj && ok && canProjectionBeEliminatedLoose(child) {
+			for _, expr := range proj.Exprs {
+				expr = replaceColumnOfExpr(expr, replace)
+			}
+			p.Children()[0] = p.Children()[0].Children()[0]
+			return p
+		}
+	}
 
 	if !(isProj && canEliminate && canProjectionBeEliminatedLoose(proj)) {
 		return p
@@ -146,6 +154,18 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		replace[string(col.HashCode(nil))] = exprs[i].(*expression.Column)
 	}
 	return p.Children()[0]
+}
+
+func replaceColumnOfExpr(expr expression.Expression, replace map[string]*expression.Column) expression.Expression {
+	switch v := expr.(type) {
+	case *expression.Column:
+		return replace[string(v.HashCode(nil))]
+	case *expression.ScalarFunction:
+		for i := range v.GetArgs() {
+			v.GetArgs()[i] = replaceColumnOfExpr(v.GetArgs()[i], replace)
+		}
+	}
+	return expr
 }
 
 func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) {
