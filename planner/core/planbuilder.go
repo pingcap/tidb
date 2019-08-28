@@ -1755,12 +1755,6 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 		if len(insert.Lists[0]) != len(affectedValuesCols) {
 			return ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 		}
-		// No generated column is allowed.
-		for _, col := range affectedValuesCols {
-			if col.IsGenerated() {
-				return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
-			}
-		}
 	}
 
 	insertPlan.AllAssignmentsAreConstant = true
@@ -1778,8 +1772,14 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 		for j, valueItem := range valuesItem {
 			var expr expression.Expression
 			var err error
+			var generatedColumnWithDefaultExpr bool
+			col := affectedValuesCols[j]
 			switch x := valueItem.(type) {
 			case *ast.DefaultExpr:
+				if col.IsGenerated() {
+					generatedColumnWithDefaultExpr = true
+					break
+				}
 				if x.Name != nil {
 					expr, err = b.findDefaultValue(totalTableCols, x.Name)
 				} else {
@@ -1799,6 +1799,14 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 			if insertPlan.AllAssignmentsAreConstant {
 				_, isConstant := expr.(*expression.Constant)
 				insertPlan.AllAssignmentsAreConstant = isConstant
+			}
+			// insert value into a generated column is not allowed
+			if col.IsGenerated() {
+				// but there is one exception: it is allowed to insert the `default` value into a generated column
+				if generatedColumnWithDefaultExpr {
+					break
+				}
+				return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 			}
 			exprList = append(exprList, expr)
 		}
