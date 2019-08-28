@@ -485,6 +485,7 @@ func indexCol2Col(cols []*Column, col *model.IndexColumn) *Column {
 // together with a []int containing their lengths.
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
 // the return value will be only the 1st corresponding *Column and its length.
+// TODO: Use a struct to represent {*Column, int}. And merge IndexInfo2PrefixCols and IndexInfo2Cols.
 func IndexInfo2PrefixCols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 	retCols := make([]*Column, 0, len(index.Columns))
 	lengths := make([]int, 0, len(index.Columns))
