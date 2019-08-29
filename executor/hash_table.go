@@ -14,8 +14,135 @@
 package executor
 
 import (
+	"hash"
+	"hash/fnv"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/memory"
 )
+
+// hashRowContainer handles the rows and the hash map of a table.
+type hashRowContainer struct {
+	records   *chunk.List
+	hashTable *rowHashMap
+
+	sc        *stmtctx.StatementContext
+	allTypes  []*types.FieldType
+	keyColIdx []int
+	h         hash.Hash64
+	buf       [1]byte
+}
+
+func newHashRowContainer(
+	sc *stmtctx.StatementContext,
+	allTypes []*types.FieldType, keyColIdx []int, initCap, maxChunkSize int) *hashRowContainer {
+
+	c := &hashRowContainer{
+		hashTable: newRowHashMap(),
+		sc:        sc,
+		allTypes:  allTypes,
+		keyColIdx: keyColIdx,
+		h:         fnv.New64(),
+	}
+	c.records = chunk.NewList(allTypes, initCap, maxChunkSize)
+	return c
+}
+
+func (c *hashRowContainer) GetMemTracker() *memory.Tracker {
+	return c.records.GetMemTracker()
+}
+
+// GetMatchedRows get matched rows from probeRow. It can be called
+// in multiple goroutines while each goroutine should keep its own
+// h and buf.
+func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, joinKeysTypes []*types.FieldType, keyColIdx []int, h hash.Hash64, buf []byte) (matched []chunk.Row, hasNull bool, err error) {
+
+	var key uint64
+	hasNull, key, err = c.getJoinKeyFromChkRow(c.sc, probeRow, joinKeysTypes, keyColIdx, h, buf)
+	if err != nil {
+		return
+	}
+	if hasNull {
+		return
+	}
+	innerPtrs := c.hashTable.Get(key)
+	if len(innerPtrs) == 0 {
+		hasNull = true
+		return
+	}
+	matched = make([]chunk.Row, 0, len(innerPtrs))
+	for _, ptr := range innerPtrs {
+		matchedRow := c.records.GetRow(ptr)
+		var ok bool
+		ok, err = c.matchJoinKey(matchedRow, probeRow, joinKeysTypes, keyColIdx)
+		if err != nil {
+			return
+		}
+		if !ok {
+			continue
+		}
+		matched = append(matched, matchedRow)
+	}
+	if len(matched) == 0 { // TODO(fengliyuan): add test case
+		hasNull = true
+	}
+	return
+}
+
+// matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
+func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeAllTypes []*types.FieldType, probeColIdx []int) (ok bool, err error) {
+	return codec.EqualChunkRow(c.sc,
+		buildRow, c.allTypes, c.keyColIdx,
+		probeRow, probeAllTypes, probeColIdx)
+}
+
+// PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
+// key of hash table: hash value of key columns
+// value of hash table: RowPtr of the corresponded row
+func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
+	chkIdx := uint32(c.records.NumChunks())
+	c.records.Add(chk)
+	var (
+		hasNull bool
+		err     error
+		key     uint64
+	)
+	numRows := chk.NumRows()
+	for j := 0; j < numRows; j++ {
+		hasNull, key, err = c.getJoinKeyFromChkRow(c.sc, chk.GetRow(j), c.allTypes, c.keyColIdx, c.h, c.buf[:])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if hasNull {
+			continue
+		}
+		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(j)}
+		c.hashTable.Put(key, rowPtr)
+	}
+	return nil
+}
+
+// getJoinKeyFromChkRow fetches join keys from row and calculate the hash value.
+func (*hashRowContainer) getJoinKeyFromChkRow(
+	sc *stmtctx.StatementContext,
+	row chunk.Row, allTypes []*types.FieldType, keyColIdx []int, h hash.Hash64, buf []byte) (hasNull bool, key uint64, err error) {
+	for _, i := range keyColIdx {
+		if row.IsNull(i) {
+			return true, 0, nil
+		}
+	}
+	h.Reset()
+	err = codec.HashChunkRow(sc, h, row, allTypes, keyColIdx, buf)
+	return false, h.Sum64(), err
+}
+
+func (c hashRowContainer) Len() int {
+	return c.hashTable.Len()
+}
 
 const maxEntrySliceLen = 8 * 1024
 
