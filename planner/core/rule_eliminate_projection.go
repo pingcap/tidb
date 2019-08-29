@@ -14,7 +14,6 @@
 package core
 
 import (
-	"bytes"
 	"context"
 
 	"github.com/pingcap/tidb/expression"
@@ -161,7 +160,7 @@ func replaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection) ex
 	switch v := expr.(type) {
 	case *expression.Column:
 		for i := range proj.Schema().Columns {
-			if bytes.Equal(proj.Schema().Columns[i].HashCode(nil), v.HashCode(nil)) {
+			if proj.Schema().Columns[i].Equal(proj.SCtx(), v) {
 				return proj.Exprs[i]
 			}
 		}
