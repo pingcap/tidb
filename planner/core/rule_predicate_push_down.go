@@ -547,17 +547,9 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	partitionCols := expression.NewSchema(p.getPartitionByCols()...)
 	for _, cond := range predicates {
-		canPush := true
-		extractedCols := expression.ExtractColumns(cond)
 		// We can push predicate beneath Window, only if all of the
 		// extractedCols are part of partitionBy columns.
-		for _, col := range extractedCols {
-			if !partitionCols.Contains(col) {
-				canPush = false
-				break
-			}
-		}
-		if canPush {
+		if expression.ExprFromSchema(cond, partitionCols) {
 			canBePushed = append(canBePushed, cond)
 		} else {
 			canNotBePushed = append(canNotBePushed, cond)
