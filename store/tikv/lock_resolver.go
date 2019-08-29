@@ -99,13 +99,13 @@ func (s TxnStatus) CommitTS() uint64 { return uint64(s) }
 // By default, locks after 3000ms is considered unusual (the client created the
 // lock might be dead). Other client may cleanup this kind of lock.
 // For locks created recently, we will do backoff and retry.
-var defaultLockTTL uint64 = 3000
+var defaultLockTTL uint64 = 100
 
 // TODO: Consider if it's appropriate.
-var maxLockTTL uint64 = 120000
+var maxLockTTL uint64 = 6000
 
 // ttl = ttlFactor * sqrt(writeSizeInMiB)
-var ttlFactor = 6000
+var ttlFactor = 600
 
 // Lock represents a lock from tikv server.
 type Lock struct {
