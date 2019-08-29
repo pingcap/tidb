@@ -1240,7 +1240,7 @@ func buildTableRegionsSchema() *expression.Schema {
 	schema.Append(buildColumn("", "SCATTERING", mysql.TypeTiny, 1))
 	schema.Append(buildColumn("", "WRITTEN_BYTES", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "READ_BYTES", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn("", "APPROXIMATE_SIZE", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "APPROXIMATE_SIZE(MB)", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "APPROXIMATE_KEYS", mysql.TypeLonglong, 4))
 	return schema
 }
