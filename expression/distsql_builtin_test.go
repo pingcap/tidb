@@ -956,6 +956,46 @@ func newJSONFieldType() *types.FieldType {
 	}
 }
 
+func newFloatFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeFloat,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newBinaryLiteralFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeBit,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newBlobFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeBlob,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newEnumFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeEnum,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
 func scalarFunctionExpr(sigCode tipb.ScalarFuncSig, retType *tipb.FieldType, args ...*tipb.Expr) *tipb.Expr {
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,

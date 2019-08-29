@@ -160,7 +160,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 
 // ConstItem implements Expression interface.
 func (col *CorrelatedColumn) ConstItem() bool {
-	return true
+	return false
 }
 
 // Decorrelate implements Expression interface.
@@ -445,6 +445,11 @@ func (col *Column) resolveIndices(schema *Schema) error {
 		return errors.Errorf("Can't find column %s in schema %s", col, schema)
 	}
 	return nil
+}
+
+// Vectorized returns if this expression supports vectorized evaluation.
+func (col *Column) Vectorized() bool {
+	return true
 }
 
 // Column2Exprs will transfer column slice to expression slice.

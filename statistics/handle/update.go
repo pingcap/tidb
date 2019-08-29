@@ -355,7 +355,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
-	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	return errors.Trace(err)
 }
 
@@ -483,7 +483,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	sql := "select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index"
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	if len(rows) == 0 || err != nil {
 		return errors.Trace(err)
 	}
@@ -651,7 +651,7 @@ const (
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
 		variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -749,7 +749,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 
 func (h *Handle) execAutoAnalyze(sql string) {
 	startTime := time.Now()
-	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {

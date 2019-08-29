@@ -54,6 +54,8 @@ type InsertValues struct {
 
 	insertColumns []*table.Column
 
+	allAssignmentsAreConstant bool
+
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
 	colDefaultVals  []defaultVal
@@ -199,10 +201,16 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
 
+	evalRowFunc := e.fastEvalRow
+	if !e.allAssignmentsAreConstant {
+		evalRowFunc = e.evalRow
+	}
+
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	for i, list := range e.Lists {
 		e.rowCount++
-		row, err := e.evalRow(ctx, list, i)
+		var row []types.Datum
+		row, err = evalRowFunc(ctx, list, i)
 		if err != nil {
 			return err
 		}
@@ -275,6 +283,31 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		e.evalBuffer.SetDatum(offset, val1)
 	}
 
+	return e.fillRow(ctx, row, hasValue)
+}
+
+var emptyRow chunk.Row
+
+func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expression, rowIdx int) ([]types.Datum, error) {
+	rowLen := len(e.Table.Cols())
+	if e.hasExtraHandle {
+		rowLen++
+	}
+	row := make([]types.Datum, rowLen)
+	hasValue := make([]bool, rowLen)
+	for i, expr := range list {
+		con := expr.(*expression.Constant)
+		val, err := con.Eval(emptyRow)
+		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
+			return nil, err
+		}
+		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo())
+		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
+			return nil, err
+		}
+		offset := e.insertColumns[i].Offset
+		row[offset], hasValue[offset] = val1, true
+	}
 	return e.fillRow(ctx, row, hasValue)
 }
 
