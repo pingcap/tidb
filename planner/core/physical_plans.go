@@ -413,10 +413,8 @@ type PhysicalTableDual struct {
 	physicalSchemaProducer
 
 	RowCount int
-	// placeHolder indicates if this dual plan is a place holder in query optimization
-	// for data sources like `Show`, if true, the dual plan would be substituted by
-	// `Show` in the final plan.
-	placeHolder bool
+
+	SourcePlan Plan
 
 	// names is used for OutputNames() method. Dual may be inited when building point get plan.
 	// So it needs to hold names for itself.

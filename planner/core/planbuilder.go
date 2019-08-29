@@ -1397,7 +1397,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
-	mockTablePlan := LogicalTableDual{placeHolder: true}.Init(b.ctx)
+	mockTablePlan := LogicalTableDual{sourcePlan: p}.Init(b.ctx)
 	mockTablePlan.SetSchema(p.schema)
 	mockTablePlan.names = names
 	var err error
@@ -1431,24 +1431,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		}
 		proj.SetSchema(schema)
 		proj.SetChildren(np)
-		physical, err := DoOptimize(ctx, b.optFlag|flagEliminateProjection, proj)
-		if err != nil {
-			return nil, err
-		}
-		return substitutePlaceHolderDual(physical, p), nil
+		return proj, nil
 	}
 	return p, nil
-}
-
-func substitutePlaceHolderDual(src PhysicalPlan, dst PhysicalPlan) PhysicalPlan {
-	if dual, ok := src.(*PhysicalTableDual); ok && dual.placeHolder {
-		return dst
-	}
-	for i, child := range src.Children() {
-		newChild := substitutePlaceHolderDual(child, dst)
-		src.SetChild(i, newChild)
-	}
-	return src
 }
 
 func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {

@@ -1182,10 +1182,15 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 		return nil
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
-	base.initCap = v.RowCount
 	e := &TableDualExec{
 		baseExecutor: base,
 		numDualRows:  v.RowCount,
+	}
+	if v.SourcePlan != nil {
+		sourceExec := b.build(v.SourcePlan)
+		e.sourceExec = sourceExec
+	} else {
+		base.initCap = v.RowCount
 	}
 	return e
 }

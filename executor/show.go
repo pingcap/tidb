@@ -24,6 +24,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
@@ -1146,6 +1147,7 @@ func (e *ShowExec) tableAccessDenied(access string, table string) error {
 }
 
 func (e *ShowExec) appendRow(row []interface{}) {
+	log.Warn("aaaa4")
 	for i, col := range row {
 		if col == nil {
 			e.result.AppendNull(i)
