@@ -447,7 +447,7 @@ type Insert struct {
 
 	Table         table.Table
 	tableSchema   *expression.Schema
-	tableColNames []*types.FieldName
+	tableColNames types.NameSlice
 	Columns       []*ast.ColumnName
 	Lists         [][]expression.Expression
 	SetList       []*expression.Assignment

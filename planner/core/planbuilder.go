@@ -1603,7 +1603,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
-	mockTablePlan.names = names
+	mockTablePlan.names = insertPlan.tableColNames
 
 	checkRefColumn := func(n ast.Node) ast.Node {
 		if insertPlan.NeedFillDefaultValue {
@@ -1637,6 +1637,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
+	mockTablePlan.names = insertPlan.names4OnDuplicate
 	columnByName := make(map[string]*table.Column, len(insertPlan.Table.Cols()))
 	for _, col := range insertPlan.Table.Cols() {
 		columnByName[col.Name.L] = col
@@ -1763,6 +1764,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 		})
 	}
 	insertPlan.Schema4OnDuplicate = insertPlan.tableSchema
+	insertPlan.names4OnDuplicate = insertPlan.tableColNames
 	return nil
 }
 
@@ -1829,6 +1831,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 		insertPlan.Lists = append(insertPlan.Lists, exprList)
 	}
 	insertPlan.Schema4OnDuplicate = insertPlan.tableSchema
+	insertPlan.names4OnDuplicate = insertPlan.tableColNames
 	return nil
 }
 
@@ -1860,6 +1863,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		}
 	}
 
+	names := selectPlan.OutputNames()
 	insertPlan.SelectPlan, err = DoOptimize(ctx, b.optFlag, selectPlan.(LogicalPlan))
 	if err != nil {
 		return err
@@ -1868,6 +1872,8 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	// schema4NewRow is the schema for the newly created data record based on
 	// the result of the select statement.
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
+	names4NewRow := make(types.NameSlice, len(insertPlan.Table.Cols()))
+	// TODO: don't clone it.
 	for i, selCol := range insertPlan.SelectPlan.Schema().Columns {
 		ordinal := affectedValuesCols[i].Offset
 		schema4NewRow.Columns[ordinal] = &expression.Column{}
@@ -1875,6 +1881,8 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 
 		schema4NewRow.Columns[ordinal].RetType = &types.FieldType{}
 		*schema4NewRow.Columns[ordinal].RetType = affectedValuesCols[i].FieldType
+
+		names4NewRow[ordinal] = names[i]
 	}
 	for i := range schema4NewRow.Columns {
 		if schema4NewRow.Columns[i] == nil {
@@ -1882,6 +1890,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		}
 	}
 	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, schema4NewRow)
+	insertPlan.names4OnDuplicate = append(insertPlan.tableColNames.Shallow(), names4NewRow...)
 	return nil
 }
 
