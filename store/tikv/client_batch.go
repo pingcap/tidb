@@ -463,14 +463,14 @@ func (a *batchConn) Close() {
 func removeCanceledRequests(entries []*batchCommandsEntry,
 	requests []*tikvpb.BatchCommandsRequest_Request) ([]*batchCommandsEntry, []*tikvpb.BatchCommandsRequest_Request) {
 	validEntries := entries[:0]
-	validRequets := requests[:0]
+	validRequests := requests[:0]
 	for _, e := range entries {
 		if !e.isCanceled() {
 			validEntries = append(validEntries, e)
-			validRequets = append(validRequets, e.req)
+			validRequests = append(validRequests, e.req)
 		}
 	}
-	return validEntries, validRequets
+	return validEntries, validRequests
 }
 
 func sendBatchRequest(

@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -211,6 +212,7 @@ type ExecuteExec struct {
 	plan          plannercore.Plan
 	id            uint32
 	lowerPriority bool
+	outputNames   []*types.FieldName
 }
 
 // Next implements the Executor Next interface.
@@ -268,6 +270,10 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID uint32, args []types.Datum) (sqlexec.Statement, error) {
+	startTime := time.Now()
+	defer func() {
+		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
+	}()
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
 		return nil, err
@@ -280,10 +286,11 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID
 	}
 
 	stmt := &ExecStmt{
-		InfoSchema: is,
-		Plan:       execPlan,
-		StmtNode:   execStmt,
-		Ctx:        sctx,
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    execStmt,
+		Ctx:         sctx,
+		outputNames: execPlan.OutputNames(),
 	}
 	if prepared, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		stmt.Text = prepared.Stmt.Text()
