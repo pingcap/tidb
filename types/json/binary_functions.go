@@ -66,19 +66,21 @@ func (bj BinaryJSON) Unquote() (string, error) {
 	switch bj.TypeCode {
 	case TypeCodeString:
 		tmp := string(hack.String(bj.GetString()))
-		s, err := unquoteString(tmp)
-		if err != nil {
-			return "", errors.Trace(err)
+		tlen := len(tmp)
+		if tlen < 2 {
+			return tmp, nil
 		}
-		// Remove prefix and suffix '"'.
-		slen := len(s)
-		if slen > 1 {
-			head, tail := s[0], s[slen-1]
-			if head == '"' && tail == '"' {
-				return s[1 : slen-1], nil
+		head, tail := tmp[0], tmp[tlen-1]
+		if head == '"' && tail == '"' {
+			// Remove prefix and suffix '"'.
+			s, err := unquoteString(tmp[1 : tlen-1])
+			if err != nil {
+				return s, errors.Trace(err)
 			}
+			return s, nil
 		}
-		return s, nil
+		// if value is not double quoted, do nothing
+		return tmp, nil
 	default:
 		return bj.String(), nil
 	}
