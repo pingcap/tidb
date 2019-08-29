@@ -211,7 +211,7 @@ func (e *ShowExec) fetchShowBind() error {
 
 func (e *ShowExec) fetchShowEngines() error {
 	sql := `SELECT * FROM information_schema.engines`
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -342,7 +342,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -963,7 +963,7 @@ func (e *ShowExec) fetchShowCreateUser() error {
 
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`,
 		mysql.SystemDB, mysql.UserTable, userName, hostName)
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}

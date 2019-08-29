@@ -743,7 +743,7 @@ func (s *session) sysSessionPool() sessionPool {
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx := context.TODO()
 
 	// Use special session to execute the sql.
@@ -762,7 +762,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chun
 // This is used for executing some restricted sql statements with snapshot.
 // If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
 // Otherwise, execute with the current transaction start timestamp if the transaction is valid.
-func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx := context.TODO()
 
 	// Use special session to execute the sql.
@@ -887,7 +887,7 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]c
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error) {
-	rows, fields, err := s.ExecRestrictedSQL(ctx, sql)
+	rows, fields, err := s.ExecRestrictedSQL(sql)
 	if err != nil {
 		return "", err
 	}
@@ -909,7 +909,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	}
 	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
 	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
-	rows, _, err := s.ExecRestrictedSQL(s, sql)
+	rows, _, err := s.ExecRestrictedSQL(sql)
 	if err != nil {
 		return nil, err
 	}
@@ -959,7 +959,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	name = strings.ToLower(name)
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
-	_, _, err = s.ExecRestrictedSQL(s, sql)
+	_, _, err = s.ExecRestrictedSQL(sql)
 	return err
 }
 
@@ -1744,7 +1744,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	if !succ {
 		// Set the variable to true to prevent cyclic recursive call.
 		vars.CommonGlobalLoaded = true
-		rows, fields, err = s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
+		rows, fields, err = s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
 		if err != nil {
 			vars.CommonGlobalLoaded = false
 			logutil.BgLogger().Error("failed to load common global variables.")

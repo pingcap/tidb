@@ -194,7 +194,7 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 	// (outerCnt / batchSize) * (batchSize * Log2(batchSize) + batchSize) * cpuFactor
 	batchSize := math.Min(float64(p.ctx.GetSessionVars().IndexJoinBatchSize), outerCnt)
 	if batchSize > 2 {
-		innerCPUCost += outerCnt * (math.Log2(float64(batchSize)) + 1) * cpuFactor
+		innerCPUCost += outerCnt * (math.Log2(batchSize) + 1) * cpuFactor
 	}
 	// Add cost of building inner executors. CPU cost of building copTasks:
 	// (outerCnt / batchSize) * (batchSize * distinctFactor) * cpuFactor
@@ -607,7 +607,7 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	}
 	p.SetChildren(childPlans...)
 	// Children of UnionExec are executed in parallel.
-	t.cst = childMaxCost + float64((1+len(tasks)))*concurrencyFactor
+	t.cst = childMaxCost + float64(1+len(tasks))*concurrencyFactor
 	return t
 }
 
