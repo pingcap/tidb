@@ -1892,6 +1892,17 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for current_timestamp, current_timestamp()
 	result = tk.MustQuery(`select current_timestamp() = now(), current_timestamp = now()`)
 	result.Check(testkit.Rows("1 1"))
+
+	// fix issue 10308
+	result = tk.MustQuery("select time(\"- -\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '- -'"))
+	result = tk.MustQuery("select time(\"---1\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '---1'"))
+	result = tk.MustQuery("select time(\"-- --1\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '-- --1'"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
