@@ -130,6 +130,17 @@ var connectionID uint64
 
 // Exec executes a sql statement.
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+	rss, err := tk.exec(sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	if len(rss) == 0 {
+		return nil, nil
+	}
+	return rss[0], nil
+}
+
+func (tk *TestKit) exec(sql string, args ...interface{}) ([]sqlexec.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
 		tk.Se, err = session.CreateSession4Test(tk.store)
@@ -142,7 +153,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 		var rss []sqlexec.RecordSet
 		rss, err = tk.Se.Execute(ctx, sql)
 		if err == nil && len(rss) > 0 {
-			return rss[0], nil
+			return rss, nil
 		}
 		return nil, errors.Trace(err)
 	}
@@ -165,7 +176,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	if len(rs) == 0 {
 		return nil, nil
 	}
-	return rs[0], nil
+	return rs, nil
 }
 
 // CheckExecResult checks the affected rows and the insert id after executing MustExec.
@@ -232,6 +243,19 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
 	return tk.ResultSetToResult(rs, comment)
+}
+
+// MustQueries query the multiple statement and returns multiple result rows.
+func (tk *TestKit) MustQueries(sql string, args ...interface{}) []*Result {
+	comment := check.Commentf("sql:%s, args:%v", sql, args)
+	rss, err := tk.exec(sql, args...)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(rss, check.NotNil, comment)
+	var result []*Result
+	for _, rs := range rss {
+		result = append(result, tk.ResultSetToResult(rs, comment))
+	}
+	return result
 }
 
 // QueryToErr executes a sql statement and discard results.

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
@@ -2807,4 +2808,27 @@ func (s *testSessionSuite) TestReplicaRead(c *C) {
 	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadFollower)
 	tk.MustExec("set @@tidb_replica_read = 'leader';")
 	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadLeader)
+}
+
+func (s *testSessionSuite) TestPrepareMultiStmts(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().ClientCapability |= mysql.ClientMultiResults
+
+	rss := tk.MustQueries("select 1; select 2")
+	c.Assert(len(rss), Equals, 2)
+	rss[0].Check(testkit.Rows("1"))
+	rss[1].Check(testkit.Rows("2"))
+
+	rss = tk.MustQueries("select ?, ?;select ?, ?, ?", 1, 2, 3, 4, 5)
+	c.Assert(len(rss), Equals, 2)
+	rss[0].Check(testkit.Rows("1 2"))
+	rss[1].Check(testkit.Rows("3 4 5"))
+
+	tk.MustExec("create table t(id int, v int)")
+	tk.MustExec("insert into t(id, v) values(1, 1), (2, 2), (3, 3)")
+	tk.MustExec("update t set v = ? where id = ?;update t set v = ? where id = ?;update t set v = ? where id = ?", 11, 1, 22, 2, 33, 3)
+	tk.MustQuery("select id, v from t").Check(testkit.Rows("1 11", "2 22", "3 33"))
+
+	_, err := tk.Exec("prepare stmt from 'update t set v = ?; update t set v = ? where id = ?'")
+	c.Check(errors.Cause(err), Equals, executor.ErrPrepareMulti)
 }
