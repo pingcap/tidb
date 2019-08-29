@@ -30,10 +30,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -305,7 +306,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("outerWorker panic stack is:\n%s", buf)
+			logutil.Logger(ctx).Error("outerWorker panicked", zap.String("stack", string(buf)))
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			task.doneCh <- errors.Errorf("%v", r)
 			ow.pushToChan(ctx, task, ow.resultCh)
@@ -362,7 +363,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
 	for task.outerResult.NumRows() < ow.batchSize {
-		err := ow.executor.Next(ctx, ow.executorChk)
+		err := Next(ctx, ow.executor, ow.executorChk)
 		if err != nil {
 			return task, errors.Trace(err)
 		}
@@ -407,7 +408,7 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("innerWorker panic stack is:\n%s", buf)
+			logutil.Logger(ctx).Error("innerWorker panicked", zap.String("stack", string(buf)))
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- errors.Errorf("%v", r)
 		}
@@ -492,7 +493,11 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 		innerColType := iw.rowTypes[iw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {
-			return nil, errors.Trace(err)
+			// If the converted outerValue overflows, we don't need to lookup it.
+			if terror.ErrorEqual(err, types.ErrOverflow) {
+				return nil, nil
+			}
+			return nil, err
 		}
 		cmp, err := outerValue.CompareDatum(sc, &innerValue)
 		if err != nil {
@@ -550,7 +555,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-		err := innerExec.Next(ctx, iw.executorChk)
+		err := Next(ctx, innerExec, iw.executorChk)
 		if err != nil {
 			return errors.Trace(err)
 		}

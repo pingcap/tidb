@@ -16,6 +16,8 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -61,6 +63,7 @@ type TiDBStatement struct {
 	paramsType  []byte
 	ctx         *TiDBContext
 	rs          ResultSet
+	sql         string
 }
 
 // ID implements PreparedStatement ID method.
@@ -209,6 +212,11 @@ func (tc *TiDBContext) CommitTxn(ctx context.Context) error {
 	return tc.session.CommitTxn(ctx)
 }
 
+// SetProcessInfo implements QueryCtx SetProcessInfo method.
+func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	tc.session.SetProcessInfo(sql, t, command, maxExecutionTime)
+}
+
 // RollbackTxn implements QueryCtx RollbackTxn method.
 func (tc *TiDBContext) RollbackTxn() error {
 	return tc.session.RollbackTxn(context.TODO())
@@ -302,6 +310,7 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 		return
 	}
 	stmt := &TiDBStatement{
+		sql:         sql,
 		id:          stmtID,
 		numParams:   paramCount,
 		boundParams: make([][]byte, paramCount),
@@ -323,8 +332,13 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 }
 
 // ShowProcess implements QueryCtx ShowProcess method.
-func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
+func (tc *TiDBContext) ShowProcess() *util.ProcessInfo {
 	return tc.session.ShowProcess()
+}
+
+// SetCommandValue implements QueryCtx SetCommandValue method.
+func (tc *TiDBContext) SetCommandValue(command byte) {
+	tc.session.SetCommandValue(command)
 }
 
 // GetSessionVars return SessionVars.
@@ -336,7 +350,7 @@ type tidbResultSet struct {
 	recordSet sqlexec.RecordSet
 	columns   []*ColumnInfo
 	rows      []chunk.Row
-	closed    bool
+	closed    int32
 }
 
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
@@ -359,10 +373,9 @@ func (trs *tidbResultSet) GetFetchedRows() []chunk.Row {
 }
 
 func (trs *tidbResultSet) Close() error {
-	if trs.closed {
+	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
 		return nil
 	}
-	trs.closed = true
 	return trs.recordSet.Close()
 }
 

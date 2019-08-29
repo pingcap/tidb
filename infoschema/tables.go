@@ -66,6 +66,8 @@ const (
 	tableTableSpaces                        = "TABLESPACES"
 	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
+	tableTiDBIndexes                        = "TIDB_INDEXES"
+	tableSlowLog                            = "SLOW_QUERY"
 )
 
 type columnInfo struct {
@@ -147,6 +149,7 @@ var tablesCols = []columnInfo{
 	{"CHECK_SUM", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
+	{"TIDB_TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -523,11 +526,24 @@ var tableProcesslistCols = []columnInfo{
 	{"ID", mysql.TypeLonglong, 21, mysql.NotNullFlag, 0, nil},
 	{"USER", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
 	{"HOST", mysql.TypeVarchar, 64, mysql.NotNullFlag, "", nil},
-	{"DB", mysql.TypeVarchar, 64, mysql.NotNullFlag, "", nil},
+	{"DB", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"COMMAND", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
 	{"TIME", mysql.TypeLong, 7, mysql.NotNullFlag, 0, nil},
 	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
-	{"Info", mysql.TypeString, 512, 0, nil, nil},
+	{"INFO", mysql.TypeString, 512, 0, nil, nil},
+	{"MEM", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
+var tableTiDBIndexesCols = []columnInfo{
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NON_UNIQUE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"KEY_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SEQ_IN_INDEX", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"COLUMN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SUB_PART", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
+	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -611,20 +627,8 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	var records [][]types.Datum
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
-		var t uint64
-		if len(pi.Info) != 0 {
-			t = uint64(time.Since(pi.Time) / time.Second)
-		}
-		record := types.MakeDatums(
-			pi.ID,
-			pi.User,
-			pi.Host,
-			pi.DB,
-			pi.Command,
-			t,
-			fmt.Sprintf("%d", pi.State),
-			pi.Info,
-		)
+		rows := pi.ToRow()
+		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
 	return records
@@ -911,8 +915,71 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				nil,           // CHECKSUM
 				"",            // CREATE_OPTIONS
 				table.Comment, // TABLE_COMMENT
+				table.ID,      // TIDB_TABLE_ID
 			)
 			rows = append(rows, record)
+		}
+	}
+	return rows, nil
+}
+
+func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, tb := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+
+			if tb.PKIsHandle {
+				var pkCol *model.ColumnInfo
+				for _, col := range tb.Cols() {
+					if mysql.HasPriKeyFlag(col.Flag) {
+						pkCol = col
+						break
+					}
+				}
+				record := types.MakeDatums(
+					schema.Name.O, // TABLE_SCHEMA
+					tb.Name.O,     // TABLE_NAME
+					0,             // NON_UNIQUE
+					"PRIMARY",     // KEY_NAME
+					1,             // SEQ_IN_INDEX
+					pkCol.Name.O,  // COLUMN_NAME
+					nil,           // SUB_PART
+					"",            // INDEX_COMMENT
+					0,             // INDEX_ID
+				)
+				rows = append(rows, record)
+			}
+			for _, idxInfo := range tb.Indices {
+				if idxInfo.State != model.StatePublic {
+					continue
+				}
+				for i, col := range idxInfo.Columns {
+					nonUniq := 1
+					if idxInfo.Unique {
+						nonUniq = 0
+					}
+					var subPart interface{}
+					if col.Length != types.UnspecifiedLength {
+						subPart = col.Length
+					}
+					record := types.MakeDatums(
+						schema.Name.O,   // TABLE_SCHEMA
+						tb.Name.O,       // TABLE_NAME
+						nonUniq,         // NON_UNIQUE
+						idxInfo.Name.O,  // KEY_NAME
+						i+1,             // SEQ_IN_INDEX
+						col.Name.O,      // COLUMN_NAME
+						subPart,         // SUB_PART
+						idxInfo.Comment, // INDEX_COMMENT
+						idxInfo.ID,      // INDEX_ID
+					)
+					rows = append(rows, record)
+				}
+			}
 		}
 	}
 	return rows, nil
@@ -1004,8 +1071,8 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			numericPrecision,                     // NUMERIC_PRECISION
 			numericScale,                         // NUMERIC_SCALE
 			datetimePrecision,                    // DATETIME_PRECISION
-			col.Charset,                          // CHARACTER_SET_NAME
-			col.Collate,                          // COLLATION_NAME
+			columnDesc.Charset,                   // CHARACTER_SET_NAME
+			columnDesc.Collation,                 // COLLATION_NAME
 			columnType,                           // COLUMN_TYPE
 			columnDesc.Key,                       // COLUMN_KEY
 			columnDesc.Extra,                     // EXTRA
@@ -1013,12 +1080,6 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDesc.Comment,                   // COLUMN_COMMENT
 			col.GeneratedExprString,              // GENERATION_EXPRESSION
 		)
-		// In mysql, 'character_set_name' and 'collation_name' are setted to null when column type is non-varchar or non-blob in information_schema.
-		if col.Tp != mysql.TypeVarchar && col.Tp != mysql.TypeBlob {
-			record[13].SetNull()
-			record[14].SetNull()
-		}
-
 		rows = append(rows, record)
 	}
 	return rows
@@ -1305,6 +1366,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTableSpaces:                        tableTableSpacesCols,
 	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
+	tableTiDBIndexes:                        tableTiDBIndexesCols,
+	tableSlowLog:                            slowQueryCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1350,6 +1413,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForSchemata(dbs)
 	case tableTables:
 		fullRows, err = dataForTables(ctx, dbs)
+	case tableTiDBIndexes:
+		fullRows, err = dataForIndexes(ctx, dbs)
 	case tableColumns:
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
@@ -1393,6 +1458,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForCollationCharacterSetApplicability()
 	case tableProcesslist:
 		fullRows = dataForProcesslist(ctx)
+	case tableSlowLog:
+		fullRows, err = dataForSlowLog(ctx)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1411,6 +1478,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	return rows, nil
 }
 
+// IterRecords implements table.Table IterRecords interface.
 func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	if len(startKey) != 0 {
@@ -1432,6 +1500,7 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 	return nil
 }
 
+// RowWithCols implements table.Table RowWithCols interface.
 func (it *infoschemaTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
@@ -1441,79 +1510,102 @@ func (it *infoschemaTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, 
 	return nil, table.ErrUnsupportedOp
 }
 
+// Cols implements table.Table Cols interface.
 func (it *infoschemaTable) Cols() []*table.Column {
 	return it.cols
 }
 
+// WritableCols implements table.Table WritableCols interface.
 func (it *infoschemaTable) WritableCols() []*table.Column {
 	return it.cols
 }
 
+// Indices implements table.Table Indices interface.
 func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+// WritableIndices implements table.Table WritableIndices interface.
 func (it *infoschemaTable) WritableIndices() []table.Index {
 	return nil
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
 func (it *infoschemaTable) DeletableIndices() []table.Index {
 	return nil
 }
 
+// RecordPrefix implements table.Table RecordPrefix interface.
 func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
 }
 
+// IndexPrefix implements table.Table IndexPrefix interface.
 func (it *infoschemaTable) IndexPrefix() kv.Key {
 	return nil
 }
 
+// FirstKey implements table.Table FirstKey interface.
 func (it *infoschemaTable) FirstKey() kv.Key {
 	return nil
 }
 
+// RecordKey implements table.Table RecordKey interface.
 func (it *infoschemaTable) RecordKey(h int64) kv.Key {
 	return nil
 }
 
+// AddRecord implements table.Table AddRecord interface.
 func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
+// RemoveRecord implements table.Table RemoveRecord interface.
 func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
+// UpdateRecord implements table.Table UpdateRecord interface.
 func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
+func (it *infoschemaTable) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
+// AllocHandle implements table.Table AllocHandle interface.
+func (it *infoschemaTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+// Allocator implements table.Table Allocator interface.
 func (it *infoschemaTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return nil
 }
 
+// RebaseAutoID implements table.Table RebaseAutoID interface.
 func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
 	return table.ErrUnsupportedOp
 }
 
+// Meta implements table.Table Meta interface.
 func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
+// GetPhysicalID implements table.Table GetPhysicalID interface.
 func (it *infoschemaTable) GetPhysicalID() int64 {
 	return it.meta.ID
 }
 
-// Seek is the first method called for table scan, we lazy initialize it here.
+// Seek implements table.Table Seek interface.
 func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp
 }
 
+// Type implements table.Table Type interface.
 func (it *infoschemaTable) Type() table.Type {
 	return table.VirtualTable
 }

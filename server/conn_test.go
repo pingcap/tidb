@@ -16,10 +16,16 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
+	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/arena"
 )
 
 type ConnTestSuite struct{}
@@ -30,7 +36,7 @@ func (ts ConnTestSuite) TestMalformHandshakeHeader(c *C) {
 	c.Parallel()
 	data := []byte{0x00}
 	var p handshakeResponse41
-	_, err := parseHandshakeResponseHeader(&p, data)
+	_, err := parseHandshakeResponseHeader(context.Background(), &p, data)
 	c.Assert(err, NotNil)
 }
 
@@ -52,10 +58,10 @@ func (ts ConnTestSuite) TestParseHandshakeResponse(c *C) {
 		0x6f, 0x6f, 0x03, 0x62, 0x61, 0x72,
 	}
 	var p handshakeResponse41
-	offset, err := parseHandshakeResponseHeader(&p, data)
+	offset, err := parseHandshakeResponseHeader(context.Background(), &p, data)
 	c.Assert(err, IsNil)
 	c.Assert(p.Capability&mysql.ClientConnectAtts, Equals, mysql.ClientConnectAtts)
-	err = parseHandshakeResponseBody(&p, data, offset)
+	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
 	c.Assert(err, IsNil)
 	eq := mapIdentical(p.Attrs, map[string]string{
 		"_client_version": "5.6.6-m9",
@@ -75,14 +81,14 @@ func (ts ConnTestSuite) TestParseHandshakeResponse(c *C) {
 		0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x00,
 	}
 	p = handshakeResponse41{}
-	offset, err = parseHandshakeResponseHeader(&p, data)
+	offset, err = parseHandshakeResponseHeader(context.Background(), &p, data)
 	c.Assert(err, IsNil)
 	capability := mysql.ClientProtocol41 |
 		mysql.ClientPluginAuth |
 		mysql.ClientSecureConnection |
 		mysql.ClientConnectWithDB
 	c.Assert(p.Capability&capability, Equals, capability)
-	err = parseHandshakeResponseBody(&p, data, offset)
+	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
 	c.Assert(err, IsNil)
 	c.Assert(p.User, Equals, "pam")
 	c.Assert(p.DBName, Equals, "test")
@@ -107,10 +113,10 @@ func (ts ConnTestSuite) TestIssue1768(c *C) {
 		0x79, 0x73, 0x71, 0x6c,
 	}
 	p := handshakeResponse41{}
-	offset, err := parseHandshakeResponseHeader(&p, data)
+	offset, err := parseHandshakeResponseHeader(context.Background(), &p, data)
 	c.Assert(err, IsNil)
 	c.Assert(p.Capability&mysql.ClientPluginAuthLenencClientData, Equals, mysql.ClientPluginAuthLenencClientData)
-	err = parseHandshakeResponseBody(&p, data, offset)
+	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
 	c.Assert(err, IsNil)
 	c.Assert(len(p.Auth) > 0, IsTrue)
 }
@@ -161,4 +167,71 @@ func mapBelong(m1, m2 map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
+	//There is no underlying netCon, use failpoint to avoid panic
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
+
+	c.Parallel()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+
+	connID := 1
+	se.SetConnectionID(uint64(connID))
+	tc := &TiDBContext{
+		session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: uint32(connID),
+		server: &Server{
+			capability: defaultCapability,
+		},
+		ctx:   tc,
+		alloc: arena.NewAllocator(32 * 1024),
+	}
+	srv := &Server{
+		clients: map[uint32]*clientConn{
+			uint32(connID): cc,
+		},
+	}
+	handle := dom.ExpensiveQueryHandle().SetSessionManager(srv)
+	go handle.Run()
+
+	_, err = se.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
+	c.Assert(err, IsNil)
+	for i := 0; i < 10; i++ {
+		str := fmt.Sprintf("insert into testTable2 values(%d, %d)", i, i%80)
+		_, err = se.Execute(context.Background(), str)
+		c.Assert(err, IsNil)
+	}
+
+	_, err = se.Execute(context.Background(), "select SLEEP(1);")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 500;")
+	c.Assert(err, IsNil)
+
+	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
+	c.Assert(err, NotNil)
+
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
+	c.Assert(err, IsNil)
+
+	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
+	c.Assert(err, IsNil)
+
+	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
+	c.Assert(err, NotNil)
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
 }

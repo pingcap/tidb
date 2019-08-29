@@ -118,8 +118,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		newJoin := e.resultJoin
 		return newJoin.PredicatePushDown(predicates)
 	}
-	leftPlan := p.children[0]
-	rightPlan := p.children[1]
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -127,7 +125,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		// Handle where conditions
 		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
 		// Only derive left where condition, because right where condition cannot be pushed down
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan, true, false)
+		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, true, false)
 		leftCond = leftPushCond
 		// Handle join conditions, only derive right join condition, because left join condition cannot be pushed down
 		_, derivedRightJoinCond := deriveOtherConditions(p, false, true)
@@ -139,7 +137,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		// Handle where conditions
 		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
 		// Only derive right where condition, because left where condition cannot be pushed down
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan, false, true)
+		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, false, true)
 		rightCond = rightPushCond
 		// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
 		derivedLeftJoinCond, _ := deriveOtherConditions(p, true, false)
@@ -164,7 +162,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 				return ret, dual
 			}
 		}
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(tempCond, leftPlan, rightPlan, true, true)
+		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
 		p.LeftConditions = nil
 		p.RightConditions = nil
 		p.EqualConditions = equalCond
@@ -172,8 +170,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	}
-	leftRet, lCh := leftPlan.PredicatePushDown(leftCond)
-	rightRet, rCh := rightPlan.PredicatePushDown(rightCond)
+	leftRet, lCh := p.children[0].PredicatePushDown(leftCond)
+	rightRet, rCh := p.children[1].PredicatePushDown(rightCond)
 	addSelection(p, lCh, leftRet, 0)
 	addSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()

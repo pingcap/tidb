@@ -404,27 +404,22 @@ func (hg *Histogram) equalRowCount(value types.Datum) float64 {
 
 // greaterRowCount estimates the row count where the column greater than value.
 func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
-	gtCount := hg.totalRowCount() - hg.lessRowCount(value) - hg.equalRowCount(value)
+	gtCount := hg.notNullCount() - hg.lessRowCount(value) - hg.equalRowCount(value)
 	if gtCount < 0 {
 		gtCount = 0
 	}
 	return gtCount
 }
 
-// greaterAndEqRowCount estimates the row count where the column greater than or equal to value.
-func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
-	return hg.totalRowCount() - hg.lessRowCount(value)
-}
-
 // lessRowCount estimates the row count where the column less than value.
 func (hg *Histogram) lessRowCountWithBktIdx(value types.Datum) (float64, int) {
-	// all the values is null
+	// All the values are null.
 	if hg.Bounds.NumRows() == 0 {
 		return 0, 0
 	}
 	index, match := hg.Bounds.LowerBound(0, &value)
 	if index == hg.Bounds.NumRows() {
-		return hg.totalRowCount(), hg.Len() - 1
+		return hg.notNullCount(), hg.Len() - 1
 	}
 	// Since we store the lower and upper bound together, so dividing the index by 2 will get the bucket index.
 	bucketIdx := index / 2
@@ -447,30 +442,32 @@ func (hg *Histogram) lessRowCount(value types.Datum) float64 {
 	return result
 }
 
-// lessAndEqRowCount estimates the row count where the column less than or equal to value.
-func (hg *Histogram) lessAndEqRowCount(value types.Datum) float64 {
-	return hg.lessRowCount(value) + hg.equalRowCount(value)
-}
-
 // betweenRowCount estimates the row count where column greater or equal to a and less than b.
 func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 	lessCountA := hg.lessRowCount(a)
 	lessCountB := hg.lessRowCount(b)
 	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
 	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than
-	// lessCountB or totalRowCount-lessCountA.
+	// lessCountB or notNullCount-lessCountA.
 	if lessCountA >= lessCountB && hg.NDV > 0 {
-		result := math.Min(lessCountB, hg.totalRowCount()-lessCountA)
-		return math.Min(result, hg.totalRowCount()/float64(hg.NDV))
+		result := math.Min(lessCountB, hg.notNullCount()-lessCountA)
+		return math.Min(result, hg.notNullCount()/float64(hg.NDV))
 	}
 	return lessCountB - lessCountA
 }
 
 func (hg *Histogram) totalRowCount() float64 {
+	return hg.notNullCount() + float64(hg.NullCount)
+}
+
+// notNullCount indicates the count of non-null values in column histogram and single-column index histogram,
+// for multi-column index histogram, since we cannot define null for the row, we treat all rows as non-null, that means,
+// notNullCount would return same value as totalRowCount for multi-column index histograms.
+func (hg *Histogram) notNullCount() float64 {
 	if hg.Len() == 0 {
-		return float64(hg.NullCount)
+		return 0
 	}
-	return float64(hg.Buckets[hg.Len()-1].Count + hg.NullCount)
+	return float64(hg.Buckets[hg.Len()-1].Count)
 }
 
 // mergeBuckets is used to merge every two neighbor buckets.
@@ -506,12 +503,20 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 
 // validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range,
 // the possible types of range are index key range and handle key range.
-func validRange(ran *ranger.Range) bool {
+func validRange(sc *stmtctx.StatementContext, ran *ranger.Range, encoded bool) bool {
 	var low, high []byte
-	if ran.LowVal[0].Kind() == types.KindBytes {
+	if encoded {
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 	} else {
-		low, high = codec.EncodeInt(nil, ran.LowVal[0].GetInt64()), codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+		var err error
+		low, err = codec.EncodeKey(sc, nil, ran.LowVal[0])
+		if err != nil {
+			return false
+		}
+		high, err = codec.EncodeKey(sc, nil, ran.HighVal[0])
+		if err != nil {
+			return false
+		}
 	}
 	if ran.LowExclude {
 		low = kv.Key(low).PrefixNext()
@@ -522,10 +527,48 @@ func validRange(ran *ranger.Range) bool {
 	return bytes.Compare(low, high) < 0
 }
 
+func checkKind(vals []types.Datum, kind byte) bool {
+	if kind == types.KindString {
+		kind = types.KindBytes
+	}
+	for _, val := range vals {
+		valKind := val.Kind()
+		if valKind == types.KindNull || valKind == types.KindMinNotNull || valKind == types.KindMaxValue {
+			continue
+		}
+		if valKind == types.KindString {
+			valKind = types.KindBytes
+		}
+		if valKind != kind {
+			return false
+		}
+		// Only check the first non-null value.
+		break
+	}
+	return true
+}
+
+func (hg *Histogram) typeMatch(ranges []*ranger.Range) bool {
+	kind := hg.GetLower(0).Kind()
+	for _, ran := range ranges {
+		if !checkKind(ran.LowVal, kind) || !checkKind(ran.HighVal, kind) {
+			return false
+		}
+	}
+	return true
+}
+
 // SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
 // as inf, so all the split ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
 // (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
-func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
+func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, oldRanges []*ranger.Range, encoded bool) ([]*ranger.Range, bool) {
+	if !hg.typeMatch(oldRanges) {
+		return oldRanges, false
+	}
+	ranges := make([]*ranger.Range, 0, len(oldRanges))
+	for _, ran := range oldRanges {
+		ranges = append(ranges, ran.Clone())
+	}
 	split := make([]*ranger.Range, 0, len(ranges))
 	for len(ranges) > 0 {
 		// Find the last bound that greater or equal to the LowVal.
@@ -569,12 +612,12 @@ func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
 				HighExclude: false})
 			ranges[0].LowVal[0] = upper
 			ranges[0].LowExclude = true
-			if !validRange(ranges[0]) {
+			if !validRange(sc, ranges[0], encoded) {
 				ranges = ranges[1:]
 			}
 		}
 	}
-	return split
+	return split, true
 }
 
 func (hg *Histogram) bucketCount(idx int) int64 {
@@ -742,7 +785,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 	if val.IsNull() {
 		return float64(c.NullCount), nil
 	}
-	// all the values is null
+	// All the values are null.
 	if c.Histogram.Bounds.NumRows() == 0 {
 		return 0.0, nil
 	}
@@ -776,17 +819,23 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			}
 			continue
 		}
-		// the interval case.
+		// The interval case.
 		cnt := c.betweenRowCount(rg.LowVal[0], rg.HighVal[0])
-		if c.outOfRange(rg.LowVal[0]) || c.outOfRange(rg.HighVal[0]) {
+		if (c.outOfRange(rg.LowVal[0]) && !rg.LowVal[0].IsNull()) || c.outOfRange(rg.HighVal[0]) {
 			cnt += float64(modifyCount) / outOfRangeBetweenRate
 		}
-		if rg.LowExclude {
+		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
+		// Note that, `cnt` does not include null values, we need specially handle cases
+		// where null is the lower bound.
+		if rg.LowExclude && !rg.LowVal[0].IsNull() {
 			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
+		}
+		if !rg.LowExclude && rg.LowVal[0].IsNull() {
+			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude {
 			highCnt, err := c.equalRowCount(sc, rg.HighVal[0], modifyCount)
@@ -818,34 +867,49 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
-func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) float64 {
+var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
+
+func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) (float64, error) {
+	if len(idx.Info.Columns) == 1 {
+		if bytes.Equal(b, nullKeyBytes) {
+			return float64(idx.NullCount), nil
+		}
+	}
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return float64(modifyCount) / (float64(idx.NDV))
+		return float64(modifyCount) / (float64(idx.NDV)), nil
 	}
 	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.QueryBytes(b))
+		return float64(idx.CMSketch.QueryBytes(b)), nil
 	}
-	return idx.Histogram.equalRowCount(val)
+	return idx.Histogram.equalRowCount(val), nil
 }
 
 func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.Range, modifyCount int64) (float64, error) {
 	totalCount := float64(0)
+	isSingleCol := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
 		lb, err := codec.EncodeKey(sc, nil, indexRange.LowVal...)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		rb, err := codec.EncodeKey(sc, nil, indexRange.HighVal...)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
-		if fullLen && bytes.Equal(lb, rb) {
-			if !indexRange.LowExclude && !indexRange.HighExclude {
-				totalCount += idx.equalRowCount(sc, lb, modifyCount)
+		if bytes.Equal(lb, rb) {
+			if indexRange.LowExclude || indexRange.HighExclude {
+				continue
 			}
-			continue
+			if fullLen {
+				count, err := idx.equalRowCount(sc, lb, modifyCount)
+				if err != nil {
+					return 0, err
+				}
+				totalCount += count
+				continue
+			}
 		}
 		if indexRange.LowExclude {
 			lb = kv.Key(lb).PrefixNext()
@@ -856,8 +920,12 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
 		totalCount += idx.betweenRowCount(l, r)
-		if idx.outOfRange(l) || idx.outOfRange(r) {
+		lowIsNull := bytes.Equal(lb, nullKeyBytes)
+		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
 			totalCount += float64(modifyCount) / outOfRangeBetweenRate
+		}
+		if isSingleCol && lowIsNull {
+			totalCount += float64(idx.NullCount)
 		}
 	}
 	if totalCount > idx.totalRowCount() {

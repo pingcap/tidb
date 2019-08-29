@@ -15,6 +15,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -49,8 +50,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"go.uber.org/zap"
 )
 
 const (
@@ -90,12 +92,12 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 func writeData(w http.ResponseWriter, data interface{}) {
-	js, err := json.Marshal(data)
+	js, err := json.MarshalIndent(data, "", " ")
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	log.Info(string(js))
+	logutil.Logger(context.Background()).Info(string(js))
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
@@ -142,9 +144,14 @@ func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 		},
 	}
 	kvResp, err := t.store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
-	log.Info(string(encodedKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
-
 	if err != nil {
+		logutil.Logger(context.Background()).Info("get MVCC by encoded key failed",
+			zap.Binary("encodeKey", encodedKey),
+			zap.Reflect("region", keyLocation.Region),
+			zap.Binary("startKey", keyLocation.StartKey),
+			zap.Binary("endKey", keyLocation.EndKey),
+			zap.Reflect("kvResp", kvResp),
+			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	return kvResp.MvccGetByKey, nil
@@ -160,7 +167,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 	for {
 		curRegion, err := t.regionCache.LocateKey(bo, startKey)
 		if err != nil {
-			log.Error(startTS, startKey, err)
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS), zap.Binary("startKey", startKey), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 
@@ -172,19 +179,39 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		}
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := t.store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
-		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
 		if err != nil {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		data := kvResp.MvccGetByStartTS
 		if err := data.GetRegionError(); err != nil {
-			log.Warn(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			logutil.Logger(context.Background()).Warn("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.Stringer("error", err))
 			continue
 		}
 
 		if len(data.GetError()) > 0 {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), data.GetError())
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", data.GetError()))
 			return nil, errors.New(data.GetError())
 		}
 
@@ -549,12 +576,19 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if levelStr := req.Form.Get("log_level"); levelStr != "" {
+			err1 := logutil.SetLevel(levelStr)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+
 			l, err1 := log.ParseLevel(levelStr)
 			if err1 != nil {
 				writeError(w, err1)
 				return
 			}
 			log.SetLevel(l)
+
 			config.GetGlobalConfig().Log.Level = levelStr
 		}
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
@@ -581,9 +615,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
 			switch checkMb4ValueInUtf8 {
 			case "0":
-				config.GetGlobalConfig().CheckMb4ValueInUtf8 = false
+				config.GetGlobalConfig().CheckMb4ValueInUTF8 = false
 			case "1":
-				config.GetGlobalConfig().CheckMb4ValueInUtf8 = true
+				config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -784,8 +818,8 @@ func (h tableHandler) addScatterSchedule(startKey, endKey []byte, name string) e
 	}
 	input := map[string]string{
 		"name":       "scatter-range",
-		"start_key":  string(startKey),
-		"end_key":    string(endKey),
+		"start_key":  url.QueryEscape(string(startKey)),
+		"end_key":    url.QueryEscape(string(endKey)),
 		"range_name": name,
 	}
 	v, err := json.Marshal(input)
@@ -1072,7 +1106,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 	}
 	// bigger than tablePrefix, means is bigger than all tables.
 	frame.TableID = math.MaxInt64
-	frame.TableID = math.MaxInt64
+	frame.IndexID = math.MaxInt64
 	frame.IsRecord = true
 	return
 }
@@ -1389,7 +1423,7 @@ type dbTableInfo struct {
 func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	tableID := params[pTableID]
-	tblID, err := strconv.Atoi(tableID)
+	physicalID, err := strconv.Atoi(tableID)
 	if err != nil {
 		writeError(w, errors.Errorf("Wrong tableID: %v", tableID))
 		return
@@ -1404,18 +1438,48 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	dbTblInfo := dbTableInfo{
 		SchemaVersion: schema.SchemaMetaVersion(),
 	}
-	tbl, ok := schema.TableByID(int64(tblID))
-	if !ok {
-		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
-		return
-	}
-	dbTblInfo.TableInfo = tbl.Meta()
-	dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
-	if !ok {
-		log.Warnf("can not find the database of table id: %v, table name: %v", dbTblInfo.TableInfo.ID, dbTblInfo.TableInfo.Name)
+	tbl, ok := schema.TableByID(int64(physicalID))
+	if ok {
+		dbTblInfo.TableInfo = tbl.Meta()
+		dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
+		if !ok {
+			logutil.Logger(context.Background()).Error("can not find the database of the table", zap.Int64("table id", dbTblInfo.TableInfo.ID), zap.String("table name", dbTblInfo.TableInfo.Name.L))
+			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+			return
+		}
+		dbTblInfo.DBInfo = dbInfo
 		writeData(w, dbTblInfo)
 		return
 	}
-	dbTblInfo.DBInfo = dbInfo
+	// The physicalID maybe a partition ID of the partition-table.
+	dbTblInfo.TableInfo, dbTblInfo.DBInfo = findTableByPartitionID(schema, int64(physicalID))
+	if dbTblInfo.TableInfo == nil {
+		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+		return
+	}
 	writeData(w, dbTblInfo)
+}
+
+// findTableByPartitionID finds the partition-table info by the partitionID.
+// This function will traverse all the tables to find the partitionID partition in which partition-table.
+func findTableByPartitionID(schema infoschema.InfoSchema, partitionID int64) (*model.TableInfo, *model.DBInfo) {
+	allDBs := schema.AllSchemas()
+	for _, db := range allDBs {
+		allTables := schema.SchemaTables(db.Name)
+		for _, tbl := range allTables {
+			if tbl.Meta().ID > partitionID || tbl.Meta().GetPartitionInfo() == nil {
+				continue
+			}
+			info := tbl.Meta().GetPartitionInfo()
+			tb := tbl.(table.PartitionedTable)
+			for _, def := range info.Definitions {
+				pid := def.ID
+				partition := tb.GetPartition(pid)
+				if partition.GetPhysicalID() == partitionID {
+					return tbl.Meta(), db
+				}
+			}
+		}
+	}
+	return nil, nil
 }

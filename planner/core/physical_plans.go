@@ -118,6 +118,8 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	isPartition     bool
 	physicalTableID int64
+
+	GenExprs map[model.TableColumnID]expression.Expression
 }
 
 // PhysicalMemTable reads memory table.
@@ -159,6 +161,9 @@ type PhysicalTableScan struct {
 	physicalTableID int64
 
 	rangeDecidedBy []*expression.Column
+
+	// HandleIdx is the index of handle, which is only used for admin check table.
+	HandleIdx int
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
@@ -373,4 +378,31 @@ type PhysicalTableDual struct {
 	physicalSchemaProducer
 
 	RowCount int
+	// placeHolder indicates if this dual plan is a place holder in query optimization
+	// for data sources like `Show`, if true, the dual plan would be substituted by
+	// `Show` in the final plan.
+	placeHolder bool
+}
+
+// CollectPlanStatsVersion uses to collect the statistics version of the plan.
+func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
+	for _, child := range plan.Children() {
+		statsInfos = CollectPlanStatsVersion(child, statsInfos)
+	}
+	switch copPlan := plan.(type) {
+	case *PhysicalTableReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.tablePlan, statsInfos)
+	case *PhysicalIndexReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
+	case *PhysicalIndexLookUpReader:
+		// For index loop up, only the indexPlan is necessary,
+		// because they use the same stats and we do not set the stats info for tablePlan.
+		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
+	case *PhysicalIndexScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.stats.StatsVersion
+	case *PhysicalTableScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.stats.StatsVersion
+	}
+
+	return statsInfos
 }

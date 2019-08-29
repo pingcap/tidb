@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -25,7 +26,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -62,12 +66,15 @@ type selectResult struct {
 	fieldTypes []*types.FieldType
 	ctx        sessionctx.Context
 
-	selectResp *tipb.SelectResponse
-	respChkIdx int
+	selectResp     *tipb.SelectResponse
+	selectRespSize int // record the selectResp.Size() when it is initialized.
+	respChkIdx     int
 
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+
+	memTracker *memory.Tracker
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -77,26 +84,41 @@ func (r *selectResult) Fetch(ctx context.Context) {
 func (r *selectResult) fetch(ctx context.Context) {
 	startTime := time.Now()
 	defer func() {
+		if c := recover(); c != nil {
+			err := fmt.Errorf("%v", c)
+			logutil.Logger(ctx).Error("OOM", zap.Error(err))
+			r.results <- resultWithErr{err: err}
+		}
+
 		close(r.results)
 		duration := time.Since(startTime)
 		metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())
 	}()
 	for {
+		var result resultWithErr
 		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
-			r.results <- resultWithErr{err: errors.Trace(err)}
+			result.err = err
+		} else if resultSubset == nil {
+			// If the result is drained, the resultSubset would be nil
 			return
-		}
-		if resultSubset == nil {
-			return
+		} else {
+			result.result = resultSubset
+			r.memConsume(int64(resultSubset.MemSize()))
 		}
 
 		select {
-		case r.results <- resultWithErr{result: resultSubset}:
+		case r.results <- result:
 		case <-r.closed:
 			// If selectResult called Close() already, make fetch goroutine exit.
+			if resultSubset != nil {
+				r.memConsume(-int64(resultSubset.MemSize()))
+			}
 			return
 		case <-ctx.Done():
+			if resultSubset != nil {
+				r.memConsume(-int64(resultSubset.MemSize()))
+			}
 			return
 		}
 	}
@@ -141,15 +163,21 @@ func (r *selectResult) getSelectResp() error {
 		if re.err != nil {
 			return errors.Trace(re.err)
 		}
+		if r.selectResp != nil {
+			r.memConsume(-int64(r.selectRespSize))
+		}
 		if re.result == nil {
 			r.selectResp = nil
 			return nil
 		}
+		r.memConsume(-int64(re.result.MemSize()))
 		r.selectResp = new(tipb.SelectResponse)
 		err := r.selectResp.Unmarshal(re.result.GetData())
 		if err != nil {
 			return errors.Trace(err)
 		}
+		r.selectRespSize = r.selectResp.Size()
+		r.memConsume(int64(r.selectRespSize))
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
 		}
@@ -182,13 +210,27 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	return nil
 }
 
+func (r *selectResult) memConsume(bytes int64) {
+	if r.memTracker != nil {
+		r.memTracker.Consume(bytes)
+	}
+}
+
 // Close closes selectResult.
 func (r *selectResult) Close() error {
-	// Close this channel tell fetch goroutine to exit.
 	if r.feedback.Actual() >= 0 {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
+	// Close this channel to tell the fetch goroutine to exit.
 	close(r.closed)
+	for re := range r.results {
+		if re.result != nil {
+			r.memConsume(-int64(re.result.MemSize()))
+		}
+	}
+	if r.selectResp != nil {
+		r.memConsume(-int64(r.selectRespSize))
+	}
 	return r.resp.Close()
 }

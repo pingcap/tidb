@@ -14,19 +14,22 @@
 package executor
 
 import (
+	"context"
 	"fmt"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // InsertValues is the data to insert.
@@ -180,6 +183,8 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 		return errors.Trace(err)
 	}
 
+	sessVars := e.ctx.GetSessionVars()
+	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || config.GetGlobalConfig().EnableBatchDML
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	for i, list := range e.Lists {
 		e.rowCount++
@@ -188,6 +193,15 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 			return errors.Trace(err)
 		}
 		rows = append(rows, row)
+		if batchInsert && int(e.rowCount)%sessVars.DMLBatchSize == 0 {
+			if err := exec(rows); err != nil {
+				return errors.Trace(err)
+			}
+			if err := batchDMLCommit(e.ctx); err != nil {
+				return errors.Trace(err)
+			}
+			rows = rows[:0]
+		}
 	}
 	return errors.Trace(exec(rows))
 }
@@ -207,7 +221,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if types.ErrTruncated.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			log.Warn(err1)
+			logutil.Logger(context.Background()).Warn("truncate error", zap.Error(err1))
 		}
 		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
@@ -289,11 +303,14 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
 	sessVars := e.ctx.GetSessionVars()
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
-	batchSize := sessVars.DMLBatchSize
+	if !sessVars.StrictSQLMode {
+		// If StrictSQLMode is disabled and it is a insert-select statement, it also handle BadNullAsWarning.
+		sessVars.StmtCtx.BadNullAsWarning = true
+	}
+	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || config.GetGlobalConfig().EnableBatchDML
 
 	for {
-		err := selectExec.Next(ctx, chk)
+		err := Next(ctx, selectExec, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -309,18 +326,14 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 				return errors.Trace(err)
 			}
 			rows = append(rows, row)
-			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
+			if batchInsert && int(e.rowCount)%sessVars.DMLBatchSize == 0 {
 				if err := exec(rows); err != nil {
 					return errors.Trace(err)
 				}
-				if err := e.ctx.StmtCommit(); err != nil {
+				if err := batchDMLCommit(e.ctx); err != nil {
 					return errors.Trace(err)
 				}
 				rows = rows[:0]
-				if err := e.ctx.NewTxn(); err != nil {
-					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
-				}
 				if !sessVars.LightningMode {
 					txn, err := e.ctx.Txn(true)
 					if err != nil {
@@ -458,12 +471,10 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		sc := e.ctx.GetSessionVars().StmtCtx
-		datum, err1 := d.ConvertTo(sc, &c.FieldType)
-		if e.filterErr(err1) != nil {
-			return types.Datum{}, err1
+		recordID, err = getAutoRecordID(d, &c.FieldType, true)
+		if err != nil {
+			return types.Datum{}, err
 		}
-		recordID = datum.GetInt64()
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
@@ -473,14 +484,13 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 		}
 		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 		retryInfo.AddAutoIncrementID(recordID)
-		d.SetAutoID(recordID, c.Flag)
 		return d, nil
 	}
 
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		recordID, err = e.Table.AllocAutoID(e.ctx)
+		recordID, err = e.Table.AllocAutoIncrementValue(e.ctx)
 		if e.filterErr(err) != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
@@ -501,10 +511,30 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 	return casted, nil
 }
 
+func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
+	var recordID int64
+
+	switch target.Tp {
+	case mysql.TypeFloat, mysql.TypeDouble:
+		f := d.GetFloat64()
+		if isInsert {
+			recordID = int64(math.Round(f))
+		} else {
+			recordID = int64(f)
+		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		recordID = d.GetInt64()
+	default:
+		return 0, errors.Errorf("unexpected field type [%v]", target.Tp)
+	}
+
+	return recordID, nil
+}
+
 func (e *InsertValues) handleWarning(err error, logInfo string) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	sc.AppendWarning(err)
-	log.Warn(logInfo)
+	logutil.Logger(context.Background()).Warn(logInfo)
 }
 
 // batchCheckAndInsert checks rows with duplicate errors.

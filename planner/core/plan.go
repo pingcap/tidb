@@ -136,6 +136,9 @@ type PhysicalPlan interface {
 	// SetChildren sets the children for the plan.
 	SetChildren(...PhysicalPlan)
 
+	// SetChild sets the ith child for the plan.
+	SetChild(i int, child PhysicalPlan)
+
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 	ResolveIndices()
 }
@@ -287,6 +290,11 @@ func (p *baseLogicalPlan) SetChildren(children ...LogicalPlan) {
 // SetChildren implements PhysicalPlan SetChildren interface.
 func (p *basePhysicalPlan) SetChildren(children ...PhysicalPlan) {
 	p.children = children
+}
+
+// SetChild implements PhysicalPlan SetChild interface.
+func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
+	p.children[i] = child
 }
 
 func (p *basePlan) context() sessionctx.Context {

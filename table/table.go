@@ -58,7 +58,7 @@ var (
 
 	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
 	// and it doesn't have a default value.
-	ErrNoDefaultValue = terror.ClassTable.New(codeNoDefaultValue, "field doesn't have a default value")
+	ErrNoDefaultValue = terror.ClassTable.New(codeNoDefaultValue, mysql.MySQLErrName[mysql.ErrNoDefaultForField])
 	// ErrIndexOutBound returns for index column offset out of bound.
 	ErrIndexOutBound = terror.ClassTable.New(codeIndexOutBound, "index column offset out of bound")
 	// ErrUnsupportedOp returns for unsupported operation.
@@ -140,8 +140,11 @@ type Table interface {
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error
 
-	// AllocAutoID allocates an auto_increment ID for a new row.
-	AllocAutoID(ctx sessionctx.Context) (int64, error)
+	// AllocAutoIncrementValue allocates an auto_increment value for a new row.
+	AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error)
+
+	// AllocHandle allocates a handle for a new row.
+	AllocHandle(ctx sessionctx.Context) (int64, error)
 
 	// Allocator returns Allocator.
 	Allocator(ctx sessionctx.Context) autoid.Allocator
@@ -199,7 +202,7 @@ const (
 	codeColumnCantNull     = mysql.ErrBadNull
 	codeUnknownColumn      = 1054
 	codeDuplicateColumn    = 1110
-	codeNoDefaultValue     = 1364
+	codeNoDefaultValue     = mysql.ErrNoDefaultForField
 	codeTruncateWrongValue = 1366
 	// MySQL error code, "Trigger creation context of table `%-.64s`.`%-.64s` is invalid".
 	// It may happen when inserting some data outside of all table partitions.

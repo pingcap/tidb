@@ -376,3 +376,62 @@ func BenchmarkSelectivity(b *testing.B) {
 	})
 	pprof.StopCPUProfile()
 }
+
+func (s *testSelectivitySuite) TestColumnIndexNullEstimation(c *C) {
+	defer cleanEnv(c, s.store, s.dom)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
+	testKit.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null);")
+	h := s.dom.StatsHandle()
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery(`explain select b from t where b is null`).Check(testkit.Rows(
+		"IndexReader_6 4.00 root index:IndexScan_5",
+		"└─IndexScan_5 4.00 cop table:t, index:b, range:[NULL,NULL], keep order:false",
+	))
+	testKit.MustQuery(`explain select b from t where b is not null`).Check(testkit.Rows(
+		"IndexReader_6 1.00 root index:IndexScan_5",
+		"└─IndexScan_5 1.00 cop table:t, index:b, range:[-inf,+inf], keep order:false",
+	))
+	testKit.MustQuery(`explain select b from t where b is null or b > 3`).Check(testkit.Rows(
+		"IndexReader_6 4.00 root index:IndexScan_5",
+		"└─IndexScan_5 4.00 cop table:t, index:b, range:[NULL,NULL], (3,+inf], keep order:false",
+	))
+	testKit.MustQuery(`explain select b from t use index(idx_b)`).Check(testkit.Rows(
+		"IndexReader_5 5.00 root index:IndexScan_4",
+		"└─IndexScan_4 5.00 cop table:t, index:b, range:[NULL,+inf], keep order:false",
+	))
+	testKit.MustQuery(`explain select b from t where b < 4`).Check(testkit.Rows(
+		"IndexReader_6 1.00 root index:IndexScan_5",
+		"└─IndexScan_5 1.00 cop table:t, index:b, range:[-inf,4), keep order:false",
+	))
+	// Make sure column stats has been loaded.
+	testKit.MustExec(`explain select * from t where a is null`)
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+	testKit.MustQuery(`explain select * from t where a is null`).Check(testkit.Rows(
+		"TableReader_7 1.00 root data:Selection_6",
+		"└─Selection_6 1.00 cop isnull(test.t.a)",
+		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
+	))
+	testKit.MustQuery(`explain select * from t where a is not null`).Check(testkit.Rows(
+		"TableReader_7 4.00 root data:Selection_6",
+		"└─Selection_6 4.00 cop not(isnull(test.t.a))",
+		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
+	))
+	testKit.MustQuery(`explain select * from t where a is null or a > 3`).Check(testkit.Rows(
+		"TableReader_7 2.00 root data:Selection_6",
+		"└─Selection_6 2.00 cop or(isnull(test.t.a), gt(test.t.a, 3))",
+		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
+	))
+	testKit.MustQuery(`explain select * from t`).Check(testkit.Rows(
+		"TableReader_5 5.00 root data:TableScan_4",
+		"└─TableScan_4 5.00 cop table:t, range:[-inf,+inf], keep order:false",
+	))
+	testKit.MustQuery(`explain select * from t where a < 4`).Check(testkit.Rows(
+		"TableReader_7 3.00 root data:Selection_6",
+		"└─Selection_6 3.00 cop lt(test.t.a, 4)",
+		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
+	))
+}

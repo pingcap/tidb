@@ -15,11 +15,11 @@ package session
 
 import (
 	"fmt"
-	"runtime/debug"
 	"strings"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -27,8 +27,9 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	binlog "github.com/pingcap/tipb/go-binlog"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-binlog"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -89,12 +90,15 @@ func (st *TxnState) GoString() string {
 		s.WriteString("state=pending")
 	} else if st.Valid() {
 		s.WriteString("state=valid")
-		fmt.Fprintf(&s, ", startTS=%d", st.Transaction.StartTS())
+		fmt.Fprintf(&s, ", txnStartTS=%d", st.Transaction.StartTS())
 		if len(st.dirtyTableOP) > 0 {
-			fmt.Fprintf(&s, ", len(dirtyTable)=%d", len(st.dirtyTableOP))
+			fmt.Fprintf(&s, ", len(dirtyTable)=%d, %#v", len(st.dirtyTableOP), st.dirtyTableOP)
 		}
 		if len(st.mutations) > 0 {
-			fmt.Fprintf(&s, ", len(mutations)=%d", len(st.mutations))
+			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(st.mutations), st.mutations)
+		}
+		if st.buf != nil && st.buf.Len() != 0 {
+			fmt.Fprintf(&s, ", buf.length: %d, buf.size: %d", st.buf.Len(), st.buf.Size())
 		}
 	} else {
 		s.WriteString("state=invalid")
@@ -160,33 +164,32 @@ func mockAutoIDRetry() bool {
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
 	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
-		log.Errorf("The code should never run here, TxnState=%#v, mutations=%#v, dirtyTableOP=%#v, buf=%#v something must be wrong: %s",
-			st,
-			st.mutations,
-			st.dirtyTableOP,
-			st.buf,
-			debug.Stack())
+		logutil.Logger(context.Background()).Error("the code should never run here",
+			zap.String("TxnState", st.GoString()),
+			zap.Stack("something must be wrong"))
 		return errors.New("invalid transaction")
 	}
 	if st.doNotCommit != nil {
 		if err1 := st.Transaction.Rollback(); err1 != nil {
-			log.Error(err1)
+			logutil.Logger(context.Background()).Error("rollback error", zap.Error(err1))
 		}
 		return errors.Trace(st.doNotCommit)
 	}
 
 	// mockCommitError8942 is used for PR #8942.
-	// gofail: var mockCommitError8942 bool
-	// if mockCommitError8942 {
-	//	return kv.ErrRetryable
-	// }
+	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(kv.ErrRetryable)
+		}
+	})
 
 	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
-	// gofail: var mockCommitRetryForAutoID bool
-	// if mockCommitRetryForAutoID && !mockAutoIDRetry() {
-	//	enableMockAutoIDRetry()
-	//	return kv.ErrRetryable
-	// }
+	failpoint.Inject("mockCommitRetryForAutoID", func(val failpoint.Value) {
+		if val.(bool) && !mockAutoIDRetry() {
+			enableMockAutoIDRetry()
+			failpoint.Return(kv.ErrRetryable)
+		}
+	})
 
 	return errors.Trace(st.Transaction.Commit(ctx))
 }
@@ -361,11 +364,12 @@ func (s *session) StmtCommit() error {
 	st := &s.txn
 	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
+			if val.(bool) {
+				count++
+			}
+		})
 
-		// gofail: var mockStmtCommitError bool
-		// if mockStmtCommitError {
-		// 	count++
-		// }
 		if count > 3 {
 			return errors.New("mock stmt commit error")
 		}

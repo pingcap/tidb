@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -27,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -42,6 +44,9 @@ const (
 
 	outOfRangeBetweenRate = 100
 )
+
+// PseudoVersion means the pseudo statistics version is 0.
+const PseudoVersion uint64 = 0
 
 // Table represents statistics for a table.
 type Table struct {
@@ -137,7 +142,7 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *Table, tableInfo *m
 	if idx != nil {
 		table.Indices[histID] = idx
 	} else {
-		log.Debugf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+		logutil.Logger(context.Background()).Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
 	}
 	return nil
 }
@@ -217,7 +222,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
 		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
 		// avoid error.
-		log.Debugf("We cannot find column id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+		logutil.Logger(context.Background()).Debug("we cannot find column in table info now. It may be deleted", zap.Int64("colID", histID), zap.String("table", tableInfo.Name.O))
 	}
 	return nil
 }
@@ -365,7 +370,7 @@ func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.
 	return c.greaterRowCount(value) * c.getIncreaseFactor(t.Count)
 }
 
-// ColumnLessRowCount estimates the row count where the column less than value.
+// ColumnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
 func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) float64 {
 	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoLessRate
@@ -380,7 +385,11 @@ func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.D
 		return float64(t.Count) / pseudoBetweenRate
 	}
 	c := t.Columns[colID]
-	return c.betweenRowCount(a, b) * c.getIncreaseFactor(t.Count)
+	count := c.betweenRowCount(a, b)
+	if a.IsNull() {
+		count += float64(c.NullCount)
+	}
+	return count * c.getIncreaseFactor(t.Count)
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -426,7 +435,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
-	if idx == nil || coll.Pseudo && idx.NotAccurate() || idx.Len() == 0 {
+	if idx == nil || coll.Pseudo && idx.NotAccurate() || idx.totalRowCount() == 0 {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -466,7 +475,7 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 }
 
 // GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxID and IdxID2ColIDs is built from the given parameter.
-func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) HistColl {
+func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64)
 	colNames2UniqueID := make(map[string]int64)
@@ -506,7 +515,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 		newIdxHistMap[idxHist.ID] = idxHist
 		idx2Columns[idxHist.ID] = ids
 	}
-	newColl := HistColl{
+	newColl := &HistColl{
 		PhysicalID:     coll.PhysicalID,
 		HavePhysicalID: coll.HavePhysicalID,
 		Pseudo:         coll.Pseudo,
@@ -520,13 +529,27 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 	return newColl
 }
 
+// isSingleColIdxNullRange checks if a range is [NULL, NULL] on a single-column index.
+func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
+	if len(idx.Info.Columns) > 1 {
+		return false
+	}
+	l, h := ran.LowVal[0], ran.HighVal[0]
+	if l.IsNull() && h.IsNull() {
+		return true
+	}
+	return false
+}
+
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
 		rangePosition := getOrdinalOfRangeCond(sc, ran)
-		// first one is range, just use the previous way to estimate
-		if rangePosition == 0 {
+		// If first one is range, just use the previous way to estimate; if it is [NULL, NULL] range
+		// on single-column index, use previous way as well, because CMSketch does not contain null
+		// values in this case.
+		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
 			count, err := idx.getRowCount(sc, []*ranger.Range{ran}, coll.ModifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -605,12 +628,18 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	}
 	for _, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {
-			t.Columns[col.ID] = &Column{Info: col, isHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag)}
+			t.Columns[col.ID] = &Column{
+				Info:      col,
+				isHandle:  tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+				Histogram: *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
+			}
 		}
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			t.Indices[idx.ID] = &Index{Info: idx}
+			t.Indices[idx.ID] = &Index{
+				Info:      idx,
+				Histogram: *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
 		}
 	}
 	return t

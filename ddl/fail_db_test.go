@@ -21,7 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
@@ -71,9 +71,10 @@ func (s *testFailDBSuite) TearDownSuite(c *C) {
 
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
 func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/truncateTableErr", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/truncateTableErr")
-
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/truncateTableErr", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/truncateTableErr"), IsNil)
+	}()
 	// test for truncating table
 	_, err := s.se.Execute(context.Background(), "create database cancel_job_db")
 	c.Assert(err, IsNil)
@@ -110,8 +111,11 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(err, IsNil)
 
 	// test for renaming table
-	gofail.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/renameTableErr")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/renameTableErr"), IsNil)
+	}()
+
 	_, err = s.se.Execute(context.Background(), "create table tx(a int)")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tx values(1)")
@@ -155,15 +159,17 @@ func (s *testStateChangeSuite) TestInitializeOffsetAndState(c *C) {
 	c.Assert(err, IsNil)
 	defer s.se.Execute(context.Background(), "drop table t")
 
-	gofail.Enable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState", `return(true)`), IsNil)
 	_, err = s.se.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
 	c.Assert(err, IsNil)
-	gofail.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState"), IsNil)
 }
 
 func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `1*return`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle"), IsNil)
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_handle_failed")
 	defer tk.MustExec("drop database test_handle_failed")
@@ -177,8 +183,10 @@ func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
 }
 
 func (s *testDBSuite) TestAddIndexFailed(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `1*return`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr"), IsNil)
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_add_index_failed")
 	defer tk.MustExec("drop database test_add_index_failed")
@@ -278,8 +286,10 @@ func (s *testDBSuite) TestAddIndexWorkerNum(c *C) {
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
-	gofail.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum"), IsNil)
+	}()
 
 	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 	checkNum := 0

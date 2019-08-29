@@ -19,8 +19,9 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -678,6 +679,11 @@ commit;`
 	tk.MustExec(`INSERT IGNORE t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'f2' cannot be null"))
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
+
+	tk.MustExec(`SET sql_mode='';`)
+	_, err = tk.Exec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
+	c.Assert(err, NotNil)
+	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 }
 
 func (s *testSuite) TestInsertIgnoreOnDup(c *C) {
@@ -819,6 +825,47 @@ func (s *testSuite) TestReplace(c *C) {
 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(3))
 	r = tk.MustQuery("select * from tIssue1012;")
 	r.Check(testkit.Rows("1 1"))
+}
+
+func (s *testSuite) TestGeneratedColumnForInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// test cases for default behavior
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(id int, id_gen int as(id + 42), b int, unique key id_gen(id_gen));`)
+	tk.MustExec(`insert into t1 (id, b) values(1,1),(2,2),(3,3),(4,4),(5,5);`)
+	tk.MustExec(`replace into t1 (id, b) values(1,1);`)
+	tk.MustExec(`replace into t1 (id, b) values(1,1),(2,2);`)
+	tk.MustExec(`replace into t1 (id, b) values(6,16),(7,17),(8,18);`)
+	tk.MustQuery("select * from t1;").Check(testkit.Rows(
+		"1 43 1", "2 44 2", "3 45 3", "4 46 4", "5 47 5", "6 48 16", "7 49 17", "8 50 18"))
+	tk.MustExec(`insert into t1 (id, b) values (6,18) on duplicate key update id = -id;`)
+	tk.MustExec(`insert into t1 (id, b) values (7,28) on duplicate key update b = -values(b);`)
+	tk.MustQuery("select * from t1;").Check(testkit.Rows(
+		"1 43 1", "2 44 2", "3 45 3", "4 46 4", "5 47 5", "-6 36 16", "7 49 -28", "8 50 18"))
+
+	// test cases for virtual and stored columns in the same table
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i), unique key idx_j(j))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_j(j))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
 }
 
 func (s *testSuite) TestPartitionedTableReplace(c *C) {
@@ -2193,9 +2240,9 @@ func (s *testSuite) TestAutoIDInRetry(c *C) {
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	gofail.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
 	tk.MustExec("commit")
-	gofail.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
@@ -2213,4 +2260,92 @@ func (s *testSuite) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustExec(`update t set i = 2 where i = 1;`)
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
+}
+
+func (s *testSuite) TestBatchDML(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int key, j varchar(20))")
+	originConfig := config.GetGlobalConfig().EnableBatchDML
+	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
+	defer func() {
+		config.GetGlobalConfig().EnableBatchDML = originConfig
+		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
+	}()
+	atomic.StoreUint64(&kv.TxnEntryCountLimit, 2)
+	tk.MustExec("set @@session.tidb_dml_batch_size=1;")
+
+	// Test auto commit transaction.
+	config.GetGlobalConfig().EnableBatchDML = true
+	tk.MustExec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
+	tk.MustExec("replace into t values (1, '-a'), (2, '-b'), (3, '-c')")
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 -a", "2 -b", "3 -c"))
+	tk.MustExec("update t set i = -i")
+	tk.MustQuery("select * from t order by i desc").Check(testkit.Rows("-1 -a", "-2 -b", "-3 -c"))
+	tk.MustExec("delete from t")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+
+	// Test transaction block.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
+	tk.MustExec("replace into t values (1, '-a'), (2, '-b'), (3, '-c')")
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 -a", "2 -b", "3 -c"))
+	tk.MustExec("update t set i = -i")
+	tk.MustQuery("select * from t order by i desc").Check(testkit.Rows("-1 -a", "-2 -b", "-3 -c"))
+	tk.MustExec("delete from t")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("commit")
+
+	// Test disable batch DML.
+	config.GetGlobalConfig().EnableBatchDML = false
+	_, err := tk.Exec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	_, err = tk.Exec("replace into t values (1, '-a'), (2, '-b'), (3, '-c')")
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values (1, 'a')")
+	tk.MustExec("insert into t values (2, 'b')")
+	tk.MustExec("insert into t values (3, 'c')")
+	_, err = tk.Exec("update t set i = -i")
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
+	_, err = tk.Exec("delete from t")
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
+
+	// Test batched retry
+	config.GetGlobalConfig().EnableBatchDML = true
+	atomic.StoreUint64(&kv.TxnEntryCountLimit, 10)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk.MustExec("set @@session.tidb_dml_batch_size=2;")
+
+	tk.MustExec("begin")
+	tk1.MustExec("update t set j = 'e'")
+	_, err = tk.Exec("update t set j = 'd'")
+	c.Assert(executor.ErrBatchDMLFail.Equal(err), IsTrue, Commentf("error %s", err))
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 e", "2 e", "3 e"))
+
+	// Test normal retry
+	config.GetGlobalConfig().EnableBatchDML = false
+	tk.MustExec("begin")
+	tk1.MustExec("update t set j = 'f' where i = 1")
+	tk.MustExec("update t set j = 'd' where i = 1")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 d", "2 e", "3 e"))
+}
+
+func (s *testSuite) TestSetWithCurrentTimestampAndNow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists tbl;`)
+	tk.MustExec(`create table t1(c1 timestamp default current_timestamp, c2 int, c3 timestamp default current_timestamp);`)
+	//c1 insert using now() function result, c3 using default value calculation, should be same
+	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(2);`)
+	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1"))
+	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(1);`)
+	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1", "1"))
 }

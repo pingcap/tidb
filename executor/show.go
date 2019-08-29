@@ -29,10 +29,18 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb-tools/pkg/etcd"
+	"github.com/pingcap/tidb-tools/pkg/utils"
+	"github.com/pingcap/tidb-tools/tidb-binlog/node"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -41,17 +49,20 @@ import (
 	"golang.org/x/net/context"
 )
 
+var etcdDialTimeout = 5 * time.Second
+
 // ShowExec represents a show executor.
 type ShowExec struct {
 	baseExecutor
 
-	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName model.CIStr
-	Table  *ast.TableName  // Used for showing columns.
-	Column *ast.ColumnName // Used for `desc table column`.
-	Flag   int             // Some flag parsed from sql, such as FULL.
-	Full   bool
-	User   *auth.UserIdentity // Used for show grants.
+	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName    model.CIStr
+	Table     *ast.TableName  // Used for showing columns.
+	Column    *ast.ColumnName // Used for `desc table column`.
+	IndexName model.CIStr     // Used for show table regions.
+	Flag      int             // Some flag parsed from sql, such as FULL.
+	Full      bool
+	User      *auth.UserIdentity // Used for show grants.
 
 	// GlobalScope is used by show variables
 	GlobalScope bool
@@ -107,6 +118,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowCreateDatabase()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
+	case ast.ShowDrainerStatus:
+		return e.fetchShowPumpOrDrainerStatus(node.DrainerNode)
 	case ast.ShowEngines:
 		return e.fetchShowEngines()
 	case ast.ShowGrants:
@@ -115,10 +128,14 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowIndex()
 	case ast.ShowProcedureStatus:
 		return e.fetchShowProcedureStatus()
+	case ast.ShowPumpStatus:
+		return e.fetchShowPumpOrDrainerStatus(node.PumpNode)
 	case ast.ShowStatus:
 		return e.fetchShowStatus()
 	case ast.ShowTables:
 		return e.fetchShowTables()
+	case ast.ShowOpenTables:
+		return e.fetchShowOpenTables()
 	case ast.ShowTableStatus:
 		return e.fetchShowTableStatus()
 	case ast.ShowTriggers:
@@ -150,6 +167,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowMasterStatus()
 	case ast.ShowPrivileges:
 		return e.fetchShowPrivileges()
+	case ast.ShowRegions:
+		return e.fetchShowTableRegions()
 	}
 	return nil
 }
@@ -190,25 +209,15 @@ func (e *ShowExec) fetchShowProcessList() error {
 
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
-		var info string
-		if e.Full {
-			info = pi.Info
-		} else {
-			info = fmt.Sprintf("%.100v", pi.Info)
-		}
-
-		e.appendRow([]interface{}{
-			pi.ID,
-			pi.User,
-			pi.Host,
-			pi.DB,
-			pi.Command,
-			uint64(time.Since(pi.Time) / time.Second),
-			fmt.Sprintf("%d", pi.State),
-			info,
-			pi.Mem,
-		})
+		row := pi.ToRowForShow(e.Full)
+		e.appendRow(row)
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowOpenTables() error {
+	// TiDB has no concept like mysql's "table cache" and "open table"
+	// For simplicity, we just return an empty result with the same structure as MySQL's SHOW OPEN TABLES
 	return nil
 }
 
@@ -281,7 +290,7 @@ func (e *ShowExec) fetchShowColumns() error {
 			// SHOW COLUMNS result expects string value
 			defaultValStr := fmt.Sprintf("%v", desc.DefaultValue)
 			// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
-			if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && strings.ToUpper(defaultValStr) != strings.ToUpper(ast.CurrentTimestamp) {
+			if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && !strings.HasPrefix(strings.ToUpper(defaultValStr), strings.ToUpper(ast.CurrentTimestamp)) {
 				timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
 				if err != nil {
 					return errors.Trace(err)
@@ -560,6 +569,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 					}
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
+					if col.Decimal > 0 {
+						buf.WriteString(fmt.Sprintf("(%d)", col.Decimal))
+					}
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
@@ -652,8 +664,37 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf(" COMPRESSION='%s'", tb.Meta().Compression))
 	}
 
+	if hasAutoIncID {
+		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// It's campatible with MySQL.
+		if autoIncID > 1 {
+			buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", autoIncID))
+		}
+	}
+
+	if tb.Meta().ShardRowIDBits > 0 {
+		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tb.Meta().ShardRowIDBits)
+		if tb.Meta().PreSplitRegions > 0 {
+			fmt.Fprintf(&buf, "PRE_SPLIT_REGIONS=%d ", tb.Meta().PreSplitRegions)
+		}
+		buf.WriteString("*/")
+	}
+
+	if len(tb.Meta().Comment) > 0 {
+		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
+	}
+
 	// add partition info here.
-	partitionInfo := tb.Meta().Partition
+	appendPartitionInfo(tb.Meta().Partition, &buf)
+
+	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
+	return nil
+}
+
+func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
 	if partitionInfo != nil {
 		// this if statement takes care of range columns case
 		if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
@@ -684,28 +725,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 		buf.WriteString(")")
 	}
-
-	if hasAutoIncID {
-		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// It's campatible with MySQL.
-		if autoIncID > 1 {
-			buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", autoIncID))
-		}
-	}
-
-	if tb.Meta().ShardRowIDBits > 0 {
-		buf.WriteString(fmt.Sprintf("/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits))
-	}
-
-	if len(tb.Meta().Comment) > 0 {
-		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
-	}
-
-	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
-	return nil
 }
 
 // fetchShowCreateDatabase composes show create database result.
@@ -807,6 +826,12 @@ func (e *ShowExec) fetchShowProcedureStatus() error {
 }
 
 func (e *ShowExec) fetchShowPlugins() error {
+	tiPlugins := plugin.GetAll()
+	for _, ps := range tiPlugins {
+		for _, p := range ps {
+			e.appendRow([]interface{}{p.Name, p.StateValue(), p.Kind.String(), p.Path, p.License, strconv.Itoa(int(p.Version))})
+		}
+	}
 	return nil
 }
 
@@ -826,6 +851,43 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 		}
 	}
 	return nil
+}
+
+// fetchShowPumpOrDrainerStatus gets status of all pumps or drainers and fill them into e.rows.
+func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
+	registry, err := createRegistry(config.GetGlobalConfig().Path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = registry.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, n := range nodes {
+		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS).Format(types.TimeFormat)})
+	}
+
+	return nil
+}
+
+// createRegistry returns an ectd registry
+func createRegistry(urls string) (*node.EtcdRegistry, error) {
+	ectdEndpoints, err := utils.ParseHostPortAddr(urls)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	cli, err := etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, node.DefaultRootPath, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return node.NewEtcdRegistry(cli, etcdDialTimeout), nil
 }
 
 func (e *ShowExec) getTable() (table.Table, error) {
@@ -878,6 +940,111 @@ func (e *ShowExec) appendRow(row []interface{}) {
 			e.result.AppendSet(i, x)
 		default:
 			e.result.AppendNull(i)
+		}
+	}
+}
+
+func (e *ShowExec) fetchShowTableRegions() error {
+	store := e.ctx.GetStore()
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return nil
+	}
+	splitStore, ok := store.(kv.SplitableStore)
+	if !ok {
+		return nil
+	}
+
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Get table regions from from pd, not from regionCache, because the region cache maybe outdated.
+	var regions []regionMeta
+	if len(e.IndexName.L) != 0 {
+		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
+		if indexInfo == nil {
+			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
+		}
+		regions, err = getTableIndexRegions(tb, indexInfo, tikvStore, splitStore)
+	} else {
+		regions, err = getTableRegions(tb, tikvStore, splitStore)
+	}
+
+	if err != nil {
+		return err
+	}
+	e.fillRegionsToChunk(regions)
+	return nil
+}
+
+func getTableRegions(tb table.Table, tikvStore tikv.Storage, splitStore kv.SplitableStore) ([]regionMeta, error) {
+	if info := tb.Meta().GetPartitionInfo(); info != nil {
+		return getPartitionTableRegions(info, tb.(table.PartitionedTable), tikvStore, splitStore)
+	}
+	return getPhysicalTableRegions(tb.Meta().ID, tb.Meta(), tikvStore, splitStore, nil)
+}
+
+func getTableIndexRegions(tb table.Table, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplitableStore) ([]regionMeta, error) {
+	if info := tb.Meta().GetPartitionInfo(); info != nil {
+		return getPartitionIndexRegions(info, tb.(table.PartitionedTable), indexInfo, tikvStore, splitStore)
+	}
+	return getPhysicalIndexRegions(tb.Meta().ID, indexInfo, tikvStore, splitStore, nil)
+}
+
+func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, tikvStore tikv.Storage, splitStore kv.SplitableStore) ([]regionMeta, error) {
+	regions := make([]regionMeta, 0, len(info.Definitions))
+	uniqueRegionMap := make(map[uint64]struct{})
+	for _, def := range info.Definitions {
+		pid := def.ID
+		partition := tbl.GetPartition(pid)
+		partition.GetPhysicalID()
+		partitionRegions, err := getPhysicalTableRegions(partition.GetPhysicalID(), tbl.Meta(), tikvStore, splitStore, uniqueRegionMap)
+		if err != nil {
+			return nil, err
+		}
+		regions = append(regions, partitionRegions...)
+	}
+	return regions, nil
+}
+
+func getPartitionIndexRegions(info *model.PartitionInfo, tbl table.PartitionedTable, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplitableStore) ([]regionMeta, error) {
+	var regions []regionMeta
+	uniqueRegionMap := make(map[uint64]struct{})
+	for _, def := range info.Definitions {
+		pid := def.ID
+		partition := tbl.GetPartition(pid)
+		partition.GetPhysicalID()
+		partitionRegions, err := getPhysicalIndexRegions(partition.GetPhysicalID(), indexInfo, tikvStore, splitStore, uniqueRegionMap)
+		if err != nil {
+			return nil, err
+		}
+		regions = append(regions, partitionRegions...)
+	}
+	return regions, nil
+}
+
+func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
+	for i := range regions {
+		e.result.AppendUint64(0, regions[i].region.Id)
+		e.result.AppendString(1, regions[i].start)
+		e.result.AppendString(2, regions[i].end)
+		e.result.AppendUint64(3, regions[i].leaderID)
+		e.result.AppendUint64(4, regions[i].storeID)
+
+		peers := ""
+		for i, peer := range regions[i].region.Peers {
+			if i > 0 {
+				peers += ", "
+			}
+			peers += strconv.FormatUint(peer.Id, 10)
+		}
+		e.result.AppendString(5, peers)
+		if regions[i].scattering {
+			e.result.AppendInt64(6, 1)
+		} else {
+			e.result.AppendInt64(6, 0)
 		}
 	}
 }

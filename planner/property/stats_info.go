@@ -24,10 +24,10 @@ type StatsInfo struct {
 	RowCount    float64
 	Cardinality []float64
 
-	HistColl statistics.HistColl
-	// UsePseudoStats indicates whether the StatsInfo is calculated using the
-	// pseudo statistics on a table.
-	UsePseudoStats bool
+	HistColl *statistics.HistColl
+	// StatsVersion indicates the statistics version of a table.
+	// If the StatsInfo is calculated using the pseudo statistics on a table, StatsVersion will be PseudoVersion.
+	StatsVersion uint64
 }
 
 // NewSimpleStats creates a simple StatsInfo with rowCount.
@@ -48,10 +48,10 @@ func (s *StatsInfo) Count() int64 {
 // Scale receives a selectivity and multiplies it with RowCount and Cardinality.
 func (s *StatsInfo) Scale(factor float64) *StatsInfo {
 	profile := &StatsInfo{
-		RowCount:       s.RowCount * factor,
-		Cardinality:    make([]float64, len(s.Cardinality)),
-		HistColl:       s.HistColl,
-		UsePseudoStats: s.UsePseudoStats,
+		RowCount:     s.RowCount * factor,
+		Cardinality:  make([]float64, len(s.Cardinality)),
+		HistColl:     s.HistColl,
+		StatsVersion: s.StatsVersion,
 	}
 	for i := range profile.Cardinality {
 		profile.Cardinality[i] = s.Cardinality[i] * factor

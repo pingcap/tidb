@@ -26,7 +26,7 @@ type ErrLocked struct {
 
 // Error formats the lock to a string.
 func (e *ErrLocked) Error() string {
-	return fmt.Sprintf("key is locked, key: %q, primary: %q, startTS: %v", e.Key, e.Primary, e.StartTS)
+	return fmt.Sprintf("key is locked, key: %q, primary: %q, txnStartTS: %v", e.Key, e.Primary, e.StartTS)
 }
 
 // ErrRetryable suggests that client may restart the txn. e.g. write conflict.

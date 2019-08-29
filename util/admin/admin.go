@@ -14,8 +14,10 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"time"
 
@@ -33,9 +35,10 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // DDLInfo is for DDL information.
@@ -105,7 +108,9 @@ func isJobRollbackable(job *model.Job, id int64) error {
 		model.ActionDropTablePartition, model.ActionAddTablePartition,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
-		model.ActionDropForeignKey:
+		model.ActionDropForeignKey, model.ActionRenameTable,
+		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
+		model.ActionModifySchemaCharsetAndCollate:
 		if job.SchemaState != model.StateNone {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
 		}
@@ -130,7 +135,9 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		found := false
 		for j, job := range jobs {
 			if id != job.ID {
-				log.Debugf("the job ID %d that needs to be canceled isn't equal to current job ID %d", id, job.ID)
+				logutil.Logger(context.Background()).Debug("the job that needs to be canceled isn't equal to current job",
+					zap.Int64("need to canceled job ID", id),
+					zap.Int64("current job ID", job.ID))
 				continue
 			}
 			found = true
@@ -226,7 +233,7 @@ const DefNumHistoryJobs = 10
 // The maximum count of history jobs is num.
 func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
-	jobs, err := t.GetAllHistoryDDLJobs()
+	jobs, err := t.GetLastNHistoryDDLJobs(maxNumJobs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -266,28 +273,46 @@ func getCount(ctx sessionctx.Context, sql string) (int64, error) {
 	return rows[0].GetInt64(0), nil
 }
 
+// Count greater Types
+const (
+	// TblCntGreater means that the number of table rows is more than the number of index rows.
+	TblCntGreater byte = 1
+	// IdxCntGreater means that the number of index rows is more than the number of table rows.
+	IdxCntGreater byte = 2
+)
+
 // CheckIndicesCount compares indices count with table count.
+// It returns the count greater type, the index offset and an error.
 // It returns nil if the count from the index is equal to the count from the table columns,
-// otherwise it returns an error with a different information.
-func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) error {
+// otherwise it returns an error and the corresponding index's offset.
+func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Add `` for some names like `table name`.
 	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
-	for _, idx := range indices {
+	for i, idx := range indices {
 		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, i, errors.Trace(err)
 		}
-		if tblCnt != idxCnt {
-			return errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
+		logutil.Logger(context.Background()).Info("check indices count",
+			zap.String("table", tableName), zap.Int64("cnt", tblCnt), zap.Reflect("index", idx), zap.Int64("cnt", idxCnt))
+		if tblCnt == idxCnt {
+			continue
 		}
-	}
 
-	return nil
+		var ret byte
+		if tblCnt > idxCnt {
+			ret = TblCntGreater
+		} else if idxCnt > tblCnt {
+			ret = IdxCntGreater
+		}
+		return ret, i, errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
+	}
+	return 0, 0, nil
 }
 
 // ScanIndexData scans the index handles and values in a limited number, according to the index information.
@@ -443,7 +468,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	startKey := t.RecordKey(0)
+	startKey := t.RecordKey(math.MinInt64)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
@@ -589,27 +614,18 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 }
 
 func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
-	cols := t.Cols()
-	tblInfo := t.Meta()
-	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
-	for _, v := range decodeCol {
-		col := cols[v.Offset]
-		tpExpr := decoder.Column{
-			Info: col.ToInfo(),
-		}
-		if col.IsGenerated() && !col.GeneratedStored {
-			for _, c := range cols {
-				if _, ok := col.Dependences[c.Name.L]; ok {
-					decodeColsMap[c.ID] = decoder.Column{
-						Info: c.ToInfo(),
-					}
-				}
-			}
-			tpExpr.GenExpr = genExpr[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
-		}
-		decodeColsMap[col.ID] = tpExpr
+	var containsVirtualCol bool
+	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
+		containsVirtualCol = true
+		return genExpr[model.TableColumnID{TableID: t.Meta().ID, ColumnID: genCol.ID}], nil
+	})
+	_ = ignored
+
+	if containsVirtualCol {
+		decoder.SubstituteGenColsInDecodeColMap(decodeColsMap)
+		decoder.RemoveUnusedVirtualCols(decodeColsMap, decodeCol)
 	}
-	return decoder.NewRowDecoder(cols, decodeColsMap)
+	return decoder.NewRowDecoder(t, decodeColsMap)
 }
 
 // genExprs use to calculate generated column value.
@@ -637,7 +653,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 	}
 
-	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
+	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, h, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -687,7 +703,10 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		return nil
 	}
 
-	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
+	logutil.Logger(context.Background()).Debug("record",
+		zap.Binary("startKey", startKey),
+		zap.Binary("key", it.Key()),
+		zap.Binary("value", it.Value()))
 	rowDecoder := makeRowDecoder(t, cols, genExprs)
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
@@ -698,7 +717,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

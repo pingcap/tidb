@@ -225,7 +225,9 @@ func (p Insert) init(ctx sessionctx.Context) *Insert {
 }
 
 func (p Show) init(ctx sessionctx.Context) *Show {
-	p.basePlan = newBasePlan(ctx, TypeShow)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeShow, &p)
+	// Just use pseudo stats to avoid panic.
+	p.stats = &property.StatsInfo{RowCount: 1}
 	return &p
 }
 
@@ -274,7 +276,7 @@ func (p PhysicalMergeJoin) init(ctx sessionctx.Context, stats *property.StatsInf
 	return &p
 }
 
-func (base basePhysicalAgg) init(ctx sessionctx.Context, stats *property.StatsInfo) *basePhysicalAgg {
+func (base basePhysicalAgg) Init(ctx sessionctx.Context, stats *property.StatsInfo) *basePhysicalAgg {
 	base.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeHashAgg, &base)
 	base.stats = stats
 	return &base

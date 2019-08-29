@@ -14,12 +14,15 @@
 package core
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {
@@ -60,29 +63,40 @@ func (p *baseLogicalPlan) deriveStats() (*property.StatsInfo, error) {
 	return profile, nil
 }
 
-func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.StatsInfo {
-	profile := &property.StatsInfo{
-		RowCount:       float64(ds.statisticTable.Count),
-		Cardinality:    make([]float64, len(ds.Columns)),
-		HistColl:       ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
-		UsePseudoStats: ds.statisticTable.Pseudo,
+// getColumnNDV computes estimated NDV of specified column using the original
+// histogram of `DataSource` which is retrieved from storage(not the derived one).
+func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
+	hist, ok := ds.statisticTable.Columns[colID]
+	if ok && hist.Count > 0 {
+		factor := float64(ds.statisticTable.Count) / float64(hist.Count)
+		ndv = float64(hist.NDV) * factor
+	} else {
+		ndv = float64(ds.statisticTable.Count) * distinctFactor
 	}
+	return ndv
+}
+
+func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
+	tableStats := &property.StatsInfo{
+		RowCount:     float64(ds.statisticTable.Count),
+		Cardinality:  make([]float64, len(ds.Columns)),
+		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
+		StatsVersion: ds.statisticTable.Version,
+	}
+	if ds.statisticTable.Pseudo {
+		tableStats.StatsVersion = statistics.PseudoVersion
+	}
+
 	for i, col := range ds.Columns {
-		hist, ok := ds.statisticTable.Columns[col.ID]
-		if ok && hist.Count > 0 {
-			factor := float64(ds.statisticTable.Count) / float64(hist.Count)
-			profile.Cardinality[i] = float64(hist.NDV) * factor
-		} else {
-			profile.Cardinality[i] = profile.RowCount * distinctFactor
-		}
+		tableStats.Cardinality[i] = ds.getColumnNDV(col.ID)
 	}
-	ds.stats = profile
-	selectivity, err := profile.HistColl.Selectivity(ds.ctx, conds)
+	ds.tableStats = tableStats
+	selectivity, err := tableStats.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
-		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
+		logutil.Logger(context.Background()).Debug("an error happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
-	return profile.Scale(selectivity)
+	ds.stats = tableStats.Scale(selectivity)
 }
 
 func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
@@ -90,7 +104,7 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
-	ds.stats = ds.getStatsByFilter(ds.pushedDownConds)
+	ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
@@ -180,7 +194,7 @@ func (lt *LogicalTopN) deriveStats() (*property.StatsInfo, error) {
 func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
-		log.Errorf("Cannot find column %v indices from schema %s", cols, schema)
+		logutil.Logger(context.Background()).Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
 		return 0
 	}
 	var cardinality = 1.0
@@ -272,14 +286,8 @@ func (p *LogicalJoin) deriveStats() (*property.StatsInfo, error) {
 		}
 		return p.stats, nil
 	}
-	leftKeys := make([]*expression.Column, 0, len(p.EqualConditions))
-	rightKeys := make([]*expression.Column, 0, len(p.EqualConditions))
-	for _, eqCond := range p.EqualConditions {
-		leftKeys = append(leftKeys, eqCond.GetArgs()[0].(*expression.Column))
-		rightKeys = append(rightKeys, eqCond.GetArgs()[1].(*expression.Column))
-	}
-	leftKeyCardinality := getCardinality(leftKeys, p.children[0].Schema(), leftProfile)
-	rightKeyCardinality := getCardinality(rightKeys, p.children[1].Schema(), rightProfile)
+	leftKeyCardinality := getCardinality(p.LeftJoinKeys, p.children[0].Schema(), leftProfile)
+	rightKeyCardinality := getCardinality(p.RightJoinKeys, p.children[1].Schema(), rightProfile)
 	count := leftProfile.RowCount * rightProfile.RowCount / math.Max(leftKeyCardinality, rightKeyCardinality)
 	if p.JoinType == LeftOuterJoin {
 		count = math.Max(count, leftProfile.RowCount)

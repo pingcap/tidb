@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -24,7 +25,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -87,8 +89,12 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			modified[i] = true
 			// Rebase auto increment id if the field is changed.
 			if mysql.HasAutoIncrementFlag(col.Flag) {
-				if err = t.RebaseAutoID(ctx, newData[i].GetInt64(), true); err != nil {
-					return false, false, 0, errors.Trace(err)
+				recordID, err := getAutoRecordID(newData[i], &col.FieldType, false)
+				if err != nil {
+					return false, false, 0, err
+				}
+				if err = t.RebaseAutoID(ctx, recordID, true); err != nil {
+					return false, false, 0, err
 				}
 			}
 			if col.IsPKHandleColumn(t.Meta()) {
@@ -178,7 +184,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, err error) error {
 	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
-	log.Error(err)
+	logutil.Logger(context.Background()).Error("data too long for column", zap.String("colName", colName), zap.Int("rowIndex", rowIdx))
 	return errors.Trace(newErr)
 }
 
@@ -189,4 +195,16 @@ func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int
 		}
 	}
 	panic("Couldn't get column information when do update/delete")
+}
+
+func batchDMLCommit(ctx sessionctx.Context) error {
+	if err := ctx.StmtCommit(); err != nil {
+		return ErrBatchDMLFail.GenWithStackByArgs(err)
+	}
+	ctx.GetSessionVars().TxnCtx.IsBatched = true
+	if err := ctx.NewTxn(); err != nil {
+		return ErrBatchDMLFail.GenWithStackByArgs(err)
+	}
+	ctx.GetSessionVars().TxnCtx.IsBatched = true
+	return nil
 }

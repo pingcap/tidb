@@ -36,17 +36,38 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.BinlogSocket = "/tmp/socket"
+	conf.Performance.TxnEntryCountLimit = 1000
+	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
-	conf.CheckMb4ValueInUtf8 = true
+	conf.CheckMb4ValueInUTF8 = true
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = path.Join(path.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
 	c.Assert(err, IsNil)
-	_, err = f.WriteString(`[performance]
+
+	// Make sure the server refuses to start if there's an unrecognized configuration option
+	_, err = f.WriteString(`
+unrecognized-option-test = true
+`)
+	c.Assert(err, IsNil)
+	c.Assert(f.Sync(), IsNil)
+
+	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*unknown configuration option(?:.|\n)*")
+
+	f.Truncate(0)
+	f.Seek(0, 0)
+
+	_, err = f.WriteString(`
+token-limit = 0
+[performance]
+txn-entry-count-limit=2000
+txn-total-size-limit=2000
 [tikv-client]
-commit-timeout="41s"`)
+commit-timeout="41s"
+`)
+
 	c.Assert(err, IsNil)
 	c.Assert(f.Sync(), IsNil)
 
@@ -55,6 +76,10 @@ commit-timeout="41s"`)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.BinlogSocket, Equals, "/tmp/socket")
+
+	// Test that the value will be overwritten by the config file.
+	c.Assert(conf.Performance.TxnEntryCountLimit, Equals, uint64(2000))
+	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(f.Close(), IsNil)

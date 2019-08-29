@@ -47,6 +47,7 @@ type mvccLock struct {
 	value   []byte
 	op      kvrpcpb.Op
 	ttl     uint64
+	txnSize uint64
 }
 
 type mvccEntry struct {
@@ -438,7 +439,8 @@ type MVCCStore interface {
 type RawKV interface {
 	RawGet(key []byte) []byte
 	RawBatchGet(keys [][]byte) [][]byte
-	RawScan(startKey, endKey []byte, limit int) []Pair
+	RawScan(startKey, endKey []byte, limit int) []Pair        // Scan the range of [startKey, endKey)
+	RawReverseScan(startKey, endKey []byte, limit int) []Pair // Scan the range of [endKey, startKey)
 	RawPut(key, value []byte)
 	RawBatchPut(keys, values [][]byte)
 	RawDelete(key []byte)

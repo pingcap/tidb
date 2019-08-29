@@ -16,7 +16,9 @@ package config
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io/ioutil"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -28,6 +30,10 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// DefTxnEntryCountLimit is the default value of TxnEntryCountLimit.
+	DefTxnEntryCountLimit = 300 * 1000
+	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
+	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Valid config maps
@@ -57,6 +63,7 @@ type Config struct {
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
+	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
@@ -73,7 +80,11 @@ type Config struct {
 	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	CheckMb4ValueInUtf8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
+	// Currently not support dynamic modify, because this need to reload all old version schema.
+	TreatOldVersionUTF8AsUTF8MB4 bool   `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	Plugin                       Plugin `toml:"plugin" json:"plugin"`
 }
 
 // Log is the log section of config.
@@ -102,6 +113,18 @@ type Security struct {
 	ClusterSSLCA   string `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
 	ClusterSSLCert string `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
 	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+}
+
+// The ErrConfigValidationFailed error is used so that external callers can do a type assertion
+// to defer handling of this specific error when someone does not want strict type checking.
+// This is needed only because logging hasn't been set up at the time we parse the config file.
+// This should all be ripped out once strict config checking is made the default behavior.
+type ErrConfigValidationFailed struct {
+	err string
+}
+
+func (e *ErrConfigValidationFailed) Error() string {
+	return e.err
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
@@ -153,12 +176,15 @@ type Performance struct {
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
+	EnableUpdateStats   bool    `toml:"enable-update-stats" json:"enable-update-stats"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
+	TxnEntryCountLimit  uint64  `toml:"txn-entry-count-limit" json:"txn-entry-count-limit"`
+	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -238,6 +264,14 @@ type TiKVClient struct {
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
+	// MaxTxnTimeUse is the max time a Txn may use (in seconds) from its startTS to commitTS.
+	MaxTxnTimeUse uint `toml:"max-txn-time-use" json:"max-txn-time-use"`
+}
+
+// Plugin is the config for plugin
+type Plugin struct {
+	Dir  string `toml:"dir" json:"dir"`
+	Load string `toml:"load" json:"load"`
 }
 
 // Binlog is the config for binlog.
@@ -252,31 +286,31 @@ type Binlog struct {
 }
 
 var defaultConf = Config{
-	Host:                "0.0.0.0",
-	AdvertiseAddress:    "",
-	Port:                4000,
-	Store:               "mocktikv",
-	Path:                "/tmp/tidb",
-	RunDDL:              true,
-	SplitTable:          true,
-	Lease:               "45s",
-	TokenLimit:          1000,
-	OOMAction:           "log",
-	MemQuotaQuery:       32 << 30,
-	EnableStreaming:     false,
-	CheckMb4ValueInUtf8: true,
+	Host:                         "0.0.0.0",
+	AdvertiseAddress:             "",
+	Port:                         4000,
+	Store:                        "mocktikv",
+	Path:                         "/tmp/tidb",
+	RunDDL:                       true,
+	SplitTable:                   true,
+	Lease:                        "45s",
+	TokenLimit:                   1000,
+	OOMAction:                    "log",
+	MemQuotaQuery:                32 << 30,
+	EnableStreaming:              false,
+	EnableBatchDML:               false,
+	CheckMb4ValueInUTF8:          true,
+	TreatOldVersionUTF8AsUTF8MB4: true,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 10240000,
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
-		Level:  "info",
-		Format: "text",
-		File: logutil.FileLogConfig{
-			LogRotate: true,
-			MaxSize:   logutil.DefaultLogMaxSize,
-		},
+		Level:              "info",
+		Format:             "text",
+		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
+		SlowQueryFile:      "tidb-slow.log",
 		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
 		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
@@ -290,12 +324,15 @@ var defaultConf = Config{
 		TCPKeepAlive:        true,
 		CrossJoin:           true,
 		StatsLease:          "3s",
+		EnableUpdateStats:   true,
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
 		FeedbackProbability: 0.05,
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
+		TxnEntryCountLimit:  DefTxnEntryCountLimit,
+		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
 	},
 	XProtocol: XProtocol{
 		XHost: "",
@@ -322,6 +359,7 @@ var defaultConf = Config{
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
+		MaxTxnTimeUse:        590,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
@@ -345,22 +383,28 @@ func GetGlobalConfig() *Config {
 
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
-	_, err := toml.DecodeFile(confFile, c)
+	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit <= 0 {
 		c.TokenLimit = 1000
 	}
-	return errors.Trace(err)
+
+	// If any items in confFile file are not mapped into the Config struct, issue
+	// an error and stop the server from starting.
+	undecoded := metaData.Undecoded()
+	if len(undecoded) > 0 && err == nil {
+		var undecodedItems []string
+		for _, item := range undecoded {
+			undecodedItems = append(undecodedItems, item.String())
+		}
+		err = &ErrConfigValidationFailed{fmt.Sprintf("config file %s contained unknown configuration options: %s", confFile, strings.Join(undecodedItems, ", "))}
+	}
+
+	return err
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return &logutil.LogConfig{
-		Level:            l.Level,
-		Format:           l.Format,
-		DisableTimestamp: l.DisableTimestamp,
-		File:             l.File,
-		SlowQueryFile:    l.SlowQueryFile,
-	}
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp)
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.

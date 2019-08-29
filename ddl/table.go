@@ -19,15 +19,18 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/charset"
 )
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -63,13 +66,9 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-		err = t.CreateTable(schemaID, tbInfo)
+		err = createTableWithCheck(t, job, schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
-		}
-		if EnableSplitTableRegion {
-			// TODO: Add restrictions to this operation.
-			go splitTableRegion(d.store, tbInfo.ID)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -78,6 +77,15 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	default:
 		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
 	}
+}
+
+func createTableWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
+	err := checkTableInfoValid(tbInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return t.CreateTable(schemaID, tbInfo)
 }
 
 func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -144,22 +152,6 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	return ver, errors.Trace(err)
-}
-
-type splitableStore interface {
-	SplitRegion(splitKey kv.Key) error
-}
-
-func splitTableRegion(store kv.Storage, tableID int64) {
-	s, ok := store.(splitableStore)
-	if !ok {
-		return
-	}
-	tableStartKey := tablecodec.GenTablePrefix(tableID)
-	if err := s.SplitRegion(tableStartKey); err != nil {
-		// It will be automatically split by TiKV later.
-		log.Warnf("[ddl] splitting table region failed %v", errors.ErrorStack(err))
-	}
 }
 
 func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
@@ -256,11 +248,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// gofail: var truncateTableErr bool
-	// if truncateTableErr {
-	//  job.State = model.JobStateCancelled
-	//  return ver, errors.New("occur an error after dropping table.")
-	// }
+	failpoint.Inject("truncateTableErr", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("occur an error after dropping table"))
+		}
+	})
 
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
@@ -327,7 +320,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 	return ver, nil
 }
 
-func onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var shardRowIDBits uint64
 	err := job.DecodeArgs(&shardRowIDBits)
 	if err != nil {
@@ -339,7 +332,22 @@ func onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo.ShardRowIDBits = shardRowIDBits
+	if shardRowIDBits < tblInfo.ShardRowIDBits {
+		tblInfo.ShardRowIDBits = shardRowIDBits
+	} else {
+		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		err = verifyNoOverflowShardBits(w.sessPool, tbl, shardRowIDBits)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		tblInfo.ShardRowIDBits = shardRowIDBits
+		// MaxShardRowIDBits use to check the overflow of auto ID.
+		tblInfo.MaxShardRowIDBits = shardRowIDBits
+	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -347,6 +355,24 @@ func onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits uint64) error {
+	ctx, err := s.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer s.put(ctx)
+
+	// Check next global max auto ID first.
+	autoIncID, err := tbl.Allocator(ctx).NextGlobalAutoID(tbl.Meta().ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tables.OverflowShardBits(autoIncID, shardRowIDBits) {
+		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID overflow", shardRowIDBits)
+	}
+	return nil
 }
 
 func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -387,11 +413,14 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// gofail: var renameTableErr bool
-	// if renameTableErr {
-	//	job.State = model.JobStateCancelled
-	//	return ver, errors.New("occur an error after renaming table.")
-	// }
+
+	failpoint.Inject("renameTableErr", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("occur an error after renaming table"))
+		}
+	})
+
 	tblInfo.Name = tableName
 	err = t.CreateTable(newSchemaID, tblInfo)
 	if err != nil {
@@ -443,9 +472,31 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	// double check.
+	_, err = checkAlterTableCharset(tblInfo, dbInfo, toCharset, toCollate)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	// update column charset.
+	for _, col := range tblInfo.Columns {
+		if field_types.HasCharset(&col.FieldType) {
+			col.Charset = toCharset
+			col.Collate = toCollate
+		} else {
+			col.Charset = charset.CharsetBin
+			col.Collate = charset.CharsetBin
+		}
 	}
 
 	tblInfo.Charset = toCharset
@@ -479,6 +530,17 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	}
 
 	return nil
+}
+
+// updateVersionAndTableInfoWithCheck checks table info validate and updates the schema version and the table information
+func updateVersionAndTableInfoWithCheck(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
+	ver int64, err error) {
+	err = checkTableInfoValid(tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	return updateVersionAndTableInfo(t, job, tblInfo, shouldUpdateVer)
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.

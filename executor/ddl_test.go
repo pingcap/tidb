@@ -15,16 +15,21 @@ package executor_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/ddl"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -113,6 +118,36 @@ func (s *testSuite) TestCreateTable(c *C) {
 			c.Assert(chk.GetRow(0).GetString(1), Equals, "double")
 		}
 	}
+
+	// test multiple collate specified in column when create.
+	tk.MustExec("drop table if exists test_multiple_column_collate;")
+	tk.MustExec("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8_general_ci")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
+	tk.MustExec("drop table if exists test_multiple_column_collate;")
+	tk.MustExec("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8_general_ci")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
+	// test Err case for multiple collate specified in column when create.
+	tk.MustExec("drop table if exists test_err_multiple_collate;")
+	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_unicode_ci collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_unicode_ci", "utf8mb4").Error())
+
+	tk.MustExec("drop table if exists test_err_multiple_collate;")
+	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) collate utf8_unicode_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_general_ci", "utf8").Error())
 
 	// table option is auto-increment
 	tk.MustExec("drop table if exists create_auto_increment_test;")
@@ -235,6 +270,43 @@ func (s *testSuite) TestAlterTableModifyColumn(c *C) {
 	createSQL := result.Rows()[0][1]
 	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
+
+	// test multiple collate modification in column.
+	tk.MustExec("drop table if exists modify_column_multiple_collate")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) collate utf8mb4_bin;")
+	c.Assert(err, IsNil)
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8mb4")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8mb4_bin")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
+	tk.MustExec("drop table if exists modify_column_multiple_collate;")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
+	c.Assert(err, IsNil)
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8mb4")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8mb4_bin")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
+
+	// test Err case for multiple collate modification in column.
+	tk.MustExec("drop table if exists err_modify_multiple_collate;")
+	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("alter table err_modify_multiple_collate modify column a char(1) charset utf8mb4 collate utf8_bin;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_bin", "utf8mb4").Error())
+
+	tk.MustExec("drop table if exists err_modify_multiple_collate;")
+	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error())
+
 }
 
 func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
@@ -257,6 +329,10 @@ func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
 }
 
 func (s *testSuite) TestRenameTable(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database rename1")
@@ -383,38 +459,98 @@ func (s *testSuite) TestShardRowIDBits(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert t values (%d)", i))
 	}
-	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	dom := domain.GetDomain(tk.Se)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	var hasShardedID bool
-	var count int
-	c.Assert(tk.Se.NewTxn(), IsNil)
-	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
-		c.Assert(h, GreaterEqual, int64(0))
-		first8bits := h >> 56
-		if first8bits > 0 {
-			hasShardedID = true
-		}
-		count++
-		return true, nil
-	})
-	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 100)
-	c.Assert(hasShardedID, IsTrue)
 
-	// Test that audo_increment column can not use shard_row_id_bits.
-	_, err = tk.Exec("create table auto (id int not null auto_increment primary key) shard_row_id_bits = 4")
-	c.Assert(err, NotNil)
-	tk.MustExec("create table auto (id int not null auto_increment primary key) shard_row_id_bits = 0")
-	_, err = tk.Exec("alter table auto shard_row_id_bits = 4")
-	c.Assert(err, NotNil)
+	assertCountAndShard := func(t table.Table, expectCount int) {
+		var hasShardedID bool
+		var count int
+		c.Assert(tk.Se.NewTxn(), IsNil)
+		err = t.IterRecords(tk.Se, t.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
+			c.Assert(h, GreaterEqual, int64(0))
+			first8bits := h >> 56
+			if first8bits > 0 {
+				hasShardedID = true
+			}
+			count++
+			return true, nil
+		})
+		c.Assert(err, IsNil)
+		c.Assert(count, Equals, expectCount)
+		c.Assert(hasShardedID, IsTrue)
+	}
+
+	assertCountAndShard(tbl, 100)
+
+	// After PR 10759, shard_row_id_bits is supported with tables with auto_increment column.
+	tk.MustExec("create table auto (id int not null auto_increment unique) shard_row_id_bits = 4")
+	tk.MustExec("alter table auto shard_row_id_bits = 5")
+	tk.MustExec("drop table auto")
+	tk.MustExec("create table auto (id int not null auto_increment unique) shard_row_id_bits = 0")
+	tk.MustExec("alter table auto shard_row_id_bits = 5")
+	tk.MustExec("drop table auto")
+	tk.MustExec("create table auto (id int not null auto_increment unique)")
+	tk.MustExec("alter table auto shard_row_id_bits = 5")
+	tk.MustExec("drop table auto")
+	tk.MustExec("create table auto (id int not null auto_increment unique) shard_row_id_bits = 4")
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
+	tk.MustExec("drop table auto")
+
+	// After PR 10759, shard_row_id_bits is not supported with pk_is_handle tables.
+	_, err = tk.Exec("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 4")
+	c.Assert(err.Error(), Equals, "[ddl:207]unsupported shard_row_id_bits for table with primary key as row id.")
+	tk.MustExec("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 0")
+	_, err = tk.Exec("alter table auto shard_row_id_bits = 5")
+	c.Assert(err.Error(), Equals, "[ddl:207]unsupported shard_row_id_bits for table with primary key as row id.")
+	tk.MustExec("alter table auto shard_row_id_bits = 0")
+
+	// Hack an existing table with shard_row_id_bits and primary key as handle
+	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test"))
+	c.Assert(ok, IsTrue)
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
+	tblInfo := tbl.Meta()
+	tblInfo.ShardRowIDBits = 5
+	tblInfo.MaxShardRowIDBits = 5
+
+	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		_, err = m.GenSchemaVersion()
+		c.Assert(err, IsNil)
+		c.Assert(m.UpdateTable(db.ID, tblInfo), IsNil)
+		return nil
+	})
+	err = dom.Reload()
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert auto(b) values (1), (3), (5)")
+	tk.MustQuery("select id from auto order by id").Check(testkit.Rows("1", "2", "3"))
+
+	tk.MustExec("alter table auto shard_row_id_bits = 0")
+	tk.MustExec("drop table auto")
+
+	// Test shard_row_id_bits with auto_increment column
+	tk.MustExec("create table auto (a int, b int auto_increment unique) shard_row_id_bits = 15")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert auto(a) values (%d)", i))
+	}
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
+	assertCountAndShard(tbl, 100)
+	prevB, err := strconv.Atoi(tk.MustQuery("select b from auto where a=0").Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	for i := 1; i < 100; i++ {
+		b, err := strconv.Atoi(tk.MustQuery(fmt.Sprintf("select b from auto where a=%d", i)).Rows()[0][0].(string))
+		c.Assert(err, IsNil)
+		c.Assert(b, Greater, prevB)
+		prevB = b
+	}
 
 	// Test overflow
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int) shard_row_id_bits = 15")
 	defer tk.MustExec("drop table if exists t1")
 
-	tbl, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	maxID := 1<<(64-15-1) - 1
 	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false)
@@ -517,4 +653,12 @@ func (s *testSuite) TestSetDDLReorgBatchSize(c *C) {
 
 	// If do not LoadDDLReorgVars, the local variable will be the last loaded value.
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
+}
+
+func (s *testSuite) TestTimestampMinDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tdv;")
+	tk.MustExec("create table tdv(a int);")
+	tk.MustExec("ALTER TABLE tdv ADD COLUMN ts timestamp DEFAULT '1970-01-01 08:00:01';")
 }

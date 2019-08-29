@@ -14,8 +14,10 @@
 package kv
 
 import (
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/memory"
 	"golang.org/x/net/context"
 )
 
@@ -72,9 +74,9 @@ var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
 	TxnEntrySizeLimit = 6 * 1024 * 1024
 	// TxnEntryCountLimit  is limit of number of entries in the MemBuffer.
-	TxnEntryCountLimit uint64 = 300 * 1000
+	TxnEntryCountLimit uint64 = config.DefTxnEntryCountLimit
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
-	TxnTotalSizeLimit = 100 * 1024 * 1024
+	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.
@@ -208,6 +210,8 @@ type Request struct {
 	// Streaming indicates using streaming API for this request, result in that one Next()
 	// call would not corresponds to a whole region result.
 	Streaming bool
+	// MemTracker is used to trace and control memory usage in co-processor layer.
+	MemTracker *memory.Tracker
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -219,6 +223,8 @@ type ResultSubset interface {
 	GetStartKey() Key
 	// GetExecDetails gets the detail information.
 	GetExecDetails() *execdetails.ExecDetails
+	// MemSize returns how many bytes of memory this result use for tracing memory usage.
+	MemSize() int64
 }
 
 // Response represents the response returned from KV layer.
@@ -280,4 +286,11 @@ type Iterator interface {
 	Value() []byte
 	Next() error
 	Close()
+}
+
+// SplitableStore is the kv store which supports split regions.
+type SplitableStore interface {
+	SplitRegion(splitKey Key, scatter bool) (regionID uint64, err error)
+	WaitScatterRegionFinish(regionID uint64, backOff int) error
+	CheckRegionInScattering(regionID uint64) (bool, error)
 }

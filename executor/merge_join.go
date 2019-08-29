@@ -139,7 +139,7 @@ func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 		if t.curRow == t.curIter.End() {
 			t.reallocReaderResult()
 			oldMemUsage := t.curResult.MemoryUsage()
-			err := t.reader.Next(t.ctx, t.curResult)
+			err := Next(t.ctx, t.reader, t.curResult)
 			// error happens or no more data.
 			if err != nil || t.curResult.NumRows() == 0 {
 				t.curRow = t.curIter.End()
@@ -378,7 +378,7 @@ func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 // may not all belong to the same join key, but are guaranteed to be sorted
 // according to the join key.
 func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context) (err error) {
-	err = e.outerTable.reader.Next(ctx, e.outerTable.chk)
+	err = Next(ctx, e.outerTable.reader, e.outerTable.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}

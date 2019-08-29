@@ -14,6 +14,7 @@
 package types
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -29,7 +30,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Kind constants.
@@ -900,11 +902,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 			val, err = ConvertIntToUint(sc, ival, upperBound, tp)
 		}
 	case KindMysqlDecimal:
-		fval, err1 := d.GetMysqlDecimal().ToFloat64()
-		val, err = ConvertFloatToUint(sc, fval, upperBound, tp)
-		if err == nil {
-			err = err1
-		}
+		val, err = ConvertDecimalToUint(sc, d.GetMysqlDecimal(), upperBound, tp)
 	case KindMysqlEnum:
 		val, err = ConvertFloatToUint(sc, d.GetMysqlEnum().ToNumber(), upperBound, tp)
 	case KindMysqlSet:
@@ -950,6 +948,8 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 		t, err = ParseTime(sc, d.GetString(), mysql.TypeTimestamp, fsp)
 	case KindInt64:
 		t, err = ParseTimeFromNum(sc, d.GetInt64(), mysql.TypeTimestamp, fsp)
+	case KindMysqlDecimal:
+		t, err = ParseTimeFromFloatString(sc, d.GetMysqlDecimal().String(), mysql.TypeTimestamp, fsp)
 	default:
 		return invalidConv(d, mysql.TypeTimestamp)
 	}
@@ -987,6 +987,8 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 			return ret, errors.Trace(err)
 		}
 		t, err = t.RoundFrac(sc, fsp)
+	case KindMysqlDecimal:
+		t, err = ParseTimeFromFloatString(sc, d.GetMysqlDecimal().String(), tp, fsp)
 	case KindString, KindBytes:
 		t, err = ParseTime(sc, d.GetString(), tp, fsp)
 	case KindInt64:
@@ -1170,11 +1172,14 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	)
 	switch d.k {
 	case KindString, KindBytes:
-		y, err = StrToInt(sc, d.GetString())
+		s := d.GetString()
+		y, err = StrToInt(sc, s)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-		fromStr = true
+		if len(s) != 4 && len(s) > 0 && s[0:1] == "0" {
+			fromStr = true
+		}
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Time.Year())
 	case KindMysqlDuration:
@@ -1231,7 +1236,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
-		log.Error(err)
+		logutil.Logger(context.Background()).Error("convert to MySQL enum failed", zap.Error(err))
 		err = errors.Trace(ErrTruncated)
 	}
 	ret.SetValue(e)
@@ -1836,14 +1841,14 @@ func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
 }
 
-func handleTruncateError(sc *stmtctx.StatementContext) error {
+func handleTruncateError(sc *stmtctx.StatementContext, err error) error {
 	if sc.IgnoreTruncate {
 		return nil
 	}
 	if !sc.TruncateAsWarning {
-		return ErrTruncated
+		return err
 	}
-	sc.AppendWarning(ErrTruncated)
+	sc.AppendWarning(err)
 	return nil
 }
 

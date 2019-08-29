@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testleak"
@@ -37,9 +38,7 @@ var _ = Suite(&testSuite{})
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -51,6 +50,9 @@ type testSuite struct {
 
 func (s *testSuite) SetUpSuite(c *C) {
 	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx = &stmtctx.StatementContext{
+		MemTracker: memory.NewTracker("testSuite", variable.DefTiDBMemQuotaDistSQL),
+	}
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{
 			MockResponse: &mockResponse{

@@ -15,7 +15,7 @@ package session_test
 
 import (
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -26,11 +26,11 @@ func (s *testSessionSuite) TestFailStatementCommit(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1)")
 
-	gofail.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`), IsNil)
 	_, err := tk.Exec("insert into t values (2),(3),(4),(5)")
 	c.Assert(err, NotNil)
 
-	gofail.Disable("github.com/pingcap/tidb/session/mockStmtCommitError")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockStmtCommitError"), IsNil)
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
@@ -65,12 +65,12 @@ func (s *testSessionSuite) TestFailStatementCommitInRetry(c *C) {
 	tk.MustExec("insert into t values (2),(3),(4),(5)")
 	tk.MustExec("insert into t values (6)")
 
-	gofail.Enable("github.com/pingcap/tidb/session/mockCommitError8942", `return(true)`)
-	gofail.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError8942", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`), IsNil)
 	_, err := tk.Exec("commit")
 	c.Assert(err, NotNil)
-	gofail.Disable("github.com/pingcap/tidb/session/mockCommitError8942")
-	gofail.Disable("github.com/pingcap/tidb/session/mockStmtCommitError")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitError8942"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockStmtCommitError"), IsNil)
 
 	tk.MustExec("insert into t values (6)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("6"))

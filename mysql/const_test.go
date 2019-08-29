@@ -15,7 +15,6 @@ package mysql_test
 
 import (
 	"flag"
-	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -29,11 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
 
 var _ = Suite(&testMySQLConstSuite{})
 

@@ -29,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -129,7 +130,7 @@ func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affecte
 	defer func() {
 		err1 := e.se.RollbackTxn(context.Background())
 		if err1 != nil {
-			log.Error(errors.ErrorStack(err1))
+			logutil.Logger(context.Background()).Error("rollback error", zap.Error(err1))
 		}
 	}()
 
@@ -172,7 +173,7 @@ func (e *kvEncoder) EncodePrepareStmt(tableID int64, stmtID uint32, param ...int
 	defer func() {
 		err1 := e.se.RollbackTxn(context.Background())
 		if err1 != nil {
-			log.Error(errors.ErrorStack(err1))
+			logutil.Logger(context.Background()).Error("rollback error", zap.Error(err1))
 		}
 	}()
 
@@ -187,7 +188,7 @@ func (e *kvEncoder) EncodePrepareStmt(tableID int64, stmtID uint32, param ...int
 func (e *kvEncoder) EncodeMetaAutoID(dbID, tableID, autoID int64) (KvPair, error) {
 	mockTxn := kv.NewMockTxn()
 	m := meta.NewMeta(mockTxn)
-	k, v := m.GenAutoTableIDIDKeyValue(dbID, tableID, autoID)
+	k, v := m.GenAutoTableIDKeyValue(dbID, tableID, autoID)
 	return KvPair{Key: k, Val: v}, nil
 }
 
@@ -269,7 +270,7 @@ func initGlobal() error {
 
 	if storeGlobal != nil {
 		if err1 := storeGlobal.Close(); err1 != nil {
-			log.Error(errors.ErrorStack(err1))
+			logutil.Logger(context.Background()).Error("storeGlobal close error", zap.Error(err1))
 		}
 	}
 	if domGlobal != nil {

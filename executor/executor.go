@@ -39,11 +39,13 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -82,6 +84,10 @@ type baseExecutor struct {
 	runtimeStats  *execdetails.RuntimeStats
 }
 
+func (e *baseExecutor) base() *baseExecutor {
+	return e
+}
+
 // Open initializes children recursively and "childrenResults" according to children's schemas.
 func (e *baseExecutor) Open(ctx context.Context) error {
 	for _, child := range e.children {
@@ -95,13 +101,13 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 
 // Close closes all executors and release all resources.
 func (e *baseExecutor) Close() error {
+	var firstErr error
 	for _, child := range e.children {
-		err := child.Close()
-		if err != nil {
-			return errors.Trace(err)
+		if err := child.Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // Schema returns the current baseExecutor's schema. If it is nil, then create and return a new one.
@@ -160,6 +166,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 // return a batch of rows, other than a single row in Volcano.
 // NOTE: Executors must call "chk.Reset()" before appending their results to it.
 type Executor interface {
+	base() *baseExecutor
 	Open(context.Context) error
 	Next(ctx context.Context, chk *chunk.Chunk) error
 	Close() error
@@ -167,6 +174,16 @@ type Executor interface {
 
 	retTypes() []*types.FieldType
 	newFirstChunk() *chunk.Chunk
+}
+
+// Next is a wrapper function on e.Next(), it handles some common codes.
+func Next(ctx context.Context, e Executor, chk *chunk.Chunk) error {
+	sessVars := e.base().ctx.GetSessionVars()
+	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+		return ErrQueryInterrupted
+	}
+
+	return e.Next(ctx, chk)
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -414,11 +431,14 @@ func getTableName(is infoschema.InfoSchema, id int64) string {
 type CheckTableExec struct {
 	baseExecutor
 
-	tables []*ast.TableName
-	done   bool
-	is     infoschema.InfoSchema
-
-	genExprs map[model.TableColumnID]expression.Expression
+	dbName  string
+	tblInfo *model.TableInfo
+	indices []table.Index
+	srcs    []*IndexLookUpExecutor
+	done    bool
+	is      infoschema.InfoSchema
+	exitCh  chan struct{}
+	retCh   chan error
 }
 
 // Open implements the Executor Open interface.
@@ -426,62 +446,131 @@ func (e *CheckTableExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
+	for _, src := range e.srcs {
+		if err := src.Open(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	e.done = false
 	return nil
 }
 
+// Close implements the Executor Close interface.
+func (e *CheckTableExec) Close() error {
+	var firstErr error
+	for _, src := range e.srcs {
+		if err := src.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *IndexLookUpExecutor) error {
+	cols := src.schema.Columns
+	retFieldTypes := make([]*types.FieldType, len(cols))
+	for i := range cols {
+		retFieldTypes[i] = cols[i].RetType
+	}
+	chk := chunk.New(retFieldTypes, e.initCap, e.maxChunkSize)
+
+	var err error
+	for {
+		err = src.Next(ctx, chk)
+		if err != nil {
+			break
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		select {
+		case <-e.exitCh:
+			return nil
+		default:
+		}
+	}
+	e.retCh <- errors.Trace(err)
+	return errors.Trace(err)
+}
+
+func (e *CheckTableExec) handlePanic(r interface{}) {
+	if r != nil {
+		e.retCh <- errors.Errorf("%v", r)
+	}
+}
+
 // Next implements the Executor Next interface.
-func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.done {
+func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.done || len(e.srcs) == 0 {
 		return nil
 	}
 	defer func() { e.done = true }()
-	for _, t := range e.tables {
-		dbName := t.DBInfo.Name
-		tb, err := e.is.TableByName(dbName, t.Name)
+
+	idxNames := make([]string, 0, len(e.indices))
+	for _, idx := range e.indices {
+		idxNames = append(idxNames, idx.Meta().Name.O)
+	}
+	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tblInfo.Name.O, idxNames)
+	if err != nil {
+		tbl := e.srcs[idxOffset].table
+		if greater == admin.IdxCntGreater {
+			err = e.checkIndexHandle(ctx, idxOffset, e.srcs[idxOffset])
+		} else if greater == admin.TblCntGreater {
+			err = e.checkTableRecord(tbl, idxOffset)
+		}
+		if err != nil && admin.ErrDataInConsistent.Equal(err) {
+			return ErrAdminCheckTable.GenWithStack("%v err:%v", tbl.Meta().Name, err)
+		}
+		return errors.Trace(err)
+	}
+
+	// The number of table rows is equal to the number of index rows.
+	// TODO: Make the value of concurrency adjustable. And we can consider the number of records.
+	concurrency := 3
+	wg := sync.WaitGroup{}
+	for i := range e.srcs {
+		wg.Add(1)
+		go func(num int) {
+			defer wg.Done()
+			util.WithRecovery(func() {
+				err1 := e.checkIndexHandle(ctx, num, e.srcs[num])
+				if err1 != nil {
+					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
+				}
+			}, e.handlePanic)
+		}(i)
+
+		if (i+1)%concurrency == 0 {
+			wg.Wait()
+		}
+	}
+
+	for i := 0; i < len(e.srcs); i++ {
+		err = <-e.retCh
 		if err != nil {
 			return errors.Trace(err)
-		}
-		if tb.Meta().GetPartitionInfo() != nil {
-			err = e.doCheckPartitionedTable(tb.(table.PartitionedTable))
-		} else {
-			err = e.doCheckTable(tb)
-		}
-		if err != nil {
-			log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
-			if admin.ErrDataInConsistent.Equal(err) {
-				return ErrAdminCheckTable.GenWithStack("%v err:%v", t.Name, err)
-			}
-
-			return errors.Errorf("%v err:%v", t.Name, err)
 		}
 	}
 	return nil
 }
 
-func (e *CheckTableExec) doCheckPartitionedTable(tbl table.PartitionedTable) error {
-	info := tbl.Meta().GetPartitionInfo()
-	for _, def := range info.Definitions {
-		pid := def.ID
-		partition := tbl.GetPartition(pid)
-		if err := e.doCheckTable(partition); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func (e *CheckTableExec) doCheckTable(tbl table.Table) error {
+func (e *CheckTableExec) checkTableRecord(tbl table.Table, idxOffset int) error {
+	idx := e.indices[idxOffset]
+	genExprs := e.srcs[idxOffset].genExprs
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, idx := range tbl.Indices() {
-		if idx.Meta().State != model.StatePublic {
-			continue
-		}
-		err := admin.CompareIndexData(e.ctx, txn, tbl, idx, e.genExprs)
-		if err != nil {
+	if tbl.Meta().GetPartitionInfo() == nil {
+		return admin.CheckRecordAndIndex(e.ctx, txn, tbl, idx, genExprs)
+	}
+
+	info := tbl.Meta().GetPartitionInfo()
+	for _, def := range info.Definitions {
+		pid := def.ID
+		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, genExprs); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -526,13 +615,13 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
-	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
+	_, _, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
 	if err != nil {
 		return errors.Trace(err)
 	}
 	chk = e.src.newFirstChunk()
 	for {
-		err := e.src.Next(ctx, chk)
+		err := Next(ctx, e.src, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -599,6 +688,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		} else {
 			chk.AppendInt64(11, 1)
 		}
+		chk.AppendString(12, slow.Digest)
 		e.cursor++
 	}
 	return nil
@@ -634,7 +724,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
-	err := e.children[0].Next(ctx, chk)
+	err := Next(ctx, e.children[0], chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -691,7 +781,7 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for !e.meetFirstBatch {
 		// transfer req's requiredRows to childResult and then adjust it in childResult
 		e.childResult = e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
-		err := e.children[0].Next(ctx, e.adjustRequiredRows(e.childResult))
+		err := Next(ctx, e.children[0], e.adjustRequiredRows(e.childResult))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -716,7 +806,7 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		e.cursor += batchSize
 	}
 	e.adjustRequiredRows(chk)
-	err := e.children[0].Next(ctx, chk)
+	err := Next(ctx, e.children[0], chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -776,7 +866,7 @@ func init() {
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
-			return rows, errors.Trace(err)
+			return rows, errors.Trace(e.err)
 		}
 		ctx := context.TODO()
 		err = exec.Open(ctx)
@@ -786,7 +876,7 @@ func init() {
 		}
 		chk := exec.newFirstChunk()
 		for {
-			err = exec.Next(ctx, chk)
+			err = Next(ctx, exec, chk)
 			if err != nil {
 				return rows, errors.Trace(err)
 			}
@@ -890,12 +980,12 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			if !e.selected[e.inputRow.Idx()] {
 				continue
 			}
-			if chk.NumRows() >= chk.Capacity() {
+			if chk.IsFull() {
 				return nil
 			}
 			chk.AppendRow(e.inputRow)
 		}
-		err := e.children[0].Next(ctx, e.childResult)
+		err := Next(ctx, e.children[0], e.childResult)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -927,7 +1017,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 				return nil
 			}
 		}
-		err := e.children[0].Next(ctx, e.childResult)
+		err := Next(ctx, e.children[0], e.childResult)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1067,7 +1157,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 	e.evaluated = true
-	err := e.children[0].Next(ctx, chk)
+	err := Next(ctx, e.children[0], chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1177,7 +1267,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("resultPuller panic stack is:\n%s", buf)
+			logutil.Logger(ctx).Error("resultPuller panicked", zap.String("stack", string(buf)))
 			result.err = errors.Errorf("%v", r)
 			e.resultPool <- result
 			e.stopFetchData.Store(true)
@@ -1259,6 +1349,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		s, err = getPreparedStmt(execStmt, vars)
+		if err != nil {
+			return
+		}
 	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
@@ -1285,8 +1378,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
+		// For insert statement (not for update statement), disabling the StrictSQLMode
+		// should make TruncateAsWarning and DividedByZeroAsWarning,
+		// but should not make DupKeyAsWarning or BadNullAsWarning,
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.BadNullAsWarning = stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
@@ -1317,6 +1413,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
+		sc.CastStrToIntStrict = true
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
@@ -1325,6 +1422,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
+	case *ast.SplitRegionStmt:
+		sc.IgnoreTruncate = false
+		sc.IgnoreZeroInDate = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	default:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
@@ -1354,6 +1455,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	err = vars.SetSystemVar("error_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(true)))
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if s != nil {
+		// execute missed stmtID uses empty sql
+		sc.OriginalSQL = s.Text()
 	}
 	vars.StmtCtx = sc
 	return

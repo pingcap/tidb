@@ -21,6 +21,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -226,14 +227,32 @@ func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 }
 
 func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanResponse {
-	if !h.checkKeyInRegion(req.GetStartKey()) {
-		panic("KvScan: startKey not in region")
+	endKey := MvccKey(h.endKey).Raw()
+	var pairs []Pair
+	if !req.Reverse {
+		if !h.checkKeyInRegion(req.GetStartKey()) {
+			panic("KvScan: startKey not in region")
+		}
+		if len(req.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(NewMvccKey(req.EndKey), h.endKey) < 0) {
+			endKey = req.EndKey
+		}
+		pairs = h.mvccStore.Scan(req.GetStartKey(), endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
+	} else {
+		// TiKV use range [end_key, start_key) for reverse scan.
+		// Should use the req.EndKey to check in region.
+		if !h.checkKeyInRegion(req.GetEndKey()) {
+			panic("KvScan: startKey not in region")
+		}
+
+		// TiKV use range [end_key, start_key) for reverse scan.
+		// So the req.StartKey actually is the end_key.
+		if len(req.StartKey) > 0 && (len(endKey) == 0 || bytes.Compare(NewMvccKey(req.StartKey), h.endKey) < 0) {
+			endKey = req.StartKey
+		}
+
+		pairs = h.mvccStore.ReverseScan(req.EndKey, endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
 	}
-	endKey := h.endKey
-	if len(req.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(req.EndKey, endKey) < 0) {
-		endKey = req.EndKey
-	}
-	pairs := h.mvccStore.Scan(req.GetStartKey(), endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
+
 	return &kvrpcpb.ScanResponse{
 		Pairs: convertToPbPairs(pairs),
 	}
@@ -475,7 +494,22 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 			},
 		}
 	}
-	pairs := rawKV.RawScan(req.GetStartKey(), h.endKey, int(req.GetLimit()))
+
+	var pairs []Pair
+	if req.Reverse {
+		pairs = rawKV.RawReverseScan(
+			req.GetStartKey(),
+			h.startKey,
+			int(req.GetLimit()),
+		)
+	} else {
+		pairs = rawKV.RawScan(
+			req.GetStartKey(),
+			h.endKey,
+			int(req.GetLimit()),
+		)
+	}
+
 	return &kvrpcpb.RawScanResponse{
 		Kvs: convertToPbPairs(pairs),
 	}
@@ -488,8 +522,8 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 		return &kvrpcpb.SplitRegionResponse{}
 	}
 	newRegionID, newPeerIDs := h.cluster.AllocID(), h.cluster.AllocIDs(len(region.Peers))
-	h.cluster.SplitRaw(region.GetId(), newRegionID, key, newPeerIDs, newPeerIDs[0])
-	return &kvrpcpb.SplitRegionResponse{}
+	newRegion := h.cluster.SplitRaw(region.GetId(), newRegionID, key, newPeerIDs, newPeerIDs[0])
+	return &kvrpcpb.SplitRegionResponse{Left: newRegion.Meta}
 }
 
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
@@ -547,10 +581,12 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	// gofail: var rpcServerBusy bool
-	// if rpcServerBusy {
-	//	return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
-	// }
+	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
+		}
+	})
+
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
 		return nil, err
@@ -582,31 +618,34 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 		resp.Prewrite = handler.handleKvPrewrite(r)
 	case tikvrpc.CmdCommit:
-		// gofail: var rpcCommitResult string
-		// switch rpcCommitResult {
-		// case "timeout":
-		// 	return nil, errors.New("timeout")
-		// case "notLeader":
-		// 	return &tikvrpc.Response{
-		// 		Type:   tikvrpc.CmdCommit,
-		// 		Commit: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-		// 	}, nil
-		// case "keyError":
-		// 	return &tikvrpc.Response{
-		// 		Type:   tikvrpc.CmdCommit,
-		// 		Commit: &kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
-		// 	}, nil
-		// }
+		failpoint.Inject("rpcCommitResult", func(val failpoint.Value) {
+			switch val.(string) {
+			case "timeout":
+				failpoint.Return(nil, errors.New("timeout"))
+			case "notLeader":
+				failpoint.Return(&tikvrpc.Response{
+					Type:   tikvrpc.CmdCommit,
+					Commit: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+				}, nil)
+			case "keyError":
+				failpoint.Return(&tikvrpc.Response{
+					Type:   tikvrpc.CmdCommit,
+					Commit: &kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
+				}, nil)
+			}
+		})
+
 		r := req.Commit
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.Commit = &kvrpcpb.CommitResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.Commit = handler.handleKvCommit(r)
-		// gofail: var rpcCommitTimeout bool
-		// if rpcCommitTimeout {
-		//	return nil, undeterminedErr
-		// }
+		failpoint.Inject("rpcCommitTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, undeterminedErr)
+			}
+		})
 	case tikvrpc.CmdCleanup:
 		r := req.Cleanup
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {

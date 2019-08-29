@@ -14,8 +14,11 @@
 package executor_test
 
 import (
+	"strconv"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
@@ -219,6 +222,9 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
+	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
+
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
 
@@ -248,11 +254,39 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("20"))
 	_, err = tk.Exec("set global tidb_query_log_max_len = 20")
 	c.Assert(err, NotNil)
+	tk.MustExec("set tidb_query_log_max_len = 1024")
 
 	tk.MustExec("set tidb_constraint_check_in_place = 1")
 	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_constraint_check_in_place = 0")
 	tk.MustQuery(`select @@global.tidb_constraint_check_in_place;`).Check(testkit.Rows("0"))
+
+	// test for tidb_wait_split_region_finish
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_wait_split_region_finish = 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_wait_split_region_finish = 0")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
+
+	// test for tidb_scatter_region
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_scatter_region = 1")
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_scatter_region = 0")
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("0"))
+	_, err = tk.Exec("set session tidb_scatter_region = 0")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`select @@session.tidb_scatter_region;`)
+	c.Assert(err, NotNil)
+
+	// test for tidb_wait_split_region_timeout
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitSplitRegionTimeout)))
+	tk.MustExec("set tidb_wait_split_region_timeout = 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
+	_, err = tk.Exec("set tidb_wait_split_region_timeout = 0")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_wait_split_region_timeout(0) cannot be smaller than 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {

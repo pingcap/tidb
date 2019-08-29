@@ -16,6 +16,7 @@ package executor
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -53,6 +54,11 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 	}
 	if e.cursor >= len(e.rows) {
 		return nil, nil
+	}
+	if config.GetGlobalConfig().EnableBatchDML && e.cursor%e.ctx.GetSessionVars().DMLBatchSize == 0 && e.cursor != 0 {
+		if err = batchDMLCommit(e.ctx); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	if e.updatedRowKeys == nil {
 		e.updatedRowKeys = make(map[int64]map[int64]struct{})
@@ -156,7 +162,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	chk := e.children[0].newFirstChunk()
 	e.evalBuffer = chunk.MutRowFromTypes(fields)
 	for {
-		err := e.children[0].Next(ctx, chk)
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

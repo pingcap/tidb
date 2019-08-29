@@ -119,8 +119,8 @@ const (
 	// tidb_enable_table_partition is used to enable table partition feature.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
-	// TiDBCheckMb4ValueInUtf8 is used to control whether to enable the check wrong utf8 value.
-	TiDBCheckMb4ValueInUtf8 = "tidb_check_mb4_value_in_utf8"
+	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
+	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -203,6 +203,15 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// tidb_scatter_region will scatter the regions for DDLs when it is ON.
+	TiDBScatterRegion = "tidb_scatter_region"
+
+	// TiDBWaitSplitRegionFinish defines the split region behaviour is sync or async.
+	TiDBWaitSplitRegionFinish = "tidb_wait_split_region_finish"
+
+	// TiDBWaitSplitRegionTimeout uses to set the split and scatter region back off time.
+	TiDBWaitSplitRegionTimeout = "tidb_wait_split_region_timeout"
+
 	// tidb_force_priority defines the operations priority of all statements.
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
 	TiDBForcePriority = "tidb_force_priority"
@@ -210,6 +219,9 @@ const (
 	// tidb_constraint_check_in_place indicates to check the constraint when the SQL executing.
 	// It could hurt the performance of bulking insert when it is ON.
 	TiDBConstraintCheckInPlace = "tidb_constraint_check_in_place"
+
+	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
+	TiDBSlowQueryFile = "tidb_slow_query_file"
 )
 
 // Default TiDB system variable values.
@@ -242,6 +254,7 @@ const (
 	DefTiDBMemQuotaIndexLookupReader = 32 << 30 // 32GB.
 	DefTiDBMemQuotaIndexLookupJoin   = 32 << 30 // 32GB.
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
+	DefTiDBMemQuotaDistSQL           = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
 	DefTiDBDisableTxnAutoRetry       = false
@@ -249,11 +262,14 @@ const (
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
-	DefTiDBDDLReorgWorkerCount       = 16
-	DefTiDBDDLReorgBatchSize         = 1024
+	DefTiDBDDLReorgWorkerCount       = 4
+	DefTiDBDDLReorgBatchSize         = 256
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
 	DefTiDBForcePriority             = mysql.NoPriority
+	DefTiDBScatterRegion             = false
+	DefTiDBWaitSplitRegionFinish     = true
+	DefWaitSplitRegionTimeout        = 300 // 300s
 )
 
 // Process global variables.
@@ -263,9 +279,10 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	// Export for testing.
-	MaxDDLReorgBatchSize int32  = 10240
-	MinDDLReorgBatchSize int32  = 32
-	DDLSlowOprThreshold  uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	ForcePriority               = int32(DefTiDBForcePriority)
-	ServerHostname, _           = os.Hostname()
+	MaxDDLReorgBatchSize  int32  = 10240
+	MinDDLReorgBatchSize  int32  = 32
+	DDLSlowOprThreshold   uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
+	ForcePriority                = int32(DefTiDBForcePriority)
+	ServerHostname, _            = os.Hostname()
+	MaxOfMaxAllowedPacket uint64 = 1073741824
 )

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/tools/container/intsets"
@@ -71,13 +72,21 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, 
 	if !prop.IsEmpty() {
 		return invalidTask, nil
 	}
-	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx, p.stats)
+	dual := PhysicalTableDual{
+		RowCount:    p.RowCount,
+		placeHolder: p.placeHolder,
+	}.init(p.ctx, p.stats)
 	dual.SetSchema(p.schema)
 	return &rootTask{p: dual}, nil
 }
 
 // findBestTask implements LogicalPlan interface.
 func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, err error) {
+	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
+	// and set inner child prop nil, so here we do nothing.
+	if prop == nil {
+		return nil, nil
+	}
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
 	bestTask = p.getTask(prop)
@@ -328,10 +337,8 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err error) {
-	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
-	// So here we do nothing.
-	// TODO: Add a special prop to handle IndexJoin's inner plan.
-	// Then we can remove forceToTableScan and forceToIndexScan.
+	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
+	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
 		return nil, nil
 	}
@@ -424,7 +431,9 @@ func isCoveringIndex(columns []*expression.Column, indexColumns []*model.IndexCo
 		isIndexColumn := false
 		for _, indexCol := range indexColumns {
 			isFullLen := indexCol.Length == types.UnspecifiedLength || indexCol.Length == col.RetType.Flen
-			if col.ColName.L == indexCol.Name.L && isFullLen {
+			// We use col.OrigColName instead of col.ColName.
+			// Related issue: https://github.com/pingcap/tidb/issues/9636.
+			if col.OrigColName.L == indexCol.Name.L && isFullLen {
 				isIndexColumn = true
 				break
 			}
@@ -450,6 +459,9 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
 	path := candidate.path
 	idx := path.index
 	is := PhysicalIndexScan{
@@ -500,7 +512,11 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
 	is.stats = property.NewSimpleStats(rowCount)
-	is.stats.UsePseudoStats = ds.statisticTable.Pseudo
+	is.stats.StatsVersion = ds.statisticTable.Version
+	if ds.statisticTable.Pseudo {
+		is.stats.StatsVersion = statistics.PseudoVersion
+	}
+
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if candidate.isMatchProp {
@@ -510,19 +526,13 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}
 		if cop.tablePlan != nil {
 			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+			cop.doubleReadNeedProj = true
 		}
 		cop.keepOrder = true
 		is.KeepOrder = true
-		is.addPushedDownSelection(cop, ds, prop.ExpectedCnt, path)
-	} else {
-		expectedCnt := math.MaxFloat64
-		if prop.IsEmpty() {
-			expectedCnt = prop.ExpectedCnt
-		} else {
-			return invalidTask, nil
-		}
-		is.addPushedDownSelection(cop, ds, expectedCnt, path)
 	}
+	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
+	is.addPushedDownSelection(cop, ds, path, finalStats)
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -563,16 +573,16 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64, path *accessPath) {
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *accessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
 		copTask.cst += copTask.count() * cpuFactor
-		count := path.countAfterAccess
-		if count >= 1.0 {
-			selectivity := path.countAfterIndex / path.countAfterAccess
-			count = is.stats.RowCount * selectivity
+		var selectivity float64
+		if path.countAfterAccess > 0 {
+			selectivity = path.countAfterIndex / path.countAfterAccess
 		}
+		count := is.stats.RowCount * selectivity
 		stats := &property.StatsInfo{RowCount: count}
 		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx, stats)
 		indexSel.SetChildren(is)
@@ -581,7 +591,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	if tableConds != nil {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * cpuFactor
-		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.ScaleByExpectCnt(expectedCnt))
+		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, finalStats)
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
@@ -652,7 +662,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
 	ts.stats = property.NewSimpleStats(rowCount)
-	ts.stats.UsePseudoStats = ds.statisticTable.Pseudo
+	ts.stats.StatsVersion = ds.statisticTable.Version
+	if ds.statisticTable.Pseudo {
+		ts.stats.StatsVersion = statistics.PseudoVersion
+	}
+
 	copTask.cst = rowCount * scanFactor
 	if candidate.isMatchProp {
 		if prop.Desc {

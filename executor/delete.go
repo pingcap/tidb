@@ -16,6 +16,7 @@ package executor
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -91,15 +92,15 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		break
 	}
 
-	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
-	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
-	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
+	sessVars := e.ctx.GetSessionVars()
+	// If tidb_batch_delete is ON and not in a transaction, or enable-batch-dml is ON, we could use BatchDelete mode.
+	batchDelete := (sessVars.BatchDelete && !sessVars.InTxn()) || config.GetGlobalConfig().EnableBatchDML
 	fields := e.children[0].retTypes()
 	chk := e.children[0].newFirstChunk()
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].Next(ctx, chk)
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -108,15 +109,10 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
-			if batchDelete && rowCount >= batchDMLSize {
-				if err = e.ctx.StmtCommit(); err != nil {
+			if batchDelete && rowCount%sessVars.DMLBatchSize == 0 && rowCount != 0 {
+				if err := batchDMLCommit(e.ctx); err != nil {
 					return errors.Trace(err)
 				}
-				if err = e.ctx.NewTxn(); err != nil {
-					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
-				}
-				rowCount = 0
 			}
 
 			datumRow := chunkRow.GetDatumRow(fields)
@@ -181,7 +177,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	chk := e.children[0].newFirstChunk()
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
-		err := e.children[0].Next(ctx, chk)
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

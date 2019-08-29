@@ -1,0 +1,12 @@
+drop table if exists t1, t2;
+create table t1(a bigint, b bigint, index idx(a));
+create table t2(a bigint, b bigint, index idx(a));
+insert into t1 values(1, 1), (1, 1), (1, 1), (1, 1), (1, 1);
+insert into t2 values(1, 1);
+
+analyze table t1, t2;
+
+-- Test https://github.com/pingcap/tidb/issues/9577
+-- we expect the following two SQL chose t2 as the outer table
+explain select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
+explain select * from t1 join t2 on t1.a=t2.a;

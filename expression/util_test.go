@@ -68,8 +68,10 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	neFunc := newFunction(ast.NE, col, One)
 	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
+	notFuncCopy := notFunc.Clone()
 	ret := PushDownNot(ctx, notFunc, false)
 	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
+	c.Assert(notFunc.Equal(ctx, notFuncCopy), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestFilter(c *check.C) {
@@ -88,6 +90,27 @@ func isLogicOrFunction(e Expression) bool {
 		return f.FuncName.L == ast.LogicOr
 	}
 	return false
+}
+
+func (s *testUtilSuite) TestDisableParseJSONFlag4Expr(c *check.C) {
+	var expr Expression
+	expr = &Column{RetType: newIntFieldType()}
+	ft := expr.GetType()
+	ft.Flag |= mysql.ParseToJSONFlag
+	DisableParseJSONFlag4Expr(expr)
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsTrue)
+
+	expr = &CorrelatedColumn{Column: Column{RetType: newIntFieldType()}}
+	ft = expr.GetType()
+	ft.Flag |= mysql.ParseToJSONFlag
+	DisableParseJSONFlag4Expr(expr)
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsTrue)
+
+	expr = &ScalarFunction{RetType: newIntFieldType()}
+	ft = expr.GetType()
+	ft.Flag |= mysql.ParseToJSONFlag
+	DisableParseJSONFlag4Expr(expr)
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsFalse)
 }
 
 func BenchmarkExtractColumns(b *testing.B) {
@@ -123,4 +146,13 @@ func BenchmarkExprFromSchema(b *testing.B) {
 		ExprFromSchema(expr, schema)
 	}
 	b.ReportAllocs()
+}
+
+func newIntFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeLonglong,
+		Flen:    mysql.MaxIntWidth,
+		Decimal: 0,
+		Flag:    mysql.BinaryFlag,
+	}
 }

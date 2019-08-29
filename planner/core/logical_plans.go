@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -22,11 +23,13 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -95,10 +98,13 @@ const (
 type LogicalJoin struct {
 	logicalSchemaProducer
 
-	JoinType       JoinType
-	reordered      bool
-	cartesianJoin  bool
-	StraightJoin   bool
+	JoinType      JoinType
+	reordered     bool
+	cartesianJoin bool
+	StraightJoin  bool
+
+	// hintInfo stores the join algorithm hint information specified by client.
+	hintInfo       *tableHintInfo
 	preferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
@@ -170,7 +176,7 @@ func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expres
 }
 
 func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
-	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan), false, false)
+	eq, left, right, other := p.extractOnCondition(onConds, false, false)
 	p.EqualConditions = append(eq, p.EqualConditions...)
 	p.LeftConditions = append(left, p.LeftConditions...)
 	p.RightConditions = append(right, p.RightConditions...)
@@ -297,6 +303,10 @@ type LogicalTableDual struct {
 	logicalSchemaProducer
 
 	RowCount int
+	// placeHolder indicates if this dual plan is a place holder in query optimization
+	// for data sources like `Show`, if true, the dual plan would be substituted by
+	// `Show` in the final plan.
+	placeHolder bool
 }
 
 // LogicalUnionScan is only used in non read-only txn.
@@ -306,7 +316,7 @@ type LogicalUnionScan struct {
 	conditions []expression.Expression
 }
 
-// DataSource represents a tablescan without condition push down.
+// DataSource represents a tableScan without condition push down.
 type DataSource struct {
 	logicalSchemaProducer
 
@@ -327,6 +337,7 @@ type DataSource struct {
 	relevantIndices []bool
 
 	statisticTable *statistics.Table
+	tableStats     *property.StatsInfo
 
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	possibleAccessPaths []*accessPath
@@ -365,19 +376,21 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	path.tableFilters = ds.pushedDownConds
 	var pkCol *expression.Column
 	columnLen := len(ds.schema.Columns)
-	if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
-		pkCol = ds.schema.Columns[columnLen-1]
-	} else if ds.tableInfo.PKIsHandle {
+	isUnsigned := false
+	if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
+	} else if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
+		pkCol = ds.schema.Columns[columnLen-1]
 	}
 	if pkCol == nil {
-		path.ranges = ranger.FullIntRange(false)
+		path.ranges = ranger.FullIntRange(isUnsigned)
 		return false, nil
 	}
 
-	path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
+	path.ranges = ranger.FullIntRange(isUnsigned)
 	if len(ds.pushedDownConds) == 0 {
 		return false, nil
 	}
@@ -455,40 +468,42 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.accessConds = res.AccessConds
 		path.tableFilters = res.RemainedConds
 		path.eqCondCount = res.EqCondCount
-		path.countAfterAccess, err = ds.stats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
+		path.countAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
 			return false, err
 		}
 	} else {
 		path.tableFilters = ds.pushedDownConds
 	}
-	corColInAccessConds := false
 	if path.eqCondCount == len(path.accessConds) {
-		access, remained := path.splitCorColAccessCondFromFilters()
-		path.accessConds = append(path.accessConds, access...)
+		accesses, remained := path.splitCorColAccessCondFromFilters()
+		path.accessConds = append(path.accessConds, accesses...)
 		path.tableFilters = remained
-		if len(access) > 0 {
-			corColInAccessConds = true
+		if len(accesses) > 0 && ds.statisticTable.Pseudo {
+			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+		} else {
+			selectivity := path.countAfterAccess / float64(ds.statisticTable.Count)
+			for i := range accesses {
+				col := path.idxCols[path.eqCondCount+i]
+				ndv := ds.getColumnNDV(col.ID)
+				ndv *= selectivity
+				if ndv < 1 {
+					ndv = 1.0
+				}
+				path.countAfterAccess = path.countAfterAccess / ndv
+			}
 		}
 	}
 	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
-	if corColInAccessConds {
-		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
-		if ok && !ds.stats.HistColl.Pseudo {
-			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
-		} else {
-			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
-		}
-	}
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.countAfterAccess < ds.stats.RowCount {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
-		selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, err := ds.tableStats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
-			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
+			logutil.Logger(context.Background()).Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
 		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)

@@ -106,8 +106,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
 	case TiDBQueryLogMaxLen:
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
-	case TiDBCheckMb4ValueInUtf8:
-		return boolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8), true, nil
+	case TiDBCheckMb4ValueInUTF8:
+		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
+	case PluginDir:
+		return config.GetGlobalConfig().Plugin.Dir, true, nil
+	case PluginLoad:
+		return config.GetGlobalConfig().Plugin.Load, true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
@@ -272,7 +276,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
 	// See "https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_allowed_packet"
 	case MaxAllowedPacket:
-		return checkUInt64SystemVar(name, value, 1024, 1073741824, vars)
+		return checkUInt64SystemVar(name, value, 1024, MaxOfMaxAllowedPacket, vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:
@@ -310,7 +314,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, err
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
-	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
+
+	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
 		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, ForeignKeyChecks, SQLSafeUpdates, TiDBConstraintCheckInPlace:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
@@ -321,13 +326,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqUnFolding, TiDBEnableTablePartition,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete, TiDBCheckMb4ValueInUtf8:
+		TiDBBatchDelete, TiDBCheckMb4ValueInUTF8, TiDBScatterRegion:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBDDLReorgBatchSize:
 		return checkUInt64SystemVar(name, value, uint64(MinDDLReorgBatchSize), uint64(MaxDDLReorgBatchSize), vars)
+	case MaxExecutionTime:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
 		TiDBIndexLookupSize,
 		TiDBHashJoinConcurrency,
@@ -375,6 +382,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return upVal, nil
+	case TiDBWaitSplitRegionTimeout:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v <= 0 {
+			return value, errors.Errorf("tidb_wait_split_region_timeout(%d) cannot be smaller than 1", v)
+		}
 	}
 	return value, nil
 }
@@ -411,9 +426,20 @@ func parseTimeZone(s string) (*time.Location, error) {
 	}
 
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
+	// The time zone's value should in [-12:59,+14:00].
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
 		d, err := types.ParseDuration(nil, s[1:], 0)
 		if err == nil {
+			if s[0] == '-' {
+				if d.Duration > 12*time.Hour+59*time.Minute {
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+				}
+			} else {
+				if d.Duration > 14*time.Hour {
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+				}
+			}
+
 			ofst := int(d.Duration / time.Second)
 			if s[0] == '-' {
 				ofst = -ofst

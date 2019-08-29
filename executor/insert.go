@@ -22,7 +22,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -159,9 +160,9 @@ func (e *InsertExec) Open(ctx context.Context) error {
 
 // updateDupRow updates a duplicate row to a new row.
 func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
-	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
+	oldRow, err := e.getOldRow(e.ctx, e.Table, handle, e.GenExprs)
 	if err != nil {
-		log.Errorf("[insert on dup] handle is %d for the to-be-inserted row %s", handle, types.DatumsToStrNoErr(row.row))
+		logutil.Logger(context.Background()).Error("get old row failed when insert on dup", zap.Int64("handle", handle), zap.String("toBeInsertedRow", types.DatumsToStrNoErr(row.row)))
 		return errors.Trace(err)
 	}
 	// Do update row.

@@ -117,7 +117,7 @@ func (t *testTableSuite) TestDesc(c *C) {
 	NewColDesc(col)
 	col.Flag = mysql.UniqueKeyFlag | mysql.OnUpdateNowFlag
 	desc := NewColDesc(col)
-	c.Assert(desc.Extra, Equals, "on update CURRENT_TIMESTAMP")
+	c.Assert(desc.Extra, Equals, "DEFAULT_GENERATED on update CURRENT_TIMESTAMP")
 	col.Flag = 0
 	col.GeneratedExprString = "test"
 	col.GeneratedStored = true

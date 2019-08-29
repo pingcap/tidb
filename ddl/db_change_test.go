@@ -63,7 +63,7 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "create database test_db_state")
+	_, err = s.se.Execute(context.Background(), "create database test_db_state default charset utf8 default collate utf8_bin")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
@@ -443,7 +443,7 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column the number of enum column's elements is less than the original: 2")
 	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8mb4 to binary")
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8 to binary")
 	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -685,6 +685,30 @@ func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
 		c.Assert(oneErr.Error(), Equals, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)
+}
+
+func (s *testStateChangeSuite) TestParallelAddColumAndSetDefaultValue(c *C) {
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), `create table tx (
+		c1 varchar(64),
+		c2 enum('N','Y') not null default 'N',
+		primary key idx2 (c2, c1))`)
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tx values('a', 'N')")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table tx")
+
+	sql1 := "alter table tx add column cx int after c1"
+	sql2 := "alter table tx alter c2 set default 'N'"
+
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		_, err := s.se.Execute(context.Background(), "delete from tx where c1='a'")
+		c.Assert(err, IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
 func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
@@ -947,4 +971,18 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 
 	intercept = &ddl.TestInterceptor{}
 	d.(ddl.DDLForTest).SetInterceptoror(intercept)
+}
+
+func (s *testStateChangeSuite) TestParallelAlterSchemaCharsetAndCollate(c *C) {
+	sql := "ALTER SCHEMA test_db_state CHARSET utf8mb4 COLLATE utf8mb4_general_ci"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+	sql = `SELECT default_character_set_name, default_collation_name
+			FROM information_schema.schemata
+			WHERE schema_name='test_db_state'`
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(sql).Check(testkit.Rows("utf8mb4 utf8mb4_general_ci"))
 }

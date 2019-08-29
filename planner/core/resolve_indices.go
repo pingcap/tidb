@@ -234,13 +234,6 @@ func (p *Insert) ResolveIndices() {
 	}
 }
 
-// ResolveIndices implements Plan interface.
-func (p *Show) ResolveIndices() {
-	for i, expr := range p.Conditions {
-		p.Conditions[i] = expr.ResolveIndices(p.schema)
-	}
-}
-
 func (p *physicalSchemaProducer) ResolveIndices() {
 	p.basePhysicalPlan.ResolveIndices()
 	if p.schema != nil {

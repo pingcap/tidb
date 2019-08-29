@@ -14,8 +14,10 @@
 package variable
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
@@ -96,15 +99,17 @@ type TransactionContext struct {
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
-	Histroy       interface{}
+	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
 
-	// For metrics.
+	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
+
+	IsBatched bool
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -129,7 +134,7 @@ func (tc *TransactionContext) Cleanup() {
 	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
 	tc.DirtyDB = nil
 	tc.Binlog = nil
-	tc.Histroy = nil
+	tc.History = nil
 	tc.TableDeltaMap = nil
 }
 
@@ -181,12 +186,12 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
-	// params for prepared statements
+	// PreparedParams params for prepared statements
 	PreparedParams []types.Datum
 
 	// retry information
 	RetryInfo *RetryInfo
-	// Should be reset on transaction finished.
+	//  TxnCtx Should be reset on transaction finished.
 	TxnCtx *TransactionContext
 
 	// KVVars is the variables for KV storage.
@@ -194,9 +199,9 @@ type SessionVars struct {
 
 	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
 	TxnIsolationLevelOneShot struct {
-		// state 0 means default
-		// state 1 means it's set in current transaction.
-		// state 2 means it should be used in current transaction.
+		// State 0 means default
+		// State 1 means it's set in current transaction.
+		// State 2 means it should be used in current transaction.
 		State int
 		Value string
 	}
@@ -300,6 +305,12 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
+	// WaitSplitRegionFinish defines the create table pre-split behaviour is sync or async.
+	WaitSplitRegionFinish bool
+
+	// WaitSplitRegionTimeout defines the split region timeout.
+	WaitSplitRegionTimeout uint64
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -308,6 +319,43 @@ type SessionVars struct {
 
 	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.
 	ConstraintCheckInPlace bool
+
+	// CommandValue indicates which command current session is doing.
+	CommandValue uint32
+
+	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
+	SlowQueryFile string
+
+	// MaxExecutionTime is the timeout for select statement, in milliseconds.
+	// If the value is 0, timeouts are not enabled.
+	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
+	MaxExecutionTime uint64
+
+	// Killed is a flag to indicate that this query is killed.
+	Killed uint32
+
+	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
+	ConnectionInfo *ConnectionInfo
+}
+
+// ConnectionInfo present connection used by audit.
+type ConnectionInfo struct {
+	ConnectionID      uint32
+	ConnectionType    string
+	Host              string
+	ClientIP          string
+	ClientPort        string
+	ServerID          int
+	ServerPort        int
+	Duration          float64
+	User              string
+	ServerOSLoginUser string
+	OSVersion         string
+	ClientVersion     string
+	ServerVersion     string
+	SSLVersion        string
+	PID               int
+	DB                string
 }
 
 // NewSessionVars creates a session vars object.
@@ -329,6 +377,10 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
+		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:     DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:    DefWaitSplitRegionTimeout,
+		CommandValue:              uint32(mysql.ComSleep),
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -349,6 +401,7 @@ func NewSessionVars() *SessionVars {
 		MemQuotaIndexLookupReader: DefTiDBMemQuotaIndexLookupReader,
 		MemQuotaIndexLookupJoin:   DefTiDBMemQuotaIndexLookupJoin,
 		MemQuotaNestedLoopApply:   DefTiDBMemQuotaNestedLoopApply,
+		MemQuotaDistSQL:           DefTiDBMemQuotaDistSQL,
 	}
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: DefIndexJoinBatchSize,
@@ -376,6 +429,11 @@ func (s *SessionVars) CleanBuffers() {
 	if !s.LightningMode {
 		s.GetWriteStmtBufs().clean()
 	}
+}
+
+// GetSplitRegionTimeout gets split region timeout.
+func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
+	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
 }
 
 // AllocPlanColumnID allocates column id for plan.
@@ -528,6 +586,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
+	case MaxExecutionTime:
+		timeoutMS := tidbOptPositiveInt32(val, 0)
+		s.MaxExecutionTime = uint64(timeoutMS)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
@@ -606,8 +667,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
 		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
-	case TiDBCheckMb4ValueInUtf8:
-		config.GetGlobalConfig().CheckMb4ValueInUtf8 = TiDBOptOn(val)
+	case TiDBCheckMb4ValueInUTF8:
+		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+	case TiDBSlowQueryFile:
+		s.SlowQueryFile = val
+	case TiDBWaitSplitRegionFinish:
+		s.WaitSplitRegionFinish = TiDBOptOn(val)
+	case TiDBWaitSplitRegionTimeout:
+		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeout))
 	}
 	s.systems[name] = val
 	return nil
@@ -633,6 +700,7 @@ const (
 	TxnIsolation         = "tx_isolation"
 	TransactionIsolation = "transaction_isolation"
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
+	MaxExecutionTime     = "max_execution_time"
 )
 
 var (
@@ -673,7 +741,7 @@ type Concurrency struct {
 	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
 	HashAggPartialConcurrency int
 
-	// HashAggPartialConcurrency is the number of concurrent hash aggregation final worker.
+	// HashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
 	HashAggFinalConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
@@ -698,6 +766,8 @@ type MemQuota struct {
 	MemQuotaIndexLookupJoin int64
 	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
 	MemQuotaNestedLoopApply int64
+	// MemQuotaDistSQL defines the memory quota for all operators in DistSQL layer like co-processor and selectResult.
+	MemQuotaDistSQL int64
 }
 
 // BatchSize defines batch size values.
@@ -714,4 +784,144 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+}
+
+const (
+	// SlowLogPrefixStr is slow log row prefix.
+	SlowLogPrefixStr = "# "
+	// SlowLogSpaceMarkStr is slow log space mark.
+	SlowLogSpaceMarkStr = ": "
+	// SlowLogSQLSuffixStr is slow log suffix.
+	SlowLogSQLSuffixStr = ";"
+	// SlowLogTimeStr is slow log field name.
+	SlowLogTimeStr = "Time"
+	// SlowLogStartPrefixStr is slow log start row prefix.
+	SlowLogStartPrefixStr = SlowLogPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
+	// SlowLogTxnStartTSStr is slow log field name.
+	SlowLogTxnStartTSStr = "Txn_start_ts"
+	// SlowLogUserStr is slow log field name.
+	SlowLogUserStr = "User"
+	// SlowLogConnIDStr is slow log field name.
+	SlowLogConnIDStr = "Conn_ID"
+	// SlowLogQueryTimeStr is slow log field name.
+	SlowLogQueryTimeStr = "Query_time"
+	// SlowLogDBStr is slow log field name.
+	SlowLogDBStr = "DB"
+	// SlowLogIsInternalStr is slow log field name.
+	SlowLogIsInternalStr = "Is_internal"
+	// SlowLogIndexIDsStr is slow log field name.
+	SlowLogIndexIDsStr = "Index_ids"
+	// SlowLogDigestStr is slow log field name.
+	SlowLogDigestStr = "Digest"
+	// SlowLogQuerySQLStr is slow log field name.
+	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
+	// SlowLogStatsInfoStr is plan stats info.
+	SlowLogStatsInfoStr = "Stats"
+	// SlowLogNumCopTasksStr is the number of cop-tasks.
+	SlowLogNumCopTasksStr = "Num_cop_tasks"
+	// SlowLogCopProcAvg is the average process time of all cop-tasks.
+	SlowLogCopProcAvg = "Cop_proc_avg"
+	// SlowLogCopProcP90 is the p90 process time of all cop-tasks.
+	SlowLogCopProcP90 = "Cop_proc_p90"
+	// SlowLogCopProcMax is the max process time of all cop-tasks.
+	SlowLogCopProcMax = "Cop_proc_max"
+	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
+	SlowLogCopWaitAvg = "Cop_wait_avg"
+	// SlowLogCopWaitP90 is the p90 wait time of all cop-tasks.
+	SlowLogCopWaitP90 = "Cop_wait_p90"
+	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
+	SlowLogCopWaitMax = "Cop_wait_max"
+	// SlowLogMemMax is the max number bytes of memory used in this statement.
+	SlowLogMemMax = "Mem_max"
+	// SlowLogSucc is used to indicate whether this sql execute successfully.
+	SlowLogSucc = "Succ"
+)
+
+// SlowLogFormat uses for formatting slow log.
+// The slow log output is like below:
+// # Time: 2019-04-28T15:24:04.309074+08:00
+// # Txn_start_ts: 406315658548871171
+// # User: root@127.0.0.1
+// # Conn_ID: 6
+// # Query_time: 4.895492
+// # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
+// # DB: test
+// # Index_ids: [1,2]
+// # Is_internal: false
+// # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+// # Stats: t1:1,t2:2
+// # Num_cop_tasks: 10
+// # Cop_process: Avg_time: 1s P90_time: 2s Max_time: 3s Max_addr: 10.6.131.78
+// # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
+// # Memory_max: 4096
+// # Succ: true
+// select * from t_slim;
+func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string,
+	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, succ bool, sql string) string {
+	var buf bytes.Buffer
+	execDetailStr := execDetail.String()
+	buf.WriteString(SlowLogPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
+	if s.User != nil {
+		buf.WriteString(SlowLogPrefixStr + SlowLogUserStr + SlowLogSpaceMarkStr + s.User.String() + "\n")
+	}
+	if s.ConnectionID != 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogConnIDStr + SlowLogSpaceMarkStr + strconv.FormatUint(s.ConnectionID, 10) + "\n")
+	}
+	buf.WriteString(SlowLogPrefixStr + SlowLogQueryTimeStr + SlowLogSpaceMarkStr + strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64) + "\n")
+	if len(execDetailStr) > 0 {
+		buf.WriteString(SlowLogPrefixStr + execDetailStr + "\n")
+	}
+	if len(s.CurrentDB) > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogDBStr + SlowLogSpaceMarkStr + s.CurrentDB + "\n")
+	}
+	if len(indexIDs) > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogIndexIDsStr + SlowLogSpaceMarkStr + indexIDs + "\n")
+	}
+	buf.WriteString(SlowLogPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
+	if len(digest) > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
+	}
+	if len(statsInfos) > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
+		firstComma := false
+		vStr := ""
+		for k, v := range statsInfos {
+			if v == 0 {
+				vStr = "pseudo"
+			} else {
+				vStr = strconv.FormatUint(v, 10)
+
+			}
+			if firstComma {
+				buf.WriteString("," + k + ":" + vStr)
+			} else {
+				buf.WriteString(k + ":" + vStr)
+				firstComma = true
+			}
+		}
+		buf.WriteString("\n")
+	}
+	if copTasks != nil {
+		buf.WriteString(SlowLogPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
+		buf.WriteString(SlowLogPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v",
+			SlowLogCopProcAvg, SlowLogSpaceMarkStr, copTasks.AvgProcessTime.Seconds(),
+			SlowLogCopProcP90, SlowLogSpaceMarkStr, copTasks.P90ProcessTime.Seconds(),
+			SlowLogCopProcMax, SlowLogSpaceMarkStr, copTasks.MaxProcessTime.Seconds()) + "\n")
+		buf.WriteString(SlowLogPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v",
+			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, copTasks.AvgWaitTime.Seconds(),
+			SlowLogCopWaitP90, SlowLogSpaceMarkStr, copTasks.P90WaitTime.Seconds(),
+			SlowLogCopWaitMax, SlowLogSpaceMarkStr, copTasks.MaxWaitTime.Seconds()) + "\n")
+	}
+	if memMax > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
+	}
+	buf.WriteString(SlowLogPrefixStr + SlowLogSucc + SlowLogSpaceMarkStr + strconv.FormatBool(succ) + "\n")
+	if len(sql) == 0 {
+		sql = ";"
+	}
+	buf.WriteString(sql)
+	if sql[len(sql)-1] != ';' {
+		buf.WriteString(";")
+	}
+	return buf.String()
 }

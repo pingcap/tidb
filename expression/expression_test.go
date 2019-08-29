@@ -61,6 +61,7 @@ func (s *testEvaluatorSuite) TestConstant(c *C) {
 
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	c.Assert(Zero.IsCorrelated(), IsFalse)
+	c.Assert(Zero.ConstItem(), IsTrue)
 	c.Assert(Zero.Decorrelate(nil).Equal(s.ctx, Zero), IsTrue)
 	c.Assert(Zero.HashCode(sc), DeepEquals, []byte{0x0, 0x8, 0x0})
 	c.Assert(Zero.Equal(s.ctx, One), IsFalse)
@@ -83,6 +84,19 @@ func (s *testEvaluatorSuite) TestIsBinaryLiteral(c *C) {
 	c.Assert(IsBinaryLiteral(con), IsTrue)
 	con.Value = types.NewIntDatum(1)
 	c.Assert(IsBinaryLiteral(con), IsFalse)
+}
+
+func (s *testEvaluatorSuite) TestConstItem(c *C) {
+	defer testleak.AfterTest(c)()
+
+	sf := newFunction(ast.Rand)
+	c.Assert(sf.ConstItem(), Equals, false)
+	sf = newFunction(ast.UUID)
+	c.Assert(sf.ConstItem(), Equals, false)
+	sf = newFunction(ast.GetParam, One)
+	c.Assert(sf.ConstItem(), Equals, false)
+	sf = newFunction(ast.Abs, One)
+	c.Assert(sf.ConstItem(), Equals, true)
 }
 
 type testTableBuilder struct {

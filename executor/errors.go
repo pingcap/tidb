@@ -25,19 +25,19 @@ const (
 	codePrepareDDL
 	codeResultIsEmpty
 	codeErrBuildExec
-	codeBatchInsertFail
+	codeBatchDMLFail
 	codeGetStartTS
 )
 
 // Error instances.
 var (
-	ErrGetStartTS      = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
-	ErrUnknownPlan     = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
-	ErrPrepareMulti    = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
-	ErrPrepareDDL      = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
-	ErrResultIsEmpty   = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
-	ErrBuildExecutor   = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
-	ErrBatchInsertFail = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
+	ErrGetStartTS    = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
+	ErrUnknownPlan   = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
+	ErrPrepareMulti  = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
+	ErrPrepareDDL    = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
+	ErrResultIsEmpty = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
+	ErrBuildExecutor = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
+	ErrBatchDMLFail  = terror.ClassExecutor.New(codeBatchDMLFail, "Batch DML failed, please clean the table and try again. %s")
 
 	ErrPasswordNoMatch             = terror.ClassExecutor.New(mysql.ErrPasswordNoMatch, mysql.MySQLErrName[mysql.ErrPasswordNoMatch])
 	ErrCannotUser                  = terror.ClassExecutor.New(mysql.ErrCannotUser, mysql.MySQLErrName[mysql.ErrCannotUser])
@@ -45,6 +45,7 @@ var (
 	ErrCantChangeTxCharacteristics = terror.ClassExecutor.New(mysql.ErrCantChangeTxCharacteristics, mysql.MySQLErrName[mysql.ErrCantChangeTxCharacteristics])
 	ErrPsManyParam                 = terror.ClassExecutor.New(mysql.ErrPsManyParam, mysql.MySQLErrName[mysql.ErrPsManyParam])
 	ErrAdminCheckTable             = terror.ClassExecutor.New(mysql.ErrAdminCheckTable, mysql.MySQLErrName[mysql.ErrAdminCheckTable])
+	ErrQueryInterrupted            = terror.ClassExecutor.New(mysql.ErrQueryInterrupted, mysql.MySQLErrName[mysql.ErrQueryInterrupted])
 )
 
 func init() {
@@ -57,6 +58,7 @@ func init() {
 		mysql.ErrCantChangeTxCharacteristics: mysql.ErrCantChangeTxCharacteristics,
 		mysql.ErrPsManyParam:                 mysql.ErrPsManyParam,
 		mysql.ErrAdminCheckTable:             mysql.ErrAdminCheckTable,
+		mysql.ErrQueryInterrupted:            mysql.ErrQueryInterrupted,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }

@@ -41,12 +41,21 @@ mem-quota-query = 34359738368
 # Enable coprocessor streaming.
 enable-streaming = false
 
+# Enable batch commit for the DMLs.
+enable-batch-dml = false
+
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
 # Make "kill query" behavior compatible with MySQL. It's not recommend to
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false
+
+# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
+check-mb4-value-in-utf8 = true
+
+# treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
+treat-old-version-utf8-as-utf8mb4 = true
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -59,7 +68,7 @@ format = "text"
 disable-timestamp = false
 
 # Stores slow query log into separated files.
-slow-query-file = ""
+slow-query-file = "tidb-slow.log"
 
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
@@ -134,6 +143,9 @@ cross-join = true
 # Stats lease duration, which influences the time of analyze and stats load.
 stats-lease = "3s"
 
+# Whether run stats updates on this tidb-server. It will use the value of `stats-lease` to set its tickers' values, so it won't work when `stats-lease` is zero.
+enable-update-stats = true
+
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true
 
@@ -150,6 +162,18 @@ pseudo-estimate-ratio = 0.8
 # Force the priority of all statements in a specified priority.
 # The value could be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY" or "DELAYED".
 force-priority = "NO_PRIORITY"
+
+# The limitation of the number for the entries in one transaction.
+# If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
+txn-entry-count-limit = 300000
+
+# The limitation of the size in byte for the entries in one transaction.
+# If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
+txn-total-size-limit = 104857600
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -229,6 +253,11 @@ grpc-keepalive-timeout = 3
 # max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
+# The max time a Txn may use (in seconds) from its startTS to commitTS.
+# We use it to guarantee GC worker will not influence any active txn. Please make sure that this
+# value is less than gc_life_time - 10s.
+max-txn-time-use = 590
+
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
@@ -248,6 +277,3 @@ ignore-error = false
 
 # use socket file to write binlog, for compatible with kafka version tidb-binlog.
 binlog-socket = ""
-
-# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
-check-mb4-value-in-utf8 = true

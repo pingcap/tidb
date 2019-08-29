@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -46,14 +47,14 @@ type AggFuncDesc struct {
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
-func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, hasDistinct bool) *AggFuncDesc {
+func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, hasDistinct bool) (*AggFuncDesc, error) {
 	a := &AggFuncDesc{
 		Name:        strings.ToLower(name),
 		Args:        args,
 		HasDistinct: hasDistinct,
 	}
-	a.typeInfer(ctx)
-	return a
+	err := a.typeInfer(ctx)
+	return a, err
 }
 
 // Equal checks whether two aggregation function signatures are equal.
@@ -143,7 +144,7 @@ func (a *AggFuncDesc) String() string {
 }
 
 // typeInfer infers the arguments and return types of an aggregation function.
-func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
+func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) error {
 	switch a.Name {
 	case ast.AggFuncCount:
 		a.typeInfer4Count(ctx)
@@ -158,8 +159,9 @@ func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
 	default:
-		panic("unsupported agg function: " + a.Name)
+		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
+	return nil
 }
 
 // EvalNullValueInOuterJoin gets the null value when the aggregation is upon an outer join,

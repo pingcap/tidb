@@ -12,7 +12,7 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := GO111MODULE=on go
-GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
+GOBUILD   := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG)
 GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
 OVERALLS  := CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
@@ -20,13 +20,13 @@ GOVERALLS := goveralls
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "vendor"
+PACKAGE_LIST  := go list ./...| grep -vE "vendor|cmd"
 PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go" | grep -vE "vendor")
 
-GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs tools/bin/gofail enable)
-GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs tools/bin/gofail disable)
+FAILPOINT_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl enable)
+FAILPOINT_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl disable)
 
 LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
@@ -40,7 +40,7 @@ CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
 
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser
+.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy ddltest
 
 default: server buildsucc
 
@@ -54,6 +54,10 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
+tidy:
+	@echo "go mod tidy"
+	./tools/check/check-tidy.sh
+
 dev: checklist test check
 
 build:
@@ -62,7 +66,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/megacheck tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint
+check: fmt errcheck lint tidy testSuite
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-static check-slow
@@ -102,6 +106,10 @@ vet:
 	@echo "vet"
 	$(GO) vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
+testSuite:
+	@echo "testSuite"
+	./tools/check/check_testSuite.sh
+
 clean:
 	$(GO) clean -i ./...
 	rm -rf *.out
@@ -112,34 +120,37 @@ test: checklist gotest explaintest
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
-gotest: gofail-enable
+ddltest:
+	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
+
+gotest: failpoint-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
 	@export log_level=error; \
 	go get github.com/go-playground/overalls
 	go get github.com/mattn/goveralls
-	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor,cmd,docs,LICENSES' || { $(GOFAIL_DISABLE); exit 1; }
-	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile || { $(GOFAIL_DISABLE); exit 1; }
+	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor,cmd,docs,LICENSES' || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile || { $(FAILPOINT_DISABLE); exit 1; }
 else
 	@echo "Running in native mode."
 	@export log_level=error; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
 endif
-	@$(GOFAIL_DISABLE)
+	@$(FAILPOINT_DISABLE)
 
-race: gofail-enable
+race: failpoint-enable
 	@export log_level=debug; \
-	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
-	@$(GOFAIL_DISABLE)
+	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
 
-leak: gofail-enable
+leak: failpoint-enable
 	@export log_level=debug; \
-	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
-	@$(GOFAIL_DISABLE)
+	$(GOTEST) -tags leak $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
 
-tikv_integration_test: gofail-enable
-	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
-	@$(GOFAIL_DISABLE)
+tikv_integration_test: failpoint-enable
+	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
 
 RACE_FLAG =
 ifeq ("$(WITH_RACE)", "1")
@@ -181,13 +192,13 @@ importer:
 checklist:
 	cat checklist.md
 
-gofail-enable: tools/bin/gofail
+failpoint-enable: tools/bin/failpoint-ctl
 # Converting gofail failpoints...
-	@$(GOFAIL_ENABLE)
+	@$(FAILPOINT_ENABLE)
 
-gofail-disable: tools/bin/gofail
+failpoint-disable: tools/bin/failpoint-ctl
 # Restoring gofail failpoints...
-	@$(GOFAIL_DISABLE)
+	@$(FAILPOINT_DISABLE)
 
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
@@ -213,5 +224,5 @@ tools/bin/errcheck: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck
 
-tools/bin/gofail: go.mod
-	$(GO) build -o $@ github.com/pingcap/gofail
+tools/bin/failpoint-ctl: go.mod
+	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl

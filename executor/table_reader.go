@@ -19,17 +19,34 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
 var _ Executor = &TableReaderExecutor{}
+
+// selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
+type selectResultHook struct {
+	selectResultFunc func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (distsql.SelectResult, error)
+}
+
+func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (distsql.SelectResult, error) {
+	if sr.selectResultFunc == nil {
+		return distsql.Select(ctx, sctx, kvReq, fieldTypes, fb)
+	}
+	return sr.selectResultFunc(ctx, sctx, kvReq, fieldTypes, fb)
+}
 
 // TableReaderExecutor sends DAG request and reads table data from kv layer.
 type TableReaderExecutor struct {
@@ -55,6 +72,8 @@ type TableReaderExecutor struct {
 	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
 	plans          []plannercore.PhysicalPlan
+
+	selectResultHook // for testing
 }
 
 // Open initialzes necessary variables for using this executor.
@@ -77,7 +96,16 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 
 	e.resultHandler = &tableResultHandler{}
-	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder)
+	// Split ranges here since the unsigned part and signed part will swap their position when encoding the range to kv ranges.
+	if e.feedback != nil && e.feedback.Hist() != nil {
+		// EncodeInt don't need *statement.Context.
+		var ok bool
+		e.ranges, ok = e.feedback.Hist().SplitRange(nil, e.ranges, false)
+		if !ok {
+			e.feedback.Invalidate()
+		}
+	}
+	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -128,11 +156,12 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetMemTracker(e.ctx, "TableReaderDistSQLTracker").
 		Build()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result, err := distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+	result, err := e.SelectResult(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -141,10 +170,12 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 }
 
 type tableResultHandler struct {
-	// If the pk is unsigned and we have KeepOrder=true.
-	// optionalResult handles the request whose range is in signed int range.
-	// result handles the request whose range is exceed signed int range.
-	// Otherwise, we just set optionalFinished true and the result handles the whole ranges.
+	// If the pk is unsigned and we have KeepOrder=true and want ascending order,
+	// `optionalResult` will handles the request whose range is in signed int range, and
+	// `result` will handle the request whose range is exceed signed int range.
+	// If we want descending order, `optionalResult` will handles the request whose range is exceed signed, and
+	// the `result` will handle the request whose range is in signed.
+	// Otherwise, we just set `optionalFinished` true and the `result` handles the whole ranges.
 	optionalResult distsql.SelectResult
 	result         distsql.SelectResult
 

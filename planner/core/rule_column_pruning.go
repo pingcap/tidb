@@ -14,11 +14,15 @@
 package core
 
 import (
+	"fmt"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 )
 
 type columnPruner struct {
@@ -34,7 +38,7 @@ func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []boo
 	for _, col := range usedCols {
 		idx := schema.ColumnIndex(col)
 		if idx == -1 {
-			log.Errorf("Can't find column %s from schema %s.", col, schema)
+			panic(fmt.Sprintf("Can't find column %s from schema %s.", col, schema))
 		}
 		used[idx] = true
 	}
@@ -69,6 +73,12 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) {
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
+	// Prune TblID2Handle since that handle column may be pruned.
+	for k, cols := range p.schema.TblID2Handle {
+		if p.schema.ColumnIndex(cols[0]) == -1 {
+			delete(p.schema.TblID2Handle, k)
+		}
+	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
 	child.PruneColumns(selfUsedCols)
@@ -95,6 +105,21 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
 	}
+	if len(la.AggFuncs) == 0 {
+		// If all the aggregate functions are pruned, we should add an aggregate function to keep the correctness.
+		one, err := aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.One}, false)
+		if err != nil {
+			panic(fmt.Sprintf("error building dummy aggregate function'first(1)': %s", err.Error()))
+		}
+		la.AggFuncs = []*aggregation.AggFuncDesc{one}
+		col := &expression.Column{
+			ColName:  model.NewCIStr("dummy_agg"),
+			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+		}
+		la.schema.Columns = []*expression.Column{col}
+	}
+
 	if len(la.GroupByItems) > 0 {
 		for i := len(la.GroupByItems) - 1; i >= 0; i-- {
 			cols := expression.ExtractColumns(la.GroupByItems[i])
@@ -119,6 +144,11 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) {
 	for i := len(ls.ByItems) - 1; i >= 0; i-- {
 		cols := expression.ExtractColumns(ls.ByItems[i].Expr)
 		if len(cols) == 0 {
+			if !ls.ByItems[i].Expr.ConstItem() {
+				continue
+			}
+			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
+		} else if ls.ByItems[i].Expr.GetType().Tp == mysql.TypeNull {
 			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
 		} else {
 			parentUsedCols = append(parentUsedCols, cols...)
@@ -137,11 +167,17 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
 	if !hasBeenUsed {
 		parentUsedCols = make([]*expression.Column, len(p.schema.Columns))
 		copy(parentUsedCols, p.schema.Columns)
+	} else {
+		// Issue 10341: p.schema.Columns might contain table name (AsName), but p.Children()0].Schema().Columns does not.
+		for i := len(used) - 1; i >= 0; i-- {
+			if !used[i] {
+				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			}
+		}
 	}
 	for _, child := range p.Children() {
 		child.PruneColumns(parentUsedCols)
 	}
-	p.schema.Columns = p.children[0].Schema().Columns
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -155,7 +191,15 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, ds.schema)
+	var (
+		handleCol     *expression.Column
+		handleColInfo *model.ColumnInfo
+	)
 	for i := len(used) - 1; i >= 0; i-- {
+		if ds.tableInfo.PKIsHandle && mysql.HasPriKeyFlag(ds.Columns[i].Flag) {
+			handleCol = ds.schema.Columns[i]
+			handleColInfo = ds.Columns[i]
+		}
 		if !used[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
@@ -169,8 +213,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if ds.schema.Len() == 0 && !infoschema.IsMemoryDB(ds.DBName.L) {
-		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
-		ds.schema.Append(ds.newExtraHandleSchemaCol())
+		if handleCol == nil {
+			handleCol = ds.newExtraHandleSchemaCol()
+			handleColInfo = model.NewExtraHandleColInfo()
+		}
+		ds.Columns = append(ds.Columns, handleColInfo)
+		ds.schema.Append(handleCol)
 	}
 }
 

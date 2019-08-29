@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
@@ -237,11 +238,6 @@ func (s *testSuite) TestAggregation(c *C) {
 	result = tk.MustQuery("SELECT COALESCE ( + 1, cor0.col0 ) + - CAST( NULL AS DECIMAL ) FROM t2, t1 AS cor0, t2 AS cor1 GROUP BY cor0.col1")
 	result.Check(testkit.Rows("<nil>", "<nil>"))
 
-	result = tk.MustQuery("select count(*) from information_schema.columns")
-	// When adding new memory columns in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "759"
-	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
-
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (c1 int)")
@@ -338,6 +334,15 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
 	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
+	_, err = tk.Exec("select std(a) from t")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
+	_, err = tk.Exec("select stddev(a) from t")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev")
+	_, err = tk.Exec("select stddev_pop(a) from t")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
+	_, err = tk.Exec("select std_samp(a) from t")
+	// TODO: Fix this error message.
+	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION std_samp does not exist")
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {
@@ -407,6 +412,9 @@ func (s *testSuite) TestGroupConcatAggr(c *C) {
 
 	result = tk.MustQuery("select id, group_concat(name SEPARATOR '123') from test group by id order by id")
 	result.Check(testkit.Rows("1 101232012330", "2 20", "3 200123500"))
+
+	// issue #9920
+	tk.MustQuery("select group_concat(123, null)").Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuite) TestSelectDistinct(c *C) {
@@ -443,6 +451,8 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 
 	// test AggregateFunc
 	tk.MustQuery("select max(a) from t group by d")
+	// for issue #8161: enable `any_value` in aggregation if `ONLY_FULL_GROUP_BY` is set
+	tk.MustQuery("select max(a), any_value(c) from t group by d;")
 	// test incompatible with sql_mode = ONLY_FULL_GROUP_BY
 	var err error
 	_, err = tk.Exec("select * from t group by d")
@@ -579,6 +589,7 @@ func (s *testSuite) TestAggEliminator(c *C) {
 	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
 	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select group_concat(b, b) from t group by a").Check(testkit.Rows("-1-1", "-2-2", "11", "<nil>"))
 }
 
 func (s *testSuite) TestMaxMinFloatScalaFunc(c *C) {
@@ -638,4 +649,79 @@ func (s *testSuite) TestFirstRowEnum(c *C) {
 	tk.MustQuery(`select a from t group by a;`).Check(testkit.Rows(
 		`a`,
 	))
+}
+
+func (s *testSuite) TestAggJSON(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a datetime, b json, index idx(a));`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:00', '["a", "b", 1]');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:01', '["a", "b", 1]');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:02', '["a", "b", 1]');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:03', '{"k1": "value", "k2": [10, 20]}');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:04', '{"k1": "value", "k2": [10, 20]}');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:05', '{"k1": "value", "k2": [10, 20]}');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:06', '"hello"');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:07', '"hello"');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:08', '"hello"');`)
+	tk.MustExec(`set @@sql_mode='';`)
+	tk.MustQuery(`select b from t group by a order by a;`).Check(testkit.Rows(
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`"hello"`,
+		`"hello"`,
+		`"hello"`,
+	))
+	tk.MustQuery(`select min(b) from t group by a order by a;`).Check(testkit.Rows(
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`"hello"`,
+		`"hello"`,
+		`"hello"`,
+	))
+	tk.MustQuery(`select max(b) from t group by a order by a;`).Check(testkit.Rows(
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`"hello"`,
+		`"hello"`,
+		`"hello"`,
+	))
+}
+
+func (s *testSuite) TestIssue10099(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b char(10))")
+	tk.MustExec("insert into t values('1', '222'), ('12', '22')")
+	tk.MustQuery("select count(distinct a, b) from t").Check(testkit.Rows("2"))
+}
+
+func (s *testSuite) TestIssue10098(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t(a char(10), b char(10))")
+	tk.MustExec("insert into t values('1', '222'), ('12', '22')")
+	tk.MustQuery("select group_concat(distinct a, b) from t").Check(testkit.Rows("1222,1222"))
+}
+
+func (s *testSuite) TestIssue10608(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t, s;`)
+	tk.MustExec("CREATE TABLE t (id int(11) NOT NULL,PRIMARY KEY (id)) ;")
+	tk.MustExec("CREATE TABLE s (id int(11) NOT NULL,b int(11) NOT NULL,PRIMARY KEY (id)) ")
+	tk.MustExec("INSERT INTO t VALUES (508931),(508932);	")
+	tk.MustExec("INSERT INTO s VALUES (100292, 508931),(120002, 508932);")
+	tk.MustQuery("select (select group_concat(concat(123,'-')) from t where t.id = b group by t.id)  from s;").Check(testkit.Rows("123-", "123-"))
 }

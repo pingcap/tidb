@@ -234,3 +234,46 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)
 }
+
+func (s *testEvaluatorSuite) TestSetVarFromColumn(c *C) {
+	defer testleak.AfterTest(c)()
+
+	// Construct arguments.
+	argVarName := &Constant{
+		Value:   types.NewStringDatum("a"),
+		RetType: &types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+	}
+	argCol := &Column{
+		RetType: &types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+		Index:   0,
+	}
+
+	// Construct SetVar function.
+	funcSetVar, err := NewFunction(
+		s.ctx,
+		ast.SetVar,
+		&types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+		[]Expression{argVarName, argCol}...,
+	)
+	c.Assert(err, IsNil)
+
+	// Construct input and output Chunks.
+	inputChunk := chunk.NewChunkWithCapacity([]*types.FieldType{argCol.RetType}, 1)
+	inputChunk.AppendString(0, "a")
+	outputChunk := chunk.NewChunkWithCapacity([]*types.FieldType{argCol.RetType}, 1)
+
+	// Evaluate the SetVar function.
+	err = evalOneCell(s.ctx, funcSetVar, inputChunk.GetRow(0), outputChunk, 0)
+	c.Assert(err, IsNil)
+	c.Assert(outputChunk.GetRow(0).GetString(0), Equals, "a")
+
+	// Change the content of the underlying Chunk.
+	inputChunk.Reset()
+	inputChunk.AppendString(0, "b")
+
+	// Check whether the user variable changed.
+	sessionVars := s.ctx.GetSessionVars()
+	sessionVars.UsersLock.RLock()
+	defer sessionVars.UsersLock.RUnlock()
+	c.Assert(sessionVars.Users["a"], Equals, "a")
+}

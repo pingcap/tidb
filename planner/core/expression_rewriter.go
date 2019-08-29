@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -415,7 +415,11 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	if useMin {
 		funcName = ast.AggFuncMin
 	}
-	funcMaxOrMin := aggregation.NewAggFuncDesc(er.ctx, funcName, []expression.Expression{rexpr}, false)
+	funcMaxOrMin, err := aggregation.NewAggFuncDesc(er.ctx, funcName, []expression.Expression{rexpr}, false)
+	if err != nil {
+		er.err = err
+		return
+	}
 
 	// Create a column and append it to the schema of that aggregation.
 	colMaxOrMin := &expression.Column{
@@ -437,7 +441,11 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	innerIsNull := expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr)
 	outerIsNull := expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), lexpr)
 
-	funcSum := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
+	funcSum, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
+	if err != nil {
+		er.err = err
+		return
+	}
 	colSum := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_sum"),
 		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -448,7 +456,11 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	innerHasNull := expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum, expression.Zero)
 
 	// Build `count(1)` aggregation to check if subquery is empty.
-	funcCount := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{expression.One}, false)
+	funcCount, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{expression.One}, false)
+	if err != nil {
+		er.err = err
+		return
+	}
 	colCount := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_cnt"),
 		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -509,8 +521,16 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 // t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	firstRowFunc, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	if err != nil {
+		er.err = err
+		return
+	}
+	countFunc, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	if err != nil {
+		er.err = err
+		return
+	}
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.init(er.ctx)
@@ -535,8 +555,16 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
 // t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	firstRowFunc, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	if err != nil {
+		er.err = err
+		return
+	}
+	countFunc, err := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	if err != nil {
+		er.err = err
+		return
+	}
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.init(er.ctx)
@@ -571,7 +599,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	}
 	np = er.popExistsSubPlan(np)
 	if len(np.extractCorrelatedCols()) > 0 {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, false)
+		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
@@ -587,7 +615,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 			er.err = errors.Trace(err)
 			return v, true
 		}
-		if len(rows) > 0 {
+		if (len(rows) > 0 && !v.Not) || (len(rows) == 0 && v.Not) {
 			er.ctxStack = append(er.ctxStack, expression.One.Clone())
 		} else {
 			er.ctxStack = append(er.ctxStack, expression.Zero.Clone())
@@ -1061,7 +1089,11 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	if leftEt == types.ETInt {
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
-				args[i], _ = expression.RefineComparedConstant(er.ctx, mysql.HasUnsignedFlag(leftFt.Flag), c, opcode.EQ)
+				var isExceptional bool
+				args[i], isExceptional = expression.RefineComparedConstant(er.ctx, *leftFt, c, opcode.EQ)
+				if isExceptional {
+					args[i] = c
+				}
 			}
 		}
 	}
@@ -1197,11 +1229,20 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	if er.err != nil {
 		return
 	}
+
+	expr, lexp, rexp := er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
+
+	if expression.GetCmpTp4MinMax([]expression.Expression{expr, lexp, rexp}) == types.ETDatetime {
+		expr = expression.WrapWithCastAsTime(er.ctx, expr, types.NewFieldType(mysql.TypeDatetime))
+		lexp = expression.WrapWithCastAsTime(er.ctx, lexp, types.NewFieldType(mysql.TypeDatetime))
+		rexp = expression.WrapWithCastAsTime(er.ctx, rexp, types.NewFieldType(mysql.TypeDatetime))
+	}
+
 	var op string
 	var l, r expression.Expression
-	l, er.err = expression.NewFunction(er.ctx, ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
+	l, er.err = expression.NewFunction(er.ctx, ast.GE, &v.Type, expr, lexp)
 	if er.err == nil {
-		r, er.err = expression.NewFunction(er.ctx, ast.LE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-1])
+		r, er.err = expression.NewFunction(er.ctx, ast.LE, &v.Type, expr, rexp)
 	}
 	op = ast.LogicAnd
 	if er.err != nil {

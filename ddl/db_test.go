@@ -25,6 +25,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -116,6 +117,15 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.store.Close()
 	testleak.AfterTest(c)()
 	autoid.SetStep(s.autoIDStep)
+}
+
+func assertErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {
+	_, err := tk.Exec(sql)
+	c.Assert(err, NotNil)
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
+	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
@@ -304,7 +314,11 @@ func (s *testDBSuite) TestRenameIndex(c *C) {
 }
 
 func (s *testDBSuite) testGetTableByName(c *C, db, table string) table.Table {
-	ctx := s.s.(sessionctx.Context)
+	return testGetTableByName(c, s.s, db, table)
+}
+
+func testGetTableByName(c *C, se sessionctx.Context, db, table string) table.Table {
+	ctx := se.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
@@ -1692,6 +1706,14 @@ func (s *testDBSuite) TestDropColumn(c *C) {
 		}
 	}
 
+	// Test for drop partition table column.
+	s.tk.MustExec("drop table if exists t1")
+	s.tk.MustExec("set @@tidb_enable_table_partition = 1")
+	s.tk.MustExec("create table t1 (a bigint, b int, c int generated always as (b+1)) partition by range(a) (partition p0 values less than (10));")
+	_, err := s.tk.Exec("alter table t1 drop column a")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+
 	s.tk.MustExec("drop database drop_col_db")
 }
 
@@ -2037,6 +2059,71 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.tk.MustExec("drop database ctwl_db1")
 }
 
+// TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
+func (s *testDBSuite) TestCreateTableWithLike2(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.tk.MustExec("drop table if exists t1,t2;")
+	defer s.tk.MustExec("drop table if exists t1,t2;")
+	s.tk.MustExec("create table t1 (a int, b int, c int, index idx1(c));")
+
+	tbl1 := s.testGetTableByName(c, "test_db", "t1")
+	doneCh := make(chan error, 2)
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn && job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
+			return
+		}
+		if job.TableID != tbl1.Meta().ID {
+			return
+		}
+		if job.SchemaState == model.StateDeleteOnly {
+			go backgroundExec(s.store, "create table t2 like t1", doneCh)
+		}
+	}
+	originalHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	// create table when refer table add column
+	s.tk.MustExec("alter table t1 add column d int")
+	checkTbl2 := func() {
+		err := <-doneCh
+		c.Assert(err, IsNil)
+		s.tk.MustExec("alter table t2 add column e int")
+		t2Info := s.testGetTableByName(c, "test_db", "t2")
+		c.Assert(len(t2Info.Meta().Columns), Equals, 4)
+		c.Assert(len(t2Info.Meta().Columns), Equals, len(t2Info.Cols()))
+	}
+	checkTbl2()
+
+	// create table when refer table drop column
+	s.tk.MustExec("drop table t2;")
+	s.tk.MustExec("alter table t1 drop column b;")
+	checkTbl2()
+
+	// create table when refer table add index
+	s.tk.MustExec("drop table t2;")
+	s.tk.MustExec("alter table t1 add index idx2(a);")
+	checkTbl2 = func() {
+		err := <-doneCh
+		c.Assert(err, IsNil)
+		s.tk.MustExec("alter table t2 add column e int")
+		tbl2 := s.testGetTableByName(c, "test_db", "t2")
+		c.Assert(len(tbl2.Meta().Columns), Equals, 4)
+		c.Assert(len(tbl2.Meta().Columns), Equals, len(tbl2.Cols()))
+		c.Assert(len(tbl2.Meta().Indices), Equals, 1)
+		c.Assert(tbl2.Meta().Indices[0].Name.L, Equals, "idx1")
+	}
+	checkTbl2()
+
+	// create table when refer table drop index.
+	s.tk.MustExec("drop table t2;")
+	s.tk.MustExec("alter table t1 drop index idx2;")
+	checkTbl2()
+
+}
+
 func (s *testDBSuite) TestCreateTable(c *C) {
 	s.tk.MustExec("use test")
 	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
@@ -2307,6 +2394,14 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	)
 	partition by range columns (a)
 	(partition p0 values less than (0));`)
+
+	s.testErrorCode(c, `create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
+
+	s.tk.MustExec(`create table t (a int) /*!50100 partition by list (a) (
+partition p0 values in (1) ENGINE = InnoDB,
+partition p1 values in (29) ENGINE = InnoDB,
+partition p2 values in (2) ENGINE = InnoDB,
+partition p3 values in (3) ENGINE = InnoDB) */`)
 }
 
 func (s *testDBSuite) TestCreateTableWithHashPartition(c *C) {
@@ -2771,6 +2866,10 @@ func (s *testDBSuite) TestComment(c *C) {
 }
 
 func (s *testDBSuite) TestRebaseAutoID(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -4101,7 +4200,7 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 
 	tk.MustExec("alter table partition_add_idx add index idx1 (hired)")
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
-	ctx := s.tk.Se.(sessionctx.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("partition_add_idx"))
 	c.Assert(err, IsNil)
@@ -4119,6 +4218,22 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 
 	tk.MustExec("admin check table partition_add_idx")
 	tk.MustExec("drop table partition_add_idx")
+
+	// Test hash partition for pr 10475.
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by hash(a) partitions 5;")
+	tk.MustExec("insert into t1 values (0,0),(1,1),(2,2),(3,3);")
+	tk.MustExec("alter table t1 add index idx(a)")
+	tk.MustExec("admin check table t1;")
+
+	// Test range partition for pr 10475.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
+	tk.MustExec("insert into t1 values (0,0);")
+	tk.MustExec("alter table t1 add index idx(a)")
+	tk.MustExec("admin check table t1;")
 }
 
 func (s *testDBSuite) TestAlterTableCharset(c *C) {
@@ -4259,7 +4374,14 @@ func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
 	})
 
 	// check records num after drop database.
-	recordsNum = getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
+	for i := 0; i < waitForCleanDataRound; i++ {
+		recordsNum = getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
+		if recordsNum != 0 {
+			time.Sleep(waitForCleanDataInterval)
+		} else {
+			break
+		}
+	}
 	c.Assert(recordsNum, Equals, 0)
 }
 
@@ -4404,7 +4526,7 @@ func (s *testDBSuite) TestCheckTooBigFieldLength(c *C) {
 	s.testErrorCode(c, "alter table tr_04 add column b varchar(20000) charset utf8mb4;", tmysql.ErrTooBigFieldlength)
 	s.testErrorCode(c, "alter table tr_04 convert to character set utf8mb4;", tmysql.ErrTooBigFieldlength)
 	s.testErrorCode(c, "create table tr_05 (id int, name varchar(30000), purchased date )  default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
-	s.testErrorCode(c, "create table tr_05 (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8;", tmysql.ErrTooBigFieldlength)
+	s.testErrorCode(c, "create table tr_05 (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
 	s.testErrorCode(c, "create table tr_05 (id int, name varchar(65536), purchased date ) default charset=latin1;", tmysql.ErrTooBigFieldlength)
 
 	s.tk.MustExec("drop table if exists tr_05;")
@@ -4501,6 +4623,22 @@ func (s *testDBSuite) TestAddIndexForGeneratedColumn(c *C) {
 	s.mustExec(c, "delete from t where y = 2155")
 	s.mustExec(c, "alter table t add index idx_y(y1)")
 	s.mustExec(c, "alter table t drop index idx_y")
+
+	// Fix issue 9311.
+	s.tk.MustExec("create table gcai_table (id int primary key);")
+	s.tk.MustExec("insert into gcai_table values(1);")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d date DEFAULT '9999-12-31';")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d1 date as (DATE_SUB(d, INTERVAL 31 DAY));")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx(d1);")
+	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30"))
+	s.tk.MustQuery("select d1 from gcai_table use index(idx)").Check(testkit.Rows("9999-11-30"))
+	s.tk.MustExec("admin check table gcai_table")
+	// The column is PKIsHandle in generated column expression.
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN id1 int as (id+5);")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx1(id1);")
+	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30 6"))
+	s.tk.MustQuery("select id1 from gcai_table use index(idx1)").Check(testkit.Rows("6"))
+	s.tk.MustExec("admin check table gcai_table")
 }
 
 func (s *testDBSuite) TestModifyColumnCharset(c *C) {
@@ -4529,4 +4667,108 @@ func (s *testDBSuite) TestModifyColumnCharset(c *C) {
 			"  `b` varchar(8) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
+}
+
+func (s *testDBSuite) TestCanceledJobTakeTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_cjtt(a int)")
+
+	hook := &ddl.TestDDLCallback{}
+	once := sync.Once{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		once.Do(func() {
+			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				t := meta.NewMeta(txn)
+				return t.DropTable(job.SchemaID, job.TableID, true)
+			})
+			c.Assert(err, IsNil)
+		})
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	originalWT := ddl.WaitTimeWhenErrorOccured
+	ddl.WaitTimeWhenErrorOccured = 1 * time.Second
+	defer func() { ddl.WaitTimeWhenErrorOccured = originalWT }()
+	startTime := time.Now()
+	s.testErrorCode(c, "alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
+	sub := time.Since(startTime)
+	c.Assert(sub, Less, ddl.WaitTimeWhenErrorOccured)
+
+	hook = &ddl.TestDDLCallback{}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+}
+
+func (s *testDBSuite) TestAlterShardRowIDBits(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+
+	tk.MustExec("use test")
+	// Test alter shard_row_id_bits
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int) shard_row_id_bits = 5")
+	tk.MustExec(fmt.Sprintf("alter table t1 auto_increment = %d;", 1<<56))
+	tk.MustExec("insert into t1 set a=1;")
+
+	// Test increase shard_row_id_bits failed by overflow global auto ID.
+	_, err := tk.Exec("alter table t1 SHARD_ROW_ID_BITS = 10;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID overflow")
+
+	// Test reduce shard_row_id_bits will be ok.
+	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 3;")
+	checkShardRowID := func(maxShardRowIDBits, shardRowIDBits uint64) {
+		tbl := testGetTableByName(c, tk.Se, "test", "t1")
+		c.Assert(tbl.Meta().MaxShardRowIDBits == maxShardRowIDBits, IsTrue)
+		c.Assert(tbl.Meta().ShardRowIDBits == shardRowIDBits, IsTrue)
+	}
+	checkShardRowID(5, 3)
+
+	// Test reduce shard_row_id_bits but calculate overflow should use the max record shard_row_id_bits.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int) shard_row_id_bits = 10")
+	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 5;")
+	checkShardRowID(10, 5)
+	tk.MustExec(fmt.Sprintf("alter table t1 auto_increment = %d;", 1<<56))
+	_, err = tk.Exec("insert into t1 set a=1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")
+}
+
+func (s *testDBSuite) TestDDLWithInvalidTableInfo(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_table_partition = 1")
+	// Test create with invalid expression.
+	_, err := s.tk.Exec(`CREATE TABLE t (
+		c0 int(11) ,
+  		c1 int(11),
+    	c2 decimal(16,4) GENERATED ALWAYS AS ((case when (c0 = 0) then 0when (c0 > 0) then (c1 / c0) end))
+	);`)
+	c.Assert(err, NotNil)
+	//c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 4 column 88 near \"then (c1 / c0) end))\n\t);\" ")
+	c.Assert(err.Error(), Equals, "line 4 column 88 near \" (c1 / c0) end))\n\t);\" (total length 155)")
+
+	tk.MustExec("create table t (a bigint, b int, c int generated always as (b+1)) partition by range (a) (partition p0 values less than (10));")
+	// Test drop partition column.
+	_, err = tk.Exec("alter table t drop column a;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+	// Test modify column with invalid expression.
+	_, err = tk.Exec("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "line 1 column 97 near \" (b / a) end));\" (total length 112)")
+	// Test add column with invalid expression.
+	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "line 1 column 94 near \" (b / a) end));\" (total length 109)")
 }

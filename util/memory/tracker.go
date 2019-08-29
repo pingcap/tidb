@@ -42,6 +42,7 @@ type Tracker struct {
 	label          string // Label of this "Tracker".
 	bytesConsumed  int64  // Consumed bytes.
 	bytesLimit     int64  // Negative value means no limit.
+	maxConsumed    int64  // max number of bytes consumed during execution.
 	actionOnExceed ActionOnExceed
 	parent         *Tracker   // The parent memory tracker.
 	children       []*Tracker // The children memory trackers.
@@ -142,6 +143,14 @@ func (t *Tracker) Consume(bytes int64) {
 		if tracker.bytesLimit > 0 && tracker.bytesConsumed >= tracker.bytesLimit {
 			rootExceed = tracker
 		}
+
+		if tracker.parent == nil {
+			// since we only need a total memory usage during execution,
+			// we only record max consumed bytes in root(statement-level) for performance.
+			if tracker.bytesConsumed > tracker.maxConsumed {
+				tracker.maxConsumed = tracker.bytesConsumed
+			}
+		}
 		tracker.Unlock()
 	}
 	if rootExceed != nil {
@@ -154,6 +163,13 @@ func (t *Tracker) BytesConsumed() int64 {
 	t.Lock()
 	defer t.Unlock()
 	return t.bytesConsumed
+}
+
+// MaxConsumed returns max number of bytes consumed during execution.
+func (t *Tracker) MaxConsumed() int64 {
+	t.Lock()
+	defer t.Unlock()
+	return t.maxConsumed
 }
 
 // String returns the string representation of this Tracker tree.

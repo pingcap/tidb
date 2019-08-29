@@ -26,11 +26,13 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -52,6 +54,15 @@ func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
+
+	if e.autoNewTxn() {
+		// Commit the old transaction, like DDL.
+		if err := e.ctx.NewTxn(); err != nil {
+			return err
+		}
+		defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()
+	}
+
 	switch x := e.Statement.(type) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
@@ -64,7 +75,7 @@ func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	case *ast.RollbackStmt:
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
-		err = e.executeCreateUser(x)
+		err = e.executeCreateUser(ctx, x)
 	case *ast.AlterUserStmt:
 		err = e.executeAlterUser(x)
 	case *ast.DropUserStmt:
@@ -103,7 +114,7 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if txnCtx.Histroy != nil {
+	if txnCtx.History != nil {
 		err := e.ctx.NewTxn()
 		if err != nil {
 			return errors.Trace(err)
@@ -126,7 +137,7 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
-	log.Debugf("con:%d execute rollback statement", sessVars.ConnectionID)
+	logutil.Logger(context.Background()).Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
@@ -139,7 +150,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
+func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
 	users := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
 		exists, err1 := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
@@ -162,6 +173,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	if len(users) == 0 {
 		return nil
 	}
+
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
 	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
@@ -348,6 +360,14 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		defer sysSessionPool.Put(ctx)
 		err = dom.PrivilegeHandle().Update(ctx.(sessionctx.Context))
 		return errors.Trace(err)
+	case ast.FlushTiDBPlugin:
+		dom := domain.GetDomain(e.ctx)
+		for _, pluginName := range s.Plugins {
+			err := plugin.NotifyFlush(dom, pluginName)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	return nil
 }
@@ -359,4 +379,12 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 		return errors.Trace(err)
 	}
 	return errors.Trace(h.Update(GetInfoSchema(e.ctx)))
+}
+
+func (e *SimpleExec) autoNewTxn() bool {
+	switch e.Statement.(type) {
+	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt:
+		return true
+	}
+	return false
 }

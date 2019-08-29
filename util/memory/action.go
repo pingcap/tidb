@@ -18,7 +18,9 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 // ActionOnExceed is the action taken when memory usage exceeds memory quota.
@@ -41,7 +43,8 @@ func (a *LogOnExceed) Action(t *Tracker) {
 	defer a.mutex.Unlock()
 	if !a.acted {
 		a.acted = true
-		log.Warnf(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String()).Error())
+		logutil.Logger(context.Background()).Warn("memory exceeds quota",
+			zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String())))
 	}
 }
 
