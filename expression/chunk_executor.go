@@ -15,6 +15,7 @@ package expression
 
 import (
 	"strconv"
+	"unsafe"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -88,16 +89,12 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 			output.SetCol(colIdx, buf)
 		} else if mysql.HasUnsignedFlag(ft.Flag) {
 			i64s := result.Int64s()
-			buf := chunk.NewColumn(ft, input.NumRows())
-			buf.ResizeUint64(input.NumRows())
 			for i := range i64s {
-				if result.IsNull(i) {
-					buf.SetNull(i, true)
-				} else {
-					buf.AppendUint64(uint64(i64s[i]))
+				if !result.IsNull(i) {
+					buf := result.GetRaw(i)
+					*(*uint64)(unsafe.Pointer(&buf[0])) = uint64(i64s[i])
 				}
 			}
-			output.SetCol(colIdx, buf)
 		}
 	case types.ETReal:
 		if err := expr.VecEvalReal(ctx, input, result); err != nil {
