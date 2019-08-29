@@ -611,7 +611,7 @@ func (c *Chunk) Column(colIdx int) *Column {
 
 // GetOrNewColumn returns the colIdx Column in this Chunk or creates a new Column if it's nil.
 func (c *Chunk) GetOrNewColumn(colIdx int, ft *types.FieldType, cap int) *Column {
-	for len(c.columns) < colIdx {
+	for len(c.columns) <= colIdx {
 		c.columns = append(c.columns, nil)
 	}
 	if c.columns[colIdx] == nil {
