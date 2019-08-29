@@ -596,6 +596,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
+	p.names = names
 	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rColumns[:commonLen]...))
 	p.redundantNames = append(p.redundantNames.Shallow(), names...)
 	p.OtherConditions = append(conds, p.OtherConditions...)
@@ -2862,6 +2863,9 @@ func (b *PlanBuilder) buildUpdateLists(
 		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
 		if err != nil {
 			return nil, nil, false, err
+		}
+		if idx < 0 {
+			return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(assign.Column.Name, "field_list")
 		}
 		name := p.OutputNames()[idx]
 		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)

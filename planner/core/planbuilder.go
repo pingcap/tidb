@@ -1662,6 +1662,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	// Calculate generated columns.
 	mockTablePlan.schema = insertPlan.tableSchema
+	mockTablePlan.names = insertPlan.tableColNames
 	insertPlan.GenCols, err = b.resolveGeneratedColumns(ctx, insertPlan.Table.Cols(), onDupColSet, mockTablePlan)
 	if err != nil {
 		return nil, err
