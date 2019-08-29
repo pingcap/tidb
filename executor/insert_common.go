@@ -221,7 +221,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		rows = append(rows, row)
 		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 			// Before batch insert, should fill the batch allocated autoIDs
-			rows, err := e.autoIdAllocN(ctx, rows)
+			rows, err := e.autoIDAllocN(ctx, rows)
 			if err != nil {
 				return err
 			}
@@ -236,25 +236,25 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		}
 	}
 	// Fill the batch allocated autoIDs
-	rows, err = e.autoIdAllocN(ctx, rows)
+	rows, err = e.autoIDAllocN(ctx, rows)
 	if err != nil {
 		return err
 	}
 	return base.exec(ctx, rows)
 }
 
-func (e *InsertValues) autoIdAllocN(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
+func (e *InsertValues) autoIDAllocN(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	length := len(e.cache)
 	for i := 0; i < length; i++ {
 		switch e.cache[i].kind {
-		case AutoIdNull:
+		case AutoIDNull:
 			// Find consecutive num.
 			var cnt int
 			var start int
 			start = i
 			for i < length {
-				if e.cache[i].kind == AutoIdNull {
+				if e.cache[i].kind == AutoIDNull {
 					cnt++
 					i++
 				} else {
@@ -298,7 +298,7 @@ func (e *InsertValues) autoIdAllocN(ctx context.Context, rows [][]types.Datum) (
 				}
 				rows[rowIdx][colIdx] = d
 			}
-		case AutoIdRebase:
+		case AutoIDRebase:
 			// Rebase action
 			rowIdx := e.cache[i].rowIdx
 			colIdx := e.cache[i].colIdx
@@ -321,7 +321,7 @@ func (e *InsertValues) autoIdAllocN(ctx context.Context, rows [][]types.Datum) (
 			}
 			// Cause d may changed in HandleBadNull, do assignment here
 			rows[rowIdx][colIdx] = d
-		case AutoIdZero:
+		case AutoIDZero:
 			// Don't change value 0 to auto id, if NoAutoValueOnZero SQL mode is set.
 			rowIdx := e.cache[i].rowIdx
 			colIdx := e.cache[i].colIdx
@@ -748,19 +748,19 @@ func (e *InsertValues) adjustAutoIncrementDatumLazy(ctx context.Context, d types
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
 		// Do the rebase action lazily.
-		return datumLazy{isInAutoIncrement: true, kind: AutoIdRebase, recordID: recordID, datum: d}, nil
+		return datumLazy{isInAutoIncrement: true, kind: AutoIDRebase, recordID: recordID, datum: d}, nil
 	}
 
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
 		// Do the alloc action lazily.
-		return datumLazy{isInAutoIncrement: true, kind: AutoIdNull, datum: d}, nil
+		return datumLazy{isInAutoIncrement: true, kind: AutoIDNull, datum: d}, nil
 	}
 
 	// Use the 0 value as auto id directly
 	// Do the action lazily.
-	return datumLazy{isInAutoIncrement: true, kind: AutoIdZero, recordID: recordID, datum: d}, nil
+	return datumLazy{isInAutoIncrement: true, kind: AutoIDZero, recordID: recordID, datum: d}, nil
 
 }
 
@@ -930,9 +930,14 @@ func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64,
 type datumAutoIDType int
 
 const (
-	AutoIdNull datumAutoIDType = iota
-	AutoIdRebase
-	AutoIdZero
+	// AutoIDNull stands for auto increment datum that need get a autoID from allocator.
+	AutoIDNull datumAutoIDType = iota
+	// AutoIDRebase stands for auto increment datum that has a specified value from user,
+	// so allocator need to rebase the value.
+	AutoIDRebase
+	// AutoIDZero stands for 0 value of auto increment datum, it won't replaced by autoID
+	// when sql-model NoAutoValueOnZero is set.
+	AutoIDZero
 )
 
 type datumLazy struct {

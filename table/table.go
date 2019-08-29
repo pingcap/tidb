@@ -195,9 +195,10 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	return t.Allocator(sctx).Alloc(t.Meta().ID)
 }
 
+// AllocBatchAutoIncrementValue allocates batch auto_increment value for rows.
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ([]int64, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("table.AllocBatchAutoIncrementValueN", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("table.AllocBatchAutoIncrementValue", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	return t.Allocator(sctx).AllocN(t.Meta().ID, uint64(N))
