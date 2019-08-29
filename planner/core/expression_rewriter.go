@@ -44,8 +44,9 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 		return val.Datum, nil
 	}
 	b := &PlanBuilder{
-		ctx:       sctx,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
+		ctx:           sctx,
+		colMapper:     make(map[*ast.ColumnNameExpr]int),
+		hintProcessor: &BlockHintProcessor{},
 	}
 	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		b.is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)

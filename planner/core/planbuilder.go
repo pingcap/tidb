@@ -197,6 +197,8 @@ type PlanBuilder struct {
 	inStraightJoin bool
 
 	windowSpecs map[string]*ast.WindowSpec
+
+	hintProcessor *BlockHintProcessor
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -230,11 +232,12 @@ func (b *PlanBuilder) GetOptFlag() uint64 {
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PlanBuilder {
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *BlockHintProcessor) *PlanBuilder {
 	return &PlanBuilder{
-		ctx:       sctx,
-		is:        is,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
+		ctx:           sctx,
+		is:            is,
+		colMapper:     make(map[*ast.ColumnNameExpr]int),
+		hintProcessor: processor,
 	}
 }
 
