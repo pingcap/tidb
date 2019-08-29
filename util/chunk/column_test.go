@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
@@ -747,6 +748,36 @@ func (s *testChunkSuite) TestResizeReserve(c *check.C) {
 	}
 	cStrs.ReserveString(0)
 	c.Assert(cStrs.length, check.Equals, 0)
+}
+
+func (s *testChunkSuite) TestGetRaw(c *check.C) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeFloat)}, 1024)
+	col := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col.AppendFloat32(float32(i))
+	}
+	it := NewIterator4Chunk(chk)
+	var i int64
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		f := float32(i)
+		b := (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
+		c.Assert(row.GetRaw(0), check.DeepEquals, b)
+		c.Assert(col.GetRaw(int(i)), check.DeepEquals, b)
+		i++
+	}
+
+	chk = NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeVarString)}, 1024)
+	col = chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		col.AppendString(fmt.Sprint(i))
+	}
+	it = NewIterator4Chunk(chk)
+	i = 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		c.Assert(row.GetRaw(0), check.DeepEquals, []byte(fmt.Sprint(i)))
+		c.Assert(col.GetRaw(int(i)), check.DeepEquals, []byte(fmt.Sprint(i)))
+		i++
+	}
 }
 
 func BenchmarkDurationRow(b *testing.B) {
