@@ -159,10 +159,9 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 func replaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection) expression.Expression {
 	switch v := expr.(type) {
 	case *expression.Column:
-		for i := range proj.Schema().Columns {
-			if proj.Schema().Columns[i].Equal(proj.SCtx(), v) {
-				return proj.Exprs[i]
-			}
+		idx := proj.Schema().ColumnIndex(v)
+		if idx != -1 && idx < len(proj.Exprs) {
+			return proj.Exprs[idx]
 		}
 	case *expression.ScalarFunction:
 		for i := range v.GetArgs() {
