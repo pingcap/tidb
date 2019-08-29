@@ -125,6 +125,9 @@ func (e *InsertValues) initInsertColumns() error {
 		cols = tableCols
 	}
 	for _, col := range cols {
+		if !col.IsGenerated() {
+			e.insertColumns = append(e.insertColumns, col)
+		}
 		if col.Name.L == model.ExtraHandleName.L {
 			if !e.ctx.GetSessionVars().AllowWriteRowID {
 				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
@@ -132,10 +135,6 @@ func (e *InsertValues) initInsertColumns() error {
 			e.hasExtraHandle = true
 			break
 		}
-		if col.IsGenerated() {
-			continue
-		}
-		e.insertColumns = append(e.insertColumns, col)
 	}
 
 	// Check column whether is specified only once.
