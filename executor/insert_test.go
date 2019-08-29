@@ -298,6 +298,8 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 	tk.MustExec(`create table t5(id int primary key, n float unsigned auto_increment, key I_n(n));`)
 	tk.MustExec(`create table t6(id int primary key, n double auto_increment, key I_n(n));`)
 	tk.MustExec(`create table t7(id int primary key, n double unsigned auto_increment, key I_n(n));`)
+	// test for inserting multiple values
+	tk.MustExec(`create table t8(id int primary key auto_increment, n int);`)
 
 	tests := []struct {
 		insert string
@@ -540,11 +542,150 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 			`select * from t7 where id = 3`,
 			testkit.Rows(`3 3`),
 		},
+
+		// the following is test for insert multiple values.
+		{
+			`insert into t8(n) values(1),(2)`,
+			`select * from t8 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 2`,
+			testkit.Rows(`2 2`),
+		},
+		{
+			`;`,
+			`select last_insert_id();`,
+			testkit.Rows(`1`),
+		},
+		// test user rebase and auto alloc mixture.
+		{
+			`insert into t8 values(null, 3),(-1, -1),(null,4),(null, 5)`,
+			`select * from t8 where id = 3`,
+			testkit.Rows(`3 3`),
+		},
+		// -1 won't rebase allocator here cause -1 < base.
+		{
+			`;`,
+			`select * from t8 where id = -1`,
+			testkit.Rows(`-1 -1`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 4`,
+			testkit.Rows(`4 4`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 5`,
+			testkit.Rows(`5 5`),
+		},
+		{
+			`;`,
+			`select last_insert_id();`,
+			testkit.Rows(`3`),
+		},
+		{
+			`insert into t8 values(null, 6),(10, 7),(null, 8)`,
+			`select * from t8 where id = 6`,
+			testkit.Rows(`6 6`),
+		},
+		// 10 will rebase allocator here.
+		{
+			`;`,
+			`select * from t8 where id = 10`,
+			testkit.Rows(`10 7`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 11`,
+			testkit.Rows(`11 8`),
+		},
+		{
+			`;`,
+			`select last_insert_id()`,
+			testkit.Rows(`6`),
+		},
+		// fix bug for last_insert_id should be first allocated id in insert rows (skip the rebase id).
+		{
+			`insert into t8 values(100, 9),(null,10),(null,11)`,
+			`select * from t8 where id = 100`,
+			testkit.Rows(`100 9`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 101`,
+			testkit.Rows(`101 10`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 102`,
+			testkit.Rows(`102 11`),
+		},
+		{
+			`;`,
+			`select last_insert_id()`,
+			testkit.Rows(`101`),
+		},
+		// test with sql_mode: NO_AUTO_VALUE_ON_ZERO.
+		{
+			`;`,
+			`select @@sql_mode`,
+			testkit.Rows(`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`),
+		},
+		{
+			`;`,
+			"set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_AUTO_VALUE_ON_ZERO`",
+			nil,
+		},
+		{
+			`insert into t8 values (0, 12), (null, 13)`,
+			`select * from t8 where id = 0`,
+			testkit.Rows(`0 12`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 103`,
+			testkit.Rows(`103 13`),
+		},
+		{
+			`;`,
+			`select last_insert_id()`,
+			testkit.Rows(`103`),
+		},
+		// test without sql_mode: NO_AUTO_VALUE_ON_ZERO.
+		{
+			`;`,
+			"set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`",
+			nil,
+		},
+		// value 0 will be substitute by autoid.
+		{
+			`insert into t8 values (0, 14), (null, 15)`,
+			`select * from t8 where id = 104`,
+			testkit.Rows(`104 14`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 105`,
+			testkit.Rows(`105 15`),
+		},
+		{
+			`;`,
+			`select last_insert_id()`,
+			testkit.Rows(`104`),
+		},
 	}
 
 	for _, tt := range tests {
 		tk.MustExec(tt.insert)
-		tk.MustQuery(tt.query).Check(tt.result)
+		if tt.query == "set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_AUTO_VALUE_ON_ZERO`" ||
+			tt.query == "set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`" {
+			tk.MustExec(tt.query)
+		} else {
+			tk.MustQuery(tt.query).Check(tt.result)
+		}
 	}
 
 }

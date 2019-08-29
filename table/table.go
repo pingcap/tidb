@@ -195,6 +195,14 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	return t.Allocator(sctx).Alloc(t.Meta().ID)
 }
 
+func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ([]int64, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("table.AllocBatchAutoIncrementValueN", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+	return t.Allocator(sctx).AllocN(t.Meta().ID, uint64(N))
+}
+
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
 // PhysicalID is a ID that can be used to construct a key ranges, all the data in the key range belongs to the corresponding PhysicalTable.
 // For a non-partitioned table, its PhysicalID equals to its TableID; For a partition of a partitioned table, its PhysicalID is the partition's ID.

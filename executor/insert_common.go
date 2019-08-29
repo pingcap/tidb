@@ -60,6 +60,9 @@ type InsertValues struct {
 	colDefaultVals  []defaultVal
 	evalBuffer      chunk.MutRow
 	evalBufferTypes []*types.FieldType
+
+	// Cache datumLazy for consecutive autoid batch alloc
+	cache []datumLazy
 }
 
 type defaultVal struct {
@@ -205,6 +208,9 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 
 	rows := make([][]types.Datum, 0, len(e.Lists))
+	// Cache for consecutive autoID batch alloc
+	e.cache = make([]datumLazy, 0, len(e.Lists))
+
 	for i, list := range e.Lists {
 		e.rowCount++
 		var row []types.Datum
@@ -214,6 +220,12 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		}
 		rows = append(rows, row)
 		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
+			// Before batch insert, should fill the batch allocated autoIDs
+			rows, err := e.autoIdAllocN(ctx, rows)
+			if err != nil {
+				return err
+			}
+			e.cache = e.cache[:0]
 			if err = base.exec(ctx, rows); err != nil {
 				return err
 			}
@@ -223,7 +235,119 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			}
 		}
 	}
+	// Fill the batch allocated autoIDs
+	rows, err = e.autoIdAllocN(ctx, rows)
+	if err != nil {
+		return err
+	}
 	return base.exec(ctx, rows)
+}
+
+func (e *InsertValues) autoIdAllocN(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
+	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	length := len(e.cache)
+	for i := 0; i < length; i++ {
+		switch e.cache[i].kind {
+		case AutoIdNull:
+			// Find consecutive num.
+			var cnt int
+			var start int
+			start = i
+			for i < length {
+				if e.cache[i].kind == AutoIdNull {
+					cnt++
+					i++
+				} else {
+					break
+				}
+			}
+			// Fix the index i
+			i--
+			// Alloc batch N consecutive autoIDs.
+			recordIDs, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
+			if e.filterErr(err) != nil {
+				return nil, err
+			}
+			// Distribute autoIDs to rows.
+			var d types.Datum
+			var c *table.Column
+			for j := 0; j < cnt; j++ {
+				offset := j + start
+				rowIdx := e.cache[offset].rowIdx
+				colIdx := e.cache[offset].colIdx
+
+				d = e.cache[offset].datum
+				c = e.Table.Cols()[colIdx]
+
+				// It's compatible with mysql. So it sets the first allocated autoID to the lastInsertId.
+				if e.lastInsertID == 0 {
+					e.lastInsertID = uint64(recordIDs[0])
+				}
+
+				d.SetAutoID(recordIDs[j], c.Flag)
+				retryInfo.AddAutoIncrementID(recordIDs[j])
+
+				// The value of d is adjusted by auto ID, so we need to cast it again.
+				d, err := table.CastValue(e.ctx, d, c.ToInfo())
+				if err != nil {
+					return nil, err
+				}
+				// Handle the bad null error.
+				if d, err = c.HandleBadNull(d, e.ctx.GetSessionVars().StmtCtx); err != nil {
+					return nil, err
+				}
+				rows[rowIdx][colIdx] = d
+			}
+		case AutoIdRebase:
+			// Rebase action
+			rowIdx := e.cache[i].rowIdx
+			colIdx := e.cache[i].colIdx
+
+			// recordID has been casted in evalRow
+			recordID := e.cache[i].recordID
+			d := e.cache[i].datum
+			c := e.Table.Cols()[colIdx]
+
+			err := e.Table.RebaseAutoID(e.ctx, recordID, true)
+			if err != nil {
+				return nil, err
+			}
+			e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
+			retryInfo.AddAutoIncrementID(recordID)
+
+			// Handle the bad null error.
+			if d, err = c.HandleBadNull(d, e.ctx.GetSessionVars().StmtCtx); err != nil {
+				return nil, err
+			}
+			// Cause d may changed in HandleBadNull, do assignment here
+			rows[rowIdx][colIdx] = d
+		case AutoIdZero:
+			// Don't change value 0 to auto id, if NoAutoValueOnZero SQL mode is set.
+			rowIdx := e.cache[i].rowIdx
+			colIdx := e.cache[i].colIdx
+
+			// recordID has been casted in evalRow
+			recordID := e.cache[i].recordID
+			d := e.cache[i].datum
+			c := e.Table.Cols()[colIdx]
+
+			d.SetAutoID(recordID, c.Flag)
+			retryInfo.AddAutoIncrementID(recordID)
+
+			// The value of d is adjusted by auto ID, so we need to cast it again.
+			d, err := table.CastValue(e.ctx, d, c.ToInfo())
+			if err != nil {
+				return nil, err
+			}
+
+			// Handle the bad null error.
+			if d, err = c.HandleBadNull(d, e.ctx.GetSessionVars().StmtCtx); err != nil {
+				return nil, err
+			}
+			rows[rowIdx][colIdx] = d
+		}
+	}
+	return rows, nil
 }
 
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
@@ -281,7 +405,8 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		e.evalBuffer.SetDatum(offset, val1)
 	}
 
-	return e.fillRow(ctx, row, hasValue)
+	// Row may lack of generated column、autoIncrement column、empty column here.
+	return e.fillRowLazy(ctx, row, hasValue, rowIdx)
 }
 
 var emptyRow chunk.Row
@@ -468,6 +593,26 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 	return defaultVal, nil
 }
 
+// fillColValueLazy is quite same to fillColValue() except it will cache auto increment datum for lazy batch allocation.
+func (e *InsertValues) fillColValueLazy(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (datumLazy,
+	error) {
+	if mysql.HasAutoIncrementFlag(column.Flag) {
+		d, err := e.adjustAutoIncrementDatumLazy(ctx, datum, hasValue, column)
+		if err != nil {
+			return datumLazy{}, err
+		}
+		return d, nil
+	}
+	if !hasValue {
+		d, err := e.getColDefaultValue(idx, column)
+		if e.filterErr(err) != nil {
+			return datumLazy{}, err
+		}
+		return datumLazy{isInAutoIncrement: false, datum: d}, nil
+	}
+	return datumLazy{isInAutoIncrement: false, datum: datum}, nil
+}
+
 // fillColValue fills the column value if it is not set in the insert statement.
 func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
 	error) {
@@ -525,6 +670,98 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		}
 	}
 	return row, nil
+}
+
+// fillRowLazy is quite same to fillRow() except it will cache auto increment datum for lazy batch allocation of autoID.
+// This case is used in insert|replace into values (row),(row),(row)...
+func (e *InsertValues) fillRowLazy(ctx context.Context, row []types.Datum, hasValue []bool, rowIdx int) ([]types.Datum, error) {
+	gCols := make([]*table.Column, 0)
+
+	for i, c := range e.Table.Cols() {
+		var err error
+		var datumLazyTmp datumLazy
+		// Evaluate the generated columns later after real columns set
+		if c.IsGenerated() {
+			gCols = append(gCols, c)
+		} else {
+			// Get the default value for all no value columns, the auto increment column is different from the others.
+			datumLazyTmp, err = e.fillColValueLazy(ctx, row[i], i, c, hasValue[i])
+			if err != nil {
+				return nil, err
+			}
+			row[i] = datumLazyTmp.datum
+			if !datumLazyTmp.isInAutoIncrement {
+				// Handle the bad null error.
+				if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+					return nil, err
+				}
+			} else {
+				// Cache the autoIncrement datum for lazy batch alloc
+				datumLazyTmp.rowIdx = rowIdx
+				datumLazyTmp.colIdx = i
+				e.cache = append(e.cache, datumLazyTmp)
+			}
+		}
+	}
+	for i, gCol := range gCols {
+		colIdx := gCol.ColumnInfo.Offset
+		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
+		if e.filterErr(err) != nil {
+			return nil, err
+		}
+		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo())
+		if err != nil {
+			return nil, err
+		}
+		// Handle the bad null error.
+		if row[colIdx], err = gCol.HandleBadNull(row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
+			return nil, err
+		}
+	}
+	return row, nil
+}
+
+// adjustAutoIncrementDatumLazy is quite same to adjustAutoIncrementDatum()
+// except it will cache auto increment datum for lazy batch allocation of autoID.
+func (e *InsertValues) adjustAutoIncrementDatumLazy(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (datumLazy, error) {
+	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	if retryInfo.Retrying {
+		id, err := retryInfo.GetCurrAutoIncrementID()
+		if err != nil {
+			return datumLazy{}, err
+		}
+		d.SetAutoID(id, c.Flag)
+		return datumLazy{isInAutoIncrement: false, datum: d}, nil
+	}
+
+	var err error
+	var recordID int64
+	if !hasValue {
+		d.SetNull()
+	}
+	if !d.IsNull() {
+		recordID, err = getAutoRecordID(d, &c.FieldType, true)
+		if err != nil {
+			return datumLazy{}, err
+		}
+	}
+	// Use the value if it's not null and not 0.
+	if recordID != 0 {
+		// Do the rebase action lazily.
+		return datumLazy{isInAutoIncrement: true, kind: AutoIdRebase, recordID: recordID, datum: d}, nil
+	}
+
+	// Change NULL to auto id.
+	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		// Do the alloc action lazily.
+		return datumLazy{isInAutoIncrement: true, kind: AutoIdNull, datum: d}, nil
+	}
+
+	// Use the 0 value as auto id directly
+	// Do the action lazily.
+	return datumLazy{isInAutoIncrement: true, kind: AutoIdZero, recordID: recordID, datum: d}, nil
+
 }
 
 func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
@@ -688,4 +925,22 @@ func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64,
 		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	return h, nil
+}
+
+type datumAutoIDType int
+
+const (
+	AutoIdNull datumAutoIDType = iota
+	AutoIdRebase
+	AutoIdZero
+)
+
+type datumLazy struct {
+	isInAutoIncrement bool
+	kind              datumAutoIDType
+	datum             types.Datum
+	// recordID is for AutoIdRebase type
+	recordID int64
+	rowIdx   int
+	colIdx   int
 }
