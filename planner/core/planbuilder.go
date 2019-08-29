@@ -1936,6 +1936,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
 	mockTablePlan.SetSchema(schema)
+	mockTablePlan.names = names
 
 	p := &SplitRegion{
 		TableInfo: tblInfo,
@@ -2054,12 +2055,12 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
 	mockTablePlan.SetSchema(schema)
+	mockTablePlan.names = names
 
 	p := &SplitRegion{
 		TableInfo: tblInfo,
 	}
 	p.setSchemaAndNames(buildSplitRegionsSchema())
-	p.names = names
 	if len(node.SplitOpt.ValueLists) > 0 {
 		values := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
 		for i, valuesItem := range node.SplitOpt.ValueLists {
