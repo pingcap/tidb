@@ -722,3 +722,14 @@ id	count	task	operator info
 IndexReader_12	10.00	root	index:IndexScan_11
 └─IndexScan_11	10.00	cop	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
 drop table if exists t;
+create table t(a int, b int);
+explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;
+id	count	task	operator info
+Projection_8	2666.67	root	test.t.a, test.t.b
+└─Selection_9	2666.67	root	gt(cast(test.t.a), avg_b), lt(test.t.b, 10)
+  └─Window_10	3333.33	root	avg(cast(test.t.b)) over(partition by test.t.a)
+    └─Sort_14	3333.33	root	test.t.a:asc
+      └─TableReader_13	3333.33	root	data:Selection_12
+        └─Selection_12	3333.33	cop	gt(test.t.a, 10)
+          └─TableScan_11	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
