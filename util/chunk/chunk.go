@@ -609,17 +609,6 @@ func (c *Chunk) Column(colIdx int) *Column {
 	return c.columns[colIdx]
 }
 
-// GetOrNewColumn returns the colIdx Column in this Chunk or creates a new Column if it's nil.
-func (c *Chunk) GetOrNewColumn(colIdx int, ft *types.FieldType, cap int) *Column {
-	for len(c.columns) <= colIdx {
-		c.columns = append(c.columns, nil)
-	}
-	if c.columns[colIdx] == nil {
-		c.columns[colIdx] = NewColumn(ft, cap)
-	}
-	return c.columns[colIdx]
-}
-
 // SetCol sets the colIdx Column to col and returns the old Column.
 func (c *Chunk) SetCol(colIdx int, col *Column) *Column {
 	for len(c.columns) <= colIdx {

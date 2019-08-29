@@ -66,7 +66,7 @@ func VectorizedExecute(ctx sessionctx.Context, exprs []Expression, iterator *chu
 
 func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, output *chunk.Chunk, colIdx int) error {
 	ft := expr.GetType()
-	result := output.GetOrNewColumn(colIdx, ft, input.NumRows())
+	result := output.Column(colIdx)
 	switch ft.EvalType() {
 	case types.ETInt:
 		if err := expr.VecEvalInt(ctx, input, result); err != nil {
