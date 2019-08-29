@@ -7,6 +7,15 @@ jobs:
     working_directory: /go/src/github.com/pingcap/tidb
     steps:
       - checkout
+      - restore_cache: # restores saved cache if no changes are detected since last run
+          # Read about caching dependencies: https://circleci.com/docs/2.0/caching/
+          keys:
+            - v1-pkg-cache-{{ checksum "go.sum" }}
       - run:
           name: "Build & Test"
           command: make dev
+      - save_cache: # Store cache in the /go/pkg directory
+          key: v1-pkg-cache-{{ checksum "go.sum" }}
+          paths:
+            - "/go/pkg"
+            - ~/.cache/go-build
