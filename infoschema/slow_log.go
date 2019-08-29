@@ -88,7 +88,6 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, error) {
 	var rows [][]types.Datum
 	startFlag := false
-	prevStmtPrefix := variable.SlowLogPrevStmt + variable.SlowLogSpaceMarkStr
 	var st *slowQueryTuple
 	for {
 		lineByte, err := getOneLine(reader)
@@ -114,8 +113,8 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 			// Parse slow log field.
 			if strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 				line = line[len(variable.SlowLogRowPrefixStr):]
-				if strings.HasPrefix(line, prevStmtPrefix) {
-					st.prevStmt = line[len(prevStmtPrefix):]
+				if strings.HasPrefix(line, variable.SlowLogPrevStmtPrefix) {
+					st.prevStmt = line[len(variable.SlowLogPrevStmtPrefix):]
 				} else {
 					fieldValues := strings.Split(line, " ")
 					for i := 0; i < len(fieldValues)-1; i += 2 {

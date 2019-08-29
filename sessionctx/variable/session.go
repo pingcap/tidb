@@ -1045,6 +1045,8 @@ const (
 	SlowLogSucc = "Succ"
 	// SlowLogPrevStmt is used to show the previous executed statement.
 	SlowLogPrevStmt = "Prev_stmt"
+	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
+	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
