@@ -141,6 +141,9 @@ const (
 
 	// TiDBLowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
 	TiDBLowResolutionTSO = "tidb_low_resolution_tso"
+
+	// TiDBReplicaRead is used for reading data from replicas, followers for example.
+	TiDBReplicaRead = "tidb_replica_read"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -333,8 +336,8 @@ const (
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBTxnMode                     = ""
-	DefTiDBDDLReorgWorkerCount         = 16
-	DefTiDBDDLReorgBatchSize           = 1024
+	DefTiDBDDLReorgWorkerCount         = 4
+	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4

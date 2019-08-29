@@ -61,7 +61,10 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 			// Union->(UnionScan->DataSource1), (UnionScan->DataSource2)
 			children := make([]LogicalPlan, 0, len(ua.Children()))
 			for _, child := range ua.Children() {
-				us := LogicalUnionScan{conditions: p.conditions}.Init(ua.ctx)
+				us := LogicalUnionScan{
+					conditions: p.conditions,
+					handleCol:  p.handleCol,
+				}.Init(ua.ctx)
 				us.SetChildren(child)
 				children = append(children, us)
 			}
@@ -167,7 +170,7 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 
 	if len(conds) == 1 {
 		// Constant false.
-		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil {
+		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
 			if err == nil && ret == false {
 				return true, nil

@@ -272,7 +272,7 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 	// Test truncate with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
 	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
 	tk.MustIndexLookup(`select * from t where a = "aa";`).Check(testkit.Rows(`aa bb`))
-	tk.MustIndexLookup(`select * from t where a = "aab";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "aab";`).Check(testkit.Rows())
 
 	tk.MustExec(`truncate table t;`)
 	tk.MustExec(`insert into t values("a ", "b ");`)
@@ -285,9 +285,9 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 
 	// Test trailing spaces with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
 	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
-	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
-	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -548,4 +548,19 @@ func (s *testPointGetSuite) TestIssue10677(c *C) {
 	tk.MustQuery("select * from t where pk = '1'").Check(testkit.Rows("1"))
 	tk.MustQuery("desc select * from t where pk = '1.0'").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:1"))
 	tk.MustQuery("select * from t where pk = '1.0'").Check(testkit.Rows("1"))
+}
+
+func (s *testPointGetSuite) TestForUpdateRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Exec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key, c int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin")
+	tk.MustQuery("select * from t where pk = 1 for update")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("update t set c = c + 1 where pk = 1")
+	tk.MustExec("update t set c = c + 1 where pk = 2")
+	_, err := tk.Exec("commit")
+	c.Assert(session.ErrForUpdateCantRetry.Equal(err), IsTrue)
 }

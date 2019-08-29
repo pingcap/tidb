@@ -45,34 +45,42 @@ const (
 )
 
 var (
-	tikvBackoffCounterRPC          = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
-	tikvBackoffCounterLock         = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
-	tikvBackoffCounterLockFast     = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
-	tikvBackoffCounterPD           = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
-	tikvBackoffCounterRegionMiss   = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
-	tikvBackoffCounterUpdateLeader = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
-	tikvBackoffCounterServerBusy   = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
-	tikvBackoffCounterEmpty        = metrics.TiKVBackoffCounter.WithLabelValues("")
+	tikvBackoffCounterRPC            = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
+	tikvBackoffCounterLock           = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
+	tikvBackoffCounterLockFast       = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
+	tikvBackoffCounterPD             = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
+	tikvBackoffCounterRegionMiss     = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
+	tikvBackoffCounterUpdateLeader   = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
+	tikvBackoffCounterServerBusy     = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
+	tikvBackoffCounterEmpty          = metrics.TiKVBackoffCounter.WithLabelValues("")
+	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
+	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
+	tikvBackoffHistogramLockFast     = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
+	tikvBackoffHistogramPD           = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
+	tikvBackoffHistogramRegionMiss   = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
+	tikvBackoffHistogramUpdateLeader = metrics.TiKVBackoffHistogram.WithLabelValues("updateLeader")
+	tikvBackoffHistogramServerBusy   = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
+	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
 )
 
-func (t backoffType) Counter() prometheus.Counter {
+func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
 	switch t {
 	case boTiKVRPC:
-		return tikvBackoffCounterRPC
+		return tikvBackoffCounterRPC, tikvBackoffHistogramRPC
 	case BoTxnLock:
-		return tikvBackoffCounterLock
+		return tikvBackoffCounterLock, tikvBackoffHistogramLock
 	case boTxnLockFast:
-		return tikvBackoffCounterLockFast
+		return tikvBackoffCounterLockFast, tikvBackoffHistogramLockFast
 	case BoPDRPC:
-		return tikvBackoffCounterPD
+		return tikvBackoffCounterPD, tikvBackoffHistogramPD
 	case BoRegionMiss:
-		return tikvBackoffCounterRegionMiss
+		return tikvBackoffCounterRegionMiss, tikvBackoffHistogramRegionMiss
 	case BoUpdateLeader:
-		return tikvBackoffCounterUpdateLeader
+		return tikvBackoffCounterUpdateLeader, tikvBackoffHistogramUpdateLeader
 	case boServerBusy:
-		return tikvBackoffCounterServerBusy
+		return tikvBackoffCounterServerBusy, tikvBackoffHistogramServerBusy
 	}
-	return tikvBackoffCounterEmpty
+	return tikvBackoffCounterEmpty, tikvBackoffHistogramEmpty
 }
 
 // NewBackoffFn creates a backoff func which implements exponential backoff with
@@ -229,8 +237,9 @@ type Backoffer struct {
 	maxSleep   int
 	totalSleep int
 	errors     []error
-	types      []backoffType
+	types      []fmt.Stringer
 	vars       *kv.Variables
+	noop       bool
 }
 
 type txnStartCtxKeyType struct{}
@@ -245,6 +254,11 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 		maxSleep: maxSleep,
 		vars:     kv.DefaultVars,
 	}
+}
+
+// NewNoopBackoff create a Backoffer do nothing just return error directly
+func NewNoopBackoff(ctx context.Context) *Backoffer {
+	return &Backoffer{ctx: ctx, noop: true}
 }
 
 // WithVars sets the kv.Variables to the Backoffer and return it.
@@ -278,7 +292,23 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	default:
 	}
 
-	typ.Counter().Inc()
+	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
+	b.types = append(b.types, typ)
+	if b.noop || (b.maxSleep > 0 && b.totalSleep >= b.maxSleep) {
+		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
+		for i, err := range b.errors {
+			// Print only last 3 errors for non-DEBUG log levels.
+			if log.GetLevel() == zapcore.DebugLevel || i >= len(b.errors)-3 {
+				errMsg += "\n" + err.Error()
+			}
+		}
+		logutil.BgLogger().Warn(errMsg)
+		// Use the first backoff type to generate a MySQL error.
+		return b.types[0].(backoffType).TError()
+	}
+
+	backoffCounter, backoffDuration := typ.metric()
+	backoffCounter.Inc()
 	// Lazy initialize.
 	if b.fn == nil {
 		b.fn = make(map[backoffType]func(context.Context, int) int)
@@ -289,8 +319,9 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		b.fn[typ] = f
 	}
 
-	b.totalSleep += f(b.ctx, maxSleepMs)
-	b.types = append(b.types, typ)
+	realSleep := f(b.ctx, maxSleepMs)
+	backoffDuration.Observe(float64(realSleep) / 1000)
+	b.totalSleep += realSleep
 
 	var startTs interface{}
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
@@ -302,20 +333,6 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		zap.Int("maxSleep", b.maxSleep),
 		zap.Stringer("type", typ),
 		zap.Reflect("txnStartTS", startTs))
-
-	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
-	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
-		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
-		for i, err := range b.errors {
-			// Print only last 3 errors for non-DEBUG log levels.
-			if log.GetLevel() == zapcore.DebugLevel || i >= len(b.errors)-3 {
-				errMsg += "\n" + err.Error()
-			}
-		}
-		logutil.BgLogger().Warn(errMsg)
-		// Use the first backoff type to generate a MySQL error.
-		return b.types[0].TError()
-	}
 	return nil
 }
 

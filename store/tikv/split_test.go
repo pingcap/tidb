@@ -58,7 +58,7 @@ func (s *testSplitSuite) TestSplitBatchGet(c *C) {
 	c.Assert(err, IsNil)
 
 	txn := s.begin(c)
-	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn.StartTS()})
+	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn.StartTS()}, 0)
 
 	keys := [][]byte{{'a'}, {'b'}, {'c'}}
 	_, region, err := s.store.regionCache.GroupKeysByRegion(s.bo, keys)

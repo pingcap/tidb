@@ -684,7 +684,7 @@ func (s *testSessionSuite) TestDatabase(c *C) {
 
 func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	r, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(tk.Se, "select 1;")
+	r, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select 1;")
 	c.Assert(err, IsNil)
 	c.Assert(len(r), Equals, 1)
 }
@@ -2795,4 +2795,16 @@ func (s *testSessionSuite) TestLoadClientInteractive(c *C) {
 	tk.Se.SetConnectionID(id)
 	tk.Se.GetSessionVars().ClientCapability = tk.Se.GetSessionVars().ClientCapability | mysql.ClientInteractive
 	tk.MustQuery("select @@wait_timeout").Check(testkit.Rows("28800"))
+}
+
+func (s *testSessionSuite) TestReplicaRead(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadLeader)
+	tk.MustExec("set @@tidb_replica_read = 'follower';")
+	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadFollower)
+	tk.MustExec("set @@tidb_replica_read = 'leader';")
+	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadLeader)
 }

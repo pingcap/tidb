@@ -37,25 +37,56 @@ func (s *testEvaluatorSuite) TestSetFlenDecimal4RealOrDecimal(c *C) {
 		Decimal: 0,
 		Flen:    2,
 	}
-	setFlenDecimal4RealOrDecimal(ret, a, b, true)
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, false)
 	c.Assert(ret.Decimal, Equals, 1)
 	c.Assert(ret.Flen, Equals, 6)
 
 	b.Flen = 65
-	setFlenDecimal4RealOrDecimal(ret, a, b, true)
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, false)
 	c.Assert(ret.Decimal, Equals, 1)
 	c.Assert(ret.Flen, Equals, mysql.MaxRealWidth)
-	setFlenDecimal4RealOrDecimal(ret, a, b, false)
+	setFlenDecimal4RealOrDecimal(ret, a, b, false, false)
 	c.Assert(ret.Decimal, Equals, 1)
 	c.Assert(ret.Flen, Equals, mysql.MaxDecimalWidth)
 
 	b.Flen = types.UnspecifiedLength
-	setFlenDecimal4RealOrDecimal(ret, a, b, true)
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, false)
 	c.Assert(ret.Decimal, Equals, 1)
 	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
 
 	b.Decimal = types.UnspecifiedLength
-	setFlenDecimal4RealOrDecimal(ret, a, b, true)
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, false)
+	c.Assert(ret.Decimal, Equals, types.UnspecifiedLength)
+	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
+
+	ret = &types.FieldType{}
+	a = &types.FieldType{
+		Decimal: 1,
+		Flen:    3,
+	}
+	b = &types.FieldType{
+		Decimal: 0,
+		Flen:    2,
+	}
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, true)
+	c.Assert(ret.Decimal, Equals, 1)
+	c.Assert(ret.Flen, Equals, 8)
+
+	b.Flen = 65
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, true)
+	c.Assert(ret.Decimal, Equals, 1)
+	c.Assert(ret.Flen, Equals, mysql.MaxRealWidth)
+	setFlenDecimal4RealOrDecimal(ret, a, b, false, true)
+	c.Assert(ret.Decimal, Equals, 1)
+	c.Assert(ret.Flen, Equals, mysql.MaxDecimalWidth)
+
+	b.Flen = types.UnspecifiedLength
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, true)
+	c.Assert(ret.Decimal, Equals, 1)
+	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
+
+	b.Decimal = types.UnspecifiedLength
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, true)
 	c.Assert(ret.Decimal, Equals, types.UnspecifiedLength)
 	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
 }
@@ -440,6 +471,14 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 		{
 			args:   []interface{}{int64(-9223372036854775808), float64(-1)},
 			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(-9223372036854775808 DIV -1\\)'"},
+		},
+		{
+			args:   []interface{}{uint64(1), float64(-2)},
+			expect: []interface{}{0, nil},
+		},
+		{
+			args:   []interface{}{uint64(1), float64(-1)},
+			expect: []interface{}{nil, "*BIGINT UNSIGNED value is out of range in '\\(1 DIV -1\\)'"},
 		},
 	}
 

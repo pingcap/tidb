@@ -22,6 +22,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,10 +68,10 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 	kvResp, err := h.Store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
 	if err != nil {
 		logutil.BgLogger().Info("get MVCC by encoded key failed",
-			zap.Binary("encodeKey", encodedKey),
+			zap.Stringer("encodeKey", encodedKey),
 			zap.Reflect("region", keyLocation.Region),
-			zap.Binary("startKey", keyLocation.StartKey),
-			zap.Binary("endKey", keyLocation.EndKey),
+			zap.Stringer("startKey", keyLocation.StartKey),
+			zap.Stringer("endKey", keyLocation.EndKey),
 			zap.Reflect("kvResp", kvResp),
 			zap.Error(err))
 		return nil, errors.Trace(err)
@@ -578,6 +579,13 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
 	err := h.requestPD("GET", pdapi.Regions, nil, &regionsInfo)
 	return &regionsInfo, err
+}
+
+// GetRegionInfoByID gets the region information of the region ID by using PD's api.
+func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
+	var regionInfo RegionInfo
+	err := h.requestPD("GET", pdapi.RegionByID+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	return &regionInfo, err
 }
 
 // request PD API, decode the response body into res

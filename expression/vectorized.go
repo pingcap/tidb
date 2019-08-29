@@ -20,17 +20,20 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	tp := expr.GetType()
-	switch tp.EvalType() {
+func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType types.EvalType, input *chunk.Chunk, result *chunk.Column) error {
+	n := 1
+	if input != nil {
+		n = input.NumRows()
+	}
+	switch targetType {
 	case types.ETInt:
-		result.PreAllocInt64(n)
+		result.ResizeInt64(n)
 		v, isNull, err := expr.EvalInt(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
-		if isNull { // all slots are set to null by PreAlloc()
+		if isNull {
+			result.SetNulls(0, n, true)
 			return nil
 		}
 		i64s := result.Int64s()
@@ -39,12 +42,13 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 		}
 		result.SetNulls(0, n, false)
 	case types.ETReal:
-		result.PreAllocFloat64(n)
+		result.ResizeFloat64(n)
 		v, isNull, err := expr.EvalReal(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
-		if isNull { // all slots are set to null by PreAlloc()
+		if isNull {
+			result.SetNulls(0, n, true)
 			return nil
 		}
 		f64s := result.Float64s()
@@ -53,12 +57,13 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 		}
 		result.SetNulls(0, n, false)
 	case types.ETDecimal:
-		result.PreAllocDecimal(n)
+		result.ResizeDecimal(n)
 		v, isNull, err := expr.EvalDecimal(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
-		if isNull { // all slots are set to null by PreAlloc()
+		if isNull {
+			result.SetNulls(0, n, true)
 			return nil
 		}
 		ds := result.Decimals()
@@ -82,7 +87,7 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 			}
 		}
 	case types.ETDuration:
-		result.Reset()
+		result.ResizeDuration(n)
 		v, isNull, err := expr.EvalDuration(ctx, chunk.Row{})
 		if err != nil {
 			return err
@@ -97,7 +102,7 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 			}
 		}
 	case types.ETJson:
-		result.Reset()
+		result.ReserveJSON(n)
 		v, isNull, err := expr.EvalJSON(ctx, chunk.Row{})
 		if err != nil {
 			return err
@@ -112,7 +117,7 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.C
 			}
 		}
 	case types.ETString:
-		result.Reset()
+		result.ReserveString(n)
 		v, isNull, err := expr.EvalString(ctx, chunk.Row{})
 		if err != nil {
 			return err
