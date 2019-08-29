@@ -368,6 +368,7 @@ type Deallocate struct {
 }
 
 // Show represents a show plan.
+// TODO: make as a logical data source or table dual.
 type Show struct {
 	physicalSchemaProducer
 
