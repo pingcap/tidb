@@ -18,6 +18,8 @@
 package expression
 
 import (
+	"sync"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -37,6 +39,9 @@ type baseBuiltinFunc struct {
 	ctx    sessionctx.Context
 	tp     *types.FieldType
 	pbCode tipb.ScalarFuncSig
+
+	childrenVectorizedOnce *sync.Once
+	childrenVectorized     bool
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -61,7 +66,8 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 		panic("ctx should not be nil")
 	}
 	return baseBuiltinFunc{
-		columnBufferAllocator: newLocalSliceBuffer(len(args)),
+		columnBufferAllocator:  newLocalSliceBuffer(len(args)),
+		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
@@ -165,7 +171,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 	return baseBuiltinFunc{
-		columnBufferAllocator: newLocalSliceBuffer(len(args)),
+		columnBufferAllocator:  newLocalSliceBuffer(len(args)),
+		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
@@ -237,6 +244,19 @@ func (b *baseBuiltinFunc) vectorized() bool {
 	return false
 }
 
+func (b *baseBuiltinFunc) isChildrenVectorized() bool {
+	b.childrenVectorizedOnce.Do(func() {
+		b.childrenVectorized = true
+		for _, arg := range b.args {
+			if !arg.Vectorized() {
+				b.childrenVectorized = false
+				break
+			}
+		}
+	})
+	return b.childrenVectorized
+}
+
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	switch b.tp.EvalType() {
 	case types.ETString:
@@ -277,6 +297,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.ctx = from.ctx
 	b.tp = from.tp
 	b.pbCode = from.pbCode
+	b.columnBufferAllocator = newLocalSliceBuffer(len(b.args))
 }
 
 func (b *baseBuiltinFunc) Clone() builtinFunc {
@@ -318,8 +339,11 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 type vecBuiltinFunc interface {
 	columnBufferAllocator
 
-	// vectorized returns if this builtin function supports vectorized evaluation.
+	// vectorized returns if this builtin function itself supports vectorized evaluation.
 	vectorized() bool
+
+	// isChildrenVectorized returns if its all children support vectorized evaluation.
+	isChildrenVectorized() bool
 
 	// vecEvalInt evaluates this builtin function in a vectorized manner.
 	vecEvalInt(input *chunk.Chunk, result *chunk.Column) error
@@ -400,12 +424,6 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
-}
-
-func init() {
-	for k, v := range funcs {
-		funcs[k] = &vecRowConvertFuncClass{v}
-	}
 }
 
 // funcs holds all registered builtin functions. When new function is added,
