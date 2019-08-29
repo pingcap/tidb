@@ -200,8 +200,19 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a where t2.a = null",
 			best: "Dual->Projection",
 		},
+		{
+			sql:  "select a, b from (select a, b, min(a) over(partition by b) as min_a from t)as tt where a < 10 and b > 10 and b = min_a",
+			best: "DataScan(t)->Projection->Projection->Window(min(test.t.a))->Sel([lt(test.tt.a, 10) eq(test.tt.b, 4_window_3)])->Projection->Projection",
+		},
+		{
+			sql:  "select a, b from (select a, b, c, d, sum(a) over(partition by b, c) as sum_a from t)as tt where b + c > 10 and b in (1, 2) and sum_a > b",
+			best: "DataScan(t)->Projection->Projection->Window(sum(cast(test.t.a)))->Sel([gt(4_window_5, cast(test.tt.b))])->Projection->Projection",
+		},
 	}
-
+	s.Parser.EnableWindowFunc(true)
+	defer func() {
+		s.Parser.EnableWindowFunc(false)
+	}()
 	ctx := context.Background()
 	for ith, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
