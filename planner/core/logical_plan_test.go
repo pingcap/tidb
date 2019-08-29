@@ -1277,7 +1277,7 @@ func (s *testPlanSuite) TestProjectionEliminater(c *C) {
 	}{
 		{
 			sql:  "select 1+num from (select 1+a as num from t) t1;",
-			best: "DataScan(t)->Projection->Projection",
+			best: "DataScan(t)->Projection",
 		},
 	}
 
@@ -1289,7 +1289,7 @@ func (s *testPlanSuite) TestProjectionEliminater(c *C) {
 
 		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagPushDownAgg, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s %d", tt.sql, ith))
 	}
