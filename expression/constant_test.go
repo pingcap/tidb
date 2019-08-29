@@ -389,7 +389,7 @@ func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
 	c.Assert(mysql.TypeBlob, Equals, cstBytes.GetType().Tp)
 	c.Assert(mysql.TypeBit, Equals, cstBinary.GetType().Tp)
 	c.Assert(mysql.TypeBit, Equals, cstBit.GetType().Tp)
-	c.Assert(mysql.TypeVarString, Equals, cstFloat32.GetType().Tp)
+	c.Assert(mysql.TypeFloat, Equals, cstFloat32.GetType().Tp)
 	c.Assert(mysql.TypeDouble, Equals, cstFloat64.GetType().Tp)
 	c.Assert(mysql.TypeEnum, Equals, cstEnum.GetType().Tp)
 
