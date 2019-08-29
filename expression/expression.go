@@ -108,6 +108,7 @@ type Expression interface {
 	IsCorrelated() bool
 
 	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
+	// A constant item can be eval() when build a plan.
 	// An expression is constant item if it:
 	// refers no tables.
 	// refers no subqueries that refers any tables.

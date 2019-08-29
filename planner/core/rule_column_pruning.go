@@ -149,12 +149,14 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 }
 
 // PruneColumns implements LogicalPlan interface.
+// If any expression can view as a constant in execution stage, such as correlated column, constant,
+// we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := ls.children[0]
 	for i := len(ls.ByItems) - 1; i >= 0; i-- {
 		cols := expression.ExtractColumns(ls.ByItems[i].Expr)
 		if len(cols) == 0 {
-			if !ls.ByItems[i].Expr.ConstItem() {
+			if expression.IsMutableEffectsExpr(ls.ByItems[i].Expr) {
 				continue
 			}
 			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
