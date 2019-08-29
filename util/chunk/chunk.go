@@ -611,9 +611,6 @@ func (c *Chunk) Column(colIdx int) *Column {
 
 // SetCol sets the colIdx Column to col and returns the old Column.
 func (c *Chunk) SetCol(colIdx int, col *Column) *Column {
-	for len(c.columns) <= colIdx {
-		c.columns = append(c.columns, nil)
-	}
 	if col == c.columns[colIdx] {
 		return nil
 	}
