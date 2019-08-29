@@ -108,14 +108,13 @@ Projection_9	9990.00	root	test.t1.c1
           └─TableScan_18	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 id	count	task	operator info
-Projection_12	10000.00	root	k
-└─Projection_13	10000.00	root	test.t1.c1, ifnull(5_col_0, 0)
-  └─MergeJoin_14	10000.00	root	left outer join, left key:test.t1.c1, right key:test.s.c1
-    ├─TableReader_17	10000.00	root	data:TableScan_16
-    │ └─TableScan_16	10000.00	cop	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
-    └─Projection_18	8000.00	root	1, test.s.c1
-      └─TableReader_20	10000.00	root	data:TableScan_19
-        └─TableScan_19	10000.00	cop	table:s, range:[-inf,+inf], keep order:true, stats:pseudo
+Projection_12	10000.00	root	ifnull(5_col_0, 0)
+└─MergeJoin_13	10000.00	root	left outer join, left key:test.t1.c1, right key:test.s.c1
+  ├─TableReader_16	10000.00	root	data:TableScan_15
+  │ └─TableScan_15	10000.00	cop	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
+  └─Projection_17	8000.00	root	1, test.s.c1
+    └─TableReader_19	10000.00	root	data:TableScan_18
+      └─TableScan_18	10000.00	cop	table:s, range:[-inf,+inf], keep order:true, stats:pseudo
 explain select * from information_schema.columns;
 id	count	task	operator info
 MemTableScan_4	10000.00	root	

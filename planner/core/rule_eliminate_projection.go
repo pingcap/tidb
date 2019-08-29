@@ -140,12 +140,10 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	p.replaceExprColumns(replace)
 	if isProj {
 		if child, ok := p.Children()[0].(*LogicalProjection); ok {
-			if len(proj.Exprs) == len(child.Exprs) {
-				for i := range proj.Exprs {
-					proj.Exprs[i] = replaceColumnOfExpr(proj.Exprs[i], child)
-				}
-				p.Children()[0] = child.Children()[0]
+			for i := range proj.Exprs {
+				proj.Exprs[i] = replaceColumnOfExpr(proj.Exprs[i], child)
 			}
+			p.Children()[0] = child.Children()[0]
 		}
 	}
 
