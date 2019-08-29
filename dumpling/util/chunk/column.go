@@ -526,6 +526,18 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
 }
 
+// GetRaw returns the underlying raw bytes in the specific row.
+func (c *Column) GetRaw(rowID int) []byte {
+	var data []byte
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		data = c.data[rowID*elemLen : rowID*elemLen+elemLen]
+	} else {
+		data = c.data[c.offsets[rowID]:c.offsets[rowID+1]]
+	}
+	return data
+}
+
 // reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
 func (c *Column) reconstruct(sel []int) {
 	if sel == nil {
