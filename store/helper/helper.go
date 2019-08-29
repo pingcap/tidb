@@ -22,6 +22,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -578,6 +579,13 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
 	err := h.requestPD("GET", pdapi.Regions, nil, &regionsInfo)
 	return &regionsInfo, err
+}
+
+// GetRegionInfoByID gets the region information of the region ID by using PD's api.
+func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
+	var regionInfo RegionInfo
+	err := h.requestPD("GET", pdapi.RegionByID+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	return &regionInfo, err
 }
 
 // request PD API, decode the response body into res
