@@ -585,6 +585,7 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 		is:           b.is,
 		name:         v.Name,
 		sqlText:      v.SQLText,
+		textProto:    true,
 	}
 }
 

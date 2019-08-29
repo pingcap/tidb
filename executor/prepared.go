@@ -78,9 +78,10 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 type PrepareExec struct {
 	baseExecutor
 
-	is      infoschema.InfoSchema
-	name    string
-	sqlText string
+	is        infoschema.InfoSchema
+	name      string
+	sqlText   string
+	textProto bool
 
 	ID         uint32
 	ParamCount int
@@ -129,6 +130,9 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if err != nil {
 		return util.SyntaxError(err)
+	}
+	if e.textProto && len(stmts) > 1 {
+		return ErrPrepareMulti
 	}
 	var prepareds []*ast.Prepared
 	for _, stmt := range stmts {

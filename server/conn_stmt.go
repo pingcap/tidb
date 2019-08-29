@@ -193,7 +193,9 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
-		// TODO: FIX ME!!!!!
+		if len(rs) > 1 {
+			return errors.New("Can not execute prepared multiple statements with cursor")
+		}
 		stmt.StoreResultSet(rs[0])
 		err = cc.writeColumnInfo(rs[0].Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
