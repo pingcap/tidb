@@ -417,7 +417,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		// Test Semi Join hint success.
 		{
-			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 where t1.a in (select a from t t2)",
+			sql:  "select /*+ TIDB_INLJ(t2@sel_2) */ * from t t1 where t1.a in (select a from t t2)",
 			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->Projection",
 		},
 		// Test Semi Join hint fail.
@@ -619,8 +619,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 	c.Assert(err, IsNil)
 
 	tests := []struct {
-		sql  string
-		best string
+		sql   string
+		best  string
+		hints string
 	}{
 		// Test for update.
 		{
@@ -641,20 +642,24 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		// TODO: Test delete/update with join.
 		// Test join hint for delete and update
 		{
-			sql:  "delete /*+ TIDB_INLJ(t1, t2) */ t1 from t t1, t t2 where t1.c=t2.c",
-			best: "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.c,test.t2.c)->Delete",
+			sql:   "delete /*+ TIDB_INLJ(t1, t2) */ t1 from t t1, t t2 where t1.c=t2.c",
+			best:  "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.c,test.t2.c)->Delete",
+			hints: "INDEX(@`del_1` `t2` `c_d_e`), INL_JOIN(@`del_1` `t2`)",
 		},
 		{
-			sql:  "delete /*+ TIDB_SMJ(t1, t2) */ from t1 using t t1, t t2 where t1.c=t2.c",
-			best: "MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.c,test.t2.c)->Delete",
+			sql:   "delete /*+ TIDB_SMJ(t1, t2) */ from t1 using t t1, t t2 where t1.c=t2.c",
+			best:  "MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.c,test.t2.c)->Delete",
+			hints: "INDEX(@`del_1` `t1` `c_d_e`), INDEX(@`del_1` `t2` `c_d_e`), SM_JOIN(@`del_1` `t1`, `t2`)",
 		},
 		{
-			sql:  "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
-			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->Update",
+			sql:   "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
+			best:  "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->Update",
+			hints: "SM_JOIN(@`upd_1` `t1`, `t2`)",
 		},
 		{
-			sql:  "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->Update",
+			sql:   "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
+			best:  "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->Update",
+			hints: "HASH_JOIN(@`upd_1` `t1`, `t2`)",
 		},
 		// Test complex delete.
 		{
@@ -668,8 +673,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		},
 		// Test "USE INDEX" hint in delete statement from single table
 		{
-			sql:  "delete from t use index(c_d_e) where b = 1",
-			best: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t)->Sel([eq(test.t.b, 1)]))->Delete",
+			sql:   "delete from t use index(c_d_e) where b = 1",
+			best:  "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t)->Sel([eq(test.t.b, 1)]))->Delete",
+			hints: "INDEX(@`del_1` `t` `c_d_e`)",
 		},
 		// Test complex insert.
 		{
@@ -705,6 +711,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, tt.hints, comment)
 	}
 }
 
@@ -1546,21 +1553,25 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 		sql     string
 		best    string
 		warning string
+		hints   string
 	}{
 		{
 			sql:     "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
 			best:    "RightHashJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t1.a)}(test.t3.a,test.t2.a)->Projection",
 			warning: "",
+			hints:   "INL_JOIN(@`sel_1` `t1`), HASH_JOIN(@`sel_1` `t3`)",
 		},
 		{
 			sql:     "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)",
 			warning: "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable",
+			hints:   "HASH_JOIN(@`sel_1` `t1`, `t2`)",
 		},
 		{
 			sql:     "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
 			best:    "IndexJoin{IndexReader(Index(t2.b)[[NULL,+inf]])->TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t1.b)->Projection",
 			warning: "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
+			hints:   "INDEX(@`sel_1` `t1` `b`), INL_JOIN(@`sel_1` `t1`)",
 		},
 	}
 	ctx := context.Background()
@@ -1582,6 +1593,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning)
 			c.Assert(warnings[0].Err.Error(), Equals, test.warning)
 		}
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, test.hints, comment)
 	}
 }
 
@@ -1721,12 +1733,14 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		sql     string
 		best    string
 		hasWarn bool
+		hints   string
 	}{
 		// simple case
 		{
 			sql:     "select /*+ INDEX(t, c_d_e) */ * from t",
 			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
 			hasWarn: false,
+			hints:   "INDEX(@`sel_1` `t` `c_d_e`)",
 		},
 		{
 			sql:     "select /*+ INDEX(t, c_d_e) */ * from t t1",
@@ -1737,17 +1751,20 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 			sql:     "select /*+ INDEX(t1, c_d_e) */ * from t t1",
 			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
 			hasWarn: false,
+			hints:   "INDEX(@`sel_1` `t1` `c_d_e`)",
 		},
 		{
 			sql:     "select /*+ INDEX(t1, c_d_e), INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
 			hasWarn: false,
+			hints:   "INDEX(@`sel_1` `t1` `c_d_e`), INDEX(@`sel_1` `t2` `f`), HASH_JOIN(@`sel_1` `t1`, `t2`)",
 		},
 		// test multiple indexes
 		{
 			sql:     "select /*+ INDEX(t, c_d_e, f, g) */ * from t order by f",
 			best:    "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
 			hasWarn: false,
+			hints:   "INDEX(@`sel_1` `t` `f`)",
 		},
 		// there will be a warning instead of error when index not exist
 		{
@@ -1772,6 +1789,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		} else {
 			c.Assert(warnings, HasLen, 0, comment)
 		}
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, test.hints, comment)
 	}
 }
 
@@ -1789,44 +1807,59 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 	c.Assert(err, IsNil)
 
 	tests := []struct {
-		sql  string
-		plan string
+		sql   string
+		plan  string
+		hints string
 	}{
 		{
-			sql:  "select /*+ SM_JOIN(@sel_1 t1), INL_JOIN(@sel_2 t3) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			sql:   "select /*+ SM_JOIN(@sel_1 t1), INL_JOIN(@sel_2 t3) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+			plan:  "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			hints: "INDEX(@`sel_2` `t3` `c_d_e`), INL_JOIN(@`sel_2` `t3`), SM_JOIN(@`sel_1` `t1`)",
 		},
 		{
-			sql:  "select /*+ SM_JOIN(@sel_1 t1), INL_JOIN(@qb t3) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			sql:   "select /*+ SM_JOIN(@sel_1 t1), INL_JOIN(@qb t3) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+			plan:  "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			hints: "INDEX(@`sel_2` `t3` `c_d_e`), INL_JOIN(@`sel_2` `t3`), SM_JOIN(@`sel_1` `t1`)",
 		},
 		{
-			sql:  "select /*+ HASH_JOIN(@sel_1 t1), SM_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			sql:   "select /*+ HASH_JOIN(@sel_1 t1), SM_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+			plan:  "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			hints: "INDEX(@`sel_2` `t3` `c_d_e`), SM_JOIN(@`sel_2` `t2`, `t3`), HASH_JOIN(@`sel_1` `t1`)",
 		},
 		{
-			sql:  "select /*+ HASH_JOIN(@sel_1 t1), SM_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			sql:   "select /*+ HASH_JOIN(@sel_1 t1), SM_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+			plan:  "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			hints: "INDEX(@`sel_2` `t3` `c_d_e`), SM_JOIN(@`sel_2` `t2`, `t3`), HASH_JOIN(@`sel_1` `t1`)",
 		},
 		{
-			sql:  "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "IndexJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
+			sql:   "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+			plan:  "IndexJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
+			hints: "HASH_JOIN(@`sel_2` `t2`, `t3`), INL_JOIN(@`sel_1` `t1`)",
 		},
 		{
-			sql:  "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "IndexJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
+			sql:   "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+			plan:  "IndexJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
+			hints: "HASH_JOIN(@`sel_2` `t2`, `t3`), INL_JOIN(@`sel_1` `t1`)",
 		},
 		{
-			sql:  "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
-			plan: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(test.t1.a, test.t2.a)])->StreamAgg)->StreamAgg->Sel([not(isnull(count(*)))])}->HashAgg",
+			sql:   "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
+			plan:  "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(test.t1.a, test.t2.a)])->StreamAgg)->StreamAgg->Sel([not(isnull(count(*)))])}->HashAgg",
+			hints: "STREAM_AGG(@`sel_2`), HASH_AGG(@`sel_1`)",
 		},
 		{
-			sql:  "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
-			plan: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(test.t1.a, test.t2.a)])->HashAgg)->HashAgg->Sel([not(isnull(count(*)))])}->StreamAgg",
+			sql:   "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
+			plan:  "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(test.t1.a, test.t2.a)])->HashAgg)->HashAgg->Sel([not(isnull(count(*)))])}->StreamAgg",
+			hints: "HASH_AGG(@`sel_2`), STREAM_AGG(@`sel_1`)",
 		},
 		{
-			sql:  "select /*+ HASH_AGG(@sel_2) */ a, (select count(*) from t t1 where t1.b > t.a) from t where b > (select b from t t2 where t2.b = t.a limit 1)",
-			plan: "Apply{Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(test.t2.b, test.t.a)])->Limit)->Limit}->TableReader(Table(t)->Sel([gt(test.t1.b, test.t.a)])->HashAgg)->HashAgg}->Projection",
+			sql:   "select /*+ HASH_AGG(@sel_2) */ a, (select count(*) from t t1 where t1.b > t.a) from t where b > (select b from t t2 where t2.b = t.a limit 1)",
+			plan:  "Apply{Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(test.t2.b, test.t.a)])->Limit)->Limit}->TableReader(Table(t)->Sel([gt(test.t1.b, test.t.a)])->HashAgg)->HashAgg}->Projection",
+			hints: "HASH_AGG(@`sel_2`)",
+		},
+		{
+			sql:   "select /*+ INL_JOIN(t@sel_2) */ * from t where a in (select a from t)",
+			plan:  "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Projection",
+			hints: "INL_JOIN(@`sel_1` `t`@`sel_2`)",
 		},
 	}
 	ctx := context.TODO()
@@ -1839,5 +1872,6 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		c.Assert(core.ToString(p), Equals, tt.plan, comment)
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, tt.hints, comment)
 	}
 }

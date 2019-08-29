@@ -70,7 +70,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, 
 	dual := PhysicalTableDual{
 		RowCount:    p.RowCount,
 		placeHolder: p.placeHolder,
-	}.Init(p.ctx, p.stats)
+	}.Init(p.ctx, p.stats, p.blockOffset)
 	dual.SetSchema(p.schema)
 	return &rootTask{p: dual}, nil
 }
@@ -166,7 +166,7 @@ func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task tas
 		Table:       ds.tableInfo,
 		Columns:     ds.Columns,
 		TableAsName: ds.TableAsName,
-	}.Init(ds.ctx, ds.stats)
+	}.Init(ds.ctx, ds.stats, ds.blockOffset)
 	memTable.SetSchema(ds.schema)
 
 	// Stop to push down these conditions.
@@ -174,7 +174,7 @@ func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task tas
 	if len(ds.pushedDownConds) > 0 {
 		sel := PhysicalSelection{
 			Conditions: ds.pushedDownConds,
-		}.Init(ds.ctx, ds.stats)
+		}.Init(ds.ctx, ds.stats, ds.blockOffset)
 		sel.SetChildren(memTable)
 		retPlan = sel
 	}
@@ -190,7 +190,7 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 				return nil, err
 			}
 			if !result {
-				dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats)
+				dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 				dual.SetSchema(ds.schema)
 				return &rootTask{
 					p: dual,
@@ -389,7 +389,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		path := candidate.path
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
-			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats)
+			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
 			return &rootTask{
 				p: dual,
@@ -482,7 +482,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
-	}.Init(ds.ctx)
+	}.Init(ds.ctx, ds.blockOffset)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
@@ -501,7 +501,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			TableAsName:     ds.TableAsName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
-		}.Init(ds.ctx)
+		}.Init(ds.ctx, ds.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
 	}
@@ -600,14 +600,14 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		}
 		count := is.stats.RowCount * selectivity
 		stats := p.tableStats.ScaleByExpectCnt(count)
-		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats)
+		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, is.blockOffset)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
 	}
 	if tableConds != nil {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * copCPUFactor
-		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats)
+		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats, is.blockOffset)
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
@@ -804,7 +804,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
-	}.Init(ds.ctx)
+	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -870,7 +870,7 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * copCPUFactor
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats)
+		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel
 	}

@@ -784,7 +784,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 		DefaultValues:   []types.Datum{types.NewDatum(1), types.NewDatum(1)},
 		LeftKeys:        outerCols,
 		RightKeys:       innerCols,
-	}.Init(ctx, nil)
+	}.Init(ctx, nil, 0)
 
 	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
 	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)

@@ -1282,8 +1282,8 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 func (s *testPlanSuite) TestAllocID(c *C) {
 	ctx := MockContext()
-	pA := DataSource{}.Init(ctx)
-	pB := DataSource{}.Init(ctx)
+	pA := DataSource{}.Init(ctx, 0)
+	pB := DataSource{}.Init(ctx, 0)
 	c.Assert(pA.id+1, Equals, pB.id)
 }
 
