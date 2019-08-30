@@ -92,9 +92,7 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 
 		spResp := batchResp.resp.Resp.(*kvrpcpb.SplitRegionResponse)
 		regions := spResp.GetRegions()
-		// Divide a region into n, one can not need to be scattered,
-		// so n-1 needs to be scattered to other storage servers.
-		srResp.Regions = append(srResp.Regions, regions[:len(regions)-1]...)
+		srResp.Regions = append(srResp.Regions, regions...)
 	}
 	return &tikvrpc.Response{Resp: srResp}, errors.Trace(err)
 }
@@ -152,7 +150,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 			zap.Uint64("batch region ID", batch.regionID.id),
 			zap.Stringer("first at", kv.Key(batch.keys[0])),
 			zap.Stringer("first new region left", logutil.Hex(spResp.Regions[0])),
-			zap.Int("new region count", len(spResp.Regions)+1))
+			zap.Int("new region count", len(spResp.Regions)))
 		return batchResp
 	}
 
@@ -166,7 +164,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 			continue
 		}
 
-		logutil.BgLogger().Info("batch split regions,scatter a region failed",
+		logutil.BgLogger().Info("batch split regions, scatter a region failed",
 			zap.Uint64("batch region ID", batch.regionID.id),
 			zap.Stringer("at", kv.Key(batch.keys[i])),
 			zap.Stringer("new region left", logutil.Hex(r)),
