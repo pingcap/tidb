@@ -495,9 +495,14 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 
 const (
 	// statCountMaxFactor defines the factor of maxStatCount with maxChunkSize.
-	// statCountMax is maxChunkSize * maxStatCountFactor.
+	// statCountMax is maxChunkSize * statCountMaxFactor.
 	// Set this threshold to prevent innerStatsCount being too large and causing a performance regression.
 	statCountMaxFactor = 10 * 1024
+
+	// statCountMinFactor defines the factor of statCountMin with maxChunkSize.
+	// statCountMin is maxChunkSize * statCountMinFactor.
+	// Set this threshold to prevent innerStatsCount being too small and causing a performance regression.
+	statCountMinFactor = 8
 
 	// statCountDivisor defines the divisor of innerStatsCount.
 	// Set this divisor to prevent innerStatsCount being too large and causing a performance regression.
@@ -513,6 +518,9 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 	statCount := int(e.innerStatsCount / statCountDivisor)
 	if statCount > e.maxChunkSize*statCountMaxFactor {
 		statCount = e.maxChunkSize * statCountMaxFactor
+	}
+	if statCount < e.maxChunkSize*statCountMinFactor {
+		statCount = 0
 	}
 	e.rowContainer = newHashRowContainer(e.ctx.GetSessionVars().StmtCtx, statCount,
 		e.innerExec.base().retFieldTypes, innerKeyColIdx,
