@@ -8,7 +8,6 @@ import (
 )
 
 func (s *testSuite) TestMergePartialResult4Varpop(c *C) {
-
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 5, types.NewFloat64Datum(float64(2)), types.NewFloat64Datum(float64(2)/float64(3)), types.NewFloat64Datum(float64(59)/float64(8)-float64(19*19)/float64(8*8))),
 	}
