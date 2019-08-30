@@ -367,59 +367,57 @@ func (req *Request) IsDebugReq() bool {
 }
 
 // Response wraps all kv/coprocessor responses.
-type Response struct {
-	Resp interface{}
-}
+type Response interface{}
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
-func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Response {
+func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) Response {
 	switch res := res.GetCmd().(type) {
 	case *tikvpb.BatchCommandsResponse_Response_Get:
-		return &Response{Resp: res.Get}
+		return res.Get
 	case *tikvpb.BatchCommandsResponse_Response_Scan:
-		return &Response{Resp: res.Scan}
+		return res.Scan
 	case *tikvpb.BatchCommandsResponse_Response_Prewrite:
-		return &Response{Resp: res.Prewrite}
+		return res.Prewrite
 	case *tikvpb.BatchCommandsResponse_Response_Commit:
-		return &Response{Resp: res.Commit}
+		return res.Commit
 	case *tikvpb.BatchCommandsResponse_Response_Cleanup:
-		return &Response{Resp: res.Cleanup}
+		return res.Cleanup
 	case *tikvpb.BatchCommandsResponse_Response_BatchGet:
-		return &Response{Resp: res.BatchGet}
+		return res.BatchGet
 	case *tikvpb.BatchCommandsResponse_Response_BatchRollback:
-		return &Response{Resp: res.BatchRollback}
+		return res.BatchRollback
 	case *tikvpb.BatchCommandsResponse_Response_ScanLock:
-		return &Response{Resp: res.ScanLock}
+		return res.ScanLock
 	case *tikvpb.BatchCommandsResponse_Response_ResolveLock:
-		return &Response{Resp: res.ResolveLock}
+		return res.ResolveLock
 	case *tikvpb.BatchCommandsResponse_Response_GC:
-		return &Response{Resp: res.GC}
+		return res.GC
 	case *tikvpb.BatchCommandsResponse_Response_DeleteRange:
-		return &Response{Resp: res.DeleteRange}
+		return res.DeleteRange
 	case *tikvpb.BatchCommandsResponse_Response_RawGet:
-		return &Response{Resp: res.RawGet}
+		return res.RawGet
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchGet:
-		return &Response{Resp: res.RawBatchGet}
+		return res.RawBatchGet
 	case *tikvpb.BatchCommandsResponse_Response_RawPut:
-		return &Response{Resp: res.RawPut}
+		return res.RawPut
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchPut:
-		return &Response{Resp: res.RawBatchPut}
+		return res.RawBatchPut
 	case *tikvpb.BatchCommandsResponse_Response_RawDelete:
-		return &Response{Resp: res.RawDelete}
+		return res.RawDelete
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchDelete:
-		return &Response{Resp: res.RawBatchDelete}
+		return res.RawBatchDelete
 	case *tikvpb.BatchCommandsResponse_Response_RawDeleteRange:
-		return &Response{Resp: res.RawDeleteRange}
+		return res.RawDeleteRange
 	case *tikvpb.BatchCommandsResponse_Response_RawScan:
-		return &Response{Resp: res.RawScan}
+		return res.RawScan
 	case *tikvpb.BatchCommandsResponse_Response_Coprocessor:
-		return &Response{Resp: res.Coprocessor}
+		return res.Coprocessor
 	case *tikvpb.BatchCommandsResponse_Response_PessimisticLock:
-		return &Response{Resp: res.PessimisticLock}
+		return res.PessimisticLock
 	case *tikvpb.BatchCommandsResponse_Response_PessimisticRollback:
-		return &Response{Resp: res.PessimisticRollback}
+		return res.PessimisticRollback
 	case *tikvpb.BatchCommandsResponse_Response_Empty:
-		return &Response{Resp: res.Empty}
+		return res.Empty
 	}
 	return nil
 }
@@ -506,9 +504,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 
 // GenRegionErrorResp returns corresponding Response with specified RegionError
 // according to the given req.
-func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
+func GenRegionErrorResp(req *Request, e *errorpb.Error) (Response, error) {
 	var p interface{}
-	resp := &Response{}
 	switch req.Type {
 	case CmdGet:
 		p = &kvrpcpb.GetResponse{
@@ -624,8 +621,7 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
-	resp.Resp = p
-	return resp, nil
+	return Response(p), nil
 }
 
 type getRegionError interface {
@@ -633,13 +629,13 @@ type getRegionError interface {
 }
 
 // GetRegionError returns the RegionError of the underlying concrete response.
-func (resp *Response) GetRegionError() (*errorpb.Error, error) {
-	if resp.Resp == nil {
+func GetRegionError(resp Response) (*errorpb.Error, error) {
+	if resp == nil {
 		return nil, nil
 	}
-	err, ok := resp.Resp.(getRegionError)
+	err, ok := resp.(getRegionError)
 	if !ok {
-		if _, isEmpty := resp.Resp.(*tikvpb.BatchCommandsEmptyResponse); isEmpty {
+		if _, isEmpty := resp.(*tikvpb.BatchCommandsEmptyResponse); isEmpty {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("invalid response type %v", resp)
@@ -650,70 +646,70 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 // CallRPC launches a rpc call.
 // ch is needed to implement timeout for coprocessor streaing, the stream object's
 // cancel function will be sent to the channel, together with a lease checked by a background goroutine.
-func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Response, error) {
-	resp := &Response{}
+func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (Response, error) {
+	var resp Response = nil
 	var err error
 	switch req.Type {
 	case CmdGet:
-		resp.Resp, err = client.KvGet(ctx, req.Get())
+		resp, err = client.KvGet(ctx, req.Get())
 	case CmdScan:
-		resp.Resp, err = client.KvScan(ctx, req.Scan())
+		resp, err = client.KvScan(ctx, req.Scan())
 	case CmdPrewrite:
-		resp.Resp, err = client.KvPrewrite(ctx, req.Prewrite())
+		resp, err = client.KvPrewrite(ctx, req.Prewrite())
 	case CmdPessimisticLock:
-		resp.Resp, err = client.KvPessimisticLock(ctx, req.PessimisticLock())
+		resp, err = client.KvPessimisticLock(ctx, req.PessimisticLock())
 	case CmdPessimisticRollback:
-		resp.Resp, err = client.KVPessimisticRollback(ctx, req.PessimisticRollback())
+		resp, err = client.KVPessimisticRollback(ctx, req.PessimisticRollback())
 	case CmdCommit:
-		resp.Resp, err = client.KvCommit(ctx, req.Commit())
+		resp, err = client.KvCommit(ctx, req.Commit())
 	case CmdCleanup:
-		resp.Resp, err = client.KvCleanup(ctx, req.Cleanup())
+		resp, err = client.KvCleanup(ctx, req.Cleanup())
 	case CmdBatchGet:
-		resp.Resp, err = client.KvBatchGet(ctx, req.BatchGet())
+		resp, err = client.KvBatchGet(ctx, req.BatchGet())
 	case CmdBatchRollback:
-		resp.Resp, err = client.KvBatchRollback(ctx, req.BatchRollback())
+		resp, err = client.KvBatchRollback(ctx, req.BatchRollback())
 	case CmdScanLock:
-		resp.Resp, err = client.KvScanLock(ctx, req.ScanLock())
+		resp, err = client.KvScanLock(ctx, req.ScanLock())
 	case CmdResolveLock:
-		resp.Resp, err = client.KvResolveLock(ctx, req.ResolveLock())
+		resp, err = client.KvResolveLock(ctx, req.ResolveLock())
 	case CmdGC:
-		resp.Resp, err = client.KvGC(ctx, req.GC())
+		resp, err = client.KvGC(ctx, req.GC())
 	case CmdDeleteRange:
-		resp.Resp, err = client.KvDeleteRange(ctx, req.DeleteRange())
+		resp, err = client.KvDeleteRange(ctx, req.DeleteRange())
 	case CmdRawGet:
-		resp.Resp, err = client.RawGet(ctx, req.RawGet())
+		resp, err = client.RawGet(ctx, req.RawGet())
 	case CmdRawBatchGet:
-		resp.Resp, err = client.RawBatchGet(ctx, req.RawBatchGet())
+		resp, err = client.RawBatchGet(ctx, req.RawBatchGet())
 	case CmdRawPut:
-		resp.Resp, err = client.RawPut(ctx, req.RawPut())
+		resp, err = client.RawPut(ctx, req.RawPut())
 	case CmdRawBatchPut:
-		resp.Resp, err = client.RawBatchPut(ctx, req.RawBatchPut())
+		resp, err = client.RawBatchPut(ctx, req.RawBatchPut())
 	case CmdRawDelete:
-		resp.Resp, err = client.RawDelete(ctx, req.RawDelete())
+		resp, err = client.RawDelete(ctx, req.RawDelete())
 	case CmdRawBatchDelete:
-		resp.Resp, err = client.RawBatchDelete(ctx, req.RawBatchDelete())
+		resp, err = client.RawBatchDelete(ctx, req.RawBatchDelete())
 	case CmdRawDeleteRange:
-		resp.Resp, err = client.RawDeleteRange(ctx, req.RawDeleteRange())
+		resp, err = client.RawDeleteRange(ctx, req.RawDeleteRange())
 	case CmdRawScan:
-		resp.Resp, err = client.RawScan(ctx, req.RawScan())
+		resp, err = client.RawScan(ctx, req.RawScan())
 	case CmdUnsafeDestroyRange:
-		resp.Resp, err = client.UnsafeDestroyRange(ctx, req.UnsafeDestroyRange())
+		resp, err = client.UnsafeDestroyRange(ctx, req.UnsafeDestroyRange())
 	case CmdCop:
-		resp.Resp, err = client.Coprocessor(ctx, req.Cop())
+		resp, err = client.Coprocessor(ctx, req.Cop())
 	case CmdCopStream:
 		var streamClient tikvpb.Tikv_CoprocessorStreamClient
 		streamClient, err = client.CoprocessorStream(ctx, req.Cop())
-		resp.Resp = &CopStreamResponse{
+		resp = &CopStreamResponse{
 			Tikv_CoprocessorStreamClient: streamClient,
 		}
 	case CmdMvccGetByKey:
-		resp.Resp, err = client.MvccGetByKey(ctx, req.MvccGetByKey())
+		resp, err = client.MvccGetByKey(ctx, req.MvccGetByKey())
 	case CmdMvccGetByStartTs:
-		resp.Resp, err = client.MvccGetByStartTs(ctx, req.MvccGetByStartTs())
+		resp, err = client.MvccGetByStartTs(ctx, req.MvccGetByStartTs())
 	case CmdSplitRegion:
-		resp.Resp, err = client.SplitRegion(ctx, req.SplitRegion())
+		resp, err = client.SplitRegion(ctx, req.SplitRegion())
 	case CmdEmpty:
-		resp.Resp, err = &tikvpb.BatchCommandsEmptyResponse{}, nil
+		resp, err = &tikvpb.BatchCommandsEmptyResponse{}, nil
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
@@ -724,12 +720,14 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 }
 
 // CallDebugRPC launches a debug rpc call.
-func CallDebugRPC(ctx context.Context, client debugpb.DebugClient, req *Request) (*Response, error) {
-	resp := &Response{}
-	var err error
+func CallDebugRPC(ctx context.Context, client debugpb.DebugClient, req *Request) (Response, error) {
+	var (
+		err  error
+		resp Response
+	)
 	switch req.Type {
 	case CmdDebugGetRegionProperties:
-		resp.Resp, err = client.GetRegionProperties(ctx, req.DebugGetRegionProperties())
+		resp, err = client.GetRegionProperties(ctx, req.DebugGetRegionProperties())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}

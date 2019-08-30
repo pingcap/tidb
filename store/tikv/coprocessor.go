@@ -663,11 +663,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 
 	if task.cmdType == tikvrpc.CmdCopStream {
-		return worker.handleCopStreamResult(bo, rpcCtx, resp.Resp.(*tikvrpc.CopStreamResponse), task, ch)
+		return worker.handleCopStreamResult(bo, rpcCtx, resp.(*tikvrpc.CopStreamResponse), task, ch)
 	}
 
 	// Handles the response for non-streaming copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, nil)
+	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.(*coprocessor.Response)}, task, ch, nil)
 }
 
 const (
@@ -676,15 +676,15 @@ const (
 	minLogKVWaitTime    = 200
 )
 
-func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
+func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp tikvrpc.Response) {
 	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txnStartTS:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
 	if bo.totalSleep > minLogBackoffTime {
 		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.types), " ", ",", -1)
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
 	}
 	var detail *kvrpcpb.ExecDetails
-	if resp.Resp != nil {
-		switch r := resp.Resp.(type) {
+	if resp != nil {
+		switch r := resp.(type) {
 		case *coprocessor.Response:
 			detail = r.ExecDetails
 		case *tikvrpc.CopStreamResponse:

@@ -245,8 +245,8 @@ func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	c.Assert(err, IsNil)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
-	keyErr := (resp.Resp.(*kvrpcpb.GetResponse)).GetError()
+	c.Assert(resp, NotNil)
+	keyErr := (resp.(*kvrpcpb.GetResponse)).GetError()
 	return keyErr.GetLocked() != nil
 }
 
@@ -293,7 +293,7 @@ type slowClient struct {
 	regionDelays map[uint64]time.Duration
 }
 
-func (c *slowClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *slowClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (tikvrpc.Response, error) {
 	for id, delay := range c.regionDelays {
 		reqCtx := &req.Context
 		if reqCtx.GetRegionId() == id {
@@ -556,8 +556,8 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	req := commiter.buildPrewriteRequest(batch, 1)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
-	keyErrs := (resp.Resp.(*kvrpcpb.PrewriteResponse)).Errors
+	c.Assert(resp, NotNil)
+	keyErrs := (resp.(*kvrpcpb.PrewriteResponse)).Errors
 	c.Assert(keyErrs, HasLen, 1)
 	locked := keyErrs[0].Locked
 	c.Assert(locked, NotNil)

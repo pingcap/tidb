@@ -184,7 +184,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.K
 				zap.Error(err))
 			return nil, errors.Trace(err)
 		}
-		data := kvResp.Resp.(*kvrpcpb.MvccGetByStartTsResponse)
+		data := kvResp.(*kvrpcpb.MvccGetByStartTsResponse)
 		if err := data.GetRegionError(); err != nil {
 			logutil.BgLogger().Warn("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),

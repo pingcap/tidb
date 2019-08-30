@@ -378,7 +378,7 @@ func (s *tikvStore) SupportDeleteRange() (supported bool) {
 	return !s.mock
 }
 
-func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (tikvrpc.Response, error) {
 	sender := NewRegionRequestSender(s.regionCache, s.client)
 	return sender.SendReq(bo, req, regionID, timeout)
 }

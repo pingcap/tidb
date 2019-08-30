@@ -682,7 +682,7 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 }
 
 // SendRequest sends a request to mock cluster.
-func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (tikvrpc.Response, error) {
 	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
@@ -694,75 +694,75 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, err
 	}
 	reqCtx := &req.Context
-	resp := &tikvrpc.Response{}
+	var resp tikvrpc.Response
 	switch req.Type {
 	case tikvrpc.CmdGet:
 		r := req.Get()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.GetResponse{RegionError: err}
+			resp = &kvrpcpb.GetResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvGet(r)
+		resp = handler.handleKvGet(r)
 	case tikvrpc.CmdScan:
 		r := req.Scan()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.ScanResponse{RegionError: err}
+			resp = &kvrpcpb.ScanResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvScan(r)
+		resp = handler.handleKvScan(r)
 
 	case tikvrpc.CmdPrewrite:
 		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
 			switch val.(string) {
 			case "notLeader":
-				failpoint.Return(&tikvrpc.Response{
-					Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-				}, nil)
+				failpoint.Return(
+					&kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}}, nil,
+				)
 			}
 		})
 
 		r := req.Prewrite()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.PrewriteResponse{RegionError: err}
+			resp = &kvrpcpb.PrewriteResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvPrewrite(r)
+		resp = handler.handleKvPrewrite(r)
 	case tikvrpc.CmdPessimisticLock:
 		r := req.PessimisticLock()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.PessimisticLockResponse{RegionError: err}
+			resp = &kvrpcpb.PessimisticLockResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvPessimisticLock(r)
+		resp = handler.handleKvPessimisticLock(r)
 	case tikvrpc.CmdPessimisticRollback:
 		r := req.PessimisticRollback()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.PessimisticRollbackResponse{RegionError: err}
+			resp = &kvrpcpb.PessimisticRollbackResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvPessimisticRollback(r)
+		resp = handler.handleKvPessimisticRollback(r)
 	case tikvrpc.CmdCommit:
 		failpoint.Inject("rpcCommitResult", func(val failpoint.Value) {
 			switch val.(string) {
 			case "timeout":
 				failpoint.Return(nil, errors.New("timeout"))
 			case "notLeader":
-				failpoint.Return(&tikvrpc.Response{
-					Resp: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-				}, nil)
+				failpoint.Return(tikvrpc.Response(
+					&kvrpcpb.CommitResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+				), nil)
 			case "keyError":
-				failpoint.Return(&tikvrpc.Response{
-					Resp: &kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
-				}, nil)
+				failpoint.Return(tikvrpc.Response(
+					&kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
+				), nil)
 			}
 		})
 
 		r := req.Commit()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.CommitResponse{RegionError: err}
+			resp = &kvrpcpb.CommitResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvCommit(r)
+		resp = handler.handleKvCommit(r)
 		failpoint.Inject("rpcCommitTimeout", func(val failpoint.Value) {
 			if val.(bool) {
 				failpoint.Return(nil, undeterminedErr)
@@ -771,113 +771,114 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdCleanup:
 		r := req.Cleanup()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.CleanupResponse{RegionError: err}
+			resp = &kvrpcpb.CleanupResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvCleanup(r)
+		resp = handler.handleKvCleanup(r)
 	case tikvrpc.CmdBatchGet:
 		r := req.BatchGet()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.BatchGetResponse{RegionError: err}
+			resp = &kvrpcpb.BatchGetResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvBatchGet(r)
+		resp = handler.handleKvBatchGet(r)
 	case tikvrpc.CmdBatchRollback:
 		r := req.BatchRollback()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.BatchRollbackResponse{RegionError: err}
+			resp = &kvrpcpb.BatchRollbackResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvBatchRollback(r)
+		resp = handler.handleKvBatchRollback(r)
 	case tikvrpc.CmdScanLock:
 		r := req.ScanLock()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.ScanLockResponse{RegionError: err}
+			resp = &kvrpcpb.ScanLockResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvScanLock(r)
+		resp = handler.handleKvScanLock(r)
 	case tikvrpc.CmdResolveLock:
 		r := req.ResolveLock()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.ResolveLockResponse{RegionError: err}
+			resp = &kvrpcpb.ResolveLockResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvResolveLock(r)
+		resp = handler.handleKvResolveLock(r)
 	case tikvrpc.CmdGC:
 		r := req.GC()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.GCResponse{RegionError: err}
+			resp = &kvrpcpb.GCResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvGC(r)
+		resp = handler.handleKvGC(r)
 	case tikvrpc.CmdDeleteRange:
 		r := req.DeleteRange()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.DeleteRangeResponse{RegionError: err}
+			resp = &kvrpcpb.DeleteRangeResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvDeleteRange(r)
+		resp = handler.handleKvDeleteRange(r)
 	case tikvrpc.CmdRawGet:
 		r := req.RawGet()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.RawGetResponse{RegionError: err}
+			resp = &kvrpcpb.RawGetResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvRawGet(r)
+		resp = handler.handleKvRawGet(r)
 	case tikvrpc.CmdRawBatchGet:
 		r := req.RawBatchGet()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.RawBatchGetResponse{RegionError: err}
+			resp = &kvrpcpb.RawBatchGetResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvRawBatchGet(r)
+		resp = handler.handleKvRawBatchGet(r)
 	case tikvrpc.CmdRawPut:
 		r := req.RawPut()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.RawPutResponse{RegionError: err}
+			resp = &kvrpcpb.RawPutResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvRawPut(r)
+		resp = handler.handleKvRawPut(r)
 	case tikvrpc.CmdRawBatchPut:
 		r := req.RawBatchPut()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.RawBatchPutResponse{RegionError: err}
+			resp = &kvrpcpb.RawBatchPutResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvRawBatchPut(r)
+		resp = handler.handleKvRawBatchPut(r)
 	case tikvrpc.CmdRawDelete:
 		r := req.RawDelete()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.RawDeleteResponse{RegionError: err}
+			resp = &kvrpcpb.RawDeleteResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvRawDelete(r)
+		resp = handler.handleKvRawDelete(r)
 	case tikvrpc.CmdRawBatchDelete:
 		r := req.RawBatchDelete()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.RawBatchDeleteResponse{RegionError: err}
+			resp = &kvrpcpb.RawBatchDeleteResponse{RegionError: err}
+			return resp, nil
 		}
-		resp.Resp = handler.handleKvRawBatchDelete(r)
+		resp = handler.handleKvRawBatchDelete(r)
 	case tikvrpc.CmdRawDeleteRange:
 		r := req.RawDeleteRange()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.RawDeleteRangeResponse{RegionError: err}
+			resp = &kvrpcpb.RawDeleteRangeResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvRawDeleteRange(r)
+		resp = handler.handleKvRawDeleteRange(r)
 	case tikvrpc.CmdRawScan:
 		r := req.RawScan()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.RawScanResponse{RegionError: err}
+			resp = &kvrpcpb.RawScanResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleKvRawScan(r)
+		resp = handler.handleKvRawScan(r)
 	case tikvrpc.CmdUnsafeDestroyRange:
 		panic("unimplemented")
 	case tikvrpc.CmdCop:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {
-			resp.Resp = &coprocessor.Response{RegionError: err}
+			resp = &coprocessor.Response{RegionError: err}
 			return resp, nil
 		}
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
@@ -893,11 +894,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		default:
 			panic(fmt.Sprintf("unknown coprocessor request type: %v", r.GetTp()))
 		}
-		resp.Resp = res
+		resp = res
 	case tikvrpc.CmdCopStream:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {
-			resp.Resp = &tikvrpc.CopStreamResponse{
+			resp = &tikvrpc.CopStreamResponse{
 				Tikv_CoprocessorStreamClient: &mockCopStreamErrClient{Error: err},
 				Response: &coprocessor.Response{
 					RegionError: err,
@@ -926,34 +927,34 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return nil, errors.Trace(err)
 		}
 		streamResp.Response = first
-		resp.Resp = streamResp
+		resp = streamResp
 	case tikvrpc.CmdMvccGetByKey:
 		r := req.MvccGetByKey()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.MvccGetByKeyResponse{RegionError: err}
+			resp = &kvrpcpb.MvccGetByKeyResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleMvccGetByKey(r)
+		resp = handler.handleMvccGetByKey(r)
 	case tikvrpc.CmdMvccGetByStartTs:
 		r := req.MvccGetByStartTs()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.MvccGetByStartTsResponse{RegionError: err}
+			resp = &kvrpcpb.MvccGetByStartTsResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleMvccGetByStartTS(r)
+		resp = handler.handleMvccGetByStartTS(r)
 	case tikvrpc.CmdSplitRegion:
 		r := req.SplitRegion()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
-			resp.Resp = &kvrpcpb.SplitRegionResponse{RegionError: err}
+			resp = &kvrpcpb.SplitRegionResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.Resp = handler.handleSplitRegion(r)
+		resp = handler.handleSplitRegion(r)
 	// DebugGetRegionProperties is for fast analyze in mock tikv.
 	case tikvrpc.CmdDebugGetRegionProperties:
 		r := req.DebugGetRegionProperties()
 		region, _ := c.Cluster.GetRegion(r.RegionId)
 		scanResp := handler.handleKvScan(&kvrpcpb.ScanRequest{StartKey: MvccKey(region.StartKey).Raw(), EndKey: MvccKey(region.EndKey).Raw(), Version: math.MaxUint64, Limit: math.MaxUint32})
-		resp.Resp = &debugpb.GetRegionPropertiesResponse{
+		resp = &debugpb.GetRegionPropertiesResponse{
 			Props: []*debugpb.Property{{
 				Name:  "mvcc.num_rows",
 				Value: strconv.Itoa(len(scanResp.Pairs)),

@@ -621,7 +621,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		req := tikvrpc.NewRequest(tikvrpc.CmdDebugGetRegionProperties, &debugpb.GetRegionPropertiesRequest{
 			RegionId: loc.Region.GetID(),
 		})
-		var resp *tikvrpc.Response
+		var resp tikvrpc.Response
 		var rpcCtx *tikv.RPCContext
 		// we always use the first follower when follower read is enabled
 		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region, e.ctx.GetSessionVars().ReplicaRead, 0)
@@ -634,11 +634,11 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		if *err != nil {
 			return
 		}
-		if resp.Resp == nil || len(resp.Resp.(*debugpb.GetRegionPropertiesResponse).Props) == 0 {
+		if resp == nil || len(resp.(*debugpb.GetRegionPropertiesResponse).Props) == 0 {
 			*needRebuild = true
 			return
 		}
-		for _, prop := range resp.Resp.(*debugpb.GetRegionPropertiesResponse).Props {
+		for _, prop := range resp.(*debugpb.GetRegionPropertiesResponse).Props {
 			if prop.Name == "mvcc.num_rows" {
 				var cnt uint64
 				cnt, *err = strconv.ParseUint(prop.Value, 10, 64)

@@ -38,7 +38,7 @@ func equalRegionStartKey(key, regionStartKey []byte) bool {
 	return false
 }
 
-func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool) (*tikvrpc.Response, error) {
+func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool) (tikvrpc.Response, error) {
 	// equalRegionStartKey is used to filter split keys.
 	// If the split key is equal to the start key of the region, then the key has been split, we need to skip the split key.
 	groups, _, err := s.regionCache.GroupKeysByRegion(bo, keys, equalRegionStartKey)
@@ -99,11 +99,11 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 			continue
 		}
 
-		spResp := batchResp.resp.Resp.(*kvrpcpb.SplitRegionResponse)
+		spResp := batchResp.resp.(*kvrpcpb.SplitRegionResponse)
 		regions := spResp.GetRegions()
 		srResp.Regions = append(srResp.Regions, regions...)
 	}
-	return &tikvrpc.Response{Resp: srResp}, errors.Trace(err)
+	return srResp, errors.Trace(err)
 }
 
 func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool) singleBatchResp {
@@ -127,7 +127,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 		batchResp.err = errors.Trace(err)
 		return batchResp
 	}
-	regionErr, err := resp.GetRegionError()
+	regionErr, err := tikvrpc.GetRegionError(resp)
 	if err != nil {
 		batchResp.err = errors.Trace(err)
 		return batchResp
@@ -144,7 +144,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 		return batchResp
 	}
 
-	spResp := resp.Resp.(*kvrpcpb.SplitRegionResponse)
+	spResp := resp.(*kvrpcpb.SplitRegionResponse)
 	regions := spResp.GetRegions()
 	if len(regions) > 0 {
 		// Divide a region into n, one of them may not need to be scattered,
@@ -189,8 +189,8 @@ func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatte
 	bo := NewBackoffer(ctx, int(math.Min(float64(len(splitKeys))*splitRegionBackoff, maxSplitRegionsBackoff)))
 	resp, err := s.splitBatchRegionsReq(bo, splitKeys, scatter)
 	regionIDs = make([]uint64, 0, len(splitKeys))
-	if resp != nil && resp.Resp != nil {
-		spResp := resp.Resp.(*kvrpcpb.SplitRegionResponse)
+	if resp != nil {
+		spResp := resp.(*kvrpcpb.SplitRegionResponse)
 		for _, r := range spResp.Regions {
 			regionIDs = append(regionIDs, r.Id)
 		}

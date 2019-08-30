@@ -68,28 +68,28 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 }
 
 // SendReq sends a request to tikv server.
-func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (tikvrpc.Response, error) {
 	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout)
 	return resp, err
 }
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
-func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, *RPCContext, error) {
+func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (tikvrpc.Response, *RPCContext, error) {
 	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
 		switch val.(string) {
 		case "timeout":
 			failpoint.Return(nil, nil, errors.New("timeout"))
 		case "GCNotLeader":
 			if req.Type == tikvrpc.CmdGC {
-				failpoint.Return(&tikvrpc.Response{
-					Resp: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-				}, nil, nil)
+				failpoint.Return(tikvrpc.Response(
+					&kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+				), nil, nil)
 			}
 		case "GCServerIsBusy":
 			if req.Type == tikvrpc.CmdGC {
-				failpoint.Return(&tikvrpc.Response{
-					Resp: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
-				}, nil, nil)
+				failpoint.Return(tikvrpc.Response(
+					&kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
+				), nil, nil)
 			}
 		}
 	})
@@ -126,7 +126,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 			continue
 		}
 
-		regionErr, err := resp.GetRegionError()
+		regionErr, err := tikvrpc.GetRegionError(resp)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -143,7 +143,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 	}
 }
 
-func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp tikvrpc.Response, retry bool, err error) {
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}

@@ -64,7 +64,7 @@ type Client interface {
 	// Close should release all data.
 	Close() error
 	// SendRequest sends Request.
-	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
+	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (tikvrpc.Response, error)
 }
 
 type connArray struct {
@@ -270,7 +270,7 @@ func (c *rpcClient) closeConns() {
 }
 
 // SendRequest sends a Request to server and receives Response.
-func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (tikvrpc.Response, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("rpcClient.SendRequest", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -327,7 +327,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	// Put the lease object to the timeout channel, so it would be checked periodically.
-	copStream := resp.Resp.(*tikvrpc.CopStreamResponse)
+	copStream := resp.(*tikvrpc.CopStreamResponse)
 	copStream.Timeout = timeout
 	copStream.Lease.Cancel = cancel
 	connArray.streamTimeout <- &copStream.Lease

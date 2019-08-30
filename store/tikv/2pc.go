@@ -484,7 +484,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		regionErr, err := resp.GetRegionError()
+		regionErr, err := tikvrpc.GetRegionError(resp)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -496,10 +496,10 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			err = c.prewriteKeys(bo, batch.keys)
 			return errors.Trace(err)
 		}
-		if resp.Resp == nil {
+		if resp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}
-		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
+		prewriteResp := resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
 			return nil
@@ -568,7 +568,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 		if err != nil {
 			return errors.Trace(err)
 		}
-		regionErr, err := resp.GetRegionError()
+		regionErr, err := tikvrpc.GetRegionError(resp)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -580,10 +580,10 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			err = c.pessimisticLockKeys(bo, batch.keys)
 			return errors.Trace(err)
 		}
-		if resp.Resp == nil {
+		if resp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}
-		lockResp := resp.Resp.(*pb.PessimisticLockResponse)
+		lockResp := resp.(*pb.PessimisticLockResponse)
 		keyErrs := lockResp.GetErrors()
 		if len(keyErrs) == 0 {
 			return nil
@@ -629,7 +629,7 @@ func (c *twoPhaseCommitter) pessimisticRollbackSingleBatch(bo *Backoffer, batch 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		regionErr, err := resp.GetRegionError()
+		regionErr, err := tikvrpc.GetRegionError(resp)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -712,7 +712,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	if err != nil {
 		return errors.Trace(err)
 	}
-	regionErr, err := resp.GetRegionError()
+	regionErr, err := tikvrpc.GetRegionError(resp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -725,10 +725,10 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		err = c.commitKeys(bo, batch.keys)
 		return errors.Trace(err)
 	}
-	if resp.Resp == nil {
+	if resp == nil {
 		return errors.Trace(ErrBodyMissing)
 	}
-	commitResp := resp.Resp.(*pb.CommitResponse)
+	commitResp := resp.(*pb.CommitResponse)
 	// Here we can make sure tikv has processed the commit primary key request. So
 	// we can clean undetermined error.
 	if isPrimary {
@@ -770,7 +770,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	regionErr, err := resp.GetRegionError()
+	regionErr, err := tikvrpc.GetRegionError(resp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -782,7 +782,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		err = c.cleanupKeys(bo, batch.keys)
 		return errors.Trace(err)
 	}
-	if keyErr := resp.Resp.(*pb.BatchRollbackResponse).GetError(); keyErr != nil {
+	if keyErr := resp.(*pb.BatchRollbackResponse).GetError(); keyErr != nil {
 		err = errors.Errorf("conn %d 2PC cleanup failed: %s", c.connID, keyErr)
 		logutil.BgLogger().Debug("2PC failed cleanup key",
 			zap.Error(err),

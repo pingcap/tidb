@@ -30,7 +30,7 @@ type Storage interface {
 	GetRegionCache() *RegionCache
 
 	// SendReq sends a request to TiKV.
-	SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
+	SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (tikvrpc.Response, error)
 
 	// GetLockResolver gets the LockResolver.
 	GetLockResolver() *LockResolver
