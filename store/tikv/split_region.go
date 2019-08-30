@@ -138,8 +138,8 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	spResp := resp.Resp.(*kvrpcpb.SplitRegionResponse)
 	regions := spResp.GetRegions()
 	if len(regions) > 0 {
-		// Divide a region into n, one can not need to be scattered,
-		// so n-1 needs to be scattered to other storage servers.
+		// Divide a region into n, one of them may not need to be scattered,
+		// so n-1 needs to be scattered to other stores.
 		spResp.Regions = regions[:len(regions)-1]
 	}
 	if !scatter {
@@ -155,8 +155,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	}
 
 	for i, r := range spResp.Regions {
-		err = s.scatterRegion(r.Id)
-		if err == nil {
+		if err = s.scatterRegion(r.Id); err == nil {
 			logutil.BgLogger().Info("batch split regions, scatter a region complete",
 				zap.Uint64("batch region ID", batch.regionID.id),
 				zap.Stringer("at", kv.Key(batch.keys[i])),
@@ -176,9 +175,9 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	return batchResp
 }
 
-// SplitRegions splits regions contains splitKeys into some regions.
+// SplitRegions splits regions by splitKeys.
 func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool) (regionIDs []uint64, err error) {
-	splitRegionsBo := splitRegionBackoff * math.Min(float64(len(splitKeys)), 10)
+	splitRegionsBo := splitRegionBackoff * math.Min(float64(len(splitKeys)), 6)
 	bo := NewBackoffer(ctx, int(splitRegionsBo))
 	resp, err := s.splitBatchRegionsReq(bo, splitKeys, scatter)
 	regionIDs = make([]uint64, 0, len(splitKeys))
