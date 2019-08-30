@@ -154,9 +154,9 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 		colData[i] = m.genColDatums(i)
 	}
 
-	m.genData = make([]*chunk.Chunk, (m.p.rows+m.initCap-1)/m.initCap)
+	m.genData = make([]*chunk.Chunk, (m.p.rows+m.maxChunkSize-1)/m.maxChunkSize)
 	for i := range m.genData {
-		m.genData[i] = chunk.NewChunkWithCapacity(retTypes(m), m.ctx.GetSessionVars().MaxChunkSize)
+		m.genData[i] = chunk.NewChunkWithCapacity(retTypes(m), m.maxChunkSize)
 	}
 
 	for i := 0; i < m.p.rows; i++ {
@@ -655,21 +655,19 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 	dataSource2 := buildMockDataSource(opt)
 
 	dataSource1.prepareChunks()
-	exec := prepare4Join(casTest, dataSource1, dataSource2)
-	tmpCtx := context.Background()
-	if err := exec.Open(tmpCtx); err != nil {
-		b.Fatal(err)
-	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		innerResultCh := make(chan *chunk.Chunk, 1)
-		go func() {
-			for _, chk := range dataSource1.genData {
-				innerResultCh <- chk
-			}
-			close(innerResultCh)
-		}()
+		exec := prepare4Join(casTest, dataSource1, dataSource2)
+		tmpCtx := context.Background()
+		if err := exec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		innerResultCh := make(chan *chunk.Chunk, len(dataSource1.chunks))
+		for _, chk := range dataSource1.chunks {
+			innerResultCh <- chk
+		}
+		close(innerResultCh)
 
 		b.StartTimer()
 		if err := exec.buildHashTableForList(innerResultCh); err != nil {
