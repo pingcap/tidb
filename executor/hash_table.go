@@ -26,6 +26,7 @@ import (
 )
 
 // hashRowContainer handles the rows and the hash map of a table.
+// TODO: support spilling out to disk when memory is limited.
 type hashRowContainer struct {
 	records   *chunk.List
 	hashTable *rowHashMap
