@@ -168,9 +168,9 @@ ORDER BY te.expect_time asc
 LIMIT 0, 5;
 id	count	task	operator info
 Projection_13	0.00	root	test.te.expect_time
-└─TopN_16	0.00	root	test.te.expect_time:asc, offset:0, count:5
-  └─IndexMergeJoin_28	0.00	root	left outer join, inner:IndexReader_26, outer key:test.tr.id, inner key:test.p.relate_id
-    ├─TopN_32	0.00	root	test.te.expect_time:asc, offset:0, count:5
+└─Limit_19	0.00	root	offset:0, count:5
+  └─IndexJoin_116	0.00	root	left outer join, inner:IndexReader_115, outer key:test.tr.id, inner key:test.p.relate_id
+    ├─TopN_123	0.00	root	test.te.expect_time:asc, offset:0, count:5
     │ └─IndexMergeJoin_47	0.00	root	inner join, inner:IndexLookUp_45, outer key:test.tr.id, inner key:test.te.trade_id
     │   ├─IndexLookUp_90	0.00	root	
     │   │ ├─Selection_88	0.00	cop	eq(test.tr.business_type, 18), eq(test.tr.trade_type, 1)
@@ -181,9 +181,9 @@ Projection_13	0.00	root	test.te.expect_time
     │     ├─IndexScan_42	10.00	cop	table:te, index:trade_id, range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:true, stats:pseudo
     │     └─Selection_44	0.25	cop	ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)
     │       └─TableScan_43	10.00	cop	table:te, keep order:false, stats:pseudo
-    └─IndexReader_26	9.99	root	index:Selection_25
-      └─Selection_25	9.99	cop	not(isnull(test.p.relate_id))
-        └─IndexScan_24	10.00	cop	table:p, index:relate_id, range: decided by [eq(test.p.relate_id, test.tr.id)], keep order:true, stats:pseudo
+    └─IndexReader_115	9.99	root	index:Selection_114
+      └─Selection_114	9.99	cop	not(isnull(test.p.relate_id))
+        └─IndexScan_113	10.00	cop	table:p, index:relate_id, range: decided by [eq(test.p.relate_id, test.tr.id)], keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	count	task	operator info
 Projection_6	1.00	root	1

@@ -17,6 +17,9 @@ package expression
 
 import (
 	"fmt"
+	"math/rand"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -188,4 +191,122 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 		sub.Clone()
 	}
 	b.ReportAllocs()
+}
+
+type vecExprBenchCase struct {
+	builtinFuncName string
+	retEvalType     types.EvalType
+	childrenTypes   []types.EvalType
+}
+
+var vecExprBenchCases = []vecExprBenchCase{
+	{ast.Cast, types.ETInt, []types.EvalType{types.ETInt}},
+}
+
+func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
+	nullRatio := 0.2
+	batchSize := 1024
+	switch eType {
+	case types.ETInt:
+		for i := 0; i < batchSize; i++ {
+			if rand.Float64() < nullRatio {
+				chk.AppendNull(colIdx)
+			} else {
+				if rand.Float64() < 0.5 {
+					chk.AppendInt64(colIdx, -rand.Int63())
+				} else {
+					chk.AppendInt64(colIdx, rand.Int63())
+				}
+			}
+		}
+	default:
+		// TODO: support all EvalTypes later.
+		panic(fmt.Sprintf("EvalType=%v is not supported.", eType))
+	}
+}
+
+func eType2FieldType(eType types.EvalType) *types.FieldType {
+	switch eType {
+	case types.ETInt:
+		return types.NewFieldType(mysql.TypeLonglong)
+	}
+	// TODO: support all EvalTypes later.
+	panic(fmt.Sprintf("EvalType=%v is not supported.", eType))
+}
+
+func genVecExprBenchCase(ctx sessionctx.Context, testCase vecExprBenchCase) (Expression, *chunk.Chunk, *chunk.Chunk) {
+	fts := make([]*types.FieldType, len(testCase.childrenTypes))
+	for i, eType := range testCase.childrenTypes {
+		fts[i] = eType2FieldType(eType)
+	}
+	cols := make([]Expression, len(testCase.childrenTypes))
+	input := chunk.New(fts, 1024, 1024)
+	for i, eType := range testCase.childrenTypes {
+		fillColumn(eType, input, i)
+		cols[i] = &Column{Index: i, RetType: fts[i]}
+	}
+
+	expr, err := NewFunction(ctx, testCase.builtinFuncName, eType2FieldType(testCase.retEvalType), cols...)
+	if err != nil {
+		panic(err)
+	}
+
+	output := chunk.New([]*types.FieldType{eType2FieldType(testCase.retEvalType)}, 1024, 1024)
+	return expr, input, output
+}
+
+func TestVectorizedExpression(t *testing.T) {
+	ctx := mock.NewContext()
+	for _, testCase := range vecExprBenchCases {
+		expr, input, output := genVecExprBenchCase(ctx, testCase)
+		output2 := output.CopyConstruct()
+		if err := evalOneVec(ctx, expr, input, output, 0); err != nil {
+			t.Fatal(err)
+		}
+
+		it := chunk.NewIterator4Chunk(input)
+		if err := evalOneColumn(ctx, expr, it, output2, 0); err != nil {
+			t.Fatal(err)
+		}
+
+		switch testCase.retEvalType {
+		case types.ETInt:
+			if !reflect.DeepEqual(output.Column(0).Int64s(), output2.Column(0).Int64s()) {
+				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+			}
+		default:
+			t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+		}
+	}
+}
+
+func BenchmarkVectorizedExpression(b *testing.B) {
+	ctx := mock.NewContext()
+	for _, testCase := range vecExprBenchCases {
+		expr, input, output := genVecExprBenchCase(ctx, testCase)
+		exprName := expr.String()
+		if sf, ok := expr.(*ScalarFunction); ok {
+			exprName = fmt.Sprintf("%v", reflect.TypeOf(sf.Function))
+			tmp := strings.Split(exprName, ".")
+			exprName = tmp[len(tmp)-1]
+		}
+
+		b.Run(exprName+"-VecExpr", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := evalOneVec(ctx, expr, input, output, 0); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run(exprName+"-NonVecExpr", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				it := chunk.NewIterator4Chunk(input)
+				if err := evalOneColumn(ctx, expr, it, output, 0); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }
