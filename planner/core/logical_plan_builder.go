@@ -561,8 +561,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 			copy(rColumns[commonLen+1:j+1], rColumns[commonLen:j])
 			rColumns[commonLen] = col
 
-			name = rNames[i]
-			copy(lNames[commonLen+1:j+1], lNames[commonLen:j])
+			name = rNames[j]
+			copy(rNames[commonLen+1:j+1], rNames[commonLen:j])
 			rNames[commonLen] = name
 
 			commonLen++
@@ -598,7 +598,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.names = names
 	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rColumns[:commonLen]...))
-	p.redundantNames = append(p.redundantNames.Shallow(), names...)
+	p.redundantNames = append(p.redundantNames.Shallow(), rNames[:commonLen]...)
 	p.OtherConditions = append(conds, p.OtherConditions...)
 
 	return nil
@@ -738,7 +738,20 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	if colNameField, ok := innerNode.(*ast.ColumnNameExpr); ok && isCol {
 		// Field is a column reference.
 		idx := p.Schema().ColumnIndex(col)
-		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, colNameField, p.OutputNames()[idx])
+		var name *types.FieldName
+		if idx == -1 {
+			ids := make([]int64, 0, p.Schema().Len())
+			for _, col := range p.Schema().Columns {
+				ids = append(ids, col.UniqueID)
+			}
+			if join, ok := p.(*LogicalJoin); ok {
+				idx = join.redundantSchema.ColumnIndex(col)
+				name = join.redundantNames[idx]
+			}
+		} else {
+			name = p.OutputNames()[idx]
+		}
+		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, colNameField, name)
 	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName

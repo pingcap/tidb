@@ -38,19 +38,13 @@ func (name *FieldName) String() string {
 	if name.Hidden {
 		return emptyName
 	}
-	if name.TblName.L != "" {
-		builder.WriteString(name.TblName.L + ".")
-	}
 	if name.DBName.L != "" {
 		builder.WriteString(name.DBName.L + ".")
 	}
+	if name.TblName.L != "" {
+		builder.WriteString(name.TblName.L + ".")
+	}
 	builder.WriteString(name.ColName.L)
-	if name.OrigTblName.L != "" {
-		builder.WriteString("origTblName: " + name.OrigTblName.L)
-	}
-	if name.OrigColName.L != "" {
-		builder.WriteString("origColName: " + name.OrigColName.L)
-	}
 	return builder.String()
 }
 
