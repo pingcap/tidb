@@ -14,14 +14,12 @@
 package expression
 
 import (
-	"strconv"
-	"unsafe"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"strconv"
 )
 
 // Vectorizable checks whether a list of expressions can employ vectorized execution.
@@ -88,13 +86,8 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 			// TODO: recycle all old Columns returned here.
 			output.SetCol(colIdx, buf)
 		} else if mysql.HasUnsignedFlag(ft.Flag) {
-			i64s := result.Int64s()
-			for i := range i64s {
-				if !result.IsNull(i) {
-					buf := result.GetRaw(i)
-					*(*uint64)(unsafe.Pointer(&buf[0])) = uint64(i64s[i])
-				}
-			}
+			// the underlying memory formats of int64 and uint64 are the same in Golang,
+			// so we can do a no-op here.
 		}
 	case types.ETReal:
 		if err := expr.VecEvalReal(ctx, input, result); err != nil {
