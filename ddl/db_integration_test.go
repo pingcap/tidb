@@ -1942,8 +1942,6 @@ func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *
 	tk.MustExec("create table t1 (a int, b int as (-a) virtual, c int as (-a) stored)")
 	tk.MustExec("insert into t1 values (1, default, default)")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 -1 -1"))
-
-	tk.MustExec("insert into t1 values (1, default, default)")
 	tk.MustExec("delete from t1")
 
 	// insert multiple rows
@@ -1978,7 +1976,20 @@ func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *
 	tk.MustExec("insert into t3 values (default, default, default, default, 1)")
 	tk.MustQuery("select * from t3").Check(testkit.Rows("2 2 3 3 1"))
 
+	// generated columns in replace statement
+	tk.MustExec("create table t4 (a int key, b int, c int as (a+1), d int as (b+1) stored)")
+	tk.MustExec("insert into t4 values (1, 10, default, default)")
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 10 2 11"))
+	tk.MustExec("replace into t4 values (1, 20, default, default)")
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 20 2 21"))
+
+	// generated columns with default function is not allowed
+	tk.MustExec("create table t5 (a int default 10, b int as (a+1))")
+	assertErrorCode(c, tk, "insert into t5 values (20, default(a))", mysql.ErrBadGeneratedColumn)
+
 	tk.MustExec("drop table t1")
 	tk.MustExec("drop table t2")
 	tk.MustExec("drop table t3")
+	tk.MustExec("drop table t4")
+	tk.MustExec("drop table t5")
 }

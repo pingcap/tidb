@@ -1777,6 +1777,9 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 			switch x := valueItem.(type) {
 			case *ast.DefaultExpr:
 				if col.IsGenerated() {
+					if x.Name != nil {
+						return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+					}
 					generatedColumnWithDefaultExpr = true
 					break
 				}
@@ -1802,7 +1805,8 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 			}
 			// insert value into a generated column is not allowed
 			if col.IsGenerated() {
-				// but there is one exception: it is allowed to insert the `default` value into a generated column
+				// but there is only one exception:
+				// it is allowed to insert the `default` value into a generated column
 				if generatedColumnWithDefaultExpr {
 					continue
 				}
