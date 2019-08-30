@@ -317,8 +317,8 @@ max-retry-count = 256
 ttl = "40s"
 
 [stmt-summary]
-# enable statement summary.
-enable = false
-
 # max count of statement summary kept in memory.
 max-stmt-count = 100
+
+# max length of displayed normalized sql and sample sql.
+max-sql-length = 4096

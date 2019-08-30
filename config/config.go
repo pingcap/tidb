@@ -318,9 +318,10 @@ type PessimisticTxn struct {
 }
 
 type StmtSummary struct {
-	Enable bool `toml:"enable" json:"enable"`
 	// How many statements can be kept in the table
-	MaxStmtCount uint16 `toml:"max-stmt-count" json:"max-stmt-count"`
+	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
+	// How long can a normalizedSQL / sampleSQL be
+	MaxSqlLength uint `toml:"max-sql-length" json:"max-sql-length"`
 }
 
 var defaultConf = Config{
@@ -418,8 +419,8 @@ var defaultConf = Config{
 		TTL:           "40s",
 	},
 	StmtSummary: StmtSummary{
-		Enable:       false,
 		MaxStmtCount: 100,
+		MaxSqlLength: 4096,
 	},
 }
 

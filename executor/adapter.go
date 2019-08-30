@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -180,6 +181,7 @@ func (a *recordSet) Close() error {
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.Ctx.GetSessionVars().PrevStmt = a.stmt.OriginText()
 	a.stmt.logAudit()
+	a.stmt.summaryStmt()
 	return err
 }
 
@@ -777,6 +779,26 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
+}
+
+func (a *ExecStmt) summaryStmt() {
+	sessVars := a.Ctx.GetSessionVars()
+	if !sessVars.EnableStmtSummary || sessVars.InRestrictedSQL {
+		return
+	}
+	stmtCtx := sessVars.StmtCtx
+	normalizedSQL, digest := stmtCtx.SQLDigest()
+	costTime := time.Since(a.StartTime)
+	stmtsummary.StmtSummary.AddStatement(&stmtsummary.StmtExecInfo{
+		SchemaName:    sessVars.CurrentDB,
+		OriginalSQL:   a.Text,
+		NormalizedSQL: normalizedSQL,
+		Digest:        digest,
+		TotalLatency:  uint64(costTime.Nanoseconds()),
+		AffectedRows:  stmtCtx.AffectedRows(),
+		SentRows:      0,
+		StartTime:     a.StartTime,
+	})
 }
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:

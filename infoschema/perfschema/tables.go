@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
 const (
@@ -88,10 +89,7 @@ func (vt *perfSchemaTable) Meta() *model.TableInfo {
 func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	switch vt.meta.Name.O {
 	case tableNameEventsStatementsSummaryByDigest:
-		fullRows = dataForEventsStatementsSummaryByDigest()
-	}
-	if err != nil {
-		return nil, err
+		fullRows = dataForEventsStatementsSummaryByDigest(ctx)
 	}
 	if len(cols) == len(vt.cols) {
 		return
@@ -129,6 +127,91 @@ func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 	return nil
 }
 
-func dataForEventsStatementsSummaryByDigest() [][]types.Datum {
+// RowWithCols implements table.Table RowWithCols interface.
+func (vt *perfSchemaTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+	return nil, table.ErrUnsupportedOp
+}
+
+// Row implements table.Table Row interface.
+func (vt *perfSchemaTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
+	return nil, table.ErrUnsupportedOp
+}
+
+// Indices implements table.Table Indices interface.
+func (vt *perfSchemaTable) Indices() []table.Index {
 	return nil
+}
+
+// WritableIndices implements table.Table WritableIndices interface.
+func (vt *perfSchemaTable) WritableIndices() []table.Index {
+	return nil
+}
+
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (vt *perfSchemaTable) DeletableIndices() []table.Index {
+	return nil
+}
+
+// RecordPrefix implements table.Table RecordPrefix interface.
+func (vt *perfSchemaTable) RecordPrefix() kv.Key {
+	return nil
+}
+
+// IndexPrefix implements table.Table IndexPrefix interface.
+func (vt *perfSchemaTable) IndexPrefix() kv.Key {
+	return nil
+}
+
+// FirstKey implements table.Table FirstKey interface.
+func (vt *perfSchemaTable) FirstKey() kv.Key {
+	return nil
+}
+
+// RecordKey implements table.Table RecordKey interface.
+func (vt *perfSchemaTable) RecordKey(h int64) kv.Key {
+	return nil
+}
+
+// AddRecord implements table.Table AddRecord interface.
+func (vt *perfSchemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+// RemoveRecord implements table.Table RemoveRecord interface.
+func (vt *perfSchemaTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+	return table.ErrUnsupportedOp
+}
+
+// UpdateRecord implements table.Table UpdateRecord interface.
+func (vt *perfSchemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+	return table.ErrUnsupportedOp
+}
+
+// AllocHandle implements table.Table AllocHandle interface.
+func (vt *perfSchemaTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+// Allocator implements table.Table Allocator interface.
+func (vt *perfSchemaTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
+	return nil
+}
+
+// RebaseAutoID implements table.Table RebaseAutoID interface.
+func (vt *perfSchemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
+	return table.ErrUnsupportedOp
+}
+
+// Seek implements table.Table Seek interface.
+func (vt *perfSchemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
+	return 0, false, table.ErrUnsupportedOp
+}
+
+// Type implements table.Table Type interface.
+func (vt *perfSchemaTable) Type() table.Type {
+	return table.VirtualTable
+}
+
+func dataForEventsStatementsSummaryByDigest(ctx sessionctx.Context) [][]types.Datum {
+	return stmtsummary.StmtSummary.ToDatum()
 }

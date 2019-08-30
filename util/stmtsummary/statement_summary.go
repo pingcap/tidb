@@ -14,78 +14,159 @@
 package stmtsummary
 
 import (
+	"strings"
 	"sync"
+	"time"
 
-	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/kvcache"
 )
 
-type StmtSummaryByDigest struct {
-	sync.RWMutex
-	summaryMap map[string]*stmtSummary
+type stmtSummaryCacheKey struct {
+	// Same statements may appear in different schema, but they refer to different tables.
+	schemaName string
+	digest     string
+	hash       []byte
 }
+
+// Hash implements SimpleLRUCache.Key
+func (key *stmtSummaryCacheKey) Hash() []byte {
+	if len(key.hash) == 0 {
+		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest))
+		key.hash = append(key.hash, hack.Slice(key.digest)...)
+		key.hash = append(key.hash, hack.Slice(strings.ToLower(key.schemaName))...)
+	}
+	return key.hash
+}
+
+// A LRU cache that stores statement summary.
+type stmtSummaryByDigest struct {
+	sync.RWMutex
+	summaryMap *kvcache.SimpleLRUCache
+}
+
+var StmtSummary = NewStmtSummaryByDigest()
 
 // Summary of each type of statements.
 type stmtSummary struct {
 	schemaName      string
-	normalizedSql   string
-	sampleSql       string
+	digest          string
+	normalizedSQL   string
+	sampleSQL       string
+	execCount       uint64
 	sumTotalLatency uint64
 	maxLatency      uint64
 	minLatency      uint64
-	sumRowsAffected uint64
-	sumRowsSent     uint64
+	sumAffectedRows uint64
+	// Number of rows sent to client.
+	sumSentRows uint64
+	// The first time this type of SQL executes.
+	firstSeen time.Time
+	// The last time this type of SQL executes.
+	lastSeen time.Time
 }
 
 // Used for recording execution status of each statement.
 type StmtExecInfo struct {
-	schemaName   string
-	originalSql  string
-	totalLatency uint64
-	rowsAffected uint64
-	rowsSent     uint64
+	SchemaName    string
+	OriginalSQL   string
+	NormalizedSQL string
+	Digest        string
+	TotalLatency  uint64
+	AffectedRows  uint64
+	// Number of rows sent to client.
+	SentRows  uint64
+	StartTime time.Time
+}
+
+func NewStmtSummaryByDigest() *stmtSummaryByDigest {
+	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
+	return &stmtSummaryByDigest{
+		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
+	}
 }
 
 // Convert StmtExecInfo to stmtSummary
-func convertStmtExecInfoToSummary(sei *StmtExecInfo, normalizedSql string) *stmtSummary {
-	return nil
+func convertStmtExecInfoToSummary(sei *StmtExecInfo) *stmtSummary {
+	return &stmtSummary{
+		schemaName:      sei.SchemaName,
+		digest:          sei.Digest,
+		normalizedSQL:   sei.NormalizedSQL,
+		sampleSQL:       sei.OriginalSQL,
+		execCount:       1,
+		sumTotalLatency: sei.TotalLatency,
+		maxLatency:      sei.TotalLatency,
+		minLatency:      sei.TotalLatency,
+		sumAffectedRows: sei.AffectedRows,
+		sumSentRows:     sei.SentRows,
+		firstSeen:       sei.StartTime,
+		lastSeen:        sei.StartTime,
+	}
 }
 
 // Add a new StmtExecInfo to stmtSummary
 func addStmtExecInfoToSummary(sei *StmtExecInfo, ss *stmtSummary) {
-	return
+	ss.sumTotalLatency += sei.TotalLatency
+	ss.execCount++
+	if sei.TotalLatency > ss.maxLatency {
+		ss.maxLatency = sei.TotalLatency
+	}
+	if sei.TotalLatency < ss.minLatency {
+		ss.minLatency = sei.TotalLatency
+	}
+	// TODO: uint64 overflow
+	ss.sumAffectedRows += sei.AffectedRows
+	ss.sumSentRows += sei.SentRows
+	if ss.lastSeen.Before(sei.StartTime) {
+		ss.lastSeen = sei.StartTime
+	}
 }
 
-func (ss *StmtSummaryByDigest) AddStatement(sei *StmtExecInfo) {
-	normalizeSQL := parser.Normalize(sei.originalSql)
-	digest := parser.DigestHash(normalizeSQL)
+// Add a statement to statement summary.
+func (ss *stmtSummaryByDigest) AddStatement(sei *StmtExecInfo) {
+	key := &stmtSummaryCacheKey{
+		schemaName: sei.SchemaName,
+		digest:     sei.Digest,
+	}
 
 	ss.Lock()
-	summary, ok := ss.summaryMap[digest]
+	summary, ok := ss.summaryMap.Get(key)
 	if ok {
-		addStmtExecInfoToSummary(sei, summary)
+		addStmtExecInfoToSummary(sei, summary.(*stmtSummary))
 	} else {
-		maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
-		if len(ss.summaryMap) >= int(maxStmtCount) {
-			ss.removeLeastUsed()
-		}
-
-		summary = convertStmtExecInfoToSummary(sei, normalizeSQL)
-		ss.summaryMap[digest] = summary
+		summary = convertStmtExecInfoToSummary(sei)
+		ss.summaryMap.Put(key, summary)
 	}
 	ss.Unlock()
 }
 
-func (ss *StmtSummaryByDigest) removeLeastUsed() {
-
-}
-
-func (ss *StmtSummaryByDigest) ToDatum() [][]types.Datum {
-	var rows [][]types.Datum
-
+// Convert statement summary to Datum
+func (ss *stmtSummaryByDigest) ToDatum() [][]types.Datum {
 	ss.RLock()
-	// TODO
+	rows := make([][]types.Datum, 0, ss.summaryMap.Size())
+	// Summary of each statement may be modified at the same time,
+	// so surround the whole block with read lock.
+	for _, value := range ss.summaryMap.Values() {
+		summary := value.(*stmtSummary)
+		record := types.MakeDatums(
+			summary.schemaName,
+			summary.digest,
+			summary.normalizedSQL,
+			summary.execCount,
+			summary.sumTotalLatency,
+			summary.maxLatency,
+			summary.minLatency,
+			summary.sumTotalLatency/summary.execCount, // AVG_LATENCY
+			summary.sumAffectedRows,
+			types.Time{Time: types.FromGoTime(summary.firstSeen), Type: mysql.TypeTimestamp},
+			types.Time{Time: types.FromGoTime(summary.lastSeen), Type: mysql.TypeTimestamp},
+			summary.sampleSQL,
+		)
+		rows = append(rows, record)
+	}
 	ss.RUnlock()
 
 	return rows
