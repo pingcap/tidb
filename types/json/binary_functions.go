@@ -72,12 +72,8 @@ func (bj BinaryJSON) Unquote() (string, error) {
 		}
 		head, tail := tmp[0], tmp[tlen-1]
 		if head == '"' && tail == '"' {
-			// Remove prefix and suffix '"'.
-			s, err := unquoteString(tmp[1 : tlen-1])
-			if err != nil {
-				return s, errors.Trace(err)
-			}
-			return s, nil
+			// Remove prefix and suffix '"' before unquoting
+			return unquoteString(tmp[1 : tlen-1])
 		}
 		// if value is not double quoted, do nothing
 		return tmp, nil
