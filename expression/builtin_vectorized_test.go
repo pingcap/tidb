@@ -431,7 +431,7 @@ func genMockRowDouble(eType types.EvalType, enableVec bool) (builtinFunc, *chunk
 			input.AppendTime(0, types.Time{Time: t, Type: mysqlType})
 		}
 	}
-	return newVecRowConverter(rowDouble), input, buf, nil
+	return rowDouble, input, buf, nil
 }
 
 func (s *testEvaluatorSuite) checkVecEval(c *C, eType types.EvalType, sel []int, result *chunk.Column) {
@@ -724,31 +724,19 @@ func BenchmarkMockDoubleVec(b *testing.B) {
 	}
 }
 
-func BenchmarkMockDoubleRow2Vec(b *testing.B) {
-	typeNames := []string{"Int", "Real", "Decimal", "Duration", "String", "Datetime", "JSON"}
-	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
-	for i, eType := range eTypes {
-		b.Run(typeNames[i], func(b *testing.B) {
-			rowDouble, input, result, _ := genMockRowDouble(eType, false)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if err := vecEvalType(rowDouble, eType, input, result); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
-	}
-}
+func (s *testEvaluatorSuite) TestVectorizedCheck(c *C) {
+	con := &Constant{}
+	c.Assert(con.Vectorized(), IsTrue)
+	col := &Column{}
+	c.Assert(col.Vectorized(), IsTrue)
+	cor := CorrelatedColumn{Column: *col}
+	c.Assert(cor.Vectorized(), IsTrue)
 
-func BenchmarkMockDoubleVec2Row(b *testing.B) {
-	typeNames := []string{"Int", "Real", "Decimal", "Duration", "String", "Datetime", "JSON"}
-	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
-	for i, eType := range eTypes {
-		b.Run(typeNames[i], func(b *testing.B) {
-			rowDouble, input, result, _ := genMockRowDouble(eType, true)
-			it := chunk.NewIterator4Chunk(input)
-			b.ResetTimer()
-			evalRows(b, it, eType, result, rowDouble)
-		})
-	}
+	vecF, _, _, _ := genMockRowDouble(types.ETInt, true)
+	sf := &ScalarFunction{Function: vecF}
+	c.Assert(sf.Vectorized(), IsTrue)
+
+	rowF, _, _, _ := genMockRowDouble(types.ETInt, false)
+	sf = &ScalarFunction{Function: rowF}
+	c.Assert(sf.Vectorized(), IsFalse)
 }

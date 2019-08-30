@@ -79,7 +79,7 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	wg.Add(count)
 	for i := 0; i < count; i++ {
 		go func(se *session) {
-			_, _, err := se.ExecRestrictedSQL(se, "select * from mysql.user limit 1")
+			_, _, err := se.ExecRestrictedSQL("select * from mysql.user limit 1")
 			c.Assert(err, IsNil)
 			wg.Done()
 		}(se)
