@@ -45,9 +45,9 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		hook.(func(*kv.Request))(kvReq)
 	}
 
-	if !sctx.GetSessionVars().EnableStreaming {
-		kvReq.Streaming = false
-	}
+	// if !sctx.GetSessionVars().EnableStreaming {
+	// 	kvReq.Streaming = false
+	// }
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
 	if resp == nil {
 		err := errors.New("client returns nil response")
