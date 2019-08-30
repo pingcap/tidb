@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/types"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
@@ -572,4 +573,22 @@ func (s *testSuite3) TestPartitionInsertOnDuplicate(c *C) {
 	tk.MustExec("insert into t3 values (1,2,3,4,5)")
 	tk.MustExec("insert into t3 values (1,2,3,4,5),(6,2,3,4,6) on duplicate key update e = e + values(e)")
 	tk.MustQuery("select * from t3").Check(testkit.Rows("1 2 3 4 16"))
+}
+
+func (s *testSuite3) TestBit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a bit(3))`)
+	_, err := tk.Exec("insert into t1 values(-1)")
+	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
+	c.Assert(err.Error(), Matches, ".*Data too long for column 't1' at.*")
+	_, err = tk.Exec("insert into t1 values(9)")
+	c.Assert(err.Error(), Matches, ".*Data too long for column 't1' at.*")
+
+	tk.MustExec(`create table t64 (a bit(64))`)
+	tk.MustExec("insert into t64 values(-1)")
+	tk.MustExec("insert into t64 values(18446744073709551615)")      // 2^64 - 1
+	_, err = tk.Exec("insert into t64 values(18446744073709551616)") // z^64
+	c.Assert(err.Error(), Matches, ".* Out of range value for column 'a' at.*")
+
 }
