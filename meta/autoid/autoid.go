@@ -370,6 +370,10 @@ func (alloc *allocator) AllocN(tableID int64, N uint64) ([]int64, error) {
 
 func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) {
 	N1 := int64(N)
+	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
+	if math.MaxInt64-alloc.base < N1 {
+		return nil, ErrAutoincReadFailed
+	}
 	// The local rest is not enough for allocN, skip it.
 	if alloc.base+N1 > alloc.end {
 		var newBase, newEnd int64
@@ -423,6 +427,10 @@ func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) 
 
 func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error) {
 	N1 := int64(N)
+	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
+	if math.MaxInt64-alloc.base < N1 {
+		return nil, ErrAutoincReadFailed
+	}
 	// The local rest is not enough for allocN, skip it.
 	if alloc.base+N1 > alloc.end {
 		var newBase, newEnd int64
