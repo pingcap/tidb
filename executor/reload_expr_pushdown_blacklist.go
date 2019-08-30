@@ -43,8 +43,11 @@ func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 	}
 	newBlacklist := make(map[string]struct{})
 	for _, row := range rows {
-		name := row.GetString(0)
-		newBlacklist[strings.ToLower(funcName2Alias[name])] = struct{}{}
+		name := strings.ToLower(row.GetString(0))
+		if alias, ok := funcName2Alias[name]; ok {
+			name = alias
+		}
+		newBlacklist[name] = struct{}{}
 	}
 	expression.DefaultExprPushdownBlacklist.Store(newBlacklist)
 	return nil
