@@ -21,7 +21,10 @@ import (
 )
 
 func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType types.EvalType, input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
+	n := 1
+	if input != nil {
+		n = input.NumRows()
+	}
 	switch targetType {
 	case types.ETInt:
 		result.ResizeInt64(n)

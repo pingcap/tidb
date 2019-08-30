@@ -35,7 +35,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		return nil
 	}
 	sql := fmt.Sprintf("select table_id from mysql.stats_meta where version < %d", h.LastUpdateVersion()-offset)
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -49,7 +49,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 
 func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error {
 	sql := fmt.Sprintf("select is_index, hist_id from mysql.stats_histograms where table_id = %d", physicalID)
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -57,7 +57,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 	// we can safely remove the meta info now.
 	if len(rows) == 0 {
 		sql := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", physicalID)
-		_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+		_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 		return errors.Trace(err)
 	}
 	h.mu.Lock()

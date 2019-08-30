@@ -50,15 +50,37 @@ var (
 
 // Constant stands for a constant value.
 type Constant struct {
-	Value        types.Datum
-	RetType      *types.FieldType
-	DeferredExpr Expression // parameter getter expression
-	hashcode     []byte
+	Value   types.Datum
+	RetType *types.FieldType
+	// DeferredExpr holds deferred function in PlanCache cached plan.
+	// it's only used to represent non-deterministic functions(see expression.DeferredFunctions)
+	// in PlanCache cached plan, so let them can be evaluated until cached item be used.
+	DeferredExpr Expression
+	// ParamMarker holds param index inside sessionVars.PreparedParams.
+	// It's only used to reference a user variable provided in the `EXECUTE` statement or `COM_EXECUTE` binary protocol.
+	ParamMarker *ParamMarker
+	hashcode    []byte
+}
+
+// ParamMarker indicates param provided by COM_STMT_EXECUTE.
+type ParamMarker struct {
+	ctx   sessionctx.Context
+	order int
+	tp    types.FieldType
+}
+
+// GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
+func (d *ParamMarker) GetUserVar() types.Datum {
+	sessionVars := d.ctx.GetSessionVars()
+	return sessionVars.PreparedParams[d.order]
 }
 
 // String implements fmt.Stringer interface.
 func (c *Constant) String() string {
-	if c.DeferredExpr != nil {
+	if c.ParamMarker != nil {
+		dt := c.ParamMarker.GetUserVar()
+		c.Value.SetValue(dt.GetValue())
+	} else if c.DeferredExpr != nil {
 		dt, err := c.Eval(chunk.Row{})
 		if err != nil {
 			logutil.BgLogger().Error("eval constant failed", zap.Error(err))
@@ -76,15 +98,24 @@ func (c *Constant) MarshalJSON() ([]byte, error) {
 
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
-	if c.DeferredExpr != nil {
+	if c.DeferredExpr != nil || c.ParamMarker != nil {
 		con := *c
 		return &con
 	}
 	return c
 }
 
+var unspecifiedTp = types.NewFieldType(mysql.TypeUnspecified)
+
 // GetType implements Expression interface.
 func (c *Constant) GetType() *types.FieldType {
+	if c.ParamMarker != nil {
+		tp := &c.ParamMarker.tp
+		*tp = *unspecifiedTp
+		dt := c.ParamMarker.GetUserVar()
+		types.DefaultParamTypeForValue(dt.GetValue(), tp)
+		return tp
+	}
 	return c.RetType
 }
 
@@ -144,32 +175,47 @@ func (c *Constant) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 	return c.DeferredExpr.VecEvalJSON(ctx, input, result)
 }
 
+func (c *Constant) getLazyDatum() (dt types.Datum, isLazy bool, err error) {
+	if c.ParamMarker != nil {
+		dt = c.ParamMarker.GetUserVar()
+		isLazy = true
+		return
+	} else if c.DeferredExpr != nil {
+		dt, err = c.DeferredExpr.Eval(chunk.Row{})
+		isLazy = true
+		return
+	}
+	return
+}
+
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
-	if c.DeferredExpr != nil {
-		if sf, sfOK := c.DeferredExpr.(*ScalarFunction); sfOK {
-			dt, err := sf.Eval(chunk.Row{})
-			if err != nil {
-				return c.Value, err
-			}
-			if dt.IsNull() {
-				c.Value.SetNull()
-				return c.Value, nil
-			}
-			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
-			if err != nil {
-				return dt, err
-			}
-			c.Value.SetValue(val.GetValue())
+	if dt, lazy, err := c.getLazyDatum(); lazy {
+		if err != nil {
+			return c.Value, err
 		}
+		if dt.IsNull() {
+			c.Value.SetNull()
+			return c.Value, nil
+		}
+		if c.DeferredExpr != nil {
+			sf, sfOk := c.DeferredExpr.(*ScalarFunction)
+			if sfOk {
+				val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
+				if err != nil {
+					return dt, err
+				}
+				return val, nil
+			}
+		}
+		return dt, nil
 	}
 	return c.Value, nil
 }
 
 // EvalInt returns int representation of Constant.
 func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, error) {
-	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(chunk.Row{})
+	if dt, lazy, err := c.getLazyDatum(); lazy {
 		if err != nil {
 			return 0, true, err
 		}
@@ -195,8 +241,7 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 
 // EvalReal returns real representation of Constant.
 func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool, error) {
-	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(chunk.Row{})
+	if dt, lazy, err := c.getLazyDatum(); lazy {
 		if err != nil {
 			return 0, true, err
 		}
@@ -222,8 +267,7 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool,
 
 // EvalString returns string representation of Constant.
 func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool, error) {
-	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(chunk.Row{})
+	if dt, lazy, err := c.getLazyDatum(); lazy {
 		if err != nil {
 			return "", true, err
 		}
@@ -246,8 +290,7 @@ func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool
 
 // EvalDecimal returns decimal representation of Constant.
 func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDecimal, bool, error) {
-	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(chunk.Row{})
+	if dt, lazy, err := c.getLazyDatum(); lazy {
 		if err != nil {
 			return nil, true, err
 		}
@@ -266,8 +309,7 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDe
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
 func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time, isNull bool, err error) {
-	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(chunk.Row{})
+	if dt, lazy, err := c.getLazyDatum(); lazy {
 		if err != nil {
 			return types.Time{}, true, err
 		}
@@ -293,8 +335,7 @@ func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time
 
 // EvalDuration returns Duration representation of Constant.
 func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.Duration, isNull bool, err error) {
-	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(chunk.Row{})
+	if dt, lazy, err := c.getLazyDatum(); lazy {
 		if err != nil {
 			return types.Duration{}, true, err
 		}
@@ -320,8 +361,7 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.
 
 // EvalJSON returns JSON representation of Constant.
 func (c *Constant) EvalJSON(ctx sessionctx.Context, _ chunk.Row) (json.BinaryJSON, bool, error) {
-	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(chunk.Row{})
+	if dt, lazy, err := c.getLazyDatum(); lazy {
 		if err != nil {
 			return json.BinaryJSON{}, true, err
 		}
@@ -399,4 +439,9 @@ func (c *Constant) ResolveIndices(_ *Schema) (Expression, error) {
 
 func (c *Constant) resolveIndices(_ *Schema) error {
 	return nil
+}
+
+// Vectorized returns if this expression supports vectorized evaluation.
+func (c *Constant) Vectorized() bool {
+	return true
 }
