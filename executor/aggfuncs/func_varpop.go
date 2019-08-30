@@ -11,9 +11,9 @@ type varPop4Float64 struct {
 }
 
 type partialResult4Float64 struct {
-	count         int64
-	sum           float64
-	quadratic_sum float64
+	count        int64
+	sum          float64
+	quadraticSum float64
 }
 
 func (e *varPop4Float64) AllocPartialResult() PartialResult {
@@ -32,7 +32,7 @@ func (e *varPop4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	varPop := p.quadratic_sum/float64(p.count) - p.sum*p.sum/float64(p.count*p.count)
+	varPop := p.quadraticSum/float64(p.count) - p.sum*p.sum/float64(p.count*p.count)
 	chk.AppendFloat64(e.ordinal, varPop)
 	return nil
 }
@@ -48,7 +48,7 @@ func (e *varPop4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 			continue
 		}
 		p.sum += input
-		p.quadratic_sum += input * input
+		p.quadraticSum += input * input
 		p.count++
 	}
 	return nil
@@ -60,7 +60,7 @@ func (e *varPop4Float64) MergePartialResult(sctx sessionctx.Context, src Partial
 		return nil
 	}
 	p2.sum += p1.sum
-	p2.quadratic_sum += p1.quadratic_sum
+	p2.quadraticSum += p1.quadraticSum
 	p2.count += p1.count
 	return nil
 }
