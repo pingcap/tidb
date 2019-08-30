@@ -459,16 +459,13 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 		if pkMatched {
 			joins := make([]PhysicalPlan, 0, 2)
-			// If some columns need keep order, the index join is always worse than index merge join.
-			// So it's unnecessary to construct index join.
-			if len(prop.Items) == 0 {
-				innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false)
-				joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
-			}
+
+			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false)
+			joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 			// The index merge join's inner plan is different from index join, so we should consturct another inner plan
 			// for it.
-			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true)
-			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
+			innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true)
+			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
 			return joins
@@ -501,16 +498,13 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		idxCols, lens := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
 		rangeInfo := helper.buildRangeDecidedByInformation(idxCols, outerJoinKeys)
 		joins := make([]PhysicalPlan, 0, 2)
-		// If some columns need keep order, the index join is always worse than index merge join.
-		// So it's unnecessary to construct index join.
-		if len(prop.Items) == 0 {
-			innerTask := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false)
-			joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)...)
-		}
+
+		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false)
+		joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)...)
 		// The index merge join's inner plan is different from index join, so we should consturct another inner plan
 		// for it.
-		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true)
-		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)...)
+		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true)
+		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)...)
 		return joins
 	}
 	return nil
