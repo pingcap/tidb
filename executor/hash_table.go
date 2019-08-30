@@ -38,11 +38,11 @@ type hashRowContainer struct {
 }
 
 func newHashRowContainer(
-	sc *stmtctx.StatementContext,
+	sc *stmtctx.StatementContext, statCount int,
 	allTypes []*types.FieldType, keyColIdx []int, initCap, maxChunkSize int) *hashRowContainer {
 
 	c := &hashRowContainer{
-		hashTable: newRowHashMap(),
+		hashTable: newRowHashMapWithStatCount(statCount),
 		sc:        sc,
 		allTypes:  allTypes,
 		keyColIdx: keyColIdx,
@@ -207,12 +207,15 @@ type rowHashMap struct {
 }
 
 // newRowHashMap creates a new rowHashMap.
-func newRowHashMap() *rowHashMap {
+func newRowHashMapWithStatCount(statCount int) *rowHashMap {
 	m := new(rowHashMap)
-	// TODO(fengliyuan): initialize the size of map from the estimated row count for better performance.
-	m.hashTable = make(map[uint64]entryAddr)
+	m.hashTable = make(map[uint64]entryAddr, statCount)
 	m.entryStore.init()
 	return m
+}
+
+func newRowHashMap() *rowHashMap {
+	return newRowHashMapWithStatCount(0)
 }
 
 // Put puts the key/rowPtr pairs to the rowHashMap, multiple rowPtrs are stored in a list.

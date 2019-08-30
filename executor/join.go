@@ -40,11 +40,12 @@ var (
 type HashJoinExec struct {
 	baseExecutor
 
-	outerExec   Executor
-	innerExec   Executor
-	outerFilter expression.CNFExprs
-	outerKeys   []*expression.Column
-	innerKeys   []*expression.Column
+	outerExec       Executor
+	innerExec       Executor
+	innerStatsCount float64
+	outerFilter     expression.CNFExprs
+	outerKeys       []*expression.Column
+	innerKeys       []*expression.Column
 
 	// concurrency is the number of partition, build and join workers.
 	concurrency   uint
@@ -492,13 +493,28 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	}
 }
 
+const (
+	// statCountMaxFactor defines the factor of maxStatCount with maxChunkSize.
+	// statCountMax is maxChunkSize * maxStatCountFactor.
+	// Set this threshold to prevent innerStatsCount being too large and causing a performance regression.
+	statCountMaxFactor = 10 * 1024
+
+	// statCountDivisor defines the divisor of innerStatsCount.
+	// Set this divisor to prevent innerStatsCount being too large and causing a performance regression.
+	statCountDivisor = 8
+)
+
 // buildHashTableForList builds hash table from `list`.
 func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) error {
 	innerKeyColIdx := make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
 		innerKeyColIdx[i] = e.innerKeys[i].Index
 	}
-	e.rowContainer = newHashRowContainer(e.ctx.GetSessionVars().StmtCtx,
+	statCount := int(e.innerStatsCount / statCountDivisor)
+	if statCount > e.maxChunkSize*statCountMaxFactor {
+		statCount = e.maxChunkSize * statCountMaxFactor
+	}
+	e.rowContainer = newHashRowContainer(e.ctx.GetSessionVars().StmtCtx, statCount,
 		e.innerExec.base().retFieldTypes, innerKeyColIdx,
 		e.initCap, e.maxChunkSize)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
