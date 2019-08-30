@@ -116,3 +116,27 @@ func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(value), Greater, 0)
 }
+
+// TestFailPrewriteRegionError tests data race does not happen on retries
+func (s *testCommitterSuite) TestFailPrewriteRegionError(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteResult", `return("notLeader")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteResult"), IsNil)
+	}()
+
+	txn := s.begin(c)
+
+	// Set the value big enough to create many batches. This increases the chance of data races.
+	var bigVal [18000]byte
+	for i := 0; i < 1000; i++ {
+		err := txn.Set([]byte{byte(i)}, bigVal[:])
+		c.Assert(err, IsNil)
+	}
+
+	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	err = committer.prewriteKeys(NewBackoffer(ctx, 1000), committer.keys)
+	c.Assert(err, NotNil)
+}

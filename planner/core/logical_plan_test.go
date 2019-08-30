@@ -48,7 +48,7 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable(), MockView()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})
 	s.ctx = MockContext()
 	s.Parser = parser.New()
 }
@@ -577,7 +577,7 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 
 func buildLogicPlan4GroupBy(s *testPlanSuite, c *C, sql string) (Plan, error) {
 	sqlMode := s.ctx.GetSessionVars().SQLMode
-	mockedTableInfo := MockTable()
+	mockedTableInfo := MockSignedTable()
 	// mock the table info here for later use
 	// enable only full group by
 	s.ctx.GetSessionVars().SQLMode = sqlMode | mysql.ModeOnlyFullGroupBy
@@ -1710,18 +1710,6 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: "drop index e on t",
 			ans: []visitInfo{
 				{mysql.IndexPriv, "test", "t", "", nil},
-			},
-		},
-		{
-			sql: `create user 'test'@'%' identified by '123456'`,
-			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
-			},
-		},
-		{
-			sql: `drop user 'test'@'%'`,
-			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
 			},
 		},
 		{

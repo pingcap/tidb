@@ -183,6 +183,9 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 	hasBeenUsed := false
 	for i := range used {
 		hasBeenUsed = hasBeenUsed || used[i]
+		if hasBeenUsed {
+			break
+		}
 	}
 	if !hasBeenUsed {
 		parentUsedCols = make([]*expression.Column, len(p.schema.Columns))
