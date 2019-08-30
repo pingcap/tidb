@@ -443,3 +443,8 @@ Projection_8	10000.00	root	minus(4_window_3, test.t.x)
   └─Sort_12	10000.00	root	test.t.i:asc
     └─TableReader_11	10000.00	root	data:TableScan_10
       └─TableScan_10	10000.00	cop	table:t, range:[0,+inf], keep order:false, stats:pseudo
+explain select 1 from (select sleep(1)) t;
+id	count	task	operator info
+Projection_4	1.00	root	1
+└─Projection_5	1.00	root	sleep(1)
+  └─TableDual_6	1.00	root	rows:1
