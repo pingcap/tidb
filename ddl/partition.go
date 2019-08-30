@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -636,11 +637,11 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.In
 	} else {
 		partCols = make([]*model.ColumnInfo, 0, len(pi.Columns))
 		for _, col := range pi.Columns {
-			for _, info := range tblInfo.Columns {
-				if info.Name.L == col.L {
-					partCols = append(partCols, info)
-				}
+			colInfo := getColumnInfoByName(tblInfo, col.L)
+			if colInfo == nil {
+				return infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
 			}
+			partCols = append(partCols, colInfo)
 		}
 	}
 
