@@ -1280,10 +1280,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) {
-			resolveFieldsFirst = false
-		}
-		if a.curClause == unknowClause {
+		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) || a.curClause == unknowClause {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
