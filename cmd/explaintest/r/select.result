@@ -432,6 +432,11 @@ Projection_7	10000.00	root	6_aux_0
   │ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─TableReader_12	10000.00	root	data:TableScan_11
     └─TableScan_11	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select 1 from (select sleep(1)) t;
+id	count	task	operator info
+Projection_4	1.00	root	1
+└─Projection_5	1.00	root	sleep(1)
+  └─TableDual_6	1.00	root	rows:1
 drop table if exists t;
 create table t(a int, b int);
 explain select a from t order by rand();
@@ -458,10 +463,10 @@ drop table if exists t2;
 create table t2(a int, b int);
 explain select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b);
 id	count	task	operator info
-Apply_11	9990.00	root	semi join, inner:TableReader_19, equal:[eq(test.t1.a, test.t2.a)]
-├─TableReader_14	9990.00	root	data:Selection_13
-│ └─Selection_13	9990.00	cop	not(isnull(test.t1.a))
-│   └─TableScan_12	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_19	7992.00	root	data:Selection_18
-  └─Selection_18	7992.00	cop	gt(test.t2.b, test.t1.b), not(isnull(test.t2.a))
-    └─TableScan_17	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+HashLeftJoin_10	7984.01	root	semi join, inner:TableReader_16, equal:[eq(test.t1.a, test.t2.a)], other cond:gt(test.t2.b, test.t1.b)
+├─TableReader_13	9980.01	root	data:Selection_12
+│ └─Selection_12	9980.01	cop	not(isnull(test.t1.a)), not(isnull(test.t1.b))
+│   └─TableScan_11	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_16	9980.01	root	data:Selection_15
+  └─Selection_15	9980.01	cop	not(isnull(test.t2.a)), not(isnull(test.t2.b))
+    └─TableScan_14	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo

@@ -208,6 +208,8 @@ type PlanBuilder struct {
 	//   If it's a join, we pop its children's out then merge them and push the new map to stack.
 	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
 	handleHelper *handleColHelper
+
+	hintProcessor *BlockHintProcessor
 }
 
 type handleColHelper struct {
@@ -284,12 +286,13 @@ func (b *PlanBuilder) GetOptFlag() uint64 {
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PlanBuilder {
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *BlockHintProcessor) *PlanBuilder {
 	return &PlanBuilder{
-		ctx:          sctx,
-		is:           is,
-		colMapper:    make(map[*ast.ColumnNameExpr]int),
-		handleHelper: &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
+		ctx:           sctx,
+		is:            is,
+		colMapper:     make(map[*ast.ColumnNameExpr]int),
+		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
+		hintProcessor: processor,
 	}
 }
 
@@ -1230,7 +1233,7 @@ func buildShowDDLJobsFields() *expression.Schema {
 }
 
 func buildTableRegionsSchema() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11)...)
 	schema.Append(buildColumn("", "REGION_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "START_KEY", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "END_KEY", mysql.TypeVarchar, 64))
@@ -1238,6 +1241,10 @@ func buildTableRegionsSchema() *expression.Schema {
 	schema.Append(buildColumn("", "LEADER_STORE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "PEERS", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "SCATTERING", mysql.TypeTiny, 1))
+	schema.Append(buildColumn("", "WRITTEN_BYTES", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "READ_BYTES", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "APPROXIMATE_SIZE(MB)", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "APPROXIMATE_KEYS", mysql.TypeLonglong, 4))
 	return schema
 }
 

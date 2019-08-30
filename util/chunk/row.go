@@ -204,6 +204,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	return d
 }
 
+// GetRaw returns the underlying raw bytes with the colIdx.
+func (r Row) GetRaw(colIdx int) []byte {
+	return r.c.columns[colIdx].GetRaw(r.idx)
+}
+
 // IsNull returns if the datum in the chunk.Row is null.
 func (r Row) IsNull(colIdx int) bool {
 	return r.c.columns[colIdx].IsNull(r.idx)
