@@ -161,7 +161,10 @@ type entryStore struct {
 func (es *entryStore) init() {
 	es.slices = [][]entry{make([]entry, 0, initialEntrySliceLen)}
 	// Reserve the first empty entry, so entryAddr{} can represent nullEntryAddr.
-	es.put(entry{})
+	reserved := es.put(entry{})
+	if reserved != nullEntryAddr {
+		panic("entryStore: first entry is not nullEntryAddr")
+	}
 }
 
 func (es *entryStore) put(e entry) entryAddr {
