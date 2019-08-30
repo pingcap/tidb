@@ -298,6 +298,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.tp = from.tp
 	b.pbCode = from.pbCode
 	b.columnBufferAllocator = newLocalSliceBuffer(len(b.args))
+	b.childrenVectorizedOnce = new(sync.Once)
 }
 
 func (b *baseBuiltinFunc) Clone() builtinFunc {

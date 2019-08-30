@@ -4145,7 +4145,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	// 4 regions to store record data.
 	// 1 region to store index data.
 	c.Assert(len(rows), Equals, 5)
-	c.Assert(len(rows[0]), Equals, 7)
+	c.Assert(len(rows[0]), Equals, 11)
 	tbl := testGetTableByName(c, tk.Se, "test", "t_regions")
 	// Check the region start key.
 	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
