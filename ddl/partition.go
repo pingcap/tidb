@@ -522,11 +522,28 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 	return nil
 }
 
-func checkPartitionKeysConstraint(sctx sessionctx.Context, partExpr string, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo) error {
-	// Parse partitioning key, extract the column names in the partitioning key to slice.
-	partCols, err := extractPartitionColumns(partExpr, tblInfo)
-	if err != nil {
-		return err
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo) error {
+	var (
+		partCols []*model.ColumnInfo
+		err      error
+	)
+	// The expr will be an empty string if the partition is defined by:
+	// CREATE TABLE t (...) PARTITION BY RANGE COLUMNS(...)
+	if partExpr := pi.Expr; partExpr != "" {
+		// Parse partitioning key, extract the column names in the partitioning key to slice.
+		partCols, err = extractPartitionColumns(partExpr, tblInfo)
+		if err != nil {
+			return err
+		}
+	} else {
+		partCols = make([]*model.ColumnInfo, 0, len(pi.Columns))
+		for _, col := range pi.Columns {
+			for _, info := range tblInfo.Columns {
+				if info.Name.L == col.L {
+					partCols = append(partCols, info)
+				}
+			}
+		}
 	}
 
 	// Every unique key on the table must use every column in the table's partitioning expression.

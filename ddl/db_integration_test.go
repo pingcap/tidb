@@ -1660,6 +1660,28 @@ func (s *testIntegrationSuite3) TestAlterAlgorithm(c *C) {
 	s.tk.MustExec("alter table t default charset = utf8mb4, ALGORITHM=INSTANT")
 }
 
+func (s *testIntegrationSuite3) TestAlterTableAddUniqueOnPartionRangeColumn(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	defer s.tk.MustExec("drop table if exists t")
+
+	s.tk.MustExec(`create table t(
+	a int,
+	b varchar(100),
+	c int,
+	INDEX idx_c(c))
+	PARTITION BY RANGE COLUMNS( a ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+	)`)
+	s.tk.MustExec("alter table t add unique index idx_a(a)")
+	s.tk.MustExec("alter table t add unique index idx_ac(a, c)")
+	assertErrorCode(c, s.tk, "alter table t add unique index idx_b(b)", mysql.ErrUniqueKeyNeedAllFieldsInPf)
+}
+
 func (s *testIntegrationSuite5) TestFulltextIndexIgnore(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
