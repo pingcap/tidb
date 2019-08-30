@@ -868,7 +868,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	)
 	switch d.k {
 	case KindInt64:
-		val, err = ConvertIntToUint(sc, d.GetInt64(), upperBound, tp)
+		val, err = ConvertIntToUint(sc, d.GetInt64(), upperBound, tp, mysql.HasUnsignedFlag(target.Flag))
 	case KindUint64:
 		val, err = ConvertUintToUint(d.GetUint64(), upperBound, tp)
 	case KindFloat32, KindFloat64:
@@ -890,7 +890,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		if err == nil {
 			err = err1
 		}
-		val, err1 = ConvertIntToUint(sc, ival, upperBound, tp)
+		val, err1 = ConvertIntToUint(sc, ival, upperBound, tp, mysql.HasUnsignedFlag(target.Flag))
 		if err == nil {
 			err = err1
 		}
@@ -899,7 +899,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		err = dec.Round(dec, 0, ModeHalfEven)
 		ival, err1 := dec.ToInt()
 		if err1 == nil {
-			val, err = ConvertIntToUint(sc, ival, upperBound, tp)
+			val, err = ConvertIntToUint(sc, ival, upperBound, tp, mysql.HasUnsignedFlag(target.Flag))
 		}
 	case KindMysqlDecimal:
 		val, err = ConvertDecimalToUint(sc, d.GetMysqlDecimal(), upperBound, tp)
@@ -1211,7 +1211,8 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 		uintValue, err = uintDatum.GetUint64(), err1
 	}
 	if target.Flen < 64 && uintValue >= 1<<(uint64(target.Flen)) {
-		return Datum{}, errors.Trace(ErrOverflow.GenWithStackByArgs("BIT", fmt.Sprintf("(%d)", target.Flen)))
+		err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen)
+		return Datum{}, errors.Trace(err)
 	}
 	byteSize := (target.Flen + 7) >> 3
 	ret.SetMysqlBit(NewBinaryLiteralFromUint(uintValue, byteSize))
