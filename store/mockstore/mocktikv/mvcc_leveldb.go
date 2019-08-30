@@ -1279,7 +1279,7 @@ func (mvcc *MVCCLevelDB) MvccGetByStartTS(startKey, endKey []byte, starTS uint64
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
-	pairs := mvcc.ReverseScan(nil, nil, 1, starTS, kvrpcpb.IsolationLevel_SI)
+	pairs := mvcc.ReverseScan(startKey, endKey, 1, starTS, kvrpcpb.IsolationLevel_SI)
 	if len(pairs) != 1 {
 		return nil, nil
 	}
@@ -1335,7 +1335,7 @@ func (mvcc *MVCCLevelDB) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
 		}
 		if !ok {
 			iter.Next()
-			continue
+			break
 		}
 		var shortValue []byte
 		if isShortValue(dec2.value.value) {
