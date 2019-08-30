@@ -656,14 +656,16 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 	dataSource2 := buildMockDataSource(opt)
 
 	dataSource1.prepareChunks()
+	exec := prepare4Join(casTest, dataSource1, dataSource2)
+	tmpCtx := context.Background()
+	if err := exec.Open(tmpCtx); err != nil {
+		b.Fatal(err)
+	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		exec := prepare4Join(casTest, dataSource1, dataSource2)
-		tmpCtx := context.Background()
-		if err := exec.Open(tmpCtx); err != nil {
-			b.Fatal(err)
-		}
+		exec.rowContainer = nil
+		exec.memTracker = memory.NewTracker(exec.id, exec.ctx.GetSessionVars().MemQuotaHashJoin)
 		innerResultCh := make(chan *chunk.Chunk, len(dataSource1.chunks))
 		for _, chk := range dataSource1.chunks {
 			innerResultCh <- chk
@@ -686,6 +688,12 @@ func BenchmarkBuildHashTableForList(b *testing.B) {
 	})
 
 	cas.keyIdx = []int{0}
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkBuildHashTableForList(b, cas)
+	})
+
+	cas.keyIdx = []int{0}
+	cas.rows = 10
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkBuildHashTableForList(b, cas)
 	})
