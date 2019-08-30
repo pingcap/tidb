@@ -1664,6 +1664,12 @@ func (s *testIntegrationSuite3) TestAlterTableAddUniqueOnPartionRangeColumn(c *C
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 	)`)
+	s.tk.MustExec("insert into t values (4, 'xxx', 4)")
+	s.tk.MustExec("insert into t values (4, 'xxx', 9)") // Note the repeated 4
+	s.tk.MustExec("insert into t values (17, 'xxx', 12)")
+	assertErrorCode(c, s.tk, "alter table t add unique index idx_a(a)", mysql.ErrDupEntry)
+
+	s.tk.MustExec("delete from t where a = 4")
 	s.tk.MustExec("alter table t add unique index idx_a(a)")
 	s.tk.MustExec("alter table t add unique index idx_ac(a, c)")
 	assertErrorCode(c, s.tk, "alter table t add unique index idx_b(b)", mysql.ErrUniqueKeyNeedAllFieldsInPf)
