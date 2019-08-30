@@ -99,7 +99,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
-	rows, _, err := h.sctx.Context.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(nil, sql)
+	rows, _, err := h.sctx.Context.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return err
 	}
@@ -218,7 +218,7 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 			return
 		}
 
-		hash, meta := newBindMetaWithoutAst(record)
+		hash, meta := newBindMetaWithoutHints(record)
 		h.removeBindMeta(hash, meta)
 	}()
 
@@ -308,11 +308,11 @@ func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMet
 	if err != nil {
 		return "", nil, err
 	}
-	meta = &BindMeta{BindRecord: record, Ast: stmtNodes[0]}
+	meta = &BindMeta{BindRecord: record, HintsSet: CollectHint(stmtNodes[0])}
 	return hash, meta, nil
 }
 
-func newBindMetaWithoutAst(record *BindRecord) (hash string, meta *BindMeta) {
+func newBindMetaWithoutHints(record *BindRecord) (hash string, meta *BindMeta) {
 	hash = parser.DigestHash(record.OriginalSQL)
 	meta = &BindMeta{BindRecord: record}
 	return hash, meta

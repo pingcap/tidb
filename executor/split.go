@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -121,6 +122,16 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 	// Split in the start of the index key.
 	startIdxKey := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, e.indexInfo.ID)
 	idxKeys = append(idxKeys, startIdxKey)
+
+	// Split in the end for the other index key.
+	for _, idx := range e.tableInfo.Indices {
+		if idx.ID <= e.indexInfo.ID {
+			continue
+		}
+		endIdxKey := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, idx.ID)
+		idxKeys = append(idxKeys, endIdxKey)
+		break
+	}
 
 	index := tables.NewIndex(e.tableInfo.ID, e.tableInfo, e.indexInfo)
 	// Split index regions by user specified value lists.
@@ -391,6 +402,10 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 		return nil, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
 	}
 
+	// Split a separate region for index.
+	if len(e.tableInfo.Indices) > 0 {
+		keys = append(keys, recordPrefix)
+	}
 	recordID := lowerValue
 	for i := 1; i < e.num; i++ {
 		recordID += int64(step)
@@ -402,12 +417,16 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 
 // RegionMeta contains a region's peer detail
 type regionMeta struct {
-	region     *metapb.Region
-	leaderID   uint64
-	storeID    uint64 // storeID is the store ID of the leader region.
-	start      string
-	end        string
-	scattering bool
+	region          *metapb.Region
+	leaderID        uint64
+	storeID         uint64 // storeID is the store ID of the leader region.
+	start           string
+	end             string
+	scattering      bool
+	writtenBytes    int64
+	readBytes       int64
+	approximateSize int64
+	approximateKeys int64
 }
 
 func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore tikv.Storage, s kv.SplitableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
@@ -423,7 +442,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	}
 	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
 	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
-	recordRegions, err := getRegionMeta(recordRegionMetas, uniqueRegionMap, tablePrefix, recordPrefix, nil, physicalTableID, 0)
+	recordRegions, err := getRegionMeta(tikvStore, recordRegionMetas, uniqueRegionMap, tablePrefix, recordPrefix, nil, physicalTableID, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +459,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 			return nil, err
 		}
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, index.ID)
-		indexRegions, err := getRegionMeta(regionMetas, uniqueRegionMap, tablePrefix, recordPrefix, indexPrefix, physicalTableID, index.ID)
+		indexRegions, err := getRegionMeta(tikvStore, regionMetas, uniqueRegionMap, tablePrefix, recordPrefix, indexPrefix, physicalTableID, index.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -467,7 +486,7 @@ func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, 
 	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
 	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, indexInfo.ID)
-	indexRegions, err := getRegionMeta(regions, uniqueRegionMap, tablePrefix, recordPrefix, indexPrefix, physicalTableID, indexInfo.ID)
+	indexRegions, err := getRegionMeta(tikvStore, regions, uniqueRegionMap, tablePrefix, recordPrefix, indexPrefix, physicalTableID, indexInfo.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -515,6 +534,9 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 	if len(d.indexPrefix) > 0 && bytes.HasPrefix(key, d.indexPrefix) {
 		return fmt.Sprintf("t_%d_i_%d_%x", d.physicalTableID, d.indexID, key[len(d.indexPrefix):])
 	} else if len(d.recordPrefix) > 0 && bytes.HasPrefix(key, d.recordPrefix) {
+		if len(d.recordPrefix) == len(key) {
+			return fmt.Sprintf("t_%d_r", d.physicalTableID)
+		}
 		_, handle, err := codec.DecodeInt(key[len(d.recordPrefix):])
 		if err == nil {
 			return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, handle)
@@ -545,7 +567,7 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 	return fmt.Sprintf("%x", key)
 }
 
-func getRegionMeta(regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct{}, tablePrefix, recordPrefix, indexPrefix []byte, physicalTableID, indexID int64) ([]regionMeta, error) {
+func getRegionMeta(tikvStore tikv.Storage, regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct{}, tablePrefix, recordPrefix, indexPrefix []byte, physicalTableID, indexID int64) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(regionMetas))
 	for _, r := range regionMetas {
 		if _, ok := uniqueRegionMap[r.GetID()]; ok {
@@ -558,6 +580,37 @@ func getRegionMeta(regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct
 			storeID:  r.GetLeaderStoreID(),
 		})
 	}
+	regions, err := getRegionInfo(tikvStore, regions)
+	if err != nil {
+		return regions, err
+	}
 	decodeRegionsKey(regions, tablePrefix, recordPrefix, indexPrefix, physicalTableID, indexID)
+	return regions, nil
+}
+
+func getRegionInfo(store tikv.Storage, regions []regionMeta) ([]regionMeta, error) {
+	// check pd server exists.
+	etcd, ok := store.(tikv.EtcdBackend)
+	if !ok {
+		return regions, nil
+	}
+	pdHosts := etcd.EtcdAddrs()
+	if len(pdHosts) == 0 {
+		return regions, nil
+	}
+	tikvHelper := &helper.Helper{
+		Store:       store,
+		RegionCache: store.GetRegionCache(),
+	}
+	for i := range regions {
+		regionInfo, err := tikvHelper.GetRegionInfoByID(regions[i].region.Id)
+		if err != nil {
+			return nil, err
+		}
+		regions[i].writtenBytes = regionInfo.WrittenBytes
+		regions[i].readBytes = regionInfo.ReadBytes
+		regions[i].approximateSize = regionInfo.ApproximateSize
+		regions[i].approximateKeys = regionInfo.ApproximateKeys
+	}
 	return regions, nil
 }

@@ -618,7 +618,9 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 		}
 		newRegionID, newPeerIDs := h.cluster.AllocID(), h.cluster.AllocIDs(len(region.Peers))
 		newRegion := h.cluster.SplitRaw(region.GetId(), newRegionID, k, newPeerIDs, newPeerIDs[0])
-		resp.Regions = append(resp.Regions, newRegion.Meta)
+		// The mocktikv should return a deep copy of meta info to avoid data race
+		metaCloned := proto.Clone(newRegion.Meta)
+		resp.Regions = append(resp.Regions, metaCloned.(*metapb.Region))
 	}
 	return resp
 }
