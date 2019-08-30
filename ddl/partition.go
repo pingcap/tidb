@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -499,7 +500,7 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 	// Parse partitioning key, extract the column names in the partitioning key to slice.
 	buf := new(bytes.Buffer)
 	s.Partition.Expr.Format(buf)
-	partCols, err := extractPartitionColumns(sctx, buf.String(), tblInfo)
+	partCols, err := extractPartitionColumns(buf.String(), tblInfo)
 	if err != nil {
 		return err
 	}
@@ -523,7 +524,7 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 
 func checkPartitionKeysConstraint(sctx sessionctx.Context, partExpr string, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo) error {
 	// Parse partitioning key, extract the column names in the partitioning key to slice.
-	partCols, err := extractPartitionColumns(sctx, partExpr, tblInfo)
+	partCols, err := extractPartitionColumns(partExpr, tblInfo)
 	if err != nil {
 		return err
 	}
@@ -536,16 +537,49 @@ func checkPartitionKeysConstraint(sctx sessionctx.Context, partExpr string, idxC
 	return nil
 }
 
-func extractPartitionColumns(sctx sessionctx.Context, partExpr string, tblInfo *model.TableInfo) ([]*expression.Column, error) {
-	e, err := expression.ParseSimpleExprWithTableInfo(sctx, partExpr, tblInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
+type columnNameExtractor struct {
+	extractedColumns []*model.ColumnInfo
+	tblInfo          *model.TableInfo
+	err              error
+}
+
+func (cne *columnNameExtractor) Enter(node ast.Node) (ast.Node, bool) {
+	return node, false
+}
+
+func (cne *columnNameExtractor) Leave(node ast.Node) (ast.Node, bool) {
+	if c, ok := node.(*ast.ColumnNameExpr); ok {
+		for _, info := range cne.tblInfo.Columns {
+			if info.Name.L == c.Name.Name.L {
+				cne.extractedColumns = append(cne.extractedColumns, info)
+				return node, true
+			}
+		}
+		cne.err = ErrBadField.GenWithStackByArgs(c.Name.Name.O, "expression")
+		return nil, false
 	}
-	return expression.ExtractColumns(e), nil
+	return node, true
+}
+
+func extractPartitionColumns(partExpr string, tblInfo *model.TableInfo) ([]*model.ColumnInfo, error) {
+	partExpr = "select " + partExpr
+	stmts, _, err := parser.New().Parse(partExpr, "", "")
+	if err != nil {
+		return nil, err
+	}
+	extractor := &columnNameExtractor{
+		tblInfo:          tblInfo,
+		extractedColumns: make([]*model.ColumnInfo, 0),
+	}
+	stmts[0].Accept(extractor)
+	if extractor.err != nil {
+		return nil, extractor.err
+	}
+	return extractor.extractedColumns, nil
 }
 
 // checkUniqueKeyIncludePartKey checks that the partitioning key is included in the constraint.
-func checkUniqueKeyIncludePartKey(partCols []*expression.Column, idxCols []*ast.IndexColName) bool {
+func checkUniqueKeyIncludePartKey(partCols []*model.ColumnInfo, idxCols []*ast.IndexColName) bool {
 	for _, partCol := range partCols {
 		if !findColumnInIndexCols(partCol, idxCols) {
 			return false
