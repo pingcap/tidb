@@ -179,7 +179,7 @@ type session struct {
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
 
-	tsoReqAlloc tsoReqAlloc
+	tsoReqPool sync.Pool
 
 	statsCollector *handle.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;

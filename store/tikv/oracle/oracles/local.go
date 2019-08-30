@@ -15,7 +15,6 @@ package oracles
 
 import (
 	"context"
-	pd "github.com/pingcap/pd/client"
 	"sync"
 	"time"
 
@@ -64,7 +63,7 @@ func (l *localOracle) GetTimestamp(context.Context) (uint64, error) {
 	return ts, nil
 }
 
-func (l *localOracle) GetTimestampAsync(ctx context.Context, alloc pd.TsoReqAlloc) oracle.Future {
+func (l *localOracle) GetTimestampAsync(ctx context.Context, pool *sync.Pool) oracle.Future {
 	return &future{
 		ctx: ctx,
 		l:   l,

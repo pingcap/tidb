@@ -64,10 +64,10 @@ func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
 }
 
 func (c *pdClient) GetTSAsync(ctx context.Context) pd.TSFuture {
-	return c.GetTSAsyncWithAlloc(ctx, nil)
+	return c.GetTSAsyncWithPool(ctx, nil)
 }
 
-func (c *pdClient) GetTSAsyncWithAlloc(ctx context.Context, alloc pd.TsoReqAlloc) pd.TSFuture {
+func (c *pdClient) GetTSAsyncWithPool(ctx context.Context, pool *sync.Pool) pd.TSFuture {
 	return &mockTSFuture{c, ctx}
 }
 

@@ -138,7 +138,7 @@ func (c *mockPDClient) GetTSAsync(ctx context.Context) pd.TSFuture {
 	return nil
 }
 
-func (c *mockPDClient) GetTSAsyncWithAlloc(ctx context.Context, alloc pd.TsoReqAlloc) pd.TSFuture {
+func (c *mockPDClient) GetTSAsyncWithPool(ctx context.Context, pool *sync.Pool) pd.TSFuture {
 	return nil
 }
 

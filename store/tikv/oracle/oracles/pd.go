@@ -15,6 +15,7 @@ package oracles
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -93,8 +94,8 @@ func (f *tsFuture) Wait() (uint64, error) {
 	return ts, nil
 }
 
-func (o *pdOracle) GetTimestampAsync(ctx context.Context, alloc pd.TsoReqAlloc) oracle.Future {
-	ts := o.c.GetTSAsyncWithAlloc(ctx, alloc)
+func (o *pdOracle) GetTimestampAsync(ctx context.Context, pool *sync.Pool) oracle.Future {
+	ts := o.c.GetTSAsyncWithPool(ctx, pool)
 	return &tsFuture{ts, o}
 }
 

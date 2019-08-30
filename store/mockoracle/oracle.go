@@ -15,7 +15,6 @@ package mockoracle
 
 import (
 	"context"
-	pd "github.com/pingcap/pd/client"
 	"sync"
 	"time"
 
@@ -82,7 +81,7 @@ func (m *mockOracleFuture) Wait() (uint64, error) {
 }
 
 // GetTimestampAsync implements oracle.Oracle interface.
-func (o *MockOracle) GetTimestampAsync(ctx context.Context, alloc pd.TsoReqAlloc) oracle.Future {
+func (o *MockOracle) GetTimestampAsync(ctx context.Context, pool *sync.Pool) oracle.Future {
 	return &mockOracleFuture{o, ctx}
 }
 

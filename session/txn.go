@@ -407,7 +407,7 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	if s.sessionVars.LowResolutionTSO {
 		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
 	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx, &s.tsoReqAlloc)
+		tsFuture = oracleStore.GetTimestampAsync(ctx, &s.tsoReqPool)
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store}
 	if x := ctx.Value("mockGetTSFail"); x != nil {
