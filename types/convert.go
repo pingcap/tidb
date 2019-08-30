@@ -107,8 +107,8 @@ func ConvertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 }
 
 // ConvertIntToUint converts an int value to an uint value.
-func ConvertIntToUint(sc *stmtctx.StatementContext, val int64, upperBound uint64, tp byte, unsignedFlag bool) (uint64, error) {
-	if sc.ShouldClipToZero() && val < 0 && !unsignedFlag {
+func ConvertIntToUint(sc *stmtctx.StatementContext, val int64, upperBound uint64, tp byte) (uint64, error) {
+	if sc.ShouldClipToZero() && val < 0 {
 		return 0, overflow(val, tp)
 	}
 

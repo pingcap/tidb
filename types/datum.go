@@ -868,7 +868,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	)
 	switch d.k {
 	case KindInt64:
-		val, err = ConvertIntToUint(sc, d.GetInt64(), upperBound, tp, mysql.HasUnsignedFlag(target.Flag))
+		val, err = ConvertIntToUint(sc, d.GetInt64(), upperBound, tp)
 	case KindUint64:
 		val, err = ConvertUintToUint(d.GetUint64(), upperBound, tp)
 	case KindFloat32, KindFloat64:
@@ -890,7 +890,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		if err == nil {
 			err = err1
 		}
-		val, err1 = ConvertIntToUint(sc, ival, upperBound, tp, mysql.HasUnsignedFlag(target.Flag))
+		val, err1 = ConvertIntToUint(sc, ival, upperBound, tp)
 		if err == nil {
 			err = err1
 		}
@@ -899,7 +899,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		err = dec.Round(dec, 0, ModeHalfEven)
 		ival, err1 := dec.ToInt()
 		if err1 == nil {
-			val, err = ConvertIntToUint(sc, ival, upperBound, tp, mysql.HasUnsignedFlag(target.Flag))
+			val, err = ConvertIntToUint(sc, ival, upperBound, tp)
 		}
 	case KindMysqlDecimal:
 		val, err = ConvertDecimalToUint(sc, d.GetMysqlDecimal(), upperBound, tp)
@@ -1206,6 +1206,11 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 	switch d.k {
 	case KindString, KindBytes:
 		uintValue, err = BinaryLiteral(d.b).ToInt(sc)
+	case KindInt64:
+		// if input kind is int64 (signed), when trans to bit, we need to treat it as unsigned
+		d.k = KindUint64
+		uintDatum, err1 := d.convertToUint(sc, target)
+		uintValue, err = uintDatum.GetUint64(), err1
 	default:
 		uintDatum, err1 := d.convertToUint(sc, target)
 		uintValue, err = uintDatum.GetUint64(), err1
