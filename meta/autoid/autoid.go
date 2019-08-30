@@ -432,7 +432,7 @@ func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error
 		return nil, ErrAutoincReadFailed
 	}
 	// The local rest is not enough for allocN, skip it.
-	if alloc.base+N1 > alloc.end {
+	if uint64(alloc.base)+N > uint64(alloc.end) {
 		var newBase, newEnd int64
 		startTime := time.Now()
 		// Although it may skip a segment here, we still think it is consumed.
@@ -475,8 +475,8 @@ func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
 	resN := make([]int64, 0, N1)
-	for i := alloc.base + 1; i <= alloc.base+N1; i++ {
-		resN = append(resN, i)
+	for i := uint64(alloc.base) + 1; i <= uint64(alloc.base)+N; i++ {
+		resN = append(resN, int64(i))
 	}
 	// Use uint64 N directly.
 	alloc.base = int64(uint64(alloc.base) + N)
