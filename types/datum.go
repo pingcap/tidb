@@ -1225,8 +1225,7 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 		uintValue, err = uintDatum.GetUint64(), err1
 	}
 	if target.Flen < 64 && uintValue >= 1<<(uint64(target.Flen)) {
-		err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen)
-		return Datum{}, errors.Trace(err)
+		return Datum{}, errors.Trace(ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen))
 	}
 	byteSize := (target.Flen + 7) >> 3
 	ret.SetMysqlBit(NewBinaryLiteralFromUint(uintValue, byteSize))
