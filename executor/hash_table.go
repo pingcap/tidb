@@ -144,7 +144,10 @@ func (c hashRowContainer) Len() int {
 	return c.hashTable.Len()
 }
 
-const maxEntrySliceLen = 8 * 1024
+const (
+	initialEntrySliceLen = 64
+	maxEntrySliceLen     = 8 * 1024
+)
 
 type entry struct {
 	ptr  chunk.RowPtr
@@ -152,20 +155,30 @@ type entry struct {
 }
 
 type entryStore struct {
-	slices   [][]entry
-	sliceIdx uint32
-	sliceLen uint32
+	slices [][]entry
+}
+
+func (es *entryStore) init() {
+	es.slices = [][]entry{make([]entry, 0, initialEntrySliceLen)}
+	// Reserve the first empty entry, so entryAddr{} can represent nullEntryAddr.
+	es.put(entry{})
 }
 
 func (es *entryStore) put(e entry) entryAddr {
-	if es.sliceLen == maxEntrySliceLen {
-		es.slices = append(es.slices, make([]entry, 0, maxEntrySliceLen))
-		es.sliceLen = 0
-		es.sliceIdx++
+	sliceIdx := uint32(len(es.slices) - 1)
+	slice := es.slices[sliceIdx]
+	if len(slice) == cap(slice) {
+		// TODO: add test here.
+		size := cap(slice) * 2
+		if size >= maxEntrySliceLen {
+			size = maxEntrySliceLen
+		}
+		slice = make([]entry, 0, size)
+		es.slices = append(es.slices, slice)
+		sliceIdx++
 	}
-	addr := entryAddr{sliceIdx: es.sliceIdx, offset: es.sliceLen}
-	es.slices[es.sliceIdx] = append(es.slices[es.sliceIdx], e)
-	es.sliceLen++
+	addr := entryAddr{sliceIdx: sliceIdx, offset: uint32(len(slice))}
+	es.slices[sliceIdx] = append(slice, e)
 	return addr
 }
 
@@ -183,6 +196,7 @@ var nullEntryAddr = entryAddr{}
 // rowHashMap stores multiple rowPtr of rows for a given key with minimum GC overhead.
 // A given key can store multiple values.
 // It is not thread-safe, should only be used in one goroutine.
+// TODO(fengliyuan): add unit test for this.
 type rowHashMap struct {
 	entryStore entryStore
 	hashTable  map[uint64]entryAddr
@@ -194,9 +208,7 @@ func newRowHashMap() *rowHashMap {
 	m := new(rowHashMap)
 	// TODO(fengliyuan): initialize the size of map from the estimated row count for better performance.
 	m.hashTable = make(map[uint64]entryAddr)
-	m.entryStore.slices = [][]entry{make([]entry, 0, 64)}
-	// Reserve the first empty entry, so entryAddr{} can represent nullEntryAddr.
-	m.entryStore.put(entry{})
+	m.entryStore.init()
 	return m
 }
 
