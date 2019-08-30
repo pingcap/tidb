@@ -62,7 +62,9 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
-	builder := plannercore.NewPlanBuilder(sctx, is)
+	hintProcessor := &plannercore.BlockHintProcessor{Ctx: sctx}
+	node.Accept(hintProcessor)
+	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, err
