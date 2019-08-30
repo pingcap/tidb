@@ -340,8 +340,8 @@ func (s *testSuite1) TestAggregation(c *C) {
 	tk.MustExec("create table t(a tinyint, b smallint, c mediumint, d int, e bigint, f float, g double, h decimal)")
 	tk.MustExec("insert into t values(1, 2, 3, 4, 5, 6.1, 7.2, 8.3), (2, 3, 4, 5, 6, 7.2, 8.3, 9.4), (1, 3, 4, 5, 6, 7.1, 8.2, 9.3)")
 	tk.MustQuery("select var_pop(b), var_pop(c), var_pop(d), var_pop(e), var_pop(f), var_pop(g), var_pop(h) from t group by a").Check(testkit.Rows(
-		"0.25 0.25 0.25 0.25 0.25 0.2500000000000071 0.25",
 		"0 0 0 0 0 0 0",
+		"0.25 0.25 0.25 0.25 0.25 0.2500000000000071 0.25",
 	))
 
 	_, err = tk.Exec("select std(a) from t")
