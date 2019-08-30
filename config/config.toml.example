@@ -163,7 +163,7 @@ stats-lease = "3s"
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true
 
-# Probability to use the query feedback to update stats, 0 or 1 for always false/true.
+# Probability to use the query feedback to update stats, 0.0 or 1.0 for always false/true.
 feedback-probability = 0.05
 
 # The max number of query feedback that cache in memory.
