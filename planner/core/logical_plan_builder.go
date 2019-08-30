@@ -1206,6 +1206,9 @@ func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, s
 		a.inAggFunc = true
 	case *ast.WindowFuncExpr:
 		a.inWindowFunc = true
+		if a.curClause == unknowClause {
+			a.curClause = windowClause
+		}
 	case *ast.WindowSpec:
 		a.inWindowSpec = true
 	case *driver.ParamMarkerExpr, *ast.ColumnNameExpr, *ast.ColumnName:
@@ -1270,11 +1273,17 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				AsName:    model.NewCIStr(fmt.Sprintf("sel_window_%d", len(a.selectFields))),
 			})
 		}
+		if a.curClause == windowClause {
+			a.curClause = unknowClause
+		}
 	case *ast.WindowSpec:
 		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
 		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) {
+			resolveFieldsFirst = false
+		}
+		if a.curClause == unknowClause {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
@@ -1414,7 +1423,6 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 		colMapper:    b.colMapper,
 		outerSchemas: b.outerSchemas,
 	}
-	extractor.curClause = windowClause
 	for _, field := range sel.Fields.Fields {
 		if !ast.HasWindowFlag(field.Expr) {
 			continue
