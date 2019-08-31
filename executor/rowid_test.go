@@ -98,10 +98,10 @@ func (s *testSuite1) TestRowIDOrder(c *C) {
 		"    └─TableScan_12 10000.00 cop table:t, range:[-inf,+inf], keep order:true, stats:pseudo",
 	))
 	tk.MustQuery("explain select max(_tidb_rowid) from t").Check(testkit.Rows(
-	 "StreamAgg_13 1.00 root funcs:max(test.t._tidb_rowid)",
-     "└─Limit_17 1.00 root offset:0, count:1",
-     "  └─TableReader_27 1.00 root data:Limit_26",
-     "    └─Limit_26 1.00 cop offset:0, count:1",
-     "      └─TableScan_25 1.25 cop table:t, range:[-inf,+inf], keep order:true, desc, stats:pseudo",
+		"StreamAgg_13 1.00 root funcs:max(test.t._tidb_rowid)",
+		"└─Limit_17 1.00 root offset:0, count:1",
+		"  └─TableReader_27 1.00 root data:Limit_26",
+		"    └─Limit_26 1.00 cop offset:0, count:1",
+		"      └─TableScan_25 1.25 cop table:t, range:[-inf,+inf], keep order:true, desc, stats:pseudo",
 	))
 }
