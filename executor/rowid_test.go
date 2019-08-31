@@ -86,3 +86,22 @@ func (s *testSuite1) TestNotAllowWriteRowID(c *C) {
 	//	tk.MustExec("insert into tt (id, c, _tidb_rowid) values(30000,10,1);")
 	//	tk.MustExec("admin check table tt;")
 }
+
+func (s *testSuite1) TestRowIDOrder(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustQuery("explain select * from t where a > 10 order by _tidb_rowid").Check(testkit.Rows(
+		"Projection_6 3333.33 root test.t.a, test.t.b",
+		"└─TableReader_14 3333.33 root data:Selection_13",
+		"  └─Selection_13 3333.33 cop gt(test.t.a, 10)",
+		"    └─TableScan_12 10000.00 cop table:t, range:[-inf,+inf], keep order:true, stats:pseudo",
+	))
+	tk.MustQuery("explain select max(_tidb_rowid) from t").Check(testkit.Rows(
+	 "StreamAgg_13 1.00 root funcs:max(test.t._tidb_rowid)",
+     "└─Limit_17 1.00 root offset:0, count:1",
+     "  └─TableReader_27 1.00 root data:Limit_26",
+     "    └─Limit_26 1.00 cop offset:0, count:1",
+     "      └─TableScan_25 1.25 cop table:t, range:[-inf,+inf], keep order:true, desc, stats:pseudo",
+	))
+}
