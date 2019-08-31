@@ -466,7 +466,6 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 	ctx := mock.NewContext()
 	for _, testCase := range vecExprBenchCases {
 		baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, testCase)
-
 		it := chunk.NewIterator4Chunk(input)
 		i := 0
 		switch testCase.retEvalType {
