@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -200,6 +201,7 @@ type vecExprBenchCase struct {
 }
 
 var vecExprBenchCases = []vecExprBenchCase{
+	// builtin_cast
 	{ast.Cast, types.ETInt, []types.EvalType{types.ETInt}},
 }
 
@@ -274,6 +276,15 @@ func TestVectorizedExpression(t *testing.T) {
 			if !reflect.DeepEqual(output.Column(0).Int64s(), output2.Column(0).Int64s()) {
 				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
 			}
+		case types.ETReal:
+			if !reflect.DeepEqual(output.Column(0).Float64s(), output2.Column(0).Float64s()) {
+				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+			}
+		case types.ETDecimal:
+		case types.ETDatetime, types.ETTimestamp:
+		case types.ETDuration:
+		case types.ETJson:
+		case types.ETString:
 		default:
 			t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 		}
@@ -305,6 +316,122 @@ func BenchmarkVectorizedExpression(b *testing.B) {
 				it := chunk.NewIterator4Chunk(input)
 				if err := evalOneColumn(ctx, expr, it, output, 0); err != nil {
 					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, testCase vecExprBenchCase) (builtinFunc, *chunk.Chunk, *chunk.Column) {
+	childrenNumber := len(testCase.childrenTypes)
+	fts := make([]*types.FieldType, childrenNumber)
+	for i, eType := range testCase.childrenTypes {
+		fts[i] = eType2FieldType(eType)
+	}
+	cols := make([]Expression, childrenNumber)
+	input := chunk.New(fts, 1024, 1024)
+	for i, eType := range testCase.childrenTypes {
+		fillColumn(eType, input, i)
+		cols[i] = &Column{Index: i, RetType: fts[i]}
+	}
+
+	baseFunc, err := funcs[testCase.builtinFuncName].getFunction(ctx, cols)
+	if err != nil {
+		panic(err)
+	}
+	result := chunk.NewColumn(eType2FieldType(testCase.retEvalType), 1024)
+	return baseFunc, input, result
+}
+
+func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
+	ctx := mock.NewContext()
+	for _, testCase := range vecExprBenchCases {
+		baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, testCase)
+
+		it := chunk.NewIterator4Chunk(input)
+		i := 0
+		switch testCase.retEvalType {
+		case types.ETInt:
+			err := baseFunc.vecEvalInt(input, output)
+			c.Assert(err, IsNil)
+			i64s := output.Int64s()
+			for row := it.Begin(); row != it.End(); row = it.Next() {
+				val, _, err := baseFunc.evalInt(row)
+				c.Assert(err, IsNil)
+				c.Assert(val, Equals, i64s[i])
+				i++
+			}
+		case types.ETReal:
+			err := baseFunc.vecEvalReal(input, output)
+			c.Assert(err, IsNil)
+			f64s := output.Float64s()
+			for row := it.Begin(); row != it.End(); row = it.Next() {
+				val, _, err := baseFunc.evalReal(row)
+				c.Assert(err, IsNil)
+				c.Assert(val, Equals, f64s[i])
+				i++
+			}
+		default:
+			c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+		}
+	}
+}
+
+func BenchmarkVectorizedBuiltinFunc(b *testing.B) {
+	ctx := mock.NewContext()
+	for _, testCase := range vecExprBenchCases {
+		baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, testCase)
+		baseFuncName := testCase.builtinFuncName
+		baseFuncName = fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
+		tmp := strings.Split(baseFuncName, ".")
+		baseFuncName = tmp[len(tmp)-1]
+
+		b.Run(baseFuncName+"-VecBuiltinFunc", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				switch testCase.retEvalType {
+				case types.ETInt:
+					if err := baseFunc.vecEvalInt(input, output); err != nil {
+						b.Fatal(err)
+					}
+				case types.ETReal:
+					if err := baseFunc.vecEvalReal(input, output); err != nil {
+						b.Fatal(err)
+					}
+				case types.ETDecimal:
+				case types.ETDatetime, types.ETTimestamp:
+				case types.ETDuration:
+				case types.ETJson:
+				case types.ETString:
+				default:
+
+				}
+			}
+		})
+		b.Run(baseFuncName+"-NonVecBuiltinFunc", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				it := chunk.NewIterator4Chunk(input)
+				switch testCase.retEvalType {
+				case types.ETInt:
+					for row := it.Begin(); row != it.End(); row = it.Next() {
+						if _, _, err := baseFunc.evalInt(row); err != nil {
+							b.Fatal(err)
+						}
+					}
+				case types.ETReal:
+					for row := it.Begin(); row != it.End(); row = it.Next() {
+						if _, _, err := baseFunc.evalReal(row); err != nil {
+							b.Fatal(err)
+						}
+					}
+				case types.ETDecimal:
+				case types.ETDatetime, types.ETTimestamp:
+				case types.ETDuration:
+				case types.ETJson:
+				case types.ETString:
+				default:
+
 				}
 			}
 		})
