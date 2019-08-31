@@ -377,9 +377,9 @@ func TestVectorizedExpression(t *testing.T) {
 				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
 			}
 		case types.ETJson:
-			// TODO: Jsons method has not been implemented yet
+			// TODO: need to implement a method to compare two json slices
 		case types.ETString:
-			// TODO: Strings method has not been implemented yet
+			// TODO: need to implement a method to compare two string slices
 		default:
 			t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 		}
@@ -521,9 +521,23 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 				i++
 			}
 		case types.ETJson:
-			// TODO: Jsons method has not been implemented yet
+			err := baseFunc.vecEvalJSON(input, output)
+			c.Assert(err, IsNil)
+			for row := it.Begin(); row != it.End(); row = it.Next() {
+				val, _, err := baseFunc.evalDuration(row)
+				c.Assert(err, IsNil)
+				c.Assert(val, Equals, output.GetJSON(i))
+				i++
+			}
 		case types.ETString:
-			// TODO: Strings method has not been implemented yet
+			err := baseFunc.vecEvalString(input, output)
+			c.Assert(err, IsNil)
+			for row := it.Begin(); row != it.End(); row = it.Next() {
+				val, _, err := baseFunc.evalDuration(row)
+				c.Assert(err, IsNil)
+				c.Assert(val, Equals, output.GetString(i))
+				i++
+			}
 		default:
 			c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 		}
