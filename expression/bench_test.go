@@ -208,6 +208,7 @@ var vecExprBenchCases = []vecExprBenchCase{
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 	nullRatio := 0.2
 	batchSize := 1024
+	// TODO: Methods for randomly generating non-native types have not been implemented yet
 	switch eType {
 	case types.ETInt:
 		for i := 0; i < batchSize; i++ {
@@ -238,11 +239,11 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				if rand.Float64() < 0.5 {
-					chk.AppendMyDecimal(colIdx, -rand.Float64())
-				} else {
-					chk.AppendMyDecimal(colIdx, rand.Float64())
-				}
+				//if rand.Float64() < 0.5 {
+				//	chk.AppendMyDecimal(colIdx, -rand.())
+				//} else {
+				//	chk.AppendMyDecimal(colIdx, rand.())
+				//}
 			}
 		}
 	case types.ETDatetime, types.ETTimestamp:
@@ -250,11 +251,11 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				if rand.Float64() < 0.5 {
-					chk.AppendTime(colIdx, -rand.Float64())
-				} else {
-					chk.AppendTime(colIdx, rand.Float64())
-				}
+				//if rand.Float64() < 0.5 {
+				//	chk.AppendTime(colIdx, -rand.())
+				//} else {
+				//	chk.AppendTime(colIdx, rand.())
+				//}
 			}
 		}
 	case types.ETDuration:
@@ -262,11 +263,11 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				if rand.Float64() < 0.5 {
-					chk.AppendDuration(colIdx, -rand.Float64())
-				} else {
-					chk.AppendDuration(colIdx, rand.Float64())
-				}
+				//if rand.Float64() < 0.5 {
+				//	chk.AppendDuration(colIdx, -rand.())
+				//} else {
+				//	chk.AppendDuration(colIdx, rand.())
+				//}
 			}
 		}
 	case types.ETJson:
@@ -274,11 +275,11 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				if rand.Float64() < 0.5 {
-					chk.AppendJSON(colIdx, -rand.Float64())
-				} else {
-					chk.AppendJSON(colIdx, rand.Float64())
-				}
+				//if rand.Float64() < 0.5 {
+				//	chk.AppendJSON(colIdx, -rand.())
+				//} else {
+				//	chk.AppendJSON(colIdx, rand.())
+				//}
 			}
 		}
 	case types.ETString:
@@ -286,15 +287,14 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				if rand.Float64() < 0.5 {
-					chk.AppendString(colIdx, -rand.Float64())
-				} else {
-					chk.AppendString(colIdx, rand.Float64())
-				}
+				//if rand.Float64() < 0.5 {
+				//	chk.AppendString(colIdx, -rand.())
+				//} else {
+				//	chk.AppendString(colIdx, rand.())
+				//}
 			}
 		}
 	default:
-		// TODO: support all EvalTypes later.
 		panic(fmt.Sprintf("EvalType=%v is not supported.", eType))
 	}
 }
@@ -316,7 +316,6 @@ func eType2FieldType(eType types.EvalType) *types.FieldType {
 	case types.ETString:
 		return types.NewFieldType(mysql.TypeVarString)
 	default:
-		// TODO: support all EvalTypes later.
 		panic(fmt.Sprintf("EvalType=%v is not supported.", eType))
 	}
 }
@@ -366,10 +365,21 @@ func TestVectorizedExpression(t *testing.T) {
 				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
 			}
 		case types.ETDecimal:
+			if !reflect.DeepEqual(output.Column(0).Decimals(), output2.Column(0).Decimals()) {
+				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+			}
 		case types.ETDatetime, types.ETTimestamp:
+			if !reflect.DeepEqual(output.Column(0).Times(), output2.Column(0).Times()) {
+				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+			}
 		case types.ETDuration:
+			if !reflect.DeepEqual(output.Column(0).GoDurations(), output2.Column(0).GoDurations()) {
+				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+			}
 		case types.ETJson:
+			// TODO: Jsons method has not been implemented yet
 		case types.ETString:
+			// TODO: Strings method has not been implemented yet
 		default:
 			t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 		}
@@ -511,7 +521,9 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 				i++
 			}
 		case types.ETJson:
+			// TODO: Jsons method has not been implemented yet
 		case types.ETString:
+			// TODO: Strings method has not been implemented yet
 		default:
 			c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 		}

@@ -404,6 +404,12 @@ func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
 	header.Cap = cap(c.data) / typeSize
 }
 
+func (c *Column) castSliceHeaderForVar(header *reflect.SliceHeader, typeSize int) {
+	header.Data = (*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Data
+	header.Len = c.length
+	// TODO: Calculate the capacity of the variable length type
+}
+
 // Int64s returns an int64 slice stored in this Column.
 func (c *Column) Int64s() []int64 {
 	var res []int64
