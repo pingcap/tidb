@@ -66,8 +66,8 @@ type recordSet struct {
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
 		// The else branch will be removed after we totally remove the *Name from expression.Column.
-		if len(a.stmt.outputNames) > 0 {
-			a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.outputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
+		if len(a.stmt.OutputNames) > 0 {
+			a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 		} else {
 			a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
 		}
@@ -202,7 +202,34 @@ type ExecStmt struct {
 	isSelectForUpdate bool
 	retryCount        uint
 
-	outputNames []*types.FieldName
+	OutputNames []*types.FieldName
+}
+
+// GetPointRecord short path for point exec directly from plan
+func (a *ExecStmt) GetPointRecord(ctx context.Context, is infoschema.InfoSchema,
+	sctx sessionctx.Context) (*recordSet, error) {
+	var err error
+	var startTs uint64 = math.MaxUint64
+	err = sctx.InitTxnWithStartTS(startTs)
+	if err != nil {
+		logutil.Logger(ctx).Error("error init txn max", zap.Error(err))
+		return nil, err
+	}
+	sctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
+	b := newExecutorBuilder(sctx, is)
+	exec := b.build(a.Plan)
+	if b.err != nil {
+		return nil, errors.Trace(b.err)
+	}
+	if err = exec.Open(ctx); err != nil {
+		terror.Call(exec.Close)
+		return nil, err
+	}
+	return &recordSet{
+		executor:   exec,
+		stmt:       a,
+		txnStartTS: startTs,
+	}, nil
 }
 
 // OriginText returns original statement as a string.
@@ -247,7 +274,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	a.outputNames = p.OutputNames()
+	a.OutputNames = p.OutputNames()
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
 }
@@ -648,7 +675,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.outputNames = executorExec.outputNames
+		a.OutputNames = executorExec.outputNames
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		if executorExec.lowerPriority {

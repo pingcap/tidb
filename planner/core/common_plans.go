@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -182,6 +181,7 @@ type Execute struct {
 	Stmt          ast.StmtNode
 	StmtType      string
 	Plan          Plan
+	CachedValue   *PSTMTPlanCacheValue
 }
 
 // OptimizePreparedPlan optimizes the prepared statement.
@@ -244,24 +244,30 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) error {
-	var cacheKey kvcache.Key
-	sessionVars := sctx.GetSessionVars()
-	sessionVars.StmtCtx.UseCache = prepared.UseCache
+	cacheKey := NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+	sctx.GetSessionVars().StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
-		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
+		var cachedVal *PSTMTPlanCacheValue
+		// CachedValue set in binary protocol, cache existence is checked at start
+		if e.CachedValue != nil {
+			cachedVal = e.CachedValue
+		} else {
+			if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
+				cachedVal = cacheValue.(*PSTMTPlanCacheValue)
+			}
+		}
+		if cachedVal != nil {
 			if metrics.ResettablePlanCacheCounterFortTest {
 				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 			} else {
 				planCacheCounter.Inc()
 			}
-			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
-			err := e.rebuildRange(plan)
+			err := e.rebuildRange(cachedVal.Plan)
 			if err != nil {
 				return err
 			}
-			e.names = cacheValue.(*PSTMTPlanCacheValue).OutPutNames
-			e.Plan = plan
+			e.names = cachedVal.OutPutNames
+			e.Plan = cachedVal.Plan
 			return nil
 		}
 	}

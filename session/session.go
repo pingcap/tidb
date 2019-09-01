@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -1158,11 +1159,62 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
+// PointExec short path for cached point plan execution
+func (s *session) PointExec(ctx context.Context,
+	stmtID uint32, prepared *ast.Prepared,
+	cachedValue *plannercore.PSTMTPlanCacheValue, args []types.Datum) (sqlexec.RecordSet, error) {
+	is := executor.GetInfoSchema(s)
+	execAst := &ast.ExecuteStmt{ExecID: stmtID}
+	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
+		return nil, err
+	}
+	execAst.BinaryArgs = args
+	execPlan, err := planner.OptimizeExecCached(ctx, s, execAst, is, cachedValue)
+	if err != nil {
+		return nil, err
+	}
+	stmt := &executor.ExecStmt{
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    prepared.Stmt,
+		Ctx:         s,
+		OutputNames: execPlan.OutputNames(),
+	}
+	rs, err := stmt.GetPointRecord(ctx, is, s)
+	s.txn.changeToInvalid()
+	return rs, err
+}
+
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
-	s.PrepareTxnCtx(ctx)
+	var err error
 	s.sessionVars.StartTime = time.Now()
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
+	prepared, ok := s.sessionVars.PreparedStmts[stmtID]
+	if !ok {
+		err = errors.Errorf("Prepared statement not found")
+		logutil.Logger(ctx).Error("prepared not found", zap.Uint32("stmtID", stmtID))
+		return nil, err
+	}
+	// try fetch from plan cache at start
+	var cachedValue *plannercore.PSTMTPlanCacheValue
+	if prepared.UseCache {
+		cacheKey := plannercore.NewPSTMTPlanCacheKey(s.sessionVars, stmtID, prepared.SchemaVersion)
+		val, exists := s.PreparedPlanCache().Get(cacheKey)
+		if exists {
+			cachedValue = val.(*plannercore.PSTMTPlanCacheValue)
+		}
+	}
+	if cachedValue != nil {
+		isPointExec, err := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(s, cachedValue.Plan)
+		if err != nil {
+			return nil, err
+		}
+		if isPointExec {
+			return s.PointExec(ctx, stmtID, prepared, cachedValue, args)
+		}
+	}
+	s.PrepareTxnCtx(ctx)
+	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args, cachedValue)
 	if err != nil {
 		return nil, err
 	}
