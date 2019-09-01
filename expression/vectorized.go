@@ -25,6 +25,10 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 	if input != nil {
 		n = input.NumRows()
 	}
+	if n == 0 {
+		result.Reset()
+		return nil
+	}
 	switch targetType {
 	case types.ETInt:
 		result.ResizeInt64(n)
@@ -93,13 +97,13 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 			return err
 		}
 		if isNull {
-			for i := 0; i < n; i++ {
-				result.AppendNull()
-			}
-		} else {
-			for i := 0; i < n; i++ {
-				result.AppendDuration(v)
-			}
+			result.SetNulls(0, n, true)
+			return nil
+		}
+		result.SetNulls(0, n, false)
+		ds := result.GoDurations()
+		for i := range ds {
+			ds[i] = v.Duration
 		}
 	case types.ETJson:
 		result.ReserveJSON(n)
