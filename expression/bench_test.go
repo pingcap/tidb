@@ -474,9 +474,12 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			c.Assert(err, IsNil)
 			i64s := output.Int64s()
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				val, _, err := baseFunc.evalInt(row)
+				val, isNull, err := baseFunc.evalInt(row)
 				c.Assert(err, IsNil)
-				c.Assert(val, Equals, i64s[i])
+				c.Assert(isNull, Equals, output.IsNull(i))
+				if !isNull {
+					c.Assert(val, Equals, i64s[i])
+				}
 				i++
 			}
 		case types.ETReal:
@@ -484,9 +487,12 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			c.Assert(err, IsNil)
 			f64s := output.Float64s()
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				val, _, err := baseFunc.evalReal(row)
+				val, isNull, err := baseFunc.evalReal(row)
 				c.Assert(err, IsNil)
-				c.Assert(val, Equals, f64s[i])
+				c.Assert(isNull, Equals, output.IsNull(i))
+				if !isNull {
+					c.Assert(val, Equals, f64s[i])
+				}
 				i++
 			}
 		case types.ETDecimal:
@@ -494,9 +500,12 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			c.Assert(err, IsNil)
 			d64s := output.Decimals()
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				val, _, err := baseFunc.evalDecimal(row)
+				val, isNull, err := baseFunc.evalDecimal(row)
 				c.Assert(err, IsNil)
-				c.Assert(val, Equals, d64s[i])
+				c.Assert(isNull, Equals, output.IsNull(i))
+				if !isNull {
+					c.Assert(val, Equals, d64s[i])
+				}
 				i++
 			}
 		case types.ETDatetime, types.ETTimestamp:
@@ -504,9 +513,12 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			c.Assert(err, IsNil)
 			t64s := output.Times()
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				val, _, err := baseFunc.evalTime(row)
+				val, isNull, err := baseFunc.evalTime(row)
 				c.Assert(err, IsNil)
-				c.Assert(val, Equals, t64s[i])
+				c.Assert(isNull, Equals, output.IsNull(i))
+				if !isNull {
+					c.Assert(val, Equals, t64s[i])
+				}
 				i++
 			}
 		case types.ETDuration:
@@ -514,27 +526,36 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			c.Assert(err, IsNil)
 			d64s := output.GoDurations()
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				val, _, err := baseFunc.evalDuration(row)
+				val, isNull, err := baseFunc.evalDuration(row)
 				c.Assert(err, IsNil)
-				c.Assert(val, Equals, d64s[i])
+				c.Assert(isNull, Equals, output.IsNull(i))
+				if !isNull {
+					c.Assert(val, Equals, d64s[i])
+				}
 				i++
 			}
 		case types.ETJson:
 			err := baseFunc.vecEvalJSON(input, output)
 			c.Assert(err, IsNil)
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				val, _, err := baseFunc.evalDuration(row)
+				val, isNull, err := baseFunc.evalDuration(row)
 				c.Assert(err, IsNil)
-				c.Assert(val, Equals, output.GetJSON(i))
+				c.Assert(isNull, Equals, output.IsNull(i))
+				if !isNull {
+					c.Assert(val, Equals, output.GetJSON(i))
+				}
 				i++
 			}
 		case types.ETString:
 			err := baseFunc.vecEvalString(input, output)
 			c.Assert(err, IsNil)
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				val, _, err := baseFunc.evalDuration(row)
+				val, isNull, err := baseFunc.evalDuration(row)
 				c.Assert(err, IsNil)
-				c.Assert(val, Equals, output.GetString(i))
+				c.Assert(isNull, Equals, output.IsNull(i))
+				if !isNull {
+					c.Assert(val, Equals, output.GetString(i))
+				}
 				i++
 			}
 		default:
