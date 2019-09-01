@@ -19,13 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -114,18 +112,6 @@ func testNewContext(d *ddl) sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
 	return ctx
-}
-
-func testNewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
-	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
-	return newDDL(
-		ctx,
-		WithEtcdClient(etcdCli),
-		WithStore(store),
-		WithInfoHandle(infoHandle),
-		WithHook(hook),
-		WithLease(lease),
-	)
 }
 
 func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
