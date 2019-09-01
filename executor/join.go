@@ -16,9 +16,10 @@ package executor
 import (
 	"context"
 	"fmt"
+	"hash"
+	"hash/fnv"
 	"sync"
 	"sync/atomic"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -49,10 +49,10 @@ type HashJoinExec struct {
 	innerKeys   []*expression.Column
 
 	// concurrency is the number of partition, build and join workers.
-	concurrency     uint
-	hashTable       *mvmap.MVMap
-	innerFinished   chan error
-	hashJoinBuffers []*hashJoinBuffer
+	concurrency   uint
+	hashTable     *rowHashMap
+	joinKeyBuf    [][]byte
+	innerFinished chan error
 	// joinWorkerWaitGroup is for sync multiple join workers.
 	joinWorkerWaitGroup sync.WaitGroup
 	finished            atomic.Value
@@ -72,7 +72,6 @@ type HashJoinExec struct {
 	outerResultChs     []chan *chunk.Chunk
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
-	hashTableValBufs   [][][]byte
 
 	memTracker  *memory.Tracker // track memory usage.
 	prepared    bool
@@ -95,11 +94,6 @@ type hashjoinWorkerResult struct {
 	chk *chunk.Chunk
 	err error
 	src chan<- *chunk.Chunk
-}
-
-type hashJoinBuffer struct {
-	data  []types.Datum
-	bytes []byte
 }
 
 // Close implements the Executor Close interface.
@@ -147,15 +141,9 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-
-	e.hashTableValBufs = make([][][]byte, e.concurrency)
-	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
-		buffer := &hashJoinBuffer{
-			data:  make([]types.Datum, len(e.outerKeys)),
-			bytes: make([]byte, 0, 10000),
-		}
-		e.hashJoinBuffers = append(e.hashJoinBuffers, buffer)
+	e.joinKeyBuf = make([][]byte, e.concurrency)
+	for i := range e.joinKeyBuf {
+		e.joinKeyBuf[i] = make([]byte, 1)
 	}
 
 	e.closeCh = make(chan struct{})
@@ -164,7 +152,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyBuf []byte) (hasNull bool, _ []byte, err error) {
+func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, h hash.Hash64, buf []byte) (hasNull bool, key uint64, err error) {
 	var keyColIdx []int
 	var allTypes []*types.FieldType
 	if isOuterKey {
@@ -177,12 +165,19 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 
 	for _, i := range keyColIdx {
 		if row.IsNull(i) {
-			return true, keyBuf, nil
+			return true, 0, nil
 		}
 	}
-	keyBuf = keyBuf[:0]
-	keyBuf, err = codec.HashChunkRow(e.ctx.GetSessionVars().StmtCtx, keyBuf, row, allTypes, keyColIdx)
-	return false, keyBuf, err
+	h.Reset()
+	err = codec.HashChunkRow(e.ctx.GetSessionVars().StmtCtx, h, row, allTypes, keyColIdx, buf)
+	return false, h.Sum64(), err
+}
+
+func (e *HashJoinExec) matchJoinKey(inner, outer chunk.Row) (ok bool, err error) {
+	innerAllTypes, outerAllTypes := retTypes(e.innerExec), retTypes(e.outerExec)
+	return codec.EqualChunkRow(e.ctx.GetSessionVars().StmtCtx,
+		inner, innerAllTypes, e.innerKeyColIdx,
+		outer, outerAllTypes, e.outerKeyColIdx)
 }
 
 // fetchOuterChunks get chunks from fetches chunks from the big table in a background goroutine
@@ -368,6 +363,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 	var (
 		outerResult *chunk.Chunk
 		selected    = make([]bool, 0, chunk.InitialCapacity)
+		h           = fnv.New64()
 	)
 	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
@@ -390,7 +386,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 		if !ok {
 			break
 		}
-		ok, joinResult = e.join2Chunk(workerID, outerResult, joinResult, selected)
+		ok, joinResult = e.join2Chunk(workerID, outerResult, joinResult, selected, h)
 		if !ok {
 			break
 		}
@@ -406,9 +402,8 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 }
 
 func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row,
-	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	buffer := e.hashJoinBuffers[workerID]
-	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, buffer.bytes)
+	joinResult *hashjoinWorkerResult, h hash.Hash64) (bool, *hashjoinWorkerResult) {
+	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, h, e.joinKeyBuf[workerID])
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -417,17 +412,27 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
 		return true, joinResult
 	}
-	e.hashTableValBufs[workerID] = e.hashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
-	innerPtrs := e.hashTableValBufs[workerID]
+	innerPtrs := e.hashTable.Get(joinKey)
 	if len(innerPtrs) == 0 {
 		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
 		return true, joinResult
 	}
 	innerRows := make([]chunk.Row, 0, len(innerPtrs))
-	for _, b := range innerPtrs {
-		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
+	for _, ptr := range innerPtrs {
 		matchedInner := e.innerResult.GetRow(ptr)
+		ok, err := e.matchJoinKey(matchedInner, outerRow)
+		if err != nil {
+			joinResult.err = err
+			return false, joinResult
+		}
+		if !ok {
+			continue
+		}
 		innerRows = append(innerRows, matchedInner)
+	}
+	if len(innerRows) == 0 { // TODO(fengliyuan): add test case
+		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
+		return true, joinResult
 	}
 	iter := chunk.NewIterator4Slice(innerRows)
 	hasMatch, hasNull := false, false
@@ -468,7 +473,7 @@ func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerRes
 }
 
 func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResult *hashjoinWorkerResult,
-	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
+	selected []bool, h hash.Hash64) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
 	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
 	if err != nil {
@@ -479,7 +484,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 		if !selected[i] { // process unmatched outer rows
 			e.joiners[workerID].onMissMatch(false, outerChk.GetRow(i), joinResult.chk)
 		} else { // process matched outer rows
-			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), joinResult)
+			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), joinResult, h)
 			if !ok {
 				return false, joinResult
 			}
@@ -537,7 +542,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	doneCh := make(chan struct{})
 	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 
-	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
+	// TODO: Parallel build hash table. Currently not support because `rowHashMap` is not thread-safe.
 	err := e.buildHashTableForList(innerResultCh)
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
@@ -554,7 +559,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) error {
-	e.hashTable = mvmap.NewMVMap()
+	e.hashTable = newRowHashMap()
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
 		e.innerKeyColIdx[i] = e.innerKeys[i].Index
@@ -562,10 +567,11 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 	var (
 		hasNull bool
 		err     error
-		keyBuf  = make([]byte, 0, 64)
-		valBuf  = make([]byte, 8)
+		key     uint64
+		buf     = make([]byte, 1)
 	)
 
+	h := fnv.New64()
 	chkIdx := uint32(0)
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {
@@ -573,7 +579,7 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 		}
 		numRows := chk.NumRows()
 		for j := 0; j < numRows; j++ {
-			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
+			hasNull, key, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), h, buf)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -581,8 +587,7 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 				continue
 			}
 			rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(j)}
-			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
-			e.hashTable.Put(keyBuf, valBuf)
+			e.hashTable.Put(key, rowPtr)
 		}
 		chkIdx++
 	}
