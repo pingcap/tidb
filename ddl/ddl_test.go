@@ -118,7 +118,14 @@ func testNewContext(d *ddl) sessionctx.Context {
 
 func testNewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
-	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease, nil)
+	return newDDL(
+		ctx,
+		WithEtcdClient(etcdCli),
+		WithStore(store),
+		WithInfoHandle(infoHandle),
+		WithHook(hook),
+		WithLease(lease),
+	)
 }
 
 func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
