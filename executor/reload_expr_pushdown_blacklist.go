@@ -207,7 +207,6 @@ var funcName2Alias = map[string]string{
 	"make_set":                   ast.MakeSet,
 	"mid":                        ast.Mid,
 	"oct":                        ast.Oct,
-	"octet_length":               ast.OctetLength,
 	"ord":                        ast.Ord,
 	"position":                   ast.Position,
 	"quote":                      ast.Quote,
