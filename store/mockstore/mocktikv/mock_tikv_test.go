@@ -670,6 +670,6 @@ func (s *testMVCCLevelDB) TestTxnHeartBeat(c *C) {
 
 	// The lock has already been clean up
 	c.Assert(s.store.Cleanup([]byte("pk"), 5), IsNil)
-	ttl, err = s.store.TxnHeartBeat([]byte("pk"), 5, 1000)
+	_, err = s.store.TxnHeartBeat([]byte("pk"), 5, 1000)
 	c.Assert(err, NotNil)
 }
