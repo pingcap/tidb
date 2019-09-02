@@ -366,12 +366,12 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 
 func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	innerRows, hasNull, err := e.rowContainer.GetMatchedRows(outerRow, hCtx)
+	innerRows, err := e.rowContainer.GetMatchedRows(outerRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
 	}
-	if hasNull {
+	if len(innerRows) == 0 {
 		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
 		return true, joinResult
 	}

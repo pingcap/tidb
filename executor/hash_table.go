@@ -85,18 +85,13 @@ func (c *hashRowContainer) GetMemTracker() *memory.Tracker {
 // GetMatchedRows get matched rows from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, hasNull bool, err error) {
-	var key uint64
-	hasNull, key, err = c.getJoinKeyFromChkRow(c.sc, probeRow, hCtx)
-	if err != nil {
-		return
-	}
-	if hasNull {
+func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, err error) {
+	hasNull, key, err := c.getJoinKeyFromChkRow(c.sc, probeRow, hCtx)
+	if err != nil || hasNull {
 		return
 	}
 	innerPtrs := c.hashTable.Get(key)
 	if len(innerPtrs) == 0 {
-		hasNull = true
 		return
 	}
 	matched = make([]chunk.Row, 0, len(innerPtrs))
@@ -112,9 +107,11 @@ func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext)
 		}
 		matched = append(matched, matchedRow)
 	}
-	if len(matched) == 0 { // TODO(fengliyuan): add test case
-		hasNull = true
+	/* TODO(fengliyuan): add test case in this case
+	if len(matched) == 0 {
+		// noop
 	}
+	*/
 	return
 }
 
