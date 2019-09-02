@@ -196,7 +196,10 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context, cancelFunc context.
 	defer close(ow.innerCh)
 	for {
 		task, err := ow.buildTask(ctx)
-		if task == nil || err != nil {
+		if task == nil {
+			return
+		}
+		if err != nil {
 			cancelFunc()
 			logutil.Logger(ctx).Info("indexHashJoinOuterWorker.run failed", zap.Error(err))
 			return
@@ -273,7 +276,6 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 	joinResult, ok := iw.getNewJoinResult(ctx)
 	if !ok {
 		cancelFunc()
-		logutil.Logger(ctx).Info("indexHashJoinInnerWorker.run failed", zap.Error(errors.New("iw.getNewJoinResult fail")))
 		return
 	}
 	for {
