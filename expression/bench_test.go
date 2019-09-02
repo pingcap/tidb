@@ -332,7 +332,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, testCase vecExprBenchCase) (Exp
 	return expr, input, output
 }
 
-func TestVectorizedExpression(t *testing.T) {
+func TestVectorizedEvalOneVec(t *testing.T) {
 	ctx := mock.NewContext()
 	for _, testCase := range vecExprBenchCases {
 		expr, input, output := genVecExprBenchCase(ctx, testCase)
@@ -396,7 +396,7 @@ func TestVectorizedExpression(t *testing.T) {
 	}
 }
 
-func BenchmarkVectorizedExpression(b *testing.B) {
+func BenchmarkVectorizedEvalOneVec(b *testing.B) {
 	ctx := mock.NewContext()
 	for _, testCase := range vecExprBenchCases {
 		expr, input, output := genVecExprBenchCase(ctx, testCase)
@@ -407,7 +407,7 @@ func BenchmarkVectorizedExpression(b *testing.B) {
 			exprName = tmp[len(tmp)-1]
 		}
 
-		b.Run(exprName+"-VecExpr", func(b *testing.B) {
+		b.Run(exprName+"-EvalOneVec", func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				if err := evalOneVec(ctx, expr, input, output, 0); err != nil {
@@ -415,7 +415,7 @@ func BenchmarkVectorizedExpression(b *testing.B) {
 				}
 			}
 		})
-		b.Run(exprName+"-NonVecExpr", func(b *testing.B) {
+		b.Run(exprName+"-EvalOneCol", func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				it := chunk.NewIterator4Chunk(input)
@@ -585,91 +585,115 @@ func BenchmarkVectorizedBuiltinFunc(b *testing.B) {
 
 		b.Run(baseFuncName+"-VecBuiltinFunc", func(b *testing.B) {
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				switch testCase.retEvalType {
-				case types.ETInt:
+			switch testCase.retEvalType {
+			case types.ETInt:
+				for i := 0; i < b.N; i++ {
 					if err := baseFunc.vecEvalInt(input, output); err != nil {
 						b.Fatal(err)
 					}
-				case types.ETReal:
+				}
+			case types.ETReal:
+				for i := 0; i < b.N; i++ {
 					if err := baseFunc.vecEvalReal(input, output); err != nil {
 						b.Fatal(err)
 					}
-				case types.ETDecimal:
+				}
+			case types.ETDecimal:
+				for i := 0; i < b.N; i++ {
 					if err := baseFunc.vecEvalDecimal(input, output); err != nil {
 						b.Fatal(err)
 					}
-				case types.ETDatetime, types.ETTimestamp:
+				}
+			case types.ETDatetime, types.ETTimestamp:
+				for i := 0; i < b.N; i++ {
 					if err := baseFunc.vecEvalTime(input, output); err != nil {
 						b.Fatal(err)
 					}
-				case types.ETDuration:
+				}
+			case types.ETDuration:
+				for i := 0; i < b.N; i++ {
 					if err := baseFunc.vecEvalDuration(input, output); err != nil {
 						b.Fatal(err)
 					}
-				case types.ETJson:
+				}
+			case types.ETJson:
+				for i := 0; i < b.N; i++ {
 					if err := baseFunc.vecEvalJSON(input, output); err != nil {
 						b.Fatal(err)
 					}
-				case types.ETString:
+				}
+			case types.ETString:
+				for i := 0; i < b.N; i++ {
 					if err := baseFunc.vecEvalString(input, output); err != nil {
 						b.Fatal(err)
 					}
-				default:
-					b.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 				}
+			default:
+				b.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 			}
 		})
 		b.Run(baseFuncName+"-NonVecBuiltinFunc", func(b *testing.B) {
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				it := chunk.NewIterator4Chunk(input)
-				switch testCase.retEvalType {
-				case types.ETInt:
+			it := chunk.NewIterator4Chunk(input)
+			switch testCase.retEvalType {
+			case types.ETInt:
+				for i := 0; i < b.N; i++ {
 					for row := it.Begin(); row != it.End(); row = it.Next() {
 						if _, _, err := baseFunc.evalInt(row); err != nil {
 							b.Fatal(err)
 						}
 					}
-				case types.ETReal:
+				}
+			case types.ETReal:
+				for i := 0; i < b.N; i++ {
 					for row := it.Begin(); row != it.End(); row = it.Next() {
 						if _, _, err := baseFunc.evalReal(row); err != nil {
 							b.Fatal(err)
 						}
 					}
-				case types.ETDecimal:
+				}
+			case types.ETDecimal:
+				for i := 0; i < b.N; i++ {
 					for row := it.Begin(); row != it.End(); row = it.Next() {
 						if _, _, err := baseFunc.evalDecimal(row); err != nil {
 							b.Fatal(err)
 						}
 					}
-				case types.ETDatetime, types.ETTimestamp:
+				}
+			case types.ETDatetime, types.ETTimestamp:
+				for i := 0; i < b.N; i++ {
 					for row := it.Begin(); row != it.End(); row = it.Next() {
 						if _, _, err := baseFunc.evalTime(row); err != nil {
 							b.Fatal(err)
 						}
 					}
-				case types.ETDuration:
+				}
+			case types.ETDuration:
+				for i := 0; i < b.N; i++ {
 					for row := it.Begin(); row != it.End(); row = it.Next() {
 						if _, _, err := baseFunc.evalDuration(row); err != nil {
 							b.Fatal(err)
 						}
 					}
-				case types.ETJson:
+				}
+			case types.ETJson:
+				for i := 0; i < b.N; i++ {
 					for row := it.Begin(); row != it.End(); row = it.Next() {
 						if _, _, err := baseFunc.evalJSON(row); err != nil {
 							b.Fatal(err)
 						}
 					}
-				case types.ETString:
+				}
+			case types.ETString:
+				for i := 0; i < b.N; i++ {
 					for row := it.Begin(); row != it.End(); row = it.Next() {
 						if _, _, err := baseFunc.evalString(row); err != nil {
 							b.Fatal(err)
 						}
 					}
-				default:
-					b.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 				}
+			default:
+				b.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 			}
 		})
 	}
