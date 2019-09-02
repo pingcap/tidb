@@ -17,6 +17,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/types/json"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -201,14 +202,12 @@ type vecExprBenchCase struct {
 }
 
 var vecExprBenchCases = []vecExprBenchCase{
-	// builtin_cast
 	{ast.Cast, types.ETInt, []types.EvalType{types.ETInt}},
 }
 
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 	nullRatio := 0.2
 	batchSize := 1024
-	// TODO: Methods for randomly generating non-native types have not been implemented yet
 	switch eType {
 	case types.ETInt:
 		for i := 0; i < batchSize; i++ {
@@ -239,11 +238,12 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				//if rand.Float64() < 0.5 {
-				//	chk.AppendMyDecimal(colIdx, -rand.())
-				//} else {
-				//	chk.AppendMyDecimal(colIdx, rand.())
-				//}
+				d := new(types.MyDecimal)
+				f := rand.Float64() * 100000
+				if err := d.FromFloat64(f); err != nil {
+					panic(err)
+				}
+				chk.AppendMyDecimal(colIdx, d)
 			}
 		}
 	case types.ETDatetime, types.ETTimestamp:
@@ -251,11 +251,9 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				//if rand.Float64() < 0.5 {
-				//	chk.AppendTime(colIdx, -rand.())
-				//} else {
-				//	chk.AppendTime(colIdx, rand.())
-				//}
+				gt := types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000))
+				t := types.Time{Time: gt, Type: convertETType(eType)}
+				chk.AppendTime(colIdx, t)
 			}
 		}
 	case types.ETDuration:
@@ -263,11 +261,8 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				//if rand.Float64() < 0.5 {
-				//	chk.AppendDuration(colIdx, -rand.())
-				//} else {
-				//	chk.AppendDuration(colIdx, rand.())
-				//}
+				d := types.Duration{Duration: time.Duration(rand.Int())}
+				chk.AppendDuration(colIdx, d)
 			}
 		}
 	case types.ETJson:
@@ -275,11 +270,11 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				//if rand.Float64() < 0.5 {
-				//	chk.AppendJSON(colIdx, -rand.())
-				//} else {
-				//	chk.AppendJSON(colIdx, rand.())
-				//}
+				j := new(json.BinaryJSON)
+				if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, rand.Int()))); err != nil {
+					panic(err)
+				}
+				chk.AppendJSON(colIdx, *j)
 			}
 		}
 	case types.ETString:
@@ -287,11 +282,7 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				//if rand.Float64() < 0.5 {
-				//	chk.AppendString(colIdx, -rand.())
-				//} else {
-				//	chk.AppendString(colIdx, rand.())
-				//}
+				chk.AppendString(colIdx, fmt.Sprintf("%v", rand.Int()))
 			}
 		}
 	default:
