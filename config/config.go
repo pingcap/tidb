@@ -93,9 +93,9 @@ type Config struct {
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
 	// EnableTableLock indicate whether enable table lock.
 	// TODO: remove this after table lock features stable.
-	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
-	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
-	SplitRegionMaxNum   uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
+	EnableTableLock     bool        `toml:"enable-table-lock" json:"enable-table-lock"`
+	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
+	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 }
 

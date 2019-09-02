@@ -29,7 +29,9 @@ type stmtSummaryCacheKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
 	schemaName string
 	digest     string
-	hash       []byte
+	// TODO: add plan digest
+	// `hash` is the hash value of this object
+	hash []byte
 }
 
 // Hash implements SimpleLRUCache.Key
@@ -57,7 +59,7 @@ type stmtSummary struct {
 	normalizedSQL   string
 	sampleSQL       string
 	execCount       uint64
-	sumTotalLatency uint64
+	sumLatency      uint64
 	maxLatency      uint64
 	minLatency      uint64
 	sumAffectedRows uint64
@@ -91,13 +93,24 @@ func NewStmtSummaryByDigest() *stmtSummaryByDigest {
 
 // Convert StmtExecInfo to stmtSummary
 func convertStmtExecInfoToSummary(sei *StmtExecInfo) *stmtSummary {
+	// Trim SQL to size MaxSqlLength
+	maxSqlLength := config.GetGlobalConfig().StmtSummary.MaxSqlLength
+	normalizedSQL := sei.NormalizedSQL
+	if len(normalizedSQL) > int(maxSqlLength) {
+		normalizedSQL = normalizedSQL[:maxSqlLength]
+	}
+	sampleSQL := sei.OriginalSQL
+	if len(sampleSQL) > int(maxSqlLength) {
+		sampleSQL = sampleSQL[:maxSqlLength]
+	}
+
 	return &stmtSummary{
 		schemaName:      sei.SchemaName,
 		digest:          sei.Digest,
-		normalizedSQL:   sei.NormalizedSQL,
-		sampleSQL:       sei.OriginalSQL,
+		normalizedSQL:   normalizedSQL,
+		sampleSQL:       sampleSQL,
 		execCount:       1,
-		sumTotalLatency: sei.TotalLatency,
+		sumLatency:      sei.TotalLatency,
 		maxLatency:      sei.TotalLatency,
 		minLatency:      sei.TotalLatency,
 		sumAffectedRows: sei.AffectedRows,
@@ -109,7 +122,7 @@ func convertStmtExecInfoToSummary(sei *StmtExecInfo) *stmtSummary {
 
 // Add a new StmtExecInfo to stmtSummary
 func addStmtExecInfoToSummary(sei *StmtExecInfo, ss *stmtSummary) {
-	ss.sumTotalLatency += sei.TotalLatency
+	ss.sumLatency += sei.TotalLatency
 	ss.execCount++
 	if sei.TotalLatency > ss.maxLatency {
 		ss.maxLatency = sei.TotalLatency
@@ -156,10 +169,10 @@ func (ss *stmtSummaryByDigest) ToDatum() [][]types.Datum {
 			summary.digest,
 			summary.normalizedSQL,
 			summary.execCount,
-			summary.sumTotalLatency,
+			summary.sumLatency,
 			summary.maxLatency,
 			summary.minLatency,
-			summary.sumTotalLatency/summary.execCount, // AVG_LATENCY
+			summary.sumLatency/summary.execCount, // AVG_LATENCY
 			summary.sumAffectedRows,
 			types.Time{Time: types.FromGoTime(summary.firstSeen), Type: mysql.TypeTimestamp},
 			types.Time{Time: types.FromGoTime(summary.lastSeen), Type: mysql.TypeTimestamp},

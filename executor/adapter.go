@@ -788,7 +788,7 @@ func (a *ExecStmt) summaryStmt() {
 	}
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
-	costTime := time.Since(a.StartTime)
+	costTime := time.Since(sessVars.StartTime)
 	stmtsummary.StmtSummary.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:    sessVars.CurrentDB,
 		OriginalSQL:   a.Text,
@@ -797,7 +797,7 @@ func (a *ExecStmt) summaryStmt() {
 		TotalLatency:  uint64(costTime.Nanoseconds()),
 		AffectedRows:  stmtCtx.AffectedRows(),
 		SentRows:      0,
-		StartTime:     a.StartTime,
+		StartTime:     sessVars.StartTime,
 	})
 }
 
