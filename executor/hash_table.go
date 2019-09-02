@@ -15,9 +15,9 @@ package executor
 
 import (
 	"hash"
-	"hash/fnv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -25,31 +25,56 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
+const (
+	// estCountMaxFactor defines the factor of maxStatCount with maxChunkSize.
+	// estCountMax is maxChunkSize * estCountMaxFactor.
+	// Set this threshold to prevent innerEstCount being too large and causing a performance regression.
+	estCountMaxFactor = 10 * 1024
+
+	// estCountMinFactor defines the factor of statCountMin with maxChunkSize.
+	// estCountMin is maxChunkSize * estCountMinFactor.
+	// Set this threshold to prevent innerEstCount being too small and causing a performance regression.
+	estCountMinFactor = 8
+
+	// estCountDivisor defines the divisor of innerEstCount.
+	// Set this divisor to prevent innerEstCount being too large and causing a performance regression.
+	estCountDivisor = 8
+)
+
+// hashContext keeps the needed hash context of a db table in hash join.
+type hashContext struct {
+	allTypes  []*types.FieldType
+	keyColIdx []int
+	h         hash.Hash64
+	buf       []byte
+}
+
 // hashRowContainer handles the rows and the hash map of a table.
 // TODO: support spilling out to disk when memory is limited.
 type hashRowContainer struct {
 	records   *chunk.List
 	hashTable *rowHashMap
 
-	sc        *stmtctx.StatementContext
-	allTypes  []*types.FieldType
-	keyColIdx []int
-	h         hash.Hash64
-	buf       [1]byte
+	sc   *stmtctx.StatementContext
+	hCtx *hashContext
 }
 
-func newHashRowContainer(
-	sc *stmtctx.StatementContext, statCount int,
-	allTypes []*types.FieldType, keyColIdx []int, initCap, maxChunkSize int) *hashRowContainer {
-
-	c := &hashRowContainer{
-		hashTable: newRowHashMapWithStatCount(statCount),
-		sc:        sc,
-		allTypes:  allTypes,
-		keyColIdx: keyColIdx,
-		h:         fnv.New64(),
+func newHashRowContainer(sctx sessionctx.Context, estCount int, hCtx *hashContext, initList *chunk.List) *hashRowContainer {
+	maxChunkSize := sctx.GetSessionVars().MaxChunkSize
+	estCount /= estCountDivisor
+	if estCount > maxChunkSize*estCountMaxFactor {
+		estCount = maxChunkSize * estCountMaxFactor
 	}
-	c.records = chunk.NewList(allTypes, initCap, maxChunkSize)
+	if estCount < maxChunkSize*estCountMinFactor {
+		estCount = 0
+	}
+	c := &hashRowContainer{
+		records:   initList,
+		hashTable: newRowHashMap(estCount),
+
+		sc:   sctx.GetSessionVars().StmtCtx,
+		hCtx: hCtx,
+	}
 	return c
 }
 
@@ -60,10 +85,9 @@ func (c *hashRowContainer) GetMemTracker() *memory.Tracker {
 // GetMatchedRows get matched rows from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, joinKeysTypes []*types.FieldType, keyColIdx []int, h hash.Hash64, buf []byte) (matched []chunk.Row, hasNull bool, err error) {
-
+func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, hasNull bool, err error) {
 	var key uint64
-	hasNull, key, err = c.getJoinKeyFromChkRow(c.sc, probeRow, joinKeysTypes, keyColIdx, h, buf)
+	hasNull, key, err = c.getJoinKeyFromChkRow(c.sc, probeRow, hCtx)
 	if err != nil {
 		return
 	}
@@ -79,7 +103,7 @@ func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, joinKeysTypes []*t
 	for _, ptr := range innerPtrs {
 		matchedRow := c.records.GetRow(ptr)
 		var ok bool
-		ok, err = c.matchJoinKey(matchedRow, probeRow, joinKeysTypes, keyColIdx)
+		ok, err = c.matchJoinKey(matchedRow, probeRow, hCtx)
 		if err != nil {
 			return
 		}
@@ -95,10 +119,11 @@ func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, joinKeysTypes []*t
 }
 
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
-func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeAllTypes []*types.FieldType, probeColIdx []int) (ok bool, err error) {
+func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *hashContext) (ok bool, err error) {
+
 	return codec.EqualChunkRow(c.sc,
-		buildRow, c.allTypes, c.keyColIdx,
-		probeRow, probeAllTypes, probeColIdx)
+		buildRow, c.hCtx.allTypes, c.hCtx.keyColIdx,
+		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
 }
 
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
@@ -114,7 +139,7 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 	)
 	numRows := chk.NumRows()
 	for j := 0; j < numRows; j++ {
-		hasNull, key, err = c.getJoinKeyFromChkRow(c.sc, chk.GetRow(j), c.allTypes, c.keyColIdx, c.h, c.buf[:])
+		hasNull, key, err = c.getJoinKeyFromChkRow(c.sc, chk.GetRow(j), c.hCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -128,17 +153,15 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 }
 
 // getJoinKeyFromChkRow fetches join keys from row and calculate the hash value.
-func (*hashRowContainer) getJoinKeyFromChkRow(
-	sc *stmtctx.StatementContext,
-	row chunk.Row, allTypes []*types.FieldType, keyColIdx []int, h hash.Hash64, buf []byte) (hasNull bool, key uint64, err error) {
-	for _, i := range keyColIdx {
+func (*hashRowContainer) getJoinKeyFromChkRow(sc *stmtctx.StatementContext, row chunk.Row, hCtx *hashContext) (hasNull bool, key uint64, err error) {
+	for _, i := range hCtx.keyColIdx {
 		if row.IsNull(i) {
 			return true, 0, nil
 		}
 	}
-	h.Reset()
-	err = codec.HashChunkRow(sc, h, row, allTypes, keyColIdx, buf)
-	return false, h.Sum64(), err
+	hCtx.h.Reset()
+	err = codec.HashChunkRow(sc, hCtx.h, row, hCtx.allTypes, hCtx.keyColIdx, hCtx.buf)
+	return false, hCtx.h.Sum64(), err
 }
 
 func (c hashRowContainer) Len() int {
@@ -207,16 +230,13 @@ type rowHashMap struct {
 	length     int
 }
 
-// newRowHashMap creates a new rowHashMap.
-func newRowHashMapWithStatCount(statCount int) *rowHashMap {
+// newRowHashMap creates a new rowHashMap. estCount means the estimated size of the hashMap.
+// If unknown, set it to 0.
+func newRowHashMap(estCount int) *rowHashMap {
 	m := new(rowHashMap)
-	m.hashTable = make(map[uint64]entryAddr, statCount)
+	m.hashTable = make(map[uint64]entryAddr, estCount)
 	m.entryStore.init()
 	return m
-}
-
-func newRowHashMap() *rowHashMap {
-	return newRowHashMapWithStatCount(0)
 }
 
 // Put puts the key/rowPtr pairs to the rowHashMap, multiple rowPtrs are stored in a list.

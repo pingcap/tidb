@@ -555,15 +555,15 @@ func prepare4Join(testCase *hashJoinTestCase, innerExec, outerExec Executor) *Ha
 		joinKeys = append(joinKeys, cols0[keyIdx])
 	}
 	e := &HashJoinExec{
-		baseExecutor:    newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
-		concurrency:     uint(testCase.concurrency),
-		joinType:        0, // InnerJoin
-		isOuterJoin:     false,
-		innerKeys:       joinKeys,
-		outerKeys:       joinKeys,
-		innerExec:       innerExec,
-		outerExec:       outerExec,
-		innerStatsCount: float64(testCase.rows),
+		baseExecutor:  newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
+		concurrency:   uint(testCase.concurrency),
+		joinType:      0, // InnerJoin
+		isOuterJoin:   false,
+		innerKeys:     joinKeys,
+		outerKeys:     joinKeys,
+		innerExec:     innerExec,
+		outerExec:     outerExec,
+		innerEstCount: float64(testCase.rows),
 	}
 	defaultValues := make([]types.Datum, e.innerExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)

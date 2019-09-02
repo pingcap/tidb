@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"hash"
 	"hash/fnv"
 	"sync"
 	"sync/atomic"
@@ -40,12 +39,12 @@ var (
 type HashJoinExec struct {
 	baseExecutor
 
-	outerExec       Executor
-	innerExec       Executor
-	innerStatsCount float64
-	outerFilter     expression.CNFExprs
-	outerKeys       []*expression.Column
-	innerKeys       []*expression.Column
+	outerExec     Executor
+	innerExec     Executor
+	innerEstCount float64
+	outerFilter   expression.CNFExprs
+	outerKeys     []*expression.Column
+	innerKeys     []*expression.Column
 
 	// concurrency is the number of partition, build and join workers.
 	concurrency   uint
@@ -322,8 +321,6 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 	var (
 		outerResult *chunk.Chunk
 		selected    = make([]bool, 0, chunk.InitialCapacity)
-		h           = fnv.New64()
-		buf         = [1]byte{}
 	)
 	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
@@ -333,6 +330,12 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 	// Read and filter outerResult, and join the outerResult with the inner rows.
 	emptyOuterResult := &outerChkResource{
 		dest: e.outerResultChs[workerID],
+	}
+	hCtx := &hashContext{
+		allTypes:  retTypes(e.outerExec),
+		keyColIdx: outerKeyColIdx,
+		h:         fnv.New64(),
+		buf:       make([]byte, 1),
 	}
 	for ok := true; ok; {
 		if e.finished.Load().(bool) {
@@ -346,7 +349,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 		if !ok {
 			break
 		}
-		ok, joinResult = e.join2Chunk(workerID, outerResult, outerKeyColIdx, joinResult, selected, h, buf[:])
+		ok, joinResult = e.join2Chunk(workerID, outerResult, hCtx, joinResult, selected)
 		if !ok {
 			break
 		}
@@ -361,9 +364,9 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 	}
 }
 
-func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row, outerKeyColIdx []int,
-	joinResult *hashjoinWorkerResult, h hash.Hash64, buf []byte) (bool, *hashjoinWorkerResult) {
-	innerRows, hasNull, err := e.rowContainer.GetMatchedRows(outerRow, retTypes(e.outerExec), outerKeyColIdx, h, buf)
+func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row, hCtx *hashContext,
+	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
+	innerRows, hasNull, err := e.rowContainer.GetMatchedRows(outerRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -410,8 +413,8 @@ func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerRes
 	return ok, joinResult
 }
 
-func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, outerKeyColIdx []int, joinResult *hashjoinWorkerResult,
-	selected []bool, h hash.Hash64, buf []byte) (ok bool, _ *hashjoinWorkerResult) {
+func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult,
+	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
 	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
 	if err != nil {
@@ -422,7 +425,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, outerKey
 		if !selected[i] { // process unmatched outer rows
 			e.joiners[workerID].onMissMatch(false, outerChk.GetRow(i), joinResult.chk)
 		} else { // process matched outer rows
-			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), outerKeyColIdx, joinResult, h, buf)
+			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), hCtx, joinResult)
 			if !ok {
 				return false, joinResult
 			}
@@ -493,38 +496,21 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	}
 }
 
-const (
-	// statCountMaxFactor defines the factor of maxStatCount with maxChunkSize.
-	// statCountMax is maxChunkSize * statCountMaxFactor.
-	// Set this threshold to prevent innerStatsCount being too large and causing a performance regression.
-	statCountMaxFactor = 10 * 1024
-
-	// statCountMinFactor defines the factor of statCountMin with maxChunkSize.
-	// statCountMin is maxChunkSize * statCountMinFactor.
-	// Set this threshold to prevent innerStatsCount being too small and causing a performance regression.
-	statCountMinFactor = 8
-
-	// statCountDivisor defines the divisor of innerStatsCount.
-	// Set this divisor to prevent innerStatsCount being too large and causing a performance regression.
-	statCountDivisor = 8
-)
-
 // buildHashTableForList builds hash table from `list`.
 func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) error {
 	innerKeyColIdx := make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
 		innerKeyColIdx[i] = e.innerKeys[i].Index
 	}
-	statCount := int(e.innerStatsCount / statCountDivisor)
-	if statCount > e.maxChunkSize*statCountMaxFactor {
-		statCount = e.maxChunkSize * statCountMaxFactor
+	allTypes := e.innerExec.base().retFieldTypes
+	hCtx := &hashContext{
+		allTypes:  allTypes,
+		keyColIdx: innerKeyColIdx,
+		h:         fnv.New64(),
+		buf:       make([]byte, 1),
 	}
-	if statCount < e.maxChunkSize*statCountMinFactor {
-		statCount = 0
-	}
-	e.rowContainer = newHashRowContainer(e.ctx.GetSessionVars().StmtCtx, statCount,
-		e.innerExec.base().retFieldTypes, innerKeyColIdx,
-		e.initCap, e.maxChunkSize)
+	initList := chunk.NewList(allTypes, e.initCap, e.maxChunkSize)
+	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx, initList)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(innerResultLabel)
 	for chk := range innerResultCh {
