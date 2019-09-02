@@ -36,7 +36,7 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 			return err
 		}
 		if isNull {
-			result.ResizeInt64( n, true)
+			result.ResizeInt64(n, true)
 			return nil
 		}
 		result.ResizeInt64(n, false)
