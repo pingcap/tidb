@@ -194,7 +194,7 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 	// (outerCnt / batchSize) * (batchSize * Log2(batchSize) + batchSize) * cpuFactor
 	batchSize := math.Min(float64(p.ctx.GetSessionVars().IndexJoinBatchSize), outerCnt)
 	if batchSize > 2 {
-		innerCPUCost += outerCnt * (math.Log2(float64(batchSize)) + 1) * cpuFactor
+		innerCPUCost += outerCnt * (math.Log2(batchSize) + 1) * cpuFactor
 	}
 	// Add cost of building inner executors. CPU cost of building copTasks:
 	// (outerCnt / batchSize) * (batchSize * distinctFactor) * cpuFactor
@@ -344,6 +344,34 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	}
 }
 
+// splitCopAvg2CountAndSum splits the cop avg function to count and sum.
+// Now it's only used for TableReader.
+func splitCopAvg2CountAndSum(p PhysicalPlan) {
+	var baseAgg *basePhysicalAgg
+	if agg, ok := p.(*PhysicalStreamAgg); ok {
+		baseAgg = &agg.basePhysicalAgg
+	}
+	if agg, ok := p.(*PhysicalHashAgg); ok {
+		baseAgg = &agg.basePhysicalAgg
+	}
+	if baseAgg == nil {
+		return
+	}
+	for i := len(baseAgg.AggFuncs) - 1; i >= 0; i-- {
+		f := baseAgg.AggFuncs[i]
+		if f.Name == ast.AggFuncAvg {
+			sumAgg := *f
+			sumAgg.Name = ast.AggFuncSum
+			sumAgg.RetTp = baseAgg.Schema().Columns[i+1].RetType
+			cntAgg := *f
+			cntAgg.Name = ast.AggFuncCount
+			cntAgg.RetTp = baseAgg.Schema().Columns[i].RetType
+			cntAgg.RetTp.Flag = f.RetTp.Flag
+			baseAgg.AggFuncs = append(baseAgg.AggFuncs[:i], append([]*aggregation.AggFuncDesc{&cntAgg, &sumAgg}, baseAgg.AggFuncs[i+1:]...)...)
+		}
+	}
+}
+
 // finishCopTask means we close the coprocessor task and create a root task.
 func finishCopTask(ctx sessionctx.Context, task task) task {
 	t, ok := task.(*copTask)
@@ -413,6 +441,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
+		splitCopAvg2CountAndSum(t.tablePlan)
 		p := PhysicalTableReader{tablePlan: t.tablePlan}.Init(ctx)
 		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
@@ -607,7 +636,7 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	}
 	p.SetChildren(childPlans...)
 	// Children of UnionExec are executed in parallel.
-	t.cst = childMaxCost + float64((1+len(tasks)))*concurrencyFactor
+	t.cst = childMaxCost + float64(1+len(tasks))*concurrencyFactor
 	return t
 }
 

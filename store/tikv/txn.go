@@ -315,7 +315,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 			if *commitDetail != nil {
 				(*commitDetail).TxnRetry += 1
 			} else {
-				*commitDetail = committer.detail
+				*commitDetail = committer.getDetail()
 			}
 		}
 	}()
@@ -331,9 +331,10 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// for transactions which need to acquire latches
 	start = time.Now()
 	lock := txn.store.txnLatches.Lock(committer.startTS, committer.keys)
-	committer.detail.LocalLatchTime = time.Since(start)
-	if committer.detail.LocalLatchTime > 0 {
-		metrics.TiKVLocalLatchWaitTimeHistogram.Observe(committer.detail.LocalLatchTime.Seconds())
+	commitDetail := committer.getDetail()
+	commitDetail.LocalLatchTime = time.Since(start)
+	if commitDetail.LocalLatchTime > 0 {
+		metrics.TiKVLocalLatchWaitTimeHistogram.Observe(commitDetail.LocalLatchTime.Seconds())
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
@@ -423,7 +424,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 		err := txn.committer.pessimisticLockKeys(bo, keys)
 		if err != nil {
 			for _, key := range keys {
-				txn.us.DeleteConditionPair(key)
+				txn.us.DeleteKeyExistErrInfo(key)
 			}
 			wg := txn.asyncPessimisticRollback(ctx, keys)
 			if dl, ok := errors.Cause(err).(*ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
