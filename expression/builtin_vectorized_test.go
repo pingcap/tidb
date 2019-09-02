@@ -771,7 +771,7 @@ func BenchmarkFloat32ColRow(b *testing.B) {
 	ctx := mock.NewContext()
 	it := chunk.NewIterator4Chunk(chk)
 	b.ResetTimer()
-	for i := 0; i < b.N; i ++ {
+	for i := 0; i < b.N; i++ {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			if _, _, err := col.EvalReal(ctx, row); err != nil {
 				b.Fatal(err)
