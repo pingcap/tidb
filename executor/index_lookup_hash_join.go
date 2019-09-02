@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -58,7 +57,6 @@ type indexHashJoinInnerWorker struct {
 	resultCh          chan *indexHashJoinResult
 	taskCh            <-chan *indexHashJoinTask
 	wg                *sync.WaitGroup
-	finished          atomic.Value
 }
 
 type indexHashJoinResult struct {
@@ -134,7 +132,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	e.workerWg.Add(concurrency)
 	for i := int(0); i < concurrency; i++ {
 		workerID := i
-		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx) }, e.finishJoinWorkers)
+		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, cancelFunc) }, e.finishJoinWorkers)
 	}
 	go e.wait4JoinWorkers()
 }
@@ -181,7 +179,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
-	return e.children[0].Close()
+	return e.baseExecutor.Close()
 }
 
 func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
@@ -260,11 +258,10 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		resultCh:          e.resultCh,
 		matchedOuterPtrs:  make([][]byte, 0, 8),
 	}
-	iw.finished.Store(false)
 	return iw
 }
 
-func (iw *indexHashJoinInnerWorker) run(ctx context.Context) {
+func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.CancelFunc) {
 	var task *indexHashJoinTask
 	joinResult, ok := iw.getNewJoinResult(ctx)
 	if !ok {
@@ -283,7 +280,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context) {
 			joinResult.err = task.err
 			break
 		}
-		err := iw.handleTask(ctx, task, joinResult)
+		err := iw.handleTask(ctx, cancelFunc, task, joinResult)
 		if err != nil {
 			joinResult.err = err
 			break
@@ -311,7 +308,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 	return joinResult, ok
 }
 
-func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, task *indexHashJoinTask) {
+func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, cancelFunc context.CancelFunc, task *indexHashJoinTask) {
 	var (
 		keyBuf, valBuf  = make([]byte, 0, 64), make([]byte, 8)
 		rowIdx, numRows = 0, task.outerResult.NumRows()
@@ -331,7 +328,6 @@ OUTER:
 		}
 		keyBuf, err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, keyBuf[:0], row, iw.outerCtx.rowTypes, keyColIdx)
 		if err != nil {
-			iw.finished.Store(true)
 			result, ok := iw.getNewJoinResult(ctx)
 			if !ok {
 				return
@@ -340,7 +336,9 @@ OUTER:
 			select {
 			case iw.resultCh <- result:
 			case <-ctx.Done():
+				return
 			}
+			cancelFunc()
 		}
 		*(*int)(unsafe.Pointer(&valBuf[0])) = rowIdx
 		task.lookupMap.Put(keyBuf, valBuf)
@@ -354,9 +352,6 @@ func (iw *indexHashJoinInnerWorker) fetchInnerResults(ctx context.Context, task 
 		return err
 	}
 	lookUpContents = iw.sortAndDedupLookUpContents(lookUpContents)
-	if iw.finished.Load().(bool) {
-		return nil
-	}
 	return iw.innerWorker.fetchInnerResults(ctx, task, lookUpContents)
 }
 
@@ -367,19 +362,16 @@ func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(r interface{}
 	iw.wg.Done()
 }
 
-func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult) error {
+func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, cancelFunc context.CancelFunc, task *indexHashJoinTask, joinResult *indexHashJoinResult) error {
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
-	go util.WithRecovery(func() { iw.buildHashTableForOuterResult(ctx, task) }, iw.handleHashJoinInnerWorkerPanic)
+	go util.WithRecovery(func() { iw.buildHashTableForOuterResult(ctx, cancelFunc, task) }, iw.handleHashJoinInnerWorkerPanic)
 	err := iw.fetchInnerResults(ctx, task.lookUpJoinTask)
 	if err != nil {
 		return err
 	}
 	iw.wg.Wait()
-	if iw.finished.Load().(bool) {
-		return nil
-	}
 	return iw.doJoin(ctx, task, joinResult)
 }
 

@@ -588,6 +588,9 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
+		if len(ctx.Done()) > 0 {
+			return nil
+		}
 		err := Next(ctx, innerExec, iw.executorChk)
 		if err != nil {
 			return err
@@ -646,5 +649,5 @@ func (e *IndexLookUpJoin) Close() error {
 	}
 	e.workerWg.Wait()
 	e.memTracker = nil
-	return e.children[0].Close()
+	return e.baseExecutor.Close()
 }
