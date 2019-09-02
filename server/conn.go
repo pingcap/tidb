@@ -1430,6 +1430,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 			return err
 		}
 	}
+	rs.LogPartialSlow()
 	return cc.writeEOF(serverStatus)
 }
 
