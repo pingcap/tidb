@@ -22,8 +22,10 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
 )
 
 // IndexNestedLoopHashJoin employs one outer worker and N inner workers to
@@ -121,7 +123,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	innerCh := make(chan *indexHashJoinTask, concurrency)
 	e.workerWg.Add(1)
 	ow := e.newOuterWorker(innerCh)
-	go util.WithRecovery(func() { ow.run(workerCtx) }, e.finishJoinWorkers)
+	go util.WithRecovery(func() { ow.run(workerCtx, e.cancelFunc) }, e.finishJoinWorkers)
 
 	e.resultCh = make(chan *indexHashJoinResult, concurrency+1)
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
@@ -152,12 +154,20 @@ func (e *IndexNestedLoopHashJoin) wait4JoinWorkers() {
 // Next implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	result, ok := <-e.resultCh
-	if !ok {
+	var (
+		result *indexHashJoinResult
+		ok     bool
+	)
+	select {
+	case result, ok = <-e.resultCh:
+		if !ok {
+			return nil
+		}
+		if result.err != nil {
+			return result.err
+		}
+	case <-ctx.Done():
 		return nil
-	}
-	if result.err != nil {
-		return result.err
 	}
 	req.SwapColumns(result.chk)
 	result.src <- result.chk
@@ -182,16 +192,13 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	return e.baseExecutor.Close()
 }
 
-func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
+func (ow *indexHashJoinOuterWorker) run(ctx context.Context, cancelFunc context.CancelFunc) {
 	defer close(ow.innerCh)
 	for {
 		task, err := ow.buildTask(ctx)
-		if task == nil {
-			return
-		}
-		if err != nil {
-			task.err = err
-			ow.pushToChan(ctx, task, ow.innerCh)
+		if task == nil || err != nil {
+			cancelFunc()
+			logutil.Logger(ctx).Info("indexHashJoinOuterWorker.run failed", zap.Error(err))
 			return
 		}
 		if finished := ow.pushToChan(ctx, task, ow.innerCh); finished {
@@ -265,6 +272,8 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 	var task *indexHashJoinTask
 	joinResult, ok := iw.getNewJoinResult(ctx)
 	if !ok {
+		cancelFunc()
+		logutil.Logger(ctx).Info("indexHashJoinInnerWorker.run failed", zap.Error(errors.New("iw.getNewJoinResult fail")))
 		return
 	}
 	for {
@@ -286,7 +295,12 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			break
 		}
 	}
-	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+	if joinResult.err != nil {
+		cancelFunc()
+		logutil.Logger(ctx).Info("indexHashJoinInnerWorker.run failed", zap.Error(joinResult.err))
+		return
+	}
+	if joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
 		select {
 		case iw.resultCh <- joinResult:
 		case <-ctx.Done():
@@ -328,17 +342,9 @@ OUTER:
 		}
 		keyBuf, err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, keyBuf[:0], row, iw.outerCtx.rowTypes, keyColIdx)
 		if err != nil {
-			result, ok := iw.getNewJoinResult(ctx)
-			if !ok {
-				return
-			}
-			result.err = err
-			select {
-			case iw.resultCh <- result:
-			case <-ctx.Done():
-				return
-			}
 			cancelFunc()
+			logutil.Logger(ctx).Info("indexHashJoinInnerWorker.buildHashTableForOuterResult failed", zap.Error(err))
+			return
 		}
 		*(*int)(unsafe.Pointer(&valBuf[0])) = rowIdx
 		task.lookupMap.Put(keyBuf, valBuf)
