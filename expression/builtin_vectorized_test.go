@@ -766,10 +766,28 @@ func (s *testEvaluatorSuite) TestFloat32ColVec(c *C) {
 	}
 }
 
-func BenchmarkFloatColRow(b *testing.B) {
+func BenchmarkFloat32ColRow(b *testing.B) {
+	col, chk, _ := genFloat32Col()
+	ctx := mock.NewContext()
+	it := chunk.NewIterator4Chunk(chk)
+	b.ResetTimer()
+	for i := 0; i < b.N; i ++ {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			if _, _, err := col.EvalReal(ctx, row); err != nil {
+				b.Fatal(err)
+			}
 
+		}
+	}
 }
 
-func BenchmarkFloatColVec(b *testing.B) {
-
+func BenchmarkFloat32ColVec(b *testing.B) {
+	col, chk, result := genFloat32Col()
+	ctx := mock.NewContext()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := col.VecEvalReal(ctx, chk, result); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
