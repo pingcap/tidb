@@ -285,12 +285,12 @@ func (s *testSuite) TestInsertWithAutoidSchema(c *C) {
 			testkit.Rows(`3000, -1`),
 		},
 		{
-			`insert into t1 values(3000, -1), (null, -2)`,
+			`;`,
 			`select * from t1 where id = 3001`,
 			testkit.Rows(`3001, -2`),
 		},
 		{
-			``,
+			`;`,
 			`select last_insert_id()`,
 			testkit.Rows(`3001`),
 		},
