@@ -1785,8 +1785,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		return
 	}
 
-	//txnFuture := s.getTxnFuture(ctx)
-	//s.txn.changeInvalidToPending(txnFuture)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
