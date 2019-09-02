@@ -302,11 +302,12 @@ func (req *Request) DebugGetRegionProperties() *debugpb.GetRegionPropertiesReque
 	return req.req.(*debugpb.GetRegionPropertiesRequest)
 }
 
-// Empty returns BatchCommandsEmptyRequest in request
+// Empty returns BatchCommandsEmptyRequest in request.
 func (req *Request) Empty() *tikvpb.BatchCommandsEmptyRequest {
 	return req.req.(*tikvpb.BatchCommandsEmptyRequest)
 }
 
+// CheckTxnStatus returns CheckTxnStatusRequest in request.
 func (req *Request) CheckTxnStatus() *kvrpcpb.CheckTxnStatusRequest {
 	return req.req.(*kvrpcpb.CheckTxnStatusRequest)
 }
