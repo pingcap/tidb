@@ -578,8 +578,7 @@ func BenchmarkVectorizedBuiltinFunc(b *testing.B) {
 	ctx := mock.NewContext()
 	for _, testCase := range vecExprBenchCases {
 		baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, testCase)
-		baseFuncName := testCase.builtinFuncName
-		baseFuncName = fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
+		baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 		tmp := strings.Split(baseFuncName, ".")
 		baseFuncName = tmp[len(tmp)-1]
 
