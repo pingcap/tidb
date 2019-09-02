@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -346,6 +347,73 @@ func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
 		c.Assert(ok, IsTrue, comment)
 		c.Assert(newConst.DeferredExpr.String(), Equals, tt.deferred, comment)
 	}
+}
+
+func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := mock.NewContext()
+	testTime := time.Now()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{
+		types.NewIntDatum(1),
+		types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
+		types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+		types.NewDurationDatum(types.ZeroDuration),
+		types.NewStringDatum("{}"),
+		types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+		types.NewBytesDatum([]byte{'b'}),
+		types.NewFloat32Datum(1.1),
+		types.NewFloat64Datum(2.1),
+		types.NewUintDatum(100),
+		types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+		types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
+	}
+	cstInt := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newIntFieldType()}
+	cstDec := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 1}, RetType: newDecimalFieldType()}
+	cstTime := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 2}, RetType: newDateFieldType()}
+	cstDuration := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 3}, RetType: newDurFieldType()}
+	cstJSON := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 4}, RetType: newJSONFieldType()}
+	cstBytes := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 6}, RetType: newBlobFieldType()}
+	cstBinary := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 5}, RetType: newBinaryLiteralFieldType()}
+	cstFloat32 := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 7}, RetType: newFloatFieldType()}
+	cstFloat64 := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 8}, RetType: newFloatFieldType()}
+	cstUint := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 9}, RetType: newIntFieldType()}
+	cstBit := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 10}, RetType: newBinaryLiteralFieldType()}
+	cstEnum := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 11}, RetType: newEnumFieldType()}
+
+	c.Assert(mysql.TypeVarString, Equals, cstJSON.GetType().Tp)
+	c.Assert(mysql.TypeNewDecimal, Equals, cstDec.GetType().Tp)
+	c.Assert(mysql.TypeLonglong, Equals, cstInt.GetType().Tp)
+	c.Assert(mysql.TypeLonglong, Equals, cstUint.GetType().Tp)
+	c.Assert(mysql.TypeTimestamp, Equals, cstTime.GetType().Tp)
+	c.Assert(mysql.TypeDuration, Equals, cstDuration.GetType().Tp)
+	c.Assert(mysql.TypeBlob, Equals, cstBytes.GetType().Tp)
+	c.Assert(mysql.TypeBit, Equals, cstBinary.GetType().Tp)
+	c.Assert(mysql.TypeBit, Equals, cstBit.GetType().Tp)
+	c.Assert(mysql.TypeFloat, Equals, cstFloat32.GetType().Tp)
+	c.Assert(mysql.TypeDouble, Equals, cstFloat64.GetType().Tp)
+	c.Assert(mysql.TypeEnum, Equals, cstEnum.GetType().Tp)
+
+	d, _, err := cstInt.EvalInt(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(d, Equals, int64(1))
+	r, _, err := cstInt.EvalReal(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(r, Equals, float64(1))
+	de, _, err := cstDec.EvalDecimal(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(de.String(), Equals, "20170118123950.123")
+	s, _, err := cstInt.EvalString(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(s, Equals, "1")
+	t, _, err := cstTime.EvalTime(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(t.Compare(ctx.GetSessionVars().PreparedParams[2].GetMysqlTime()), Equals, 0)
+	dur, _, err := cstDuration.EvalDuration(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(dur.Duration, Equals, types.ZeroDuration.Duration)
+	json, _, err := cstJSON.EvalJSON(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(json, NotNil)
 }
 
 func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {

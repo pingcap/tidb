@@ -170,7 +170,7 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 
 	if len(conds) == 1 {
 		// Constant false.
-		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil {
+		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
 			if err == nil && ret == false {
 				return true, nil
