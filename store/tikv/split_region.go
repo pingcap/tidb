@@ -177,8 +177,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 
 // SplitRegions splits regions by splitKeys.
 func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool) (regionIDs []uint64, err error) {
-	splitRegionsBo := splitRegionBackoff * math.Min(float64(len(splitKeys)), 6)
-	bo := NewBackoffer(ctx, int(splitRegionsBo))
+	bo := NewBackoffer(ctx, int(math.Min(float64(len(splitKeys)), maxSplitRegionsBackoff)))
 	resp, err := s.splitBatchRegionsReq(bo, splitKeys, scatter)
 	regionIDs = make([]uint64, 0, len(splitKeys))
 	if resp != nil && resp.Resp != nil {
