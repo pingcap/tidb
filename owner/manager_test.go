@@ -58,7 +58,12 @@ func TestSingle(t *testing.T) {
 	defer clus.Terminate(t)
 	cli := clus.RandClient()
 	ctx := goctx.Background()
-	d := NewDDL(ctx, cli, store, nil, nil, testLease, nil)
+	d := NewDDL(
+		ctx,
+		WithEtcdClient(cli),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d.Stop()
 
 	isOwner := checkOwner(d, true)
@@ -109,13 +114,23 @@ func TestCluster(t *testing.T) {
 	defer clus.Terminate(t)
 
 	cli := clus.Client(0)
-	d := NewDDL(goctx.Background(), cli, store, nil, nil, testLease, nil)
+	d := NewDDL(
+		goctx.Background(),
+		WithEtcdClient(cli),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	isOwner := checkOwner(d, true)
 	if !isOwner {
 		t.Fatalf("expect true, got isOwner:%v", isOwner)
 	}
 	cli1 := clus.Client(1)
-	d1 := NewDDL(goctx.Background(), cli1, store, nil, nil, testLease, nil)
+	d1 := NewDDL(
+		goctx.Background(),
+		WithEtcdClient(cli1),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	isOwner = checkOwner(d1, false)
 	if isOwner {
 		t.Fatalf("expect false, got isOwner:%v", isOwner)
@@ -135,7 +150,12 @@ func TestCluster(t *testing.T) {
 
 	// d3 (not owner) stop
 	cli3 := clus.Client(3)
-	d3 := NewDDL(goctx.Background(), cli3, store, nil, nil, testLease, nil)
+	d3 := NewDDL(
+		goctx.Background(),
+		WithEtcdClient(cli3),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d3.Stop()
 	isOwner = checkOwner(d3, false)
 	if isOwner {
