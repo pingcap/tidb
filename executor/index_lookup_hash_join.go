@@ -125,7 +125,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	ow := e.newOuterWorker(innerCh)
 	go util.WithRecovery(func() { ow.run(workerCtx, e.cancelFunc) }, e.finishJoinWorkers)
 
-	e.resultCh = make(chan *indexHashJoinResult, concurrency+1)
+	e.resultCh = make(chan *indexHashJoinResult, concurrency)
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := int(0); i < concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
@@ -201,7 +201,7 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context, cancelFunc context.
 		}
 		if err != nil {
 			cancelFunc()
-			logutil.Logger(ctx).Info("indexHashJoinOuterWorker.run failed", zap.Error(err))
+			logutil.Logger(ctx).Error("indexHashJoinOuterWorker.run failed", zap.Error(err))
 			return
 		}
 		if finished := ow.pushToChan(ctx, task, ow.innerCh); finished {
@@ -299,7 +299,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 	}
 	if joinResult.err != nil {
 		cancelFunc()
-		logutil.Logger(ctx).Info("indexHashJoinInnerWorker.run failed", zap.Error(joinResult.err))
+		logutil.Logger(ctx).Error("indexHashJoinInnerWorker.run failed", zap.Error(joinResult.err))
 		return
 	}
 	if joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
@@ -345,7 +345,7 @@ OUTER:
 		keyBuf, err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, keyBuf[:0], row, iw.outerCtx.rowTypes, keyColIdx)
 		if err != nil {
 			cancelFunc()
-			logutil.Logger(ctx).Info("indexHashJoinInnerWorker.buildHashTableForOuterResult failed", zap.Error(err))
+			logutil.Logger(ctx).Error("indexHashJoinInnerWorker.buildHashTableForOuterResult failed", zap.Error(err))
 			return
 		}
 		*(*int)(unsafe.Pointer(&valBuf[0])) = rowIdx
@@ -398,7 +398,10 @@ func (iw *indexHashJoinInnerWorker) doJoin(ctx context.Context, task *indexHashJ
 		}
 		iw.joiner.onMissMatch(val == outerRowHasNull, task.outerResult.GetRow(rowIdx), joinResult.chk)
 		if joinResult.chk.IsFull() {
-			iw.resultCh <- joinResult
+			select {
+			case iw.resultCh <- joinResult:
+			case <-ctx.Done():
+			}
 			joinResult, ok = iw.getNewJoinResult(ctx)
 			if !ok {
 				return errors.New("indexHashJoinInnerWorker.handleTask failed")
@@ -439,7 +442,10 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 			task.outerRowStatus[rowIdx] = outerRowHasNull
 		}
 		if joinResult.chk.IsFull() {
-			iw.resultCh <- joinResult
+			select {
+			case iw.resultCh <- joinResult:
+			case <-ctx.Done():
+			}
 			joinResult, ok = iw.getNewJoinResult(ctx)
 			if !ok {
 				return false, joinResult

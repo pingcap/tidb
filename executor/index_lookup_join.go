@@ -588,8 +588,10 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-		if len(ctx.Done()) > 0 {
+		select {
+		case <-ctx.Done():
 			return nil
+		default:
 		}
 		err := Next(ctx, innerExec, iw.executorChk)
 		if err != nil {
