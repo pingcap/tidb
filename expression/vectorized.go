@@ -24,10 +24,10 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 	n := 1
 	if input != nil {
 		n = input.NumRows()
-	}
-	if n == 0 {
-		result.Reset()
-		return nil
+		if n == 0 {
+			result.Reset()
+			return nil
+		}
 	}
 	switch targetType {
 	case types.ETInt:
