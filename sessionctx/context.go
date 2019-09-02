@@ -98,6 +98,8 @@ type Context interface {
 	ReleaseAllTableLocks()
 	// HasLockedTables uses to check whether this session locked any tables.
 	HasLockedTables() bool
+
+	PrepareTxnFuture(ctx context.Context)
 }
 
 type basicCtxType int
