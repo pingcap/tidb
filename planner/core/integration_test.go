@@ -59,3 +59,24 @@ func (s *testIntegrationSuite) TestShowSubquery(c *C) {
 		"a varchar(10) YES  <nil> ",
 	))
 }
+
+func (s *testIntegrationSuite) BitColErrorMessage(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists bit_col_t")
+	tk.MustExec("create table bit_col_t (a bit(64))")
+	tk.MustExec("drop table bit_col_t")
+	tk.MustExec("create table bit_col_t (a bit(1))")
+	tk.MustExec("drop table bit_col_t")
+	_, err = tk.Exec("create table bit_col_t (a bit(0))")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("create table bit_col_t (a bit(65))")
+	c.Assert(err, NotNil)
+}
