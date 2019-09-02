@@ -356,7 +356,7 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 		// test last insert id
 		{
 			`insert into t1 values(3000, -1), (null, -2)`,
-			`select * from t1 where id = 3000git `,
+			`select * from t1 where id = 3000`,
 			testkit.Rows(`3000, -1`),
 		},
 		{
