@@ -61,6 +61,10 @@ type hashRowContainer struct {
 
 func newHashRowContainer(sctx sessionctx.Context, estCount int, hCtx *hashContext, initList *chunk.List) *hashRowContainer {
 	maxChunkSize := sctx.GetSessionVars().MaxChunkSize
+	// The estCount from cost model is not quite accurate and we need
+	// to avoid that it's too large to consume redundant memory.
+	// So I invent a rough protection, firstly divide it by estCountDivisor
+	// then set a maximum threshold and a minimum threshold.
 	estCount /= estCountDivisor
 	if estCount > maxChunkSize*estCountMaxFactor {
 		estCount = maxChunkSize * estCountMaxFactor
