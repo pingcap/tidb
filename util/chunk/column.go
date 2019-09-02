@@ -260,9 +260,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		c.nullBitmap = make([]byte, sizeNulls)
 		newNulls = true
 	}
-	if isNull && newNulls {
-		// do nothing, all slots are already set to null
-	} else {
+	if !isNull || !newNulls {
 		var nullVal byte = 0
 		if !isNull {
 			nullVal = 0xFF
