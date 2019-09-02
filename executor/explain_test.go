@@ -152,3 +152,34 @@ func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 		}
 	}
 }
+
+func (s *testSuite1) TestExplainAnalyzeExecutionInfo(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int, k int, key(k))")
+	tk.MustExec("insert into t values (1, 1), (1, 1), (1, 1), (1, 1), (1, 1)")
+
+	s.checkExecutionInfo(c, tk, "explain analyze select * from t order by v")
+	s.checkExecutionInfo(c, tk, "explain analyze select * from t order by v limit 5")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ TIDB_HJ(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ TIDB_SMJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ TIDB_INLJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkExecutionInfo(c, tk, "explain analyze select sum(k) from t group by v")
+	s.checkExecutionInfo(c, tk, "explain analyze select sum(v) from t group by k")
+	s.checkExecutionInfo(c, tk, "explain analyze select * from t")
+	s.checkExecutionInfo(c, tk, "explain analyze select k from t use index(k)")
+	s.checkExecutionInfo(c, tk, "explain analyze select * from t use index(k)")
+}
+
+func (s *testSuite1) checkExecutionInfo(c *C, tk *testkit.TestKit, sql string) {
+	executionInfoCol := 4
+	rows := tk.MustQuery(sql).Rows()
+	for _, row := range rows {
+		strs := make([]string, len(row))
+		for i, c := range row {
+			strs[i] = c.(string)
+		}
+
+		c.Assert(strs[executionInfoCol], Not(Equals), "time:0s, loops:0, rows:0")
+	}
+}
