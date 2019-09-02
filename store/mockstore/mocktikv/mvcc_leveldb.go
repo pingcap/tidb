@@ -968,7 +968,7 @@ func (mvcc *MVCCLevelDB) TxnHeartBeat(key []byte, startTS uint64, adviseTTL uint
 			return lock.ttl, nil
 		}
 	}
-	return 0, errors.New("lock doesn't exist!!")
+	return 0, errors.New("lock doesn't exist")
 }
 
 // ScanLock implements the MVCCStore interface.
