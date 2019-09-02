@@ -17,7 +17,6 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/types/json"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -346,31 +346,50 @@ func TestVectorizedExpression(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		c1, c2 := output.Column(0), output2.Column(0)
 		switch testCase.retEvalType {
 		case types.ETInt:
-			if !reflect.DeepEqual(output.Column(0).Int64s(), output2.Column(0).Int64s()) {
-				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+			for i := 0; i < input.NumRows(); i++ {
+				if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetInt64(i) != c2.GetInt64(i)) {
+					t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+				}
 			}
 		case types.ETReal:
-			if !reflect.DeepEqual(output.Column(0).Float64s(), output2.Column(0).Float64s()) {
-				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+			for i := 0; i < input.NumRows(); i++ {
+				if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetFloat64(i) != c2.GetFloat64(i)) {
+					t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+				}
 			}
 		case types.ETDecimal:
-			if !reflect.DeepEqual(output.Column(0).Decimals(), output2.Column(0).Decimals()) {
-				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+			for i := 0; i < input.NumRows(); i++ {
+				if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetDecimal(i).Compare(c2.GetDecimal(i)) != 0) {
+					t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+				}
 			}
 		case types.ETDatetime, types.ETTimestamp:
-			if !reflect.DeepEqual(output.Column(0).Times(), output2.Column(0).Times()) {
-				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+			for i := 0; i < input.NumRows(); i++ {
+				if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetTime(i).Compare(c2.GetTime(i)) != 0) {
+					t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+				}
 			}
 		case types.ETDuration:
-			if !reflect.DeepEqual(output.Column(0).GoDurations(), output2.Column(0).GoDurations()) {
-				t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+			for i := 0; i < input.NumRows(); i++ {
+				if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetDuration(i, 0) != c2.GetDuration(i, 0)) {
+					t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+				}
 			}
 		case types.ETJson:
-			// TODO: need to implement a method to compare two json slices
+			for i := 0; i < input.NumRows(); i++ {
+				if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetJSON(i).String() != c2.GetJSON(i).String()) {
+					t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+				}
+			}
 		case types.ETString:
-			// TODO: need to implement a method to compare two string slices
+			for i := 0; i < input.NumRows(); i++ {
+				if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetString(i) != c2.GetString(i)) {
+					t.Fatal(fmt.Sprintf("error testCase %v", testCase))
+				}
+			}
 		default:
 			t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 		}
