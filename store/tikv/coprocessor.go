@@ -365,6 +365,7 @@ type copIteratorWorker struct {
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
 	vars     *kv.Variables
+	clientHelper
 
 	memTracker *memory.Tracker
 
@@ -458,6 +459,7 @@ func (it *copIterator) open(ctx context.Context) {
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
+		sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
 		worker := &copIteratorWorker{
 			taskCh:   taskCh,
 			wg:       &it.wg,
@@ -466,6 +468,11 @@ func (it *copIterator) open(ctx context.Context) {
 			respChan: it.respChan,
 			finishCh: it.finishCh,
 			vars:     it.vars,
+			clientHelper: clientHelper{
+				LockResolver:        it.store.lockResolver,
+				RegionRequestSender: sender,
+				resolved:            make(map[RegionVerID][]uint64),
+			},
 
 			memTracker: it.memTracker,
 
@@ -637,7 +644,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		}
 	})
 
-	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &coprocessor.Request{
 		Tp:     worker.req.Tp,
 		Data:   worker.req.Data,
@@ -650,12 +656,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		ScanDetail:     true,
 	})
 	startTime := time.Now()
-	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium)
+	resp, rpcCtx, err := worker.SendReqCtx(bo, req, task.region)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
-	task.storeAddr = sender.storeAddr
+	task.storeAddr = worker.RegionRequestSender.storeAddr
 	costTime := time.Since(startTime)
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, resp)
@@ -668,6 +674,43 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	// Handles the response for non-streaming copTask.
 	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, nil)
+}
+
+// clientHelper wraps LockResolver and RegionRequestSender.
+// It's introduced to support the new lock resolving pattern in the large transaction.
+// In the large transaction protocol, sending requests and resolving locks are
+// context-dependent. For example, when a send request meets a secondary lock, we'll
+// call ResolveLock, and if the lock belongs to a large transaction, we may retry
+// the request. If there is no context information about the resolved locks, we'll
+// meet the secondary lock again and run into a deadloop.
+type clientHelper struct {
+	*LockResolver
+	*RegionRequestSender
+
+	resolved map[RegionVerID][]uint64
+}
+
+// ResolveLocks wraps the ResolveLocks function and store the resolved result.
+func (ch *clientHelper) ResolveLocks(bo *Backoffer, region RegionVerID, locks []*Lock) (int64, error) {
+	msBeforeTxnExpired, resolvedLocks, err := ch.LockResolver.ResolveLocks(bo, locks)
+	if err != nil {
+		return msBeforeTxnExpired, err
+	}
+	if len(resolvedLocks) > 0 {
+		if locks, ok := ch.resolved[region]; !ok {
+			resolvedLocks = append(resolvedLocks, locks...)
+		}
+		ch.resolved[region] = resolvedLocks
+	}
+	return msBeforeTxnExpired, nil
+}
+
+// SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
+func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID) (*tikvrpc.Response, *RPCContext, error) {
+	if resolvedLocks, ok := ch.resolved[regionID]; ok {
+		req.Context.ResolvedLocks = resolvedLocks
+	}
+	return ch.RegionRequestSender.SendReqCtx(bo, req, regionID, ReadTimeoutMedium)
 }
 
 const (
@@ -777,7 +820,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		logutil.BgLogger().Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
-		msBeforeExpired, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
+		msBeforeExpired, err1 := worker.ResolveLocks(bo, task.region, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
