@@ -491,6 +491,7 @@ import (
 	transaction	"TRANSACTION"
 	triggers	"TRIGGERS"
 	truncate	"TRUNCATE"
+	tp             	"TYPE"
 	unbounded	"UNBOUNDED"
 	uncommitted	"UNCOMMITTED"
 	unknown 	"UNKNOWN"
@@ -845,11 +846,13 @@ import (
 	IndexKeyTypeOpt			"index key type"
 	IndexLockAndAlgorithmOpt	"index lock and algorithm"
 	IndexName			"index name"
+	IndexNameAndTypeOpt		"index name and index type"
 	IndexNameList			"index name list"
 	IndexOption			"Index Option"
 	IndexOptionList			"Index Option List or empty"
 	IndexType			"index type"
-	IndexTypeOpt			"Optional index type"
+	IndexTypeName			"index type name"
+	IndexTypeOpt			"optional index type"
 	InsertValues			"Rest part of INSERT/REPLACE INTO statement"
 	JoinTable 			"join table"
 	JoinType			"join type"
@@ -2440,20 +2443,20 @@ ColumnOptionListOpt:
 	}
 
 ConstraintElem:
-	"PRIMARY" "KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
+	"PRIMARY" "KEY" IndexNameAndTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp: ast.ConstraintPrimaryKey,
-			Keys: $6.([]*ast.IndexColName),
+			Keys: $5.([]*ast.IndexColName),
 		}
-		if $8 != nil {
-			c.Option = $8.(*ast.IndexOption)
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
 		}
-		if $4 != nil {
+		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $4.(model.IndexType)
+			c.Option.Tp = indexType.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -2469,40 +2472,40 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	KeyOrIndex IfNotExists IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
+|	KeyOrIndex IfNotExists IndexNameAndTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			IfNotExists:	$2.(bool),
 			Tp:		ast.ConstraintIndex,
-			Keys:		$6.([]*ast.IndexColName),
-			Name:		$3.(string),
+			Keys:		$5.([]*ast.IndexColName),
 		}
-		if $8 != nil {
-			c.Option = $8.(*ast.IndexOption)
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
 		}
-		if $4 != nil {
+		c.Name = $3.([]interface{})[0].(string)
+		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $4.(model.IndexType)
+			c.Option.Tp = indexType.(model.IndexType)
 		}
 		$$ = c
 	}
-|	"UNIQUE" KeyOrIndexOpt IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
+|	"UNIQUE" KeyOrIndexOpt IndexNameAndTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniq,
-			Keys:	$6.([]*ast.IndexColName),
-			Name:	$3.(string),
+			Keys:	$5.([]*ast.IndexColName),
 		}
-		if $8 != nil {
-			c.Option = $8.(*ast.IndexOption)
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
 		}
-		if $4 != nil {
+		c.Name = $3.([]interface{})[0].(string)
+		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $4.(model.IndexType)
+			c.Option.Tp = indexType.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -2691,6 +2694,8 @@ NumLiteral:
 
 /**************************************CreateIndexStmt***************************************
  * See https://dev.mysql.com/doc/refman/8.0/en/create-index.html
+ *
+ * TYPE type_name is recognized as a synonym for USING type_name. However, USING is the preferred form.
  *
  * CREATE [UNIQUE | FULLTEXT | SPATIAL] INDEX index_name
  *     [index_type]
@@ -4195,7 +4200,6 @@ IndexOptionList:
 		}
 	}
 
-
 IndexOption:
 	"KEY_BLOCK_SIZE" EqOpt LengthNum
 	{
@@ -4230,18 +4234,37 @@ IndexOption:
 		}
 	}
 
-IndexType:
-	"USING" "BTREE"
+/*
+  See: https://github.com/mysql/mysql-server/blob/8.0/sql/sql_yacc.yy#L7179
+
+  The syntax for defining an index is:
+
+    ... INDEX [index_name] [USING|TYPE] <index_type> ...
+
+  The problem is that whereas USING is a reserved word, TYPE is not. We can
+  still handle it if an index name is supplied, i.e.:
+
+    ... INDEX type TYPE <index_type> ...
+
+  here the index's name is unmbiguously 'type', but for this:
+
+    ... INDEX TYPE <index_type> ...
+
+  it's impossible to know what this actually mean - is 'type' the name or the
+  type? For this reason we accept the TYPE syntax only if a name is supplied.
+*/
+IndexNameAndTypeOpt:
+	IndexName
 	{
-		$$ = model.IndexTypeBtree
+		$$ = []interface{}{$1, nil}
 	}
-|	"USING" "HASH"
+| 	IndexName "USING" IndexTypeName
 	{
-		$$ = model.IndexTypeHash
+		$$ = []interface{}{$1, $3}
 	}
-|	"USING" "RTREE"
+|	Identifier "TYPE" IndexTypeName
 	{
-		$$ = model.IndexTypeRtree
+		$$ = []interface{}{$1, $3}
 	}
 
 IndexTypeOpt:
@@ -4252,6 +4275,30 @@ IndexTypeOpt:
 	{
 		$$ = $1
 	}
+
+IndexType:
+	"USING" IndexTypeName
+	{
+		$$ = $2
+	}
+| 	"TYPE" IndexTypeName
+	{
+		$$ = $2
+	}
+
+IndexTypeName:
+	"BTREE"
+ 	{
+ 		$$ = model.IndexTypeBtree
+ 	}
+ |	"HASH"
+ 	{
+ 		$$ = model.IndexTypeHash
+ 	}
+ |	"RTREE"
+ 	{
+ 		$$ = model.IndexTypeRtree
+ 	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -4284,7 +4331,7 @@ UnReservedKeyword:
 | "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT" | "INCREMENTAL" | "CPU" | "MEMORY" | "BLOCK" | "IO" | "CONTEXT" | "SWITCHES" | "PAGE" | "FAULTS" | "IPC" | "SWAPS" | "SOURCE"
 | "TRADITIONAL" | "SQL_BUFFER_RESULT" | "DIRECTORY" | "HISTORY" | "LIST" | "NODEGROUP" | "SYSTEM_TIME" | "PARTIAL" | "SIMPLE" | "REMOVE" | "PARTITIONING" | "STORAGE" | "DISK" | "STATS_SAMPLE_PAGES" | "SECONDARY_ENGINE" | "SECONDARY_LOAD" | "SECONDARY_UNLOAD" | "VALIDATION"
 | "WITHOUT" | "RTREE" | "EXCHANGE" | "COLUMN_FORMAT" | "REPAIR" | "IMPORT" | "DISCARD" | "TABLE_CHECKSUM"
-| "SQL_TSI_DAY" | "SQL_TSI_HOUR" | "SQL_TSI_MINUTE" | "SQL_TSI_MONTH" | "SQL_TSI_QUARTER" | "SQL_TSI_SECOND" | "SQL_TSI_WEEK" | "SQL_TSI_YEAR" | "INVISIBLE" | "VISIBLE"
+| "SQL_TSI_DAY" | "SQL_TSI_HOUR" | "SQL_TSI_MINUTE" | "SQL_TSI_MONTH" | "SQL_TSI_QUARTER" | "SQL_TSI_SECOND" | "SQL_TSI_WEEK" | "SQL_TSI_YEAR" | "INVISIBLE" | "VISIBLE" | "TYPE"
 
 TiDBKeyword:
  "ADMIN" | "AGG_TO_COP" |"BUCKETS" | "CANCEL" | "CMSKETCH" | "DDL" | "DEPTH" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "SAMPLES" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB"
