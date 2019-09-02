@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -73,19 +72,18 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 			ds[i] = *v
 		}
 	case types.ETDatetime, types.ETTimestamp:
-		result.Reset()
+		result.ResizeTime(n)
 		v, isNull, err := expr.EvalTime(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
-			for i := 0; i < n; i++ {
-				result.AppendNull()
-			}
-		} else {
-			for i := 0; i < n; i++ {
-				result.AppendTime(v)
-			}
+			result.SetNulls(0, n, true)
+			return nil
+		}
+		ts := result.Times()
+		for i := range ts {
+			ts[i] = v
 		}
 	case types.ETDuration:
 		result.ResizeDuration(n)
