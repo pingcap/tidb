@@ -95,6 +95,10 @@ type RecordSet interface {
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
 	Close() error
+
+	// LogPartialSlow logs the slow log for partial result.
+	// it will be used in server-side cursor or multi-queries.
+	LogPartialSlow()
 }
 
 // MultiQueryNoDelayResult is an interface for one no-delay result for one statement in multi-queries.

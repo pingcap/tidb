@@ -383,6 +383,10 @@ func (trs *tidbResultSet) Close() error {
 	return trs.recordSet.Close()
 }
 
+func (trs *tidbResultSet) LogPartialSlow() {
+	trs.recordSet.LogPartialSlow()
+}
+
 func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	if trs.columns == nil {
 		fields := trs.recordSet.Fields()

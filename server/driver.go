@@ -141,4 +141,5 @@ type ResultSet interface {
 	StoreFetchedRows(rows []chunk.Row)
 	GetFetchedRows() []chunk.Row
 	Close() error
+	LogPartialSlow()
 }
