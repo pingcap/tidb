@@ -125,6 +125,7 @@ func init() {
 		codeTruncatedWrongValue:      mysql.ErrTruncatedWrongValue,
 		codeUnknown:                  mysql.ErrUnknown,
 		codeInvalidDefault:           mysql.ErrInvalidDefault,
+		codeInvalidFieldSize:         mysql.ErrInvalidFieldSize,
 		codeMBiggerThanD:             mysql.ErrMBiggerThanD,
 		codeDataOutOfRange:           mysql.ErrWarnDataOutOfRange,
 		codeDuplicatedValueInType:    mysql.ErrDuplicatedValueInType,

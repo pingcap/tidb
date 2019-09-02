@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -249,6 +250,15 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 		tk.c.Assert(res.Close(), check.IsNil)
 	}
 	return err
+}
+
+func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
+	_, err := tk.Exec(sql)
+	tk.c.Assert(err, check.NotNil)
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	tk.c.Assert(ok, check.IsTrue, check.Commentf("err: %T", originErr))
+	tk.c.Assert(tErr.ToSQLError().Code, check.Equals, uint16(errCode), check.Commentf("MySQL code:%v", tErr.ToSQLError()))
 }
 
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
