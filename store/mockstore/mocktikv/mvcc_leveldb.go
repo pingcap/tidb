@@ -931,6 +931,46 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
 	return mvcc.db.Write(batch, nil)
 }
 
+// TxnHeartBeat implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) TxnHeartBeat(key []byte, startTS uint64, adviseTTL uint64) (uint64, error) {
+	startKey := mvccEncode(key, lockVer)
+	iter := newIterator(mvcc.db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	if iter.Valid() {
+		dec := lockDecoder{
+			expectKey: key,
+		}
+		ok, err := dec.Decode(iter)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if ok && dec.lock.startTS == startTS {
+			lock := dec.lock
+			batch := &leveldb.Batch{}
+			// Increase the ttl of this transaction.
+			if adviseTTL < lock.ttl {
+				lock.ttl = lock.ttl/2 + adviseTTL/2
+			} else {
+				lock.ttl = adviseTTL
+			}
+			writeKey := mvccEncode(key, lockVer)
+			writeValue, err := lock.MarshalBinary()
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			batch.Put(writeKey, writeValue)
+			if err = mvcc.db.Write(batch, nil); err != nil {
+				return 0, errors.Trace(err)
+			}
+			return lock.ttl, nil
+		}
+	}
+	return 0, errors.New("lock doesn't exist!!")
+}
+
 // ScanLock implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error) {
 	mvcc.mu.RLock()
