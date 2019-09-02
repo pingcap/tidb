@@ -570,8 +570,9 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		if e.filterErr(err) != nil {
 			return types.Datum{}, err
 		}
-		// It's compatible with mysql. So it sets last insert id to the first row.
-		if e.rowCount == 1 {
+		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
+		// Cause autoID may be specified by user, judge only the first row is not suitable.
+		if e.lastInsertID == 0 {
 			e.lastInsertID = uint64(recordID)
 		}
 	}
