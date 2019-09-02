@@ -15,7 +15,8 @@ package executor
 
 import (
 	"context"
-	"time"
+	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -24,11 +25,20 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	"go.uber.org/atomic"
-	"sync"
 )
 
-//IndexNestedLoopHashJoin is the hash join executor
+// IndexNestedLoopHashJoin employs one outer worker and N inner workers to
+// execute concurrently. The output order is not promised.
+//
+// The execution flow is very similar to IndexLookUpReader:
+// 1. The outer worker reads N outer rows, builds a task and sends it to the
+// inner worker channel.
+// 2. The inner worker receives the tasks and does 3 things for every task:
+//    1. builds hash table from the outer rows
+//    2. builds key ranges from outer rows and fetches inner rows
+//    3. probes the hash table and sends the join result to the main thread channel.
+//    Note: step 1 and step 2 runs concurrently.
+// 3. The main thread receives the join results.
 type IndexNestedLoopHashJoin struct {
 	IndexLookUpJoin
 	resultCh          chan *indexHashJoinResult
@@ -143,10 +153,6 @@ func (e *IndexNestedLoopHashJoin) wait4JoinWorkers() {
 
 // Next implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
-	}
 	req.Reset()
 	result, ok := <-e.resultCh
 	if !ok {
@@ -173,8 +179,6 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
-		for range e.joinChkResourceCh[i] {
-		}
 	}
 	e.joinChkResourceCh = nil
 	return e.children[0].Close()
@@ -309,12 +313,12 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 
 func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, task *indexHashJoinTask) {
 	var (
-		keyBuf = make([]byte, 0, 64)
-		valBuf = make([]byte, 8)
-		err    error
+		keyBuf, valBuf  = make([]byte, 0, 64), make([]byte, 8)
+		rowIdx, numRows = 0, task.outerResult.NumRows()
+		err             error
 	)
-	for rowIdx, numRows := 0, task.outerResult.NumRows(); rowIdx < numRows; rowIdx++ {
-		var hasNull bool
+OUTER:
+	for ; rowIdx < numRows; rowIdx++ {
 		if task.outerMatch != nil && !task.outerMatch[rowIdx] {
 			continue
 		}
@@ -322,12 +326,8 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 		keyColIdx := iw.outerCtx.keyCols
 		for _, i := range keyColIdx {
 			if row.IsNull(i) {
-				hasNull = true
-				break
+				continue OUTER
 			}
-		}
-		if hasNull {
-			continue
 		}
 		keyBuf, err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, keyBuf[:0], row, iw.outerCtx.rowTypes, keyColIdx)
 		if err != nil {
@@ -370,6 +370,7 @@ func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(r interface{}
 func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult) error {
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
+	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(func() { iw.buildHashTableForOuterResult(ctx, task) }, iw.handleHashJoinInnerWorkerPanic)
 	err := iw.fetchInnerResults(ctx, task.lookUpJoinTask)
 	if err != nil {
