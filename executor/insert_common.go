@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -506,11 +505,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		}
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 		// Cause autoID may be specified by user, judge only the first row is not suitable.
-		//if e.lastInsertID == 0 {
-		//	e.lastInsertID = uint64(recordID)
-		//}
-		fmt.Println(e.rowCount, uint64(recordID), hasValue)
-		if e.rowCount == 1 {
+		if e.lastInsertID == 0 {
 			e.lastInsertID = uint64(recordID)
 		}
 	}
