@@ -1805,6 +1805,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	}
 }
 
+// PrepareTxnFuture uses to try to get txn future.
 func (s *session) PrepareTxnFuture(ctx context.Context) {
 	if s.txn.validOrPending() {
 		return

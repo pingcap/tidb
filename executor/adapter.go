@@ -788,5 +788,5 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 		return false, nil
 	}
 
-	return planner.IsPointGetWithoutDoubleRead(ctx,p),nil
+	return planner.IsPointGetWithoutDoubleRead(ctx, p), nil
 }
