@@ -84,7 +84,7 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 	c.Assert(pairs[0].Err, IsNil)
 
 	// TODO: Implement resolve lock to make the following code work.
-	return
+	c.Skip("Implement resolve lock to make the following code work")
 
 	// Simulate a large txn (holding a pk lock with large TTL).
 	ttl := uint64(10 * time.Second)
