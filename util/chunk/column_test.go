@@ -589,7 +589,7 @@ func (s *testChunkSuite) TestPreAllocInt64(c *check.C) {
 	i64s := col.Int64s()
 	c.Assert(len(i64s), check.Equals, 256)
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		c.Assert(col.IsNull(i), check.Equals, false)
 	}
 	col.AppendInt64(2333)
 	c.Assert(col.IsNull(256), check.Equals, false)
@@ -605,7 +605,7 @@ func (s *testChunkSuite) TestPreAllocUint64(c *check.C) {
 	u64s := col.Uint64s()
 	c.Assert(len(u64s), check.Equals, 256)
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		c.Assert(col.IsNull(i), check.Equals, false)
 	}
 	col.AppendUint64(2333)
 	c.Assert(col.IsNull(256), check.Equals, false)
@@ -619,7 +619,7 @@ func (s *testChunkSuite) TestPreAllocFloat32(c *check.C) {
 	f32s := col.Float32s()
 	c.Assert(len(f32s), check.Equals, 256)
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		c.Assert(col.IsNull(i), check.Equals, false)
 	}
 	col.AppendFloat32(2333)
 	c.Assert(col.IsNull(256), check.Equals, false)
@@ -633,7 +633,7 @@ func (s *testChunkSuite) TestPreAllocFloat64(c *check.C) {
 	f64s := col.Float64s()
 	c.Assert(len(f64s), check.Equals, 256)
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		c.Assert(col.IsNull(i), check.Equals, false)
 	}
 	col.AppendFloat64(2333)
 	c.Assert(col.IsNull(256), check.Equals, false)
@@ -647,7 +647,7 @@ func (s *testChunkSuite) TestPreAllocDecimal(c *check.C) {
 	ds := col.Decimals()
 	c.Assert(len(ds), check.Equals, 256)
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		c.Assert(col.IsNull(i), check.Equals, false)
 	}
 	col.AppendMyDecimal(new(types.MyDecimal))
 	c.Assert(col.IsNull(256), check.Equals, false)
@@ -660,7 +660,7 @@ func (s *testChunkSuite) TestPreAllocTime(c *check.C) {
 	ds := col.Times()
 	c.Assert(len(ds), check.Equals, 256)
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		c.Assert(col.IsNull(i), check.Equals, false)
 	}
 	col.AppendTime(types.ZeroDatetime)
 	c.Assert(col.IsNull(256), check.Equals, false)
@@ -670,18 +670,18 @@ func (s *testChunkSuite) TestPreAllocTime(c *check.C) {
 func (s *testChunkSuite) TestNull(c *check.C) {
 	col := newFixedLenColumn(sizeFloat64, 32)
 	col.ResizeFloat64(1024)
-	c.Assert(col.nullCount(), check.Equals, 1024)
+	c.Assert(col.nullCount(), check.Equals, 0)
 
-	notNulls := make(map[int]struct{})
+	nulls := make(map[int]struct{})
 	for i := 0; i < 512; i++ {
 		idx := rand.Intn(1024)
-		notNulls[idx] = struct{}{}
-		col.SetNull(idx, false)
+		nulls[idx] = struct{}{}
+		col.SetNull(idx, true)
 	}
 
-	c.Assert(col.nullCount(), check.Equals, 1024-len(notNulls))
-	for idx := range notNulls {
-		c.Assert(col.IsNull(idx), check.Equals, false)
+	c.Assert(col.nullCount(), check.Equals, len(nulls))
+	for idx := range nulls {
+		c.Assert(col.IsNull(idx), check.Equals, true)
 	}
 
 	col.ResizeFloat64(8)
@@ -702,7 +702,7 @@ func (s *testChunkSuite) TestNull(c *check.C) {
 func (s *testChunkSuite) TestSetNulls(c *check.C) {
 	col := newFixedLenColumn(sizeFloat64, 32)
 	col.ResizeFloat64(1024)
-	c.Assert(col.nullCount(), check.Equals, 1024)
+	c.Assert(col.nullCount(), check.Equals, 0)
 
 	col.SetNulls(0, 1024, false)
 	c.Assert(col.nullCount(), check.Equals, 0)
