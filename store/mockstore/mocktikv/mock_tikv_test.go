@@ -157,10 +157,15 @@ func (s *testMockTiKVSuite) mustRangeReverseScanOK(c *C, start, end string, limi
 }
 
 func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
+	s.mustPrewriteOK1(c, mutations, primary, startTS, 0)
+}
+
+func (s *testMockTiKVSuite) mustPrewriteOK1(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64, ttl uint64) {
 	req := &kvrpcpb.PrewriteRequest{
 		Mutations:    mutations,
 		PrimaryLock:  []byte(primary),
 		StartVersion: startTS,
+		LockTtl:      ttl,
 	}
 	errs := s.store.Prewrite(req)
 	for _, err := range errs {
@@ -649,4 +654,28 @@ func (s *testMVCCLevelDB) TestErrors(c *C) {
 	c.Assert(ErrAbort("txn").Error(), Equals, "abort: txn")
 	c.Assert(ErrAlreadyCommitted(0).Error(), Equals, "txn already committed")
 	c.Assert((&ErrConflict{}).Error(), Equals, "write conflict")
+}
+
+func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
+	s.mustPrewriteOK1(c, putMutations("pk", "val"), "pk", 5, 666)
+
+	ttl, commitTS, err := s.store.CheckTxnStatus([]byte("pk"), 5, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(666))
+	c.Assert(commitTS, Equals, uint64(0))
+
+	s.mustCommitOK(c, [][]byte{[]byte("pk")}, 5, 30)
+
+	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk"), 5, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(0))
+	c.Assert(commitTS, Equals, uint64(30))
+
+	s.mustPrewriteOK1(c, putMutations("pk1", "val"), "pk1", 5, 666)
+	s.mustRollbackOK(c, [][]byte{[]byte("pk1")}, 5)
+
+	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk1"), 5, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(0))
+	c.Assert(commitTS, Equals, uint64(0))
 }

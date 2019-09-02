@@ -202,6 +202,34 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 }
 
+func (s *testLockSuite) TestCheckTxnStatus(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set(kv.Key("key"), []byte("value"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+
+	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
+	status, err := newLockResolver(s.store).checkTxnStatus(bo, txn.StartTS(), []byte("key"), math.MaxUint64)
+	c.Assert(err, IsNil)
+	c.Assert(status.IsCommitted(), IsFalse)
+	c.Assert(status.CommitTS(), Equals, uint64(0))
+
+	// The getTxnStatus API is confusing, it really means rollback!
+	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"))
+	c.Assert(err, IsNil)
+
+	status, err = newLockResolver(s.store).checkTxnStatus(bo, txn.StartTS(), []byte("key"), math.MaxUint64)
+	c.Assert(err, IsNil)
+	c.Assert(status.ttl, Equals, uint64(0))
+	c.Assert(status.commitTS, Equals, uint64(0))
+
+	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
+	status, err = newLockResolver(s.store).checkTxnStatus(bo, startTS, []byte("a"), math.MaxUint64)
+	c.Assert(err, IsNil)
+	c.Assert(status.ttl, Equals, uint64(0))
+	c.Assert(status.commitTS, Equals, commitTS)
+}
+
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)

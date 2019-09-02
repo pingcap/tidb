@@ -47,6 +47,7 @@ const (
 	CmdDeleteRange
 	CmdPessimisticLock
 	CmdPessimisticRollback
+	CmdCheckTxnStatus
 
 	CmdRawGet CmdType = 256 + iota
 	CmdRawBatchGet
@@ -127,6 +128,8 @@ func (t CmdType) String() string {
 		return "MvccGetByStartTS"
 	case CmdSplitRegion:
 		return "SplitRegion"
+	case CmdCheckTxnStatus:
+		return "CheckTxnStatus"
 	case CmdDebugGetRegionProperties:
 		return "DebugGetRegionProperties"
 	}
@@ -304,6 +307,10 @@ func (req *Request) Empty() *tikvpb.BatchCommandsEmptyRequest {
 	return req.req.(*tikvpb.BatchCommandsEmptyRequest)
 }
 
+func (req *Request) CheckTxnStatus() *kvrpcpb.CheckTxnStatusRequest {
+	return req.req.(*kvrpcpb.CheckTxnStatusRequest)
+}
+
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
 func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Request {
 	switch req.Type {
@@ -353,6 +360,8 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticRollback{PessimisticRollback: req.PessimisticRollback()}}
 	case CmdEmpty:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Empty{Empty: req.Empty()}}
+	case CmdCheckTxnStatus:
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_CheckTxnStatus{CheckTxnStatus: req.CheckTxnStatus()}}
 	}
 	return nil
 }
@@ -498,6 +507,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.SplitRegion().Context = ctx
 	case CmdEmpty:
 		req.SplitRegion().Context = ctx
+	case CmdCheckTxnStatus:
+		req.CheckTxnStatus().Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -714,6 +725,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.SplitRegion(ctx, req.SplitRegion())
 	case CmdEmpty:
 		resp.Resp, err = &tikvpb.BatchCommandsEmptyResponse{}, nil
+	case CmdCheckTxnStatus:
+		resp.Resp, err = client.KvCheckTxnStatus(ctx, req.CheckTxnStatus())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
