@@ -107,6 +107,9 @@ func (r *recordSet) Close() error {
 	return nil
 }
 
+func (r *recordSet) LogPartialSlow() {
+}
+
 func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.count = 100000
 	samples := make([]*SampleItem, 10000)

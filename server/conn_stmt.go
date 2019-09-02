@@ -197,6 +197,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		if err != nil {
 			return err
 		}
+		rs.LogPartialSlow()
 		// explicitly flush columnInfo to client.
 		return cc.flush()
 	}
@@ -209,6 +210,7 @@ const (
 )
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
+	cc.ctx.GetSessionVars().StartTime = time.Now()
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {
@@ -588,6 +590,7 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 			strconv.Itoa(stmtID), "stmt_reset")
 	}
 	stmt.Reset()
+	stmt.StoreResultSet(nil)
 	return cc.writeOK()
 }
 

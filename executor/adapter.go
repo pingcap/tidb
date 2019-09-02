@@ -176,9 +176,14 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, false)
 	a.stmt.logAudit()
 	return err
+}
+
+func (a *recordSet) LogPartialSlow() {
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, true)
+	return
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -396,6 +401,10 @@ func (c *chunkRowRecordSet) NewChunk() *chunk.Chunk {
 
 func (c *chunkRowRecordSet) Close() error {
 	return nil
+}
+
+func (c *chunkRowRecordSet) LogPartialSlow() {
+	return
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
@@ -683,7 +692,7 @@ func (a *ExecStmt) logAudit() {
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
-func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
 	if level > zapcore.WarnLevel {
@@ -715,34 +724,38 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(&variable.SlowQueryLogItems{
-			TxnTS:       txnTS,
-			SQL:         sql,
-			Digest:      digest,
-			TimeTotal:   costTime,
-			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
-			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
-			IndexNames:  indexNames,
-			StatsInfos:  statsInfos,
-			CopTasks:    copTaskInfo,
-			ExecDetail:  execDetail,
-			MemMax:      memMax,
-			Succ:        succ,
+			TxnTS:          txnTS,
+			SQL:            sql,
+			Digest:         digest,
+			TimeTotal:      costTime,
+			TimeParse:      a.Ctx.GetSessionVars().DurationParse,
+			TimeCompile:    a.Ctx.GetSessionVars().DurationCompile,
+			IndexNames:     indexNames,
+			StatsInfos:     statsInfos,
+			CopTasks:       copTaskInfo,
+			ExecDetail:     execDetail,
+			MemMax:         memMax,
+			InPrepare:      a.isPreparedStmt,
+			HasMoreResults: hasMoreResults,
+			Succ:           succ,
 		}))
 	} else {
 		_, digest := sessVars.StmtCtx.SQLDigest()
 		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(&variable.SlowQueryLogItems{
-			TxnTS:       txnTS,
-			SQL:         sql,
-			Digest:      digest,
-			TimeTotal:   costTime,
-			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
-			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
-			IndexNames:  indexNames,
-			StatsInfos:  statsInfos,
-			CopTasks:    copTaskInfo,
-			ExecDetail:  execDetail,
-			MemMax:      memMax,
-			Succ:        succ,
+			TxnTS:          txnTS,
+			SQL:            sql,
+			Digest:         digest,
+			TimeTotal:      costTime,
+			TimeParse:      a.Ctx.GetSessionVars().DurationParse,
+			TimeCompile:    a.Ctx.GetSessionVars().DurationCompile,
+			IndexNames:     indexNames,
+			StatsInfos:     statsInfos,
+			CopTasks:       copTaskInfo,
+			ExecDetail:     execDetail,
+			MemMax:         memMax,
+			InPrepare:      a.isPreparedStmt,
+			HasMoreResults: hasMoreResults,
+			Succ:           succ,
 		}))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
