@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -30,71 +31,71 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 	}
 	switch targetType {
 	case types.ETInt:
-		result.ResizeInt64(n)
 		v, isNull, err := expr.EvalInt(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNulls(0, n, true)
+			result.ResizeInt64( n, true)
 			return nil
 		}
+		result.ResizeInt64(n, false)
 		i64s := result.Int64s()
 		for i := range i64s {
 			i64s[i] = v
 		}
 	case types.ETReal:
-		result.ResizeFloat64(n)
 		v, isNull, err := expr.EvalReal(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNulls(0, n, true)
+			result.ResizeFloat64(n, true)
 			return nil
 		}
+		result.ResizeFloat64(n, false)
 		f64s := result.Float64s()
 		for i := range f64s {
 			f64s[i] = v
 		}
 	case types.ETDecimal:
-		result.ResizeDecimal(n)
 		v, isNull, err := expr.EvalDecimal(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNulls(0, n, true)
+			result.ResizeDecimal(n, true)
 			return nil
 		}
+		result.ResizeDecimal(n, false)
 		ds := result.Decimals()
 		for i := range ds {
 			ds[i] = *v
 		}
 	case types.ETDatetime, types.ETTimestamp:
-		result.ResizeTime(n)
 		v, isNull, err := expr.EvalTime(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNulls(0, n, true)
+			result.ResizeTime(n, true)
 			return nil
 		}
+		result.ResizeTime(n, false)
 		ts := result.Times()
 		for i := range ts {
 			ts[i] = v
 		}
 	case types.ETDuration:
-		result.ResizeDuration(n)
 		v, isNull, err := expr.EvalDuration(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNulls(0, n, true)
+			result.ResizeDuration(n, true)
 			return nil
 		}
+		result.ResizeDuration(n, false)
 		ds := result.GoDurations()
 		for i := range ds {
 			ds[i] = v.Duration

@@ -97,7 +97,7 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 			f64s := result.Float64s()
 			n := input.NumRows()
 			buf := chunk.NewColumn(ft, n)
-			buf.ResizeFloat32(n)
+			buf.ResizeFloat32(n, false)
 			f32s := buf.Float32s()
 			for i := range f64s {
 				if result.IsNull(i) {
