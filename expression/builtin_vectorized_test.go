@@ -740,3 +740,36 @@ func (s *testEvaluatorSuite) TestVectorizedCheck(c *C) {
 	sf = &ScalarFunction{Function: rowF}
 	c.Assert(sf.Vectorized(), IsFalse)
 }
+
+func genFloat32Col() (*Column, *chunk.Chunk, *chunk.Column) {
+	typeFloat := types.NewFieldType(mysql.TypeFloat)
+	col := &Column{Index: 0, RetType: typeFloat}
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{typeFloat}, 1024)
+	for i := 0; i < 1024; i++ {
+		chk.AppendFloat32(0, rand.Float32())
+	}
+	result := chunk.NewColumn(typeFloat, 1024)
+	return col, chk, result
+}
+
+func (s *testEvaluatorSuite) TestFloat32ColVec(c *C) {
+	col, chk, result := genFloat32Col()
+	ctx := mock.NewContext()
+	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
+	it := chunk.NewIterator4Chunk(chk)
+	i := 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		v, _, err := col.EvalReal(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetFloat64(i))
+		i++
+	}
+}
+
+func BenchmarkFloatColRow(b *testing.B) {
+
+}
+
+func BenchmarkFloatColVec(b *testing.B) {
+
+}
