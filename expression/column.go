@@ -244,7 +244,6 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 	src := input.Column(col.Index)
 	if col.GetType().Tp == mysql.TypeFloat {
 		result.ResizeFloat64(n)
-		result.SetNulls(0, n, false)
 		f32s := src.Float32s()
 		f64s := result.Float64s()
 		for i := range f32s {

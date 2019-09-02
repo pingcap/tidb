@@ -258,6 +258,9 @@ func (c *Column) resize(n, typeSize int) {
 	} else {
 		c.nullBitmap = make([]byte, sizeNulls)
 	}
+	for i := range c.nullBitmap {
+		c.nullBitmap[i] = 0xff
+	}
 
 	if cap(c.elemBuf) >= typeSize {
 		(*reflect.SliceHeader)(unsafe.Pointer(&c.elemBuf)).Len = typeSize

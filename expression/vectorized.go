@@ -44,7 +44,6 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 		for i := range i64s {
 			i64s[i] = v
 		}
-		result.SetNulls(0, n, false)
 	case types.ETReal:
 		result.ResizeFloat64(n)
 		v, isNull, err := expr.EvalReal(ctx, chunk.Row{})
@@ -59,7 +58,6 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 		for i := range f64s {
 			f64s[i] = v
 		}
-		result.SetNulls(0, n, false)
 	case types.ETDecimal:
 		result.ResizeDecimal(n)
 		v, isNull, err := expr.EvalDecimal(ctx, chunk.Row{})
@@ -74,7 +72,6 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 		for i := range ds {
 			ds[i] = *v
 		}
-		result.SetNulls(0, n, false)
 	case types.ETDatetime, types.ETTimestamp:
 		result.Reset()
 		v, isNull, err := expr.EvalTime(ctx, chunk.Row{})
@@ -100,7 +97,6 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 			result.SetNulls(0, n, true)
 			return nil
 		}
-		result.SetNulls(0, n, false)
 		ds := result.GoDurations()
 		for i := range ds {
 			ds[i] = v.Duration
