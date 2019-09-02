@@ -252,18 +252,24 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		c.data = make([]byte, sizeData)
 	}
 
+	newNulls := false
 	sizeNulls := (n + 7) >> 3
 	if cap(c.nullBitmap) >= sizeNulls {
 		(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = sizeNulls
 	} else {
 		c.nullBitmap = make([]byte, sizeNulls)
+		newNulls = true
 	}
-	var nullVal byte = 0
-	if !isNull {
-		nullVal = 0xFF
-	}
-	for i := range c.nullBitmap {
-		c.nullBitmap[i] = nullVal
+	if isNull && newNulls {
+		// do nothing, all slots are already set to null
+	} else {
+		var nullVal byte = 0
+		if !isNull {
+			nullVal = 0xFF
+		}
+		for i := range c.nullBitmap {
+			c.nullBitmap[i] = nullVal
+		}
 	}
 
 	if cap(c.elemBuf) >= typeSize {
