@@ -321,52 +321,6 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 	return
 }
 
-func (lr *LockResolver) checkTxnStatus(bo *Backoffer, txnID uint64, primary []byte, currentTS uint64) (TxnStatus, error) {
-	var status TxnStatus
-	req := tikvrpc.NewRequest(tikvrpc.CmdCheckTxnStatus, &kvrpcpb.CheckTxnStatusRequest{
-		PrimaryKey:   primary,
-		StartVersion: txnID,
-		CurrentTs:    currentTS,
-	})
-	for {
-		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
-		if err != nil {
-			return status, errors.Trace(err)
-		}
-		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
-		if err != nil {
-			return status, errors.Trace(err)
-		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return status, errors.Trace(err)
-		}
-		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return status, errors.Trace(err)
-			}
-			continue
-		}
-		if resp.Resp == nil {
-			return status, errors.Trace(ErrBodyMissing)
-		}
-		cmdResp := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse)
-		if keyErr := cmdResp.GetError(); keyErr != nil {
-			err = errors.Errorf("unexpected err: %s, tid: %v", keyErr, txnID)
-			logutil.BgLogger().Error("checkTxnStatus error", zap.Error(err))
-			return status, err
-		}
-		if cmdResp.LockTtl != 0 {
-			status.ttl = cmdResp.LockTtl
-		} else {
-			status.commitTS = cmdResp.CommitVersion
-		}
-		lr.saveResolved(txnID, status)
-		return status, nil
-	}
-}
-
 // GetTxnStatus queries tikv-server for a txn's status (commit/rollback).
 // If the primary key is still locked, it will launch a Rollback to abort it.
 // To avoid unnecessarily aborting too many txns, it is wiser to wait a few
