@@ -551,7 +551,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 				err := baseFunc.vecEvalJSON(input, output)
 				c.Assert(err, IsNil)
 				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalDuration(row)
+					val, isNull, err := baseFunc.evalJSON(row)
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
@@ -563,7 +563,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 				err := baseFunc.vecEvalString(input, output)
 				c.Assert(err, IsNil)
 				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalDuration(row)
+					val, isNull, err := baseFunc.evalString(row)
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {

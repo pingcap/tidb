@@ -45,3 +45,7 @@ func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 	}
 	return nil
 }
+
+func (b *builtinLowerSig) vectorized() bool {
+	return true
+}
