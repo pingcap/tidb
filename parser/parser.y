@@ -7685,20 +7685,29 @@ ShowStmt:
                         User:	$4.(*auth.UserIdentity),
                 }
         }
-|	"SHOW" "TABLE" TableName "REGIONS"
+|	"SHOW" "TABLE" TableName "REGIONS" WhereClauseOptional
 	{
-		$$ = &ast.ShowStmt{
+
+		stmt := &ast.ShowStmt{
 			Tp:	ast.ShowRegions,
 			Table:	$3.(*ast.TableName),
 		}
+		if $5 != nil {
+			stmt.Where = $5.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
-|	"SHOW" "TABLE" TableName "INDEX" Identifier "REGIONS"
+|	"SHOW" "TABLE" TableName "INDEX" Identifier "REGIONS" WhereClauseOptional
 	{
-		$$ = &ast.ShowStmt{
+		stmt := &ast.ShowStmt{
 			Tp:	ast.ShowRegions,
 			Table:	$3.(*ast.TableName),
 			IndexName: model.NewCIStr($5),
 		}
+		if $7 != nil {
+			stmt.Where = $7.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 |	"SHOW" "GRANTS"
 	{
