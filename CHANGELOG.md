@@ -3,16 +3,16 @@ All notable changes to this project will be documented in this file. See also [R
 
 ## [3.0.3] 2019-08-29
 ### SQL Optimizer
-* Add the  `opt_rule_blacklist` table to disable logic optimization rules such as `aggregation_eliminate` and `column_prune` [#11658](https://github.com/pingcap/tidb/pull/11658)
-* Fix the issue that incorrect results might be returned for `Index Join` when the  join key uses a prefix index or an unsigned index column that is equal to a negative value [#11759](https://github.com/pingcap/tidb/pull/11759)
-* Fix the issue that  `"` or  `\`  in the `SELECT` statements of `create ... binding ...` might result in parsing errors [#11726](https://github.com/pingcap/tidb/pull/11726)
+* Add the `opt_rule_blacklist` table to disable logic optimization rules such as `aggregation_eliminate` and `column_prune` [#11658](https://github.com/pingcap/tidb/pull/11658)
+* Fix the issue that incorrect results might be returned for `Index Join` when the join key uses a prefix index or an unsigned index column that is equal to a negative value [#11759](https://github.com/pingcap/tidb/pull/11759)
+* Fix the issue that `"` or `\` in the `SELECT` statements of `create ... binding ...` might result in parsing errors [#11726](https://github.com/pingcap/tidb/pull/11726)
 
 ### SQL Execution Engine
-* Fix the issue that type errors in the return value might occur when the Quote function handles a null value [#11619](https://github.com/pingcap/tidb/pull/11619)
-* Fix the issue that incorrect results for `ifnull` might be returned when Max/Min is used for type inferring with `NotNullFlag` retained [#11641](https://github.com/pingcap/tidb/pull/11641)
+* Fix the issue that type errors in the return value might occur when the `Quote` function handles a null value [#11619](https://github.com/pingcap/tidb/pull/11619)
+* Fix the issue that incorrect results for `Ifnull` might be returned when `Max`/`min` is used for type inferring with `NotNullFlag` retained [#11641](https://github.com/pingcap/tidb/pull/11641)
 * Fix the potential error that occurs when comparing bit type data in string form [#11660](https://github.com/pingcap/tidb/pull/11660)
-* Decrease the concurrency for data that requires sequential read to lower the possibility of OOM [#11679](https://github.com/pingcap/tidb/pull/11679)
-* Fix the issue that incorrect type inferring might be caused when multiple parameters are unsigned for some built-in functions (e.g. `if`, `coalesce`) [#11621](https://github.com/pingcap/tidb/pull/11621)
+* Decrease the concurrency for data that requires sequential read to reduce the possibility of OOM [#11679](https://github.com/pingcap/tidb/pull/11679)
+* Fix the issue that incorrect type inferring might be caused when multiple parameters are unsigned for some built-in functions (e.g. `If`, `Coalesce`) [#11621](https://github.com/pingcap/tidb/pull/11621)
 * Fix the incompatibility with MySQL when the `Div` function handles unsigned decimal types [#11813](https://github.com/pingcap/tidb/pull/11813)
 * Fix the issue that panic might occur when executing SQL statements that modify the status of Pump/Drainer [#11827](https://github.com/pingcap/tidb/pull/11827)
 * Fix the issue that panic might occur for `select ... for update` when Autocommit = 1 and there is no `begin` statement [#11736](https://github.com/pingcap/tidb/pull/11736)
@@ -20,7 +20,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Fix the permission check error that might occur when `create user` or `drop user` is executed [#11814](https://github.com/pingcap/tidb/pull/11814)
 * Fix the issue that  the `select ... for update` statement might auto retry when it is constructed into the `PointGetExecutor` function [#11718](https://github.com/pingcap/tidb/pull/11718)
 * Fix the boundary error that might occur when the Window function handles partition [#11825](https://github.com/pingcap/tidb/pull/11825)
-* Fix the issue that the `time` function hits EOF errors when handling an incorrectly formatted argument [#11893](https://github.com/pingcap/tidb/pull/11893)
+* Fix the issue that the `Time` function hits EOF errors when handling an incorrectly formatted argument [#11893](https://github.com/pingcap/tidb/pull/11893)
 * Fix the issue that the Window function does not check the passed-in parameters [#11705](https://github.com/pingcap/tidb/pull/11705)
 * Fix the issue that the plan result viewed via `Explain` is inconsistent with the actually executed plan [#11186](https://github.com/pingcap/tidb/pull/11186)
 * Fix the issue that duplicate memory referenced by the Window function might result in a crash or incorrect results [#11823](https://github.com/pingcap/tidb/pull/11823)
@@ -34,7 +34,7 @@ All notable changes to this project will be documented in this file. See also [R
 ### DDL
 * Skip the execution of  unsupported partition-related DDL statements, including statements that modify the partition type while deleting multiple partitions [#11373](https://github.com/pingcap/tidb/pull/11373)
 * Disallow a Generated Column to be placed before its dependent columns [#11686](https://github.com/pingcap/tidb/pull/11686)
-* Modify the default values of  `tidb_ddl_reorg_worker_cnt` and `tidb_ddl_reorg_batch_size` [#11874](https://github.com/pingcap/tidb/pull/11874)
+* Modify the default values of `tidb_ddl_reorg_worker_cnt` and `tidb_ddl_reorg_batch_size` [#11874](https://github.com/pingcap/tidb/pull/11874)
 
 ### Monitor
 * Add new backoff monitoring types to record duration for each backoff type; add more backoff metrics to cover previously uncounted types such as commit backoff [#11728](https://github.com/pingcap/tidb/pull/11728)
