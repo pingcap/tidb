@@ -331,7 +331,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if len(keys) == 0 {
 		return nil
 	}
-	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys)
+	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}

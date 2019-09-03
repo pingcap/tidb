@@ -154,9 +154,9 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 		colData[i] = m.genColDatums(i)
 	}
 
-	m.genData = make([]*chunk.Chunk, (m.p.rows+m.initCap-1)/m.initCap)
+	m.genData = make([]*chunk.Chunk, (m.p.rows+m.maxChunkSize-1)/m.maxChunkSize)
 	for i := range m.genData {
-		m.genData[i] = chunk.NewChunkWithCapacity(retTypes(m), m.ctx.GetSessionVars().MaxChunkSize)
+		m.genData[i] = chunk.NewChunkWithCapacity(retTypes(m), m.maxChunkSize)
 	}
 
 	for i := 0; i < m.p.rows; i++ {
@@ -555,14 +555,15 @@ func prepare4Join(testCase *hashJoinTestCase, innerExec, outerExec Executor) *Ha
 		joinKeys = append(joinKeys, cols0[keyIdx])
 	}
 	e := &HashJoinExec{
-		baseExecutor: newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
-		concurrency:  uint(testCase.concurrency),
-		joinType:     0, // InnerJoin
-		isOuterJoin:  false,
-		innerKeys:    joinKeys,
-		outerKeys:    joinKeys,
-		innerExec:    innerExec,
-		outerExec:    outerExec,
+		baseExecutor:  newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
+		concurrency:   uint(testCase.concurrency),
+		joinType:      0, // InnerJoin
+		isOuterJoin:   false,
+		innerKeys:     joinKeys,
+		outerKeys:     joinKeys,
+		innerExec:     innerExec,
+		outerExec:     outerExec,
+		innerEstCount: float64(testCase.rows),
 	}
 	defaultValues := make([]types.Datum, e.innerExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
@@ -663,13 +664,13 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		innerResultCh := make(chan *chunk.Chunk, 1)
-		go func() {
-			for _, chk := range dataSource1.genData {
-				innerResultCh <- chk
-			}
-			close(innerResultCh)
-		}()
+		exec.rowContainer = nil
+		exec.memTracker = memory.NewTracker(exec.id, exec.ctx.GetSessionVars().MemQuotaHashJoin)
+		innerResultCh := make(chan *chunk.Chunk, len(dataSource1.chunks))
+		for _, chk := range dataSource1.chunks {
+			innerResultCh <- chk
+		}
+		close(innerResultCh)
 
 		b.StartTimer()
 		if err := exec.buildHashTableForList(innerResultCh); err != nil {
@@ -687,6 +688,12 @@ func BenchmarkBuildHashTableForList(b *testing.B) {
 	})
 
 	cas.keyIdx = []int{0}
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkBuildHashTableForList(b, cas)
+	})
+
+	cas.keyIdx = []int{0}
+	cas.rows = 10
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkBuildHashTableForList(b, cas)
 	})
