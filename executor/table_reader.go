@@ -193,7 +193,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
+	result.Fetch(ctx, distsql.CalcDecodeType(e.dagPB.EncodeType))
 	return result, nil
 }
 

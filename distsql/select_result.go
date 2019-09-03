@@ -38,10 +38,41 @@ var (
 	_ SelectResult = (*streamResult)(nil)
 )
 
+// DecodeType indicates the encode type.
+type DecodeType int
+
+const (
+	// DecodeTypeDefault indicates the default encode type.
+	DecodeTypeDefault DecodeType = iota
+	// DecodeTypeArrow indicates the arrow encode type.
+	DecodeTypeArrow
+)
+
+func (t DecodeType) String() string {
+	switch t {
+	case DecodeTypeDefault:
+		return "DecodeTypeDefault"
+	case DecodeTypeArrow:
+		return "DecodeTypeArrow"
+	}
+	return "unknown decode type"
+}
+
+// CalcDecodeType convert tipb.EncodeType to DecodeType.
+func CalcDecodeType(encodeType tipb.EncodeType) (decodeType DecodeType) {
+	switch encodeType {
+	case tipb.EncodeType_TypeDefault:
+		return DecodeTypeDefault
+	case tipb.EncodeType_TypeArrow:
+		return DecodeTypeArrow
+	}
+	panic("unsupported encode type")
+}
+
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
 	// Fetch fetches partial results from client.
-	Fetch(context.Context)
+	Fetch(context.Context, DecodeType)
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
 	// Next reads the data into chunk.
@@ -73,6 +104,7 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+	decodeType   DecodeType
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
@@ -81,7 +113,8 @@ type selectResult struct {
 	memTracker *memory.Tracker
 }
 
-func (r *selectResult) Fetch(ctx context.Context) {
+func (r *selectResult) Fetch(ctx context.Context, dt DecodeType) {
+	r.decodeType = dt
 	go r.fetch(ctx)
 }
 
@@ -144,6 +177,16 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
+	switch r.decodeType {
+	case DecodeTypeDefault:
+		return r.readFromDefault(ctx, chk)
+	case DecodeTypeArrow:
+		return r.readFromArrow(ctx, chk)
+	}
+	panic("unsupported decode type")
+}
+
+func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) error {
 	for !chk.IsFull() {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
@@ -160,6 +203,24 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 	return nil
+}
+
+func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
+	if r.selectResp == nil || len(r.selectResp.RowBatchData) == 0 {
+		err := r.getSelectResp()
+		if err != nil || r.selectResp == nil {
+			return errors.Trace(err)
+		}
+	}
+	r.readRowBatch(chk)
+	return nil
+}
+
+func (r *selectResult) readRowBatch(chk *chunk.Chunk) {
+	rowBatchData := r.selectResp.RowBatchData
+	codec := chunk.NewCodec(r.fieldTypes)
+	remained := codec.DecodeToChunk(rowBatchData, chk)
+	r.selectResp.RowBatchData = remained
 }
 
 func (r *selectResult) getSelectResp() error {
@@ -195,7 +256,7 @@ func (r *selectResult) getSelectResp() error {
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
-		if len(r.selectResp.Chunks) == 0 {
+		if len(r.selectResp.Chunks) == 0 && len(r.selectResp.RowBatchData) == 0 {
 			continue
 		}
 		return nil

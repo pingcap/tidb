@@ -122,7 +122,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.result.Fetch(ctx)
+	e.result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
 	return nil
 }
 
@@ -146,6 +146,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	if err != nil {
 		return nil, err
 	}
+	distsql.SetEncodeType(dagReq)
 	return dagReq, nil
 }
 
@@ -249,7 +250,7 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 
 	limitExec := e.constructLimitPB(limitCnt)
 	dagReq.Executors = append(dagReq.Executors, limitExec)
-
+	distsql.SetEncodeType(dagReq)
 	return dagReq, nil
 }
 
@@ -277,7 +278,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
+	result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
 	return result, nil
 }
 
@@ -643,7 +644,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
+	result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
 	return result, nil
 }
 
@@ -684,7 +685,7 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 
 	limitExec := e.constructLimitPB()
 	dagReq.Executors = append(dagReq.Executors, limitExec)
-
+	distsql.SetEncodeType(dagReq)
 	return dagReq, nil
 }
 

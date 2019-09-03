@@ -1697,6 +1697,8 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dag
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+
+	distsql.SetEncodeType(dagReq)
 	return dagReq, streaming, err
 }
 
@@ -2110,7 +2112,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
+	result.Fetch(ctx, distsql.CalcDecodeType(e.dagPB.EncodeType))
 	e.resultHandler.open(nil, result)
 	return e, nil
 }

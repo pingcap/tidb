@@ -307,7 +307,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return err
 	}
-	e.result.Fetch(ctx)
+	e.result.Fetch(ctx, distsql.CalcDecodeType(e.dagPB.EncodeType))
 	return nil
 }
 
@@ -456,7 +456,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	if err != nil {
 		return err
 	}
-	result.Fetch(ctx)
+	result.Fetch(ctx, distsql.CalcDecodeType(e.dagPB.EncodeType))
 	worker := &indexWorker{
 		idxLookup:       e,
 		workCh:          workCh,

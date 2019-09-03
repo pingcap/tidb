@@ -41,9 +41,9 @@ type requiredRowsSelectResult struct {
 	numNextCalled   int
 }
 
-func (r *requiredRowsSelectResult) Fetch(context.Context)                   {}
-func (r *requiredRowsSelectResult) NextRaw(context.Context) ([]byte, error) { return nil, nil }
-func (r *requiredRowsSelectResult) Close() error                            { return nil }
+func (r *requiredRowsSelectResult) Fetch(context.Context, distsql.DecodeType) {}
+func (r *requiredRowsSelectResult) NextRaw(context.Context) ([]byte, error)   { return nil, nil }
+func (r *requiredRowsSelectResult) Close() error                              { return nil }
 
 func (r *requiredRowsSelectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	defer func() {

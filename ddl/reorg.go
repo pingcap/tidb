@@ -234,6 +234,7 @@ func buildDescTableScanDAG(startTS uint64, tbl table.PhysicalTable, columns []*m
 	tblScanExec := constructDescTableScanPB(tbl.GetPhysicalID(), pbColumnInfos)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
+	distsql.SetEncodeType(dagReq)
 	return dagReq, nil
 }
 
@@ -271,7 +272,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(ctx)
+	result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
 	return result, nil
 }
 

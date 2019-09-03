@@ -16,6 +16,9 @@ package distsql
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tipb/go-tipb"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -139,4 +142,71 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 		sqlType:  metrics.LblGeneral,
 	}
 	return result, nil
+}
+
+// SetEncodeType set a DAGRequest's EncodeType
+func SetEncodeType(dagReq *tipb.DAGRequest) {
+	if useChunkIPC(dagReq) {
+		dagReq.EncodeType = tipb.EncodeType_TypeArrow
+	} else {
+		dagReq.EncodeType = tipb.EncodeType_TypeDefault
+	}
+}
+
+func useChunkIPC(dagReq *tipb.DAGRequest) bool {
+	if config.GetGlobalConfig().EnableArrow == false {
+		return false
+	}
+	if config.GetGlobalConfig().EnableStreaming == true {
+		return false
+	}
+	root := dagReq.Executors[len(dagReq.Executors)-1]
+	if root.Aggregation != nil {
+		hashAgg := root.Aggregation
+		for i := range hashAgg.AggFunc {
+			if !typeSupported(hashAgg.AggFunc[i].FieldType.Tp) {
+				return false
+			}
+		}
+		for i := range hashAgg.GroupBy {
+			if !typeSupported(hashAgg.GroupBy[i].FieldType.Tp) {
+				return false
+			}
+		}
+	} else if root.StreamAgg != nil {
+		streamAgg := root.StreamAgg
+		for i := range streamAgg.AggFunc {
+			if !typeSupported(streamAgg.AggFunc[i].FieldType.Tp) {
+				return false
+			}
+		}
+		for i := range streamAgg.GroupBy {
+			if !typeSupported(streamAgg.GroupBy[i].FieldType.Tp) {
+				return false
+			}
+		}
+	} else {
+		for _, executor := range dagReq.Executors {
+			switch executor.GetTp() {
+			case tipb.ExecType_TypeIndexScan:
+				for _, col := range executor.IdxScan.Columns {
+					if !typeSupported(col.Tp) {
+						return false
+					}
+				}
+			case tipb.ExecType_TypeTableScan:
+				for _, col := range executor.TblScan.Columns {
+					if !typeSupported(col.Tp) {
+						return false
+					}
+				}
+			}
+		}
+	}
+	return true
+}
+
+func typeSupported(tpInput int32) bool {
+	tp := byte(tpInput)
+	return tp != mysql.TypeBit && tp != mysql.TypeEnum && tp != mysql.TypeSet
 }

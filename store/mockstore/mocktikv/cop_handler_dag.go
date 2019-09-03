@@ -16,6 +16,7 @@ package mocktikv
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/util/chunk"
 	"io"
 	"time"
 
@@ -62,10 +63,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		return resp
 	}
 
-	var (
-		chunks []tipb.Chunk
-		rowCnt int
-	)
+	var rows [][][]byte
 	ctx := context.TODO()
 	for {
 		var row [][]byte
@@ -76,20 +74,23 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		if row == nil {
 			break
 		}
-		data := dummySlice
-		for _, offset := range dagReq.OutputOffsets {
-			data = append(data, row[offset]...)
-		}
-		chunks = appendRow(chunks, data, rowCnt)
-		rowCnt++
+		rows = append(rows, row)
 	}
-	warnings := dagCtx.evalCtx.sc.GetWarnings()
 
 	var execDetails []*execDetail
 	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
 		execDetails = e.ExecDetails()
 	}
-	return buildResp(chunks, e.Counts(), execDetails, err, warnings)
+
+	selResp := h.initSelectResponse(err, dagCtx.evalCtx.sc.GetWarnings(), e.Counts())
+	if err == nil {
+		err = h.supplementSelectResponse(selResp, dagReq, dagCtx, rows)
+		if err != nil {
+			terror.Log(err)
+		}
+	}
+
+	return buildResp(selResp, execDetails, err)
 }
 
 func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
@@ -550,13 +551,111 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 	return chunk, finish, &ran, mock.exec.Counts(), warnings, nil
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, execDetails []*execDetail, err error, warnings []stmtctx.SQLWarn) *coprocessor.Response {
-	resp := &coprocessor.Response{}
+func (h *rpcHandler) initSelectResponse(err error, warnings []stmtctx.SQLWarn, counts []int64) *tipb.SelectResponse {
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
-		Chunks:       chunks,
 		OutputCounts: counts,
 	}
+	for i := range warnings {
+		selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
+	}
+
+	return selResp
+}
+
+func (h *rpcHandler) supplementSelectResponse(selResp *tipb.SelectResponse, dagReq *tipb.DAGRequest, dagCtx *dagContext, rows [][][]byte) error {
+	colTypes := h.constructRespSchema(dagCtx)
+	loc := dagCtx.evalCtx.sc.TimeZone
+
+	switch dagReq.EncodeType {
+	case tipb.EncodeType_TypeDefault:
+		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
+	case tipb.EncodeType_TypeArrow:
+		err := h.encodeArrow(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (h *rpcHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldType {
+	root := dagCtx.dagReq.Executors[len(dagCtx.dagReq.Executors)-1]
+	if root.Aggregation != nil {
+		hashAgg := root.Aggregation
+		schema := make([]*types.FieldType, 0, len(hashAgg.AggFunc)+len(hashAgg.GroupBy))
+		for i := range hashAgg.AggFunc {
+			if hashAgg.AggFunc[i].Tp == tipb.ExprType_Avg {
+				schema = append(schema, types.NewFieldType(mysql.TypeLonglong))
+			}
+			schema = append(schema, expression.PbTypeToFieldType(hashAgg.AggFunc[i].FieldType))
+		}
+		for i := range hashAgg.GroupBy {
+			schema = append(schema, expression.PbTypeToFieldType(hashAgg.GroupBy[i].FieldType))
+		}
+		return schema
+	} else if root.StreamAgg != nil {
+		streamAgg := root.StreamAgg
+		schema := make([]*types.FieldType, 0, len(streamAgg.AggFunc)+len(streamAgg.GroupBy))
+		for i := range streamAgg.AggFunc {
+			if streamAgg.AggFunc[i].Tp == tipb.ExprType_Avg {
+				schema = append(schema, types.NewFieldType(mysql.TypeLonglong))
+			}
+			schema = append(schema, expression.PbTypeToFieldType(streamAgg.AggFunc[i].FieldType))
+		}
+		for i := range streamAgg.GroupBy {
+			schema = append(schema, expression.PbTypeToFieldType(streamAgg.GroupBy[i].FieldType))
+		}
+		return schema
+	}
+	return dagCtx.evalCtx.fieldTps
+}
+
+func (h *rpcHandler) encodeDefault(selResp *tipb.SelectResponse, rows [][][]byte, colOrdinal []uint32) {
+	var chunks []tipb.Chunk
+	for i := range rows {
+		requestedRow := dummySlice
+		for _, ordinal := range colOrdinal {
+			requestedRow = append(requestedRow, rows[i][ordinal]...)
+		}
+		chunks = appendRow(chunks, requestedRow, i)
+	}
+	selResp.Chunks = chunks
+}
+
+func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
+	rowBatchData := make([]byte, 0, 1024)
+	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
+	for _, ordinal := range colOrdinal {
+		respColTypes = append(respColTypes, colTypes[ordinal])
+	}
+
+	chk := chunk.NewChunkWithCapacity(respColTypes, rowsPerChunk)
+	encoder := chunk.NewCodec(respColTypes)
+	decoder := codec.NewDecoder(chk, loc)
+	for i := range rows {
+		for j, ordinal := range colOrdinal {
+			_, err := decoder.DecodeOne(rows[i][ordinal], j, colTypes[ordinal])
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		if i%rowsPerChunk == 0 {
+			rowBatchData = append(rowBatchData, encoder.Encode(chk)...)
+			chk.Reset()
+		}
+	}
+	if chk.NumRows() > 0 {
+		rowBatchData = append(rowBatchData, encoder.Encode(chk)...)
+		chk.Reset()
+	}
+	selResp.RowBatchData = rowBatchData
+	return nil
+}
+
+func buildResp(selResp *tipb.SelectResponse, execDetails []*execDetail, err error) *coprocessor.Response {
+	resp := &coprocessor.Response{}
+
 	if len(execDetails) > 0 {
 		execSummary := make([]*tipb.ExecutorExecutionSummary, 0, len(execDetails))
 		for _, d := range execDetails {
@@ -571,12 +670,7 @@ func buildResp(chunks []tipb.Chunk, counts []int64, execDetails []*execDetail, e
 		}
 		selResp.ExecutionSummaries = execSummary
 	}
-	if len(warnings) > 0 {
-		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
-		for i := range warnings {
-			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
-		}
-	}
+
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 			resp.Locked = &kvrpcpb.LockInfo{
