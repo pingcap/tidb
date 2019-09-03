@@ -2098,6 +2098,12 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for unaryPlus
 	result = tk.MustQuery(`select +1, +0, +(-9), +(-0.001), +0.999, +null, +"aaa"`)
 	result.Check(testkit.Rows("1 0 -9 -0.001 0.999 <nil> aaa"))
+	// for unaryMinus
+	tk.MustExec("drop table if exists f")
+	tk.MustExec("create table f(a decimal(65,0))")
+	tk.MustExec("insert into f value (-17000000000000000000)")
+	result = tk.MustQuery("select a from f")
+	result.Check(testkit.Rows("-17000000000000000000"))
 }
 
 func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
@@ -4861,6 +4867,12 @@ func (s *testIntegrationSuite) TestIssue11594(c *C) {
 	tk.MustQuery("SELECT sum(IFNULL(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
 	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
 	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), v)) FROM t1;").Check(testkit.Rows("3"))
+}
+
+func (s *testIntegrationSuite) TestDefEnableVectorizedEvaluation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use mysql")
+	tk.MustQuery(`select @@tidb_enable_vectorized_expression`).Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
