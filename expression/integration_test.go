@@ -4869,6 +4869,12 @@ func (s *testIntegrationSuite) TestIssue11594(c *C) {
 	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), v)) FROM t1;").Check(testkit.Rows("3"))
 }
 
+func (s *testIntegrationSuite) TestDefEnableVectorizedEvaluation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use mysql")
+	tk.MustQuery(`select @@tidb_enable_vectorized_expression`).Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
