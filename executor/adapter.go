@@ -202,6 +202,7 @@ type ExecStmt struct {
 	isSelectForUpdate bool
 	retryCount        uint
 
+	// will be set if using cached plan
 	OutputNames []*types.FieldName
 }
 
