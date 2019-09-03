@@ -208,38 +208,17 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, stmtN
 	}
 }
 
-// IsPointGetWithoutDoubleRead returns true when meets following conditions:
+// isPointGetWithoutDoubleRead returns true when meets following conditions:
 //  1. ctx is auto commit tagged
 //  2. plan is point get by pk, or point get by unique index (no double read)
-func IsPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
+func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
 		return false
 	}
 
-	// check plan
-	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
-		if len(proj.Children()) != 1 {
-			return false
-		}
-		p = proj.Children()[0]
-	}
-
-	switch v := p.(type) {
-	case *plannercore.PhysicalIndexReader:
-		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
-	case *plannercore.PhysicalTableReader:
-		tableScan := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
-	case *plannercore.PointGetPlan:
-		// If the PointGetPlan needs to read data using unique index (double read), we
-		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
-		// and the data and index would be inconsistent!
-		return v.IndexInfo == nil
-	default:
-		return false
-	}
+	v, ok := p.(*plannercore.PointGetPlan)
+	return ok && v.IndexInfo == nil
 }
 
 func init() {

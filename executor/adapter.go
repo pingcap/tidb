@@ -788,5 +788,27 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 		return false, nil
 	}
 
-	return planner.IsPointGetWithoutDoubleRead(ctx, p), nil
+	// check plan
+	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
+		if len(proj.Children()) != 1 {
+			return false, nil
+		}
+		p = proj.Children()[0]
+	}
+
+	switch v := p.(type) {
+	case *plannercore.PhysicalIndexReader:
+		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
+	case *plannercore.PhysicalTableReader:
+		tableScan := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
+	case *plannercore.PointGetPlan:
+		// If the PointGetPlan needs to read data using unique index (double read), we
+		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
+		// and the data and index would be inconsistent!
+		return v.IndexInfo == nil, nil
+	default:
+		return false, nil
+	}
 }
