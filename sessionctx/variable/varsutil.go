@@ -379,7 +379,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
 		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
-		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace:
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -560,6 +560,13 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if v <= 0 {
 			return value, errors.Errorf("tidb_wait_split_region_timeout(%d) cannot be smaller than 1", v)
 		}
+	case TiDBReplicaRead:
+		if strings.EqualFold(value, "follower") {
+			return "follower", nil
+		} else if strings.EqualFold(value, "leader") || len(value) == 0 {
+			return "leader", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	}
 	return value, nil
 }

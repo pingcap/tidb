@@ -40,8 +40,29 @@ var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, e
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
-	// VecEval evaluates this expression in a vectorized manner.
-	VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	// Vectorized returns if this expression supports vectorized evaluation.
+	Vectorized() bool
+
+	// VecEvalInt evaluates this expression in a vectorized manner.
+	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalReal evaluates this expression in a vectorized manner.
+	VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalString evaluates this expression in a vectorized manner.
+	VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalDecimal evaluates this expression in a vectorized manner.
+	VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalTime evaluates this expression in a vectorized manner.
+	VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalDuration evaluates this expression in a vectorized manner.
+	VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalJSON evaluates this expression in a vectorized manner.
+	VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
 }
 
 // Expression represents all scalar expression in SQL.
@@ -87,6 +108,7 @@ type Expression interface {
 	IsCorrelated() bool
 
 	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
+	// A constant item can be eval() when build a plan.
 	// An expression is constant item if it:
 	// refers no tables.
 	// refers no subqueries that refers any tables.

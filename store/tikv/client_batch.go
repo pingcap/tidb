@@ -35,7 +35,6 @@ import (
 )
 
 type batchConn struct {
-	index uint32
 	// batchCommandsCh used for batch commands.
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
@@ -44,10 +43,12 @@ type batchConn struct {
 
 	// Notify rpcClient to check the idle flag
 	idleNotify *uint32
-	idle       bool
 	idleDetect *time.Timer
 
 	pendingRequests prometheus.Gauge
+
+	index uint32
+	idle  bool
 }
 
 func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
@@ -462,14 +463,14 @@ func (a *batchConn) Close() {
 func removeCanceledRequests(entries []*batchCommandsEntry,
 	requests []*tikvpb.BatchCommandsRequest_Request) ([]*batchCommandsEntry, []*tikvpb.BatchCommandsRequest_Request) {
 	validEntries := entries[:0]
-	validRequets := requests[:0]
+	validRequests := requests[:0]
 	for _, e := range entries {
 		if !e.isCanceled() {
 			validEntries = append(validEntries, e)
-			validRequets = append(validRequets, e.req)
+			validRequests = append(validRequests, e.req)
 		}
 	}
-	return validEntries, validRequets
+	return validEntries, validRequests
 }
 
 func sendBatchRequest(

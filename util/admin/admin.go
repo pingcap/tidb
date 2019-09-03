@@ -258,7 +258,7 @@ type RecordData struct {
 }
 
 func getCount(ctx sessionctx.Context, sql string) (int64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(sql)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -555,6 +555,10 @@ func ScanSnapshotTableRecord(sessCtx sessionctx.Context, store kv.Storage, ver k
 		return nil, 0, errors.Trace(err)
 	}
 
+	if sessCtx.GetSessionVars().ReplicaRead.IsFollowerRead() {
+		snap.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
+
 	records, nextHandle, err := ScanTableRecord(sessCtx, snap, t, startHandle, limit)
 
 	return records, nextHandle, errors.Trace(err)
@@ -699,8 +703,8 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	}
 
 	logutil.BgLogger().Debug("record",
-		zap.Binary("startKey", startKey),
-		zap.Binary("key", it.Key()),
+		zap.Stringer("startKey", startKey),
+		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
 	rowDecoder := makeRowDecoder(t, cols, genExprs)
 	for it.Valid() && it.Key().HasPrefix(prefix) {

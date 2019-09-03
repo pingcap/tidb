@@ -264,8 +264,10 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		if err != nil {
 			return nil, false, err
 		}
-		e.colsToRow(ctx, cols)
+		// rowCount will be used in fillRow(), last insert ID will be assigned according to the rowCount = 1.
+		// So should add first here.
 		e.rowCount++
+		e.colsToRow(ctx, cols)
 		e.curBatchCnt++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
@@ -351,17 +353,17 @@ type field struct {
 
 type fieldWriter struct {
 	pos           int
+	ReadBuf       []byte
+	OutputBuf     []byte
 	enclosedChar  byte
 	fieldTermChar byte
-	term          *string
+	term          string
 	isEnclosed    bool
 	isLineStart   bool
 	isFieldStart  bool
-	ReadBuf       *[]byte
-	OutputBuf     []byte
 }
 
-func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf *[]byte, term *string) {
+func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf []byte, term string) {
 	w.isEnclosed = false
 	w.isLineStart = true
 	w.isFieldStart = true
@@ -376,8 +378,8 @@ func (w *fieldWriter) putback() {
 }
 
 func (w *fieldWriter) getChar() (bool, byte) {
-	if w.pos < len(*w.ReadBuf) {
-		ret := (*w.ReadBuf)[w.pos]
+	if w.pos < len(w.ReadBuf) {
+		ret := w.ReadBuf[w.pos]
 		w.pos++
 		return true, ret
 	}
@@ -386,9 +388,9 @@ func (w *fieldWriter) getChar() (bool, byte) {
 
 func (w *fieldWriter) isTerminator() bool {
 	chkpt, isterm := w.pos, true
-	for i := 1; i < len(*w.term); i++ {
+	for i := 1; i < len(w.term); i++ {
 		flag, ch := w.getChar()
-		if !flag || ch != (*w.term)[i] {
+		if !flag || ch != w.term[i] {
 			isterm = false
 			break
 		}
@@ -502,7 +504,7 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 		return fields, nil
 	}
 
-	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Terminated[0], &line, &e.FieldsInfo.Terminated)
+	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Terminated[0], line, e.FieldsInfo.Terminated)
 	for {
 		eol, f := reader.GetField()
 		f = f.escape()
