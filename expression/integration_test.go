@@ -4909,12 +4909,3 @@ func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_HOUR)`).Check(testkit.Rows("2007-03-31 00:08:28"))
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR_MONTH)`).Check(testkit.Rows("2009-05-28 22:08:28"))
 }
-
-func (s *testIntegrationSuite) TestIssue11943(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT, i int(10) unsigned DEFAULT NULL, x int(10) unsigned DEFAULT 0, PRIMARY KEY (id));`)
-	tk.MustExec(`INSERT INTO t (id, i) VALUES (1,1),(2,2),(3,3),(4,4),(5,5);`)
-	tk.MustQuery(`select row_number() over( partition by i ) - x as rnk from t;`).Check(testkit.Rows("1", "1", "1", "1", "1"))
-}
