@@ -32,7 +32,7 @@ const (
 	// Set this threshold to prevent innerEstCount being too large and causing a performance and memory regression.
 	estCountMaxFactor = 10 * 1024
 
-	// estCountMinFactor defines the factor of statCountMin with maxChunkSize.
+	// estCountMinFactor defines the factor of estCountMin with maxChunkSize.
 	// estCountMin is maxChunkSize * estCountMinFactor, the minimum threshold of estCount.
 	// If estCount is smaller than estCountMin, set estCount to 0.
 	// Set this threshold to prevent innerEstCount being too small and causing a performance regression.
