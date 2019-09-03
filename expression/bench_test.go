@@ -241,7 +241,7 @@ var vecExprBenchCases = map[string][]vecExprBenchCase{
 		{types.ETInt, []types.EvalType{types.ETInt}, nil},
 	},
 	ast.Repeat: {
-		{types.ETString, []types.EvalType{types.ETString, types.ETInt}, []gener{&randLenStrGener{10, 50}, &rangeInt64Gener{10, 50}}},
+		{types.ETString, []types.EvalType{types.ETString, types.ETInt}, []gener{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
 	},
 }
 
