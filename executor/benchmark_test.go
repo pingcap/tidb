@@ -770,7 +770,7 @@ func BenchmarkSortExec(b *testing.B) {
 		benchmarkSortExec(b, cas)
 	})
 
-	cas.ndvs = []int{4450, 0} // values of the first column are similar
+	cas.ndvs = []int{4450, 0} // values of the first column are mostly equal
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkSortExec(b, cas)
 	})
