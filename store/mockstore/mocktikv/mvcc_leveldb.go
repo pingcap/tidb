@@ -951,19 +951,17 @@ func (mvcc *MVCCLevelDB) TxnHeartBeat(key []byte, startTS uint64, adviseTTL uint
 			lock := dec.lock
 			batch := &leveldb.Batch{}
 			// Increase the ttl of this transaction.
-			if adviseTTL < lock.ttl {
-				lock.ttl = lock.ttl/2 + adviseTTL/2
-			} else {
+			if adviseTTL > lock.ttl {
 				lock.ttl = adviseTTL
-			}
-			writeKey := mvccEncode(key, lockVer)
-			writeValue, err := lock.MarshalBinary()
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			batch.Put(writeKey, writeValue)
-			if err = mvcc.db.Write(batch, nil); err != nil {
-				return 0, errors.Trace(err)
+				writeKey := mvccEncode(key, lockVer)
+				writeValue, err := lock.MarshalBinary()
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				batch.Put(writeKey, writeValue)
+				if err = mvcc.db.Write(batch, nil); err != nil {
+					return 0, errors.Trace(err)
+				}
 			}
 			return lock.ttl, nil
 		}

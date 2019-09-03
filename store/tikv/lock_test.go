@@ -209,15 +209,18 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	s.prewriteTxn(c, txn.(*tikvTxn))
 
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
-	err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
+	newTTL, err := sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
 	c.Assert(err, IsNil)
+	c.Assert(newTTL, Equals, 666)
 
 	// The getTxnStatus API is confusing, it really means rollback!
-	_, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"))
+	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"))
 	c.Assert(err, IsNil)
+	c.Assert(status, Equals, 0)
 
-	err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
+	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
 	c.Assert(err, NotNil)
+	c.Assert(newTTL, Equals, 0)
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
