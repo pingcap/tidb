@@ -55,7 +55,12 @@ func TestSyncerSimple(t *testing.T) {
 	defer clus.Terminate(t)
 	cli := clus.RandClient()
 	ctx := goctx.Background()
-	d := NewDDL(ctx, cli, store, nil, nil, testLease, nil)
+	d := NewDDL(
+		ctx,
+		WithEtcdClient(cli),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d.Stop()
 
 	// for init function
@@ -82,7 +87,12 @@ func TestSyncerSimple(t *testing.T) {
 		t.Fatalf("client get global version result not match, err %v", err)
 	}
 
-	d1 := NewDDL(ctx, cli, store, nil, nil, testLease, nil)
+	d1 := NewDDL(
+		ctx,
+		WithEtcdClient(cli),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d1.Stop()
 	if err = d1.SchemaSyncer().Init(ctx); err != nil {
 		t.Fatalf("schema version syncer init failed %v", err)

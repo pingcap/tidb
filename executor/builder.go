@@ -991,10 +991,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 
 	e := &HashJoinExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-		concurrency:  v.Concurrency,
-		joinType:     v.JoinType,
-		isOuterJoin:  v.JoinType.IsOuterJoin(),
+		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
+		concurrency:   v.Concurrency,
+		joinType:      v.JoinType,
+		isOuterJoin:   v.JoinType.IsOuterJoin(),
+		innerEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
 	}
 
 	defaultValues := v.DefaultValues
@@ -1803,7 +1804,10 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
-	return e
+	if v.KeepOuterOrder {
+		return e
+	}
+	return &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
 }
 
 // containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
