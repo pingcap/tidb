@@ -126,7 +126,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	innerCh := make(chan *indexHashJoinTask, concurrency)
 	e.workerWg.Add(1)
 	ow := e.newOuterWorker(innerCh)
-	go util.WithRecovery(func() { ow.run(workerCtx, e.cancelFunc) }, e.finishJoinWorkers)
+	go util.WithRecovery(func() { ow.run(workerCtx, cancelFunc) }, e.finishJoinWorkers)
 
 	e.resultCh = make(chan *indexHashJoinResult, concurrency)
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
