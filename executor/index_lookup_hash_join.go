@@ -15,8 +15,9 @@ package executor
 
 import (
 	"context"
+	"hash"
+	"hash/fnv"
 	"sync"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util"
@@ -53,12 +54,13 @@ type indexHashJoinOuterWorker struct {
 
 type indexHashJoinInnerWorker struct {
 	innerWorker
-	matchedOuterPtrs  [][]byte
+	matchedOuterPtrs  []chunk.RowPtr
 	joiner            joiner
 	joinChkResourceCh chan *chunk.Chunk
 	resultCh          chan *indexHashJoinResult
 	taskCh            <-chan *indexHashJoinTask
 	wg                *sync.WaitGroup
+	joinKeyBuf        []byte
 }
 
 type indexHashJoinResult struct {
@@ -78,6 +80,7 @@ const (
 type indexHashJoinTask struct {
 	*lookUpJoinTask
 	outerRowStatus []outerRowStatusFlag
+	lookupMap      *rowHashMap
 	err            error
 }
 
@@ -266,7 +269,8 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		joiner:            e.joiner,
 		joinChkResourceCh: e.joinChkResourceCh[workerID],
 		resultCh:          e.resultCh,
-		matchedOuterPtrs:  make([][]byte, 0, 8),
+		matchedOuterPtrs:  make([]chunk.RowPtr, 0, e.maxChunkSize),
+		joinKeyBuf:        make([]byte, 1),
 	}
 	return iw
 }
@@ -278,6 +282,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		cancelFunc()
 		return
 	}
+	h := fnv.New64()
 	for {
 		select {
 		case <-ctx.Done():
@@ -291,7 +296,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			joinResult.err = task.err
 			break
 		}
-		err := iw.handleTask(ctx, cancelFunc, task, joinResult)
+		err := iw.handleTask(ctx, cancelFunc, task, joinResult, h)
 		if err != nil {
 			joinResult.err = err
 			break
@@ -324,12 +329,10 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 	return joinResult, ok
 }
 
-func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, cancelFunc context.CancelFunc, task *indexHashJoinTask) {
-	var (
-		keyBuf, valBuf  = make([]byte, 0, 64), make([]byte, 8)
-		rowIdx, numRows = 0, task.outerResult.NumRows()
-		err             error
-	)
+func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, cancelFunc context.CancelFunc, task *indexHashJoinTask, h hash.Hash64) {
+	rowIdx, numRows := 0, task.outerResult.NumRows()
+	buf := make([]byte, 1)
+	task.lookupMap = newRowHashMap()
 OUTER:
 	for ; rowIdx < numRows; rowIdx++ {
 		if task.outerMatch != nil && !task.outerMatch[rowIdx] {
@@ -342,14 +345,15 @@ OUTER:
 				continue OUTER
 			}
 		}
-		keyBuf, err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, keyBuf[:0], row, iw.outerCtx.rowTypes, keyColIdx)
+		h.Reset()
+		err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.rowTypes, keyColIdx, buf)
 		if err != nil {
 			cancelFunc()
 			logutil.Logger(ctx).Error("indexHashJoinInnerWorker.buildHashTableForOuterResult failed", zap.Error(err))
 			return
 		}
-		*(*int)(unsafe.Pointer(&valBuf[0])) = rowIdx
-		task.lookupMap.Put(keyBuf, valBuf)
+		rowPtr := chunk.RowPtr{ChkIdx: 0, RowIdx: uint32(rowIdx)}
+		task.lookupMap.Put(h.Sum64(), rowPtr)
 	}
 	return
 }
@@ -370,24 +374,24 @@ func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(r interface{}
 	iw.wg.Done()
 }
 
-func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, cancelFunc context.CancelFunc, task *indexHashJoinTask, joinResult *indexHashJoinResult) error {
+func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, cancelFunc context.CancelFunc, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64) error {
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
-	go util.WithRecovery(func() { iw.buildHashTableForOuterResult(ctx, cancelFunc, task) }, iw.handleHashJoinInnerWorkerPanic)
+	go util.WithRecovery(func() { iw.buildHashTableForOuterResult(ctx, cancelFunc, task, h) }, iw.handleHashJoinInnerWorkerPanic)
 	err := iw.fetchInnerResults(ctx, task.lookUpJoinTask)
 	if err != nil {
 		return err
 	}
 	iw.wg.Wait()
-	return iw.doJoin(ctx, task, joinResult)
+	return iw.doJoin(ctx, task, joinResult, h)
 }
 
-func (iw *indexHashJoinInnerWorker) doJoin(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult) error {
+func (iw *indexHashJoinInnerWorker) doJoin(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64) error {
 	var ok bool
 	iter := chunk.NewIterator4List(task.innerResult)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		ok, joinResult = iw.joinMatchedInnerRow2Chunk(ctx, row, task, joinResult)
+		ok, joinResult = iw.joinMatchedInnerRow2Chunk(ctx, row, task, joinResult, h, iw.joinKeyBuf)
 		if !ok {
 			return errors.New("indexHashJoinInnerWorker.handleTask failed")
 		}
@@ -412,15 +416,15 @@ func (iw *indexHashJoinInnerWorker) doJoin(ctx context.Context, task *indexHashJ
 }
 
 func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Context, innerRow chunk.Row, task *indexHashJoinTask,
-	joinResult *indexHashJoinResult) (bool, *indexHashJoinResult) {
+	joinResult *indexHashJoinResult, h hash.Hash64, buf []byte) (bool, *indexHashJoinResult) {
 	var err error
-	keyBuf := make([]byte, 0, 64)
-	keyBuf, err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, keyBuf, innerRow, iw.rowTypes, iw.keyCols)
+	h.Reset()
+	err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, innerRow, iw.rowTypes, iw.keyCols, buf)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
 	}
-	iw.matchedOuterPtrs = task.lookupMap.Get(keyBuf, iw.matchedOuterPtrs[:0])
+	iw.matchedOuterPtrs = task.lookupMap.Get(h.Sum64())
 	if len(iw.matchedOuterPtrs) == 0 {
 		return true, joinResult
 	}
@@ -428,7 +432,7 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 	var ok bool
 	for _, ptr := range iw.matchedOuterPtrs {
 		innerIter.Begin()
-		rowIdx := *(*int)(unsafe.Pointer(&ptr[0]))
+		rowIdx := int(ptr.RowIdx)
 		outerRow := task.outerResult.GetRow(rowIdx)
 		matched, isNull, err := iw.joiner.tryToMatch(outerRow, innerIter, joinResult.chk)
 		if err != nil {
