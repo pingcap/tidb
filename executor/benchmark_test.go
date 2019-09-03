@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -120,7 +121,9 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	case mysql.TypeDouble:
 		return rand.Float64()
 	case mysql.TypeVarString:
-		return rawData
+		buff := make([]byte, 10)
+		rand.Read(buff)
+		return base64.RawURLEncoding.EncodeToString(buff)
 	default:
 		panic("not implement")
 	}
@@ -409,15 +412,11 @@ type windowTestCase struct {
 	ctx        sessionctx.Context
 }
 
-var rawData = strings.Repeat("x", 5*1024)
-
 func (a windowTestCase) columns() []*expression.Column {
-	rawDataTp := new(types.FieldType)
-	types.DefaultTypeForValue(rawData, rawDataTp)
 	return []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 2, RetType: rawDataTp},
+		{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
 		{Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong)},
 	}
 }
@@ -522,6 +521,7 @@ type hashJoinTestCase struct {
 	concurrency int
 	ctx         sessionctx.Context
 	keyIdx      []int
+	rawData     string
 }
 
 func (tc hashJoinTestCase) columns() []*expression.Column {
@@ -541,7 +541,7 @@ func defaultHashJoinTestCase() *hashJoinTestCase {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
-	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}}
+	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}, rawData: strings.Repeat("x", 5*1024)}
 	return tc
 }
 
@@ -584,7 +584,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeVarString:
-				return rawData
+				return casTest.rawData
 			default:
 				panic("not implement")
 			}
@@ -645,7 +645,7 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeVarString:
-				return rawData
+				return casTest.rawData
 			default:
 				panic("not implement")
 			}
@@ -689,5 +689,101 @@ func BenchmarkBuildHashTableForList(b *testing.B) {
 	cas.keyIdx = []int{0}
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkBuildHashTableForList(b, cas)
+	})
+}
+
+type sortCase struct {
+	rows       int
+	orderByIdx []int
+	ndvs       []int
+	ctx        sessionctx.Context
+}
+
+func (tc sortCase) columns() []*expression.Column {
+	return []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeVarString)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeVarString)},
+	}
+}
+
+func (tc sortCase) String() string {
+	return fmt.Sprintf("(rows:%v, orderBy:%v, ndvs: %v)", tc.rows, tc.orderByIdx, tc.ndvs)
+}
+
+func defaultSortTestCase() *sortCase {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	tc := &sortCase{rows: 3000000, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	return tc
+}
+
+func benchmarkSortExec(b *testing.B, cas *sortCase) {
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource := buildMockDataSource(opt)
+	exec := &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		ByItems:      make([]*core.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.schema,
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &core.ByItems{Expr: cas.columns()[idx]})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		tmpCtx := context.Background()
+		chk := newFirstChunk(exec)
+		dataSource.prepareChunks()
+
+		b.StartTimer()
+		if err := exec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			if err := exec.Next(tmpCtx, chk); err != nil {
+				b.Fatal(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+
+		if err := exec.Close(); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+	}
+}
+
+func BenchmarkSortExec(b *testing.B) {
+	b.ReportAllocs()
+	cas := defaultSortTestCase()
+	cas.ndvs = []int{0, 0} // all random data
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkSortExec(b, cas)
+	})
+
+	cas.ndvs = []int{4450, 0} // values of the first column are similar
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkSortExec(b, cas)
+	})
+
+	cas.ndvs = []int{4450, 0}
+	cas.orderByIdx = []int{0}
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkSortExec(b, cas)
+	})
+
+	cas.ndvs = []int{10, 0}
+	cas.orderByIdx = []int{1}
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkSortExec(b, cas)
 	})
 }
