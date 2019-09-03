@@ -17,8 +17,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -406,34 +408,52 @@ type RegionsInfo struct {
 
 // GetRegionsInfo gets the region information of current store by using PD's api.
 func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GET", pdapi.Regions, nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
+// GetRegionInfoByID gets the region information of the region ID by using PD's api.
+func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
+	var regionInfo RegionInfo
+	err := h.requestPD("GET", pdapi.RegionByID+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	return &regionInfo, err
+}
+
+// request PD API, decode the response body into res
+func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) error {
 	etcd, ok := h.Store.(tikv.EtcdBackend)
 	if !ok {
-		return nil, errors.WithStack(errors.New("not implemented"))
+		return errors.WithStack(errors.New("not implemented"))
 	}
 	pdHosts := etcd.EtcdAddrs()
 	if len(pdHosts) == 0 {
-		return nil, errors.New("pd unavailable")
+		return errors.New("pd unavailable")
 	}
-	req, err := http.NewRequest("GET", protocol+pdHosts[0]+pdapi.Regions, nil)
+
+	logutil.Logger(context.Background()).Debug("RequestPD URL", zap.String("url", protocol+pdHosts[0]+uri))
+	req, err := http.NewRequest(method, protocol+pdHosts[0]+uri, body)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
+
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
 			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
 		}
 	}()
-	var regionsInfo RegionsInfo
-	err = json.NewDecoder(resp.Body).Decode(&regionsInfo)
+
+	err = json.NewDecoder(resp.Body).Decode(res)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return &regionsInfo, nil
+
+	return nil
 }
 
 // StoresStat stores all information get from PD's api.
