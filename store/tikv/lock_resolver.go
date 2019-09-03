@@ -266,19 +266,19 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 //    commit status.
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
-func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnExpired int64, err error) {
+func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnExpired int64, resolved []uint64, err error) {
 	if len(locks) == 0 {
 		return
 	}
 
 	tikvLockResolverCountWithResolve.Inc()
 
-	var expiredLocks []*Lock
+	var expiredSecondaryLocks []*Lock
 	for _, l := range locks {
 		msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL)
 		if msBeforeLockExpired <= 0 {
 			tikvLockResolverCountWithExpired.Inc()
-			expiredLocks = append(expiredLocks, l)
+			expiredSecondaryLocks = append(expiredSecondaryLocks, l)
 		} else {
 			if msBeforeTxnExpired == 0 || msBeforeLockExpired < msBeforeTxnExpired {
 				msBeforeTxnExpired = msBeforeLockExpired
@@ -286,36 +286,56 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 			tikvLockResolverCountWithNotExpired.Inc()
 		}
 	}
-	if len(expiredLocks) == 0 {
+	if len(expiredSecondaryLocks) == 0 {
 		if msBeforeTxnExpired > 0 {
 			tikvLockResolverCountWithWaitExpired.Inc()
 		}
 		return
 	}
 
+	currentTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
-	for _, l := range expiredLocks {
+	for _, l := range expiredSecondaryLocks {
 		var status TxnStatus
-		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary)
+		status, err = lr.checkTxnStatus(bo, l.TxnID, l.Primary, currentTS)
 		if err != nil {
 			msBeforeTxnExpired = 0
 			err = errors.Trace(err)
 			return
 		}
 
-		cleanRegions, exists := cleanTxns[l.TxnID]
-		if !exists {
-			cleanRegions = make(map[RegionVerID]struct{})
-			cleanTxns[l.TxnID] = cleanRegions
-		}
+		if status.ttl == 0 {
+			// If the lock is committed or rollbacked, resolve lock.
+			cleanRegions, exists := cleanTxns[l.TxnID]
+			if !exists {
+				cleanRegions = make(map[RegionVerID]struct{})
+				cleanTxns[l.TxnID] = cleanRegions
+			}
 
-		err = lr.resolveLock(bo, l, status, cleanRegions)
-		if err != nil {
-			msBeforeTxnExpired = 0
-			err = errors.Trace(err)
-			return
+			err = lr.resolveLock(bo, l, status, cleanRegions)
+			if err != nil {
+				msBeforeTxnExpired = 0
+				err = errors.Trace(err)
+				return
+			}
+		} else {
+			// If the lock is valid, the txn may be a large transaction.
+			resolved = append(resolved, l.TxnID)
+			msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, status.ttl)
+			if msBeforeLockExpired <= 0 {
+				// The txn is a large transaction, and it's primary lock will expire soon, but
+				// TxnHeartBeat could update the TTL, so we should not clean up the lock.
+				continue
+			}
+			if msBeforeTxnExpired == 0 || msBeforeLockExpired < msBeforeTxnExpired {
+				msBeforeTxnExpired = msBeforeLockExpired
+			}
 		}
 	}
 	return
