@@ -948,7 +948,11 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
 // If the transaction is rollbacked, this function returns (0, 0, nil)
 // Note that CheckTxnStatus may also push forward the `minCommitTS` of the
 // transaction, so it's not simply a read-only operation.
-func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, startTS uint64, currentTS uint64) (uint64, uint64, error) {
+//
+// primaryKey + lockTS together could locate the primary lock.
+// callerStartTS is the start ts of reader transaction.
+// currentTS is the current ts, but it may be inaccurate. Just use it to check TTL.
+func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64) (uint64, uint64, error) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
@@ -967,13 +971,13 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, startTS uint64, curre
 			return 0, 0, errors.Trace(err)
 		}
 		// If current transaction's lock exists.
-		if ok && dec.lock.startTS == startTS {
+		if ok && dec.lock.startTS == lockTS {
 			lock := dec.lock
 			batch := &leveldb.Batch{}
 
 			// If the lock has already outdated, clean up it.
 			if uint64(oracle.ExtractPhysical(lock.startTS))+lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
-				if err = rollbackLock(batch, lock, primaryKey, startTS); err != nil {
+				if err = rollbackLock(batch, lock, primaryKey, lockTS); err != nil {
 					return 0, 0, errors.Trace(err)
 				}
 				if err = mvcc.db.Write(batch, nil); err != nil {
@@ -985,9 +989,9 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, startTS uint64, curre
 			// If this is a large transaction and the lock is active, push forward the minCommitTS.
 			// lock.minCommitTS == 0 may be a secondary lock, or not a large transaction.
 			if lock.minCommitTS > 0 {
-				// We must guarantee the invariance lock.minCommitTS >= startTS + 1
-				if lock.minCommitTS < startTS+1 {
-					lock.minCommitTS = startTS + 1
+				// We must guarantee the invariance lock.minCommitTS >= callerStartTS + 1
+				if lock.minCommitTS < callerStartTS+1 {
+					lock.minCommitTS = callerStartTS + 1
 
 					writeKey := mvccEncode(primaryKey, lockVer)
 					writeValue, err := lock.MarshalBinary()
@@ -1006,7 +1010,7 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, startTS uint64, curre
 
 		// If current transaction's lock does not exist.
 		// If the commit info of the current transaction exists.
-		c, ok, err := getTxnCommitInfo(iter, primaryKey, startTS)
+		c, ok, err := getTxnCommitInfo(iter, primaryKey, lockTS)
 		if err != nil {
 			return 0, 0, errors.Trace(err)
 		}

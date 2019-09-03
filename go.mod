@@ -76,6 +76,6 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/pingcap/kvproto => github.com/pingcap/kvproto v0.0.0-20190829095345-6a581f25586d
+replace github.com/pingcap/kvproto => github.com/pingcap/kvproto v0.0.0-20190903073125-8f378ce91fd4
 
 go 1.13
