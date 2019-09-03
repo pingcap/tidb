@@ -91,11 +91,13 @@ func (s *testScanSuite) TestScan(c *C) {
 		c.Assert(err, IsNil)
 
 		if rowNum > 123 {
+			fmt.Println(s.prefix, s08d("key", 123))
 			_, err = s.store.SplitRegions(context.Background(), [][]byte{encodeKey(s.prefix, s08d("key", 123))}, false)
 			c.Assert(err, IsNil)
 		}
 
 		if rowNum > 456 {
+			fmt.Println(s.prefix, s08d("key", 456))
 			_, err = s.store.SplitRegions(context.Background(), [][]byte{encodeKey(s.prefix, s08d("key", 456))}, false)
 			c.Assert(err, IsNil)
 		}

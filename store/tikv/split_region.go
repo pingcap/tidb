@@ -31,8 +31,17 @@ import (
 	"go.uber.org/zap"
 )
 
+func equalRegionStartKey(key, regionStartKey []byte) bool {
+	if bytes.Equal(key, regionStartKey) {
+		return true
+	}
+	return false
+}
+
 func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool) (*tikvrpc.Response, error) {
-	groups, _, err := s.regionCache.GroupKeysByRegion(bo, keys)
+	// equalRegionStartKey is used to filter split keys.
+	// If the split key is equal to the start key of the region, then the key has been split, we need to skip the split key.
+	groups, _, err := s.regionCache.GroupKeysByRegion(bo, keys, equalRegionStartKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -177,7 +186,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 
 // SplitRegions splits regions by splitKeys.
 func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool) (regionIDs []uint64, err error) {
-	bo := NewBackoffer(ctx, int(math.Min(float64(len(splitKeys)), maxSplitRegionsBackoff)))
+	bo := NewBackoffer(ctx, int(math.Min(float64(len(splitKeys))*splitRegionBackoff, maxSplitRegionsBackoff)))
 	resp, err := s.splitBatchRegionsReq(bo, splitKeys, scatter)
 	regionIDs = make([]uint64, 0, len(splitKeys))
 	if resp != nil && resp.Resp != nil {
