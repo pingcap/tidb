@@ -133,6 +133,9 @@ func addStmtExecInfoToSummary(sei *StmtExecInfo, ss *stmtSummary) {
 	// TODO: uint64 overflow
 	ss.sumAffectedRows += sei.AffectedRows
 	ss.sumSentRows += sei.SentRows
+	if sei.StartTime.Before(ss.firstSeen) {
+		ss.firstSeen = sei.StartTime
+	}
 	if ss.lastSeen.Before(sei.StartTime) {
 		ss.lastSeen = sei.StartTime
 	}
@@ -153,6 +156,13 @@ func (ss *stmtSummaryByDigest) AddStatement(sei *StmtExecInfo) {
 		summary = convertStmtExecInfoToSummary(sei)
 		ss.summaryMap.Put(key, summary)
 	}
+	ss.Unlock()
+}
+
+// Remove all statement summaries.
+func (ss *stmtSummaryByDigest) Clear() {
+	ss.Lock()
+	ss.summaryMap.DeleteAll()
 	ss.Unlock()
 }
 

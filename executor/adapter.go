@@ -181,7 +181,7 @@ func (a *recordSet) Close() error {
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.Ctx.GetSessionVars().PrevStmt = a.stmt.OriginText()
 	a.stmt.logAudit()
-	a.stmt.summaryStmt()
+	a.stmt.SummaryStmt()
 	return err
 }
 
@@ -781,7 +781,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 }
 
-func (a *ExecStmt) summaryStmt() {
+// Collect statements for performance_schema.events_statements_summary_by_digest
+func (a *ExecStmt) SummaryStmt() {
 	sessVars := a.Ctx.GetSessionVars()
 	if !sessVars.EnableStmtSummary || sessVars.InRestrictedSQL {
 		return
