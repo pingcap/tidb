@@ -985,20 +985,19 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, startTS uint64, curre
 			// If this is a large transaction and the lock is active, push forward the minCommitTS.
 			// lock.minCommitTS == 0 may be a secondary lock, or not a large transaction.
 			if lock.minCommitTS > 0 {
-				// currentTS may be inaccurate, we have to guarantee the invariance lock.minCommitTS >= startTS + 1
-				lock.minCommitTS = currentTS
+				// We must guarantee the invariance lock.minCommitTS >= startTS + 1
 				if lock.minCommitTS < startTS+1 {
 					lock.minCommitTS = startTS + 1
-				}
 
-				writeKey := mvccEncode(primaryKey, lockVer)
-				writeValue, err := lock.MarshalBinary()
-				if err != nil {
-					return 0, 0, errors.Trace(err)
-				}
-				batch.Put(writeKey, writeValue)
-				if err = mvcc.db.Write(batch, nil); err != nil {
-					return 0, 0, errors.Trace(err)
+					writeKey := mvccEncode(primaryKey, lockVer)
+					writeValue, err := lock.MarshalBinary()
+					if err != nil {
+						return 0, 0, errors.Trace(err)
+					}
+					batch.Put(writeKey, writeValue)
+					if err = mvcc.db.Write(batch, nil); err != nil {
+						return 0, 0, errors.Trace(err)
+					}
 				}
 			}
 
