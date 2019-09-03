@@ -37,25 +37,56 @@ func (s *testEvaluatorSuite) TestSetFlenDecimal4RealOrDecimal(c *C) {
 		Decimal: 0,
 		Flen:    2,
 	}
-	setFlenDecimal4RealOrDecimal(ret, a, b, true)
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, false)
 	c.Assert(ret.Decimal, Equals, 1)
 	c.Assert(ret.Flen, Equals, 6)
 
 	b.Flen = 65
-	setFlenDecimal4RealOrDecimal(ret, a, b, true)
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, false)
 	c.Assert(ret.Decimal, Equals, 1)
 	c.Assert(ret.Flen, Equals, mysql.MaxRealWidth)
-	setFlenDecimal4RealOrDecimal(ret, a, b, false)
+	setFlenDecimal4RealOrDecimal(ret, a, b, false, false)
 	c.Assert(ret.Decimal, Equals, 1)
 	c.Assert(ret.Flen, Equals, mysql.MaxDecimalWidth)
 
 	b.Flen = types.UnspecifiedLength
-	setFlenDecimal4RealOrDecimal(ret, a, b, true)
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, false)
 	c.Assert(ret.Decimal, Equals, 1)
 	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
 
 	b.Decimal = types.UnspecifiedLength
-	setFlenDecimal4RealOrDecimal(ret, a, b, true)
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, false)
+	c.Assert(ret.Decimal, Equals, types.UnspecifiedLength)
+	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
+
+	ret = &types.FieldType{}
+	a = &types.FieldType{
+		Decimal: 1,
+		Flen:    3,
+	}
+	b = &types.FieldType{
+		Decimal: 0,
+		Flen:    2,
+	}
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, true)
+	c.Assert(ret.Decimal, Equals, 1)
+	c.Assert(ret.Flen, Equals, 8)
+
+	b.Flen = 65
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, true)
+	c.Assert(ret.Decimal, Equals, 1)
+	c.Assert(ret.Flen, Equals, mysql.MaxRealWidth)
+	setFlenDecimal4RealOrDecimal(ret, a, b, false, true)
+	c.Assert(ret.Decimal, Equals, 1)
+	c.Assert(ret.Flen, Equals, mysql.MaxDecimalWidth)
+
+	b.Flen = types.UnspecifiedLength
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, true)
+	c.Assert(ret.Decimal, Equals, 1)
+	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
+
+	b.Decimal = types.UnspecifiedLength
+	setFlenDecimal4RealOrDecimal(ret, a, b, true, true)
 	c.Assert(ret.Decimal, Equals, types.UnspecifiedLength)
 	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
 }
@@ -96,7 +127,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err := funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	intSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusIntSig)
+	intSig, ok := bf.(*builtinArithmeticPlusIntSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(intSig, NotNil)
 
@@ -111,7 +142,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusRealSig)
+	realSig, ok := bf.(*builtinArithmeticPlusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -126,7 +157,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusRealSig)
+	realSig, ok = bf.(*builtinArithmeticPlusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -141,7 +172,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusRealSig)
+	realSig, ok = bf.(*builtinArithmeticPlusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -158,7 +189,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	intSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticPlusIntSig)
+	intSig, ok = bf.(*builtinArithmeticPlusIntSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(intSig, NotNil)
 
@@ -176,7 +207,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err := funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	intSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusIntSig)
+	intSig, ok := bf.(*builtinArithmeticMinusIntSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(intSig, NotNil)
 
@@ -191,7 +222,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok := bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
+	realSig, ok := bf.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -206,7 +237,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
+	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -221,7 +252,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
+	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 
@@ -236,7 +267,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	realSig, ok = bf.(*vecRowConverter).builtinFunc.(*builtinArithmeticMinusRealSig)
+	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(realSig, NotNil)
 

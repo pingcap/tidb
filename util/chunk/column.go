@@ -244,7 +244,7 @@ const (
 )
 
 // resize resizes the column so that it contains n elements, only valid for fixed-length types.
-func (c *Column) resize(n, typeSize int) {
+func (c *Column) resize(n, typeSize int, isNull bool) {
 	sizeData := n * typeSize
 	if cap(c.data) >= sizeData {
 		(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = sizeData
@@ -252,11 +252,22 @@ func (c *Column) resize(n, typeSize int) {
 		c.data = make([]byte, sizeData)
 	}
 
+	newNulls := false
 	sizeNulls := (n + 7) >> 3
 	if cap(c.nullBitmap) >= sizeNulls {
 		(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = sizeNulls
 	} else {
 		c.nullBitmap = make([]byte, sizeNulls)
+		newNulls = true
+	}
+	if !isNull || !newNulls {
+		var nullVal byte = 0
+		if !isNull {
+			nullVal = 0xFF
+		}
+		for i := range c.nullBitmap {
+			c.nullBitmap[i] = nullVal
+		}
 	}
 
 	if cap(c.elemBuf) >= typeSize {
@@ -339,38 +350,38 @@ func (c *Column) nullCount() int {
 }
 
 // ResizeInt64 resizes the column so that it contains n int64 elements.
-func (c *Column) ResizeInt64(n int) {
-	c.resize(n, sizeInt64)
+func (c *Column) ResizeInt64(n int, isNull bool) {
+	c.resize(n, sizeInt64, isNull)
 }
 
 // ResizeUint64 resizes the column so that it contains n uint64 elements.
-func (c *Column) ResizeUint64(n int) {
-	c.resize(n, sizeUint64)
+func (c *Column) ResizeUint64(n int, isNull bool) {
+	c.resize(n, sizeUint64, isNull)
 }
 
 // ResizeFloat32 resizes the column so that it contains n float32 elements.
-func (c *Column) ResizeFloat32(n int) {
-	c.resize(n, sizeFloat32)
+func (c *Column) ResizeFloat32(n int, isNull bool) {
+	c.resize(n, sizeFloat32, isNull)
 }
 
 // ResizeFloat64 resizes the column so that it contains n float64 elements.
-func (c *Column) ResizeFloat64(n int) {
-	c.resize(n, sizeFloat64)
+func (c *Column) ResizeFloat64(n int, isNull bool) {
+	c.resize(n, sizeFloat64, isNull)
 }
 
 // ResizeDecimal resizes the column so that it contains n decimal elements.
-func (c *Column) ResizeDecimal(n int) {
-	c.resize(n, sizeMyDecimal)
+func (c *Column) ResizeDecimal(n int, isNull bool) {
+	c.resize(n, sizeMyDecimal, isNull)
 }
 
 // ResizeDuration resizes the column so that it contains n duration elements.
-func (c *Column) ResizeDuration(n int) {
-	c.resize(n, sizeGoDuration)
+func (c *Column) ResizeDuration(n int, isNull bool) {
+	c.resize(n, sizeGoDuration, isNull)
 }
 
 // ResizeTime resizes the column so that it contains n Time elements.
-func (c *Column) ResizeTime(n int) {
-	c.resize(n, sizeTime)
+func (c *Column) ResizeTime(n int, isNull bool) {
+	c.resize(n, sizeTime, isNull)
 }
 
 // ReserveString changes the column capacity to store n string elements and set the length to zero.
@@ -524,6 +535,18 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 		return "", 0
 	}
 	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
+}
+
+// GetRaw returns the underlying raw bytes in the specific row.
+func (c *Column) GetRaw(rowID int) []byte {
+	var data []byte
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		data = c.data[rowID*elemLen : rowID*elemLen+elemLen]
+	} else {
+		data = c.data[c.offsets[rowID]:c.offsets[rowID+1]]
+	}
+	return data
 }
 
 // reconstruct reconstructs this Column by removing all filtered rows in it according to sel.

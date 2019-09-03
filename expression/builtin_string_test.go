@@ -821,7 +821,7 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("haha", "utf8")))
 	c.Assert(err, IsNil)
 	c.Assert(f, NotNil)
-	wrongFunction := f.(*vecRowConverter).builtinFunc.(*builtinConvertSig)
+	wrongFunction := f.(*builtinConvertSig)
 	wrongFunction.tp.Charset = "wrongcharset"
 	_, err = evalBuiltinFunc(wrongFunction, chunk.Row{})
 	c.Assert(err.Error(), Equals, "[expression:1115]Unknown character set: 'wrongcharset'")

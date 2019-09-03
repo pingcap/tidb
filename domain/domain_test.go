@@ -92,7 +92,13 @@ func TestInfo(t *testing.T) {
 	dom.etcdClient = cli
 	// Mock new DDL and init the schema syncer with etcd client.
 	goCtx := context.Background()
-	dom.ddl = ddl.NewDDL(goCtx, dom.GetEtcdClient(), s, dom.infoHandle, nil, ddlLease, nil)
+	dom.ddl = ddl.NewDDL(
+		goCtx,
+		ddl.WithEtcdClient(dom.GetEtcdClient()),
+		ddl.WithStore(s),
+		ddl.WithInfoHandle(dom.infoHandle),
+		ddl.WithLease(ddlLease),
+	)
 	err = failpoint.Enable("github.com/pingcap/tidb/domain/MockReplaceDDL", `return(true)`)
 	if err != nil {
 		t.Fatal(err)
