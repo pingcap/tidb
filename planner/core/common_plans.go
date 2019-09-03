@@ -273,7 +273,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, p.OutputNames()))
+		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, names))
 	}
 	return err
 }
