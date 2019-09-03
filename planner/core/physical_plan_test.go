@@ -529,7 +529,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		},
 		{
 			sql:  "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
-			best: "LeftHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.s.a,test.t1.a)->StreamAgg}(test.t.a,test.s.a)->Projection->Projection",
+			best: "LeftHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.s.a,test.t1.a)->StreamAgg}(test.t.a,test.s.a)->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
@@ -864,7 +864,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test agg + table.
 		{
 			sql:  "select sum(a), avg(b + c) from t group by d",
-			best: "TableReader(Table(t)->HashAgg)->HashAgg",
+			best: "TableReader(Table(t))->Projection->HashAgg",
 		},
 		{
 			sql:  "select sum(distinct a), avg(b + c) from t group by d",
@@ -912,7 +912,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		},
 		{
 			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
-			best: "MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t.a,test.s.a)->Projection->Projection",
+			best: "MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t.a,test.s.a)->Projection",
 		},
 		// Test stream agg with multi group by columns.
 		{

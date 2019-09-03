@@ -240,6 +240,22 @@ func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result
 
 // VecEvalReal evaluates this expression in a vectorized manner.
 func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	src := input.Column(col.Index)
+	if col.GetType().Tp == mysql.TypeFloat {
+		result.ResizeFloat64(n, false)
+		f32s := src.Float32s()
+		f64s := result.Float64s()
+		for i := range f32s {
+			// TODO(zhangyuanjia): speed up the way to manipulate null-bitmaps.
+			if src.IsNull(i) {
+				result.SetNull(i, true)
+			} else {
+				f64s[i] = float64(f32s[i])
+			}
+		}
+		return nil
+	}
 	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
 	return nil
 }
