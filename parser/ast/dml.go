@@ -2100,6 +2100,9 @@ func (n *ShowStmt) Restore(ctx *RestoreCtx) error {
 				ctx.WriteName(n.IndexName.String())
 			}
 			ctx.WriteKeyWord(" REGIONS")
+			if err := restoreShowLikeOrWhereOpt(); err != nil {
+				return err
+			}
 			return nil
 		default:
 			return errors.New("Unknown ShowStmt type")
