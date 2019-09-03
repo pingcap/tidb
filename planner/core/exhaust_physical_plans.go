@@ -357,6 +357,7 @@ func (p *LogicalJoin) constructIndexJoin(
 		KeyOff2IdxOff:   newKeyOff,
 		IdxColLens:      lens,
 		Ranges:          ranges,
+		KeepOuterOrder:  len(prop.Items) > 0,
 		CompareFilters:  compareFilters,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
