@@ -26,13 +26,15 @@ import (
 )
 
 const (
-	// estCountMaxFactor defines the factor of maxStatCount with maxChunkSize.
-	// estCountMax is maxChunkSize * estCountMaxFactor.
-	// Set this threshold to prevent innerEstCount being too large and causing a performance regression.
+	// estCountMaxFactor defines the factor of estCountMax with maxChunkSize.
+	// estCountMax is maxChunkSize * estCountMaxFactor, the maximum threshold of estCount.
+	// if estCount is larger than estCountMax, set estCount to estCountMax.
+	// Set this threshold to prevent innerEstCount being too large and causing a performance and memory regression.
 	estCountMaxFactor = 10 * 1024
 
 	// estCountMinFactor defines the factor of statCountMin with maxChunkSize.
-	// estCountMin is maxChunkSize * estCountMinFactor.
+	// estCountMin is maxChunkSize * estCountMinFactor, the minimum threshold of estCount.
+	// If estCount is smaller than estCountMin, set estCount to 0.
 	// Set this threshold to prevent innerEstCount being too small and causing a performance regression.
 	estCountMinFactor = 8
 
@@ -121,7 +123,6 @@ func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext)
 
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
 func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *hashContext) (ok bool, err error) {
-
 	return codec.EqualChunkRow(c.sc,
 		buildRow, c.hCtx.allTypes, c.hCtx.keyColIdx,
 		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
