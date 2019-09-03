@@ -460,6 +460,7 @@ func NewSessionVars() *SessionVars {
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		EnableRadixJoin:             false,
+		EnableVectorizedExpression:  DefEnableVectorizedExpression,
 		L2CacheSize:                 cpuid.CPU.Cache.L2,
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
