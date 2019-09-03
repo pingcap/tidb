@@ -332,7 +332,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, cancelFunc context.CancelFunc, task *indexHashJoinTask, h hash.Hash64) {
 	rowIdx, numRows := 0, task.outerResult.NumRows()
 	buf := make([]byte, 1)
-	task.lookupMap = newRowHashMap()
+	task.lookupMap = newRowHashMap(numRows)
 OUTER:
 	for ; rowIdx < numRows; rowIdx++ {
 		if task.outerMatch != nil && !task.outerMatch[rowIdx] {
