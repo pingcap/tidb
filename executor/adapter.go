@@ -859,7 +859,7 @@ func (a *ExecStmt) SummaryStmt() {
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
 //  2. txn is not valid
-//  2. plan is point get by pk, or point get by unique index (no double read)
+//  3. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) (bool, error) {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
