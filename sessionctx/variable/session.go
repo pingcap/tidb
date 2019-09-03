@@ -339,6 +339,9 @@ type SessionVars struct {
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
+	// EnableVectorizedExpression  enables the vectorized expression evaluation.
+	EnableVectorizedExpression bool
+
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	EnableIndexMerge bool
 
@@ -457,6 +460,7 @@ func NewSessionVars() *SessionVars {
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		EnableRadixJoin:             false,
+		EnableVectorizedExpression:  DefEnableVectorizedExpression,
 		L2CacheSize:                 cpuid.CPU.Cache.L2,
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
@@ -820,6 +824,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
+	case TiDBEnableVectorizedExpression:
+		s.EnableVectorizedExpression = TiDBOptOn(val)
 	case TiDBOptJoinReorderThreshold:
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
 	case TiDBCheckMb4ValueInUTF8:

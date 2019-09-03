@@ -35,20 +35,14 @@ import (
 
 // EncodeHandle encodes handle in data.
 func EncodeHandle(h int64) []byte {
-	buf := &bytes.Buffer{}
-	err := binary.Write(buf, binary.BigEndian, h)
-	if err != nil {
-		panic(err)
-	}
-	return buf.Bytes()
+	var data [8]byte
+	binary.BigEndian.PutUint64(data[:], uint64(h))
+	return data[:]
 }
 
 // DecodeHandle decodes handle in data.
 func DecodeHandle(data []byte) (int64, error) {
-	var h int64
-	buf := bytes.NewBuffer(data)
-	err := binary.Read(buf, binary.BigEndian, &h)
-	return h, err
+	return int64(binary.BigEndian.Uint64(data)), nil
 }
 
 // indexIter is for KV store index iterator.

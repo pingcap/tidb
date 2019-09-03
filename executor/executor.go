@@ -522,7 +522,7 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *Ind
 
 	var err error
 	for {
-		err = src.Next(ctx, chk)
+		err = Next(ctx, src, chk)
 		if err != nil {
 			break
 		}
