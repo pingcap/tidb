@@ -1100,7 +1100,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		}
 		buf.WriteString("\n")
 	}
-	if logItems.CopTasks != nil {
+	if logItems.CopTasks != nil && logItems.CopTasks.NumCopTasks > 0 {
 		writeSlowLogItem(&buf, SlowLogNumCopTasksStr, strconv.FormatInt(int64(logItems.CopTasks.NumCopTasks), 10))
 		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
 			SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
