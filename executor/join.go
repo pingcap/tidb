@@ -266,7 +266,7 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 			return
 		}
 		chk := chunk.NewChunkWithCapacity(e.innerExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
-		err = e.innerExec.Next(ctx, chk)
+		err = Next(ctx, e.innerExec, chk)
 		if err != nil {
 			e.innerFinished <- errors.Trace(err)
 			return

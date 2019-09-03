@@ -47,7 +47,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
-	b := NewPlanBuilder(sctx, is)
+	b := NewPlanBuilder(sctx, is, &BlockHintProcessor{})
 	fakePlan := LogicalTableDual{}.Init(sctx)
 	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
 	if err != nil {
