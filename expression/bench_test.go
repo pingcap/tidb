@@ -411,20 +411,19 @@ func BenchmarkVectorizedEvalOneVec(b *testing.B) {
 	}
 }
 
-func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (builtinFunc, *chunk.Chunk, *chunk.Column) {
+func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (baseFunc builtinFunc, input *chunk.Chunk, result *chunk.Column) {
 	childrenNumber := len(testCase.childrenTypes)
 	fts := make([]*types.FieldType, childrenNumber)
 	for i, eType := range testCase.childrenTypes {
 		fts[i] = eType2FieldType(eType)
 	}
 	cols := make([]Expression, childrenNumber)
-	input := chunk.New(fts, 1024, 1024)
+	input = chunk.New(fts, 1024, 1024)
 	for i, eType := range testCase.childrenTypes {
 		fillColumn(eType, input, i)
 		cols[i] = &Column{Index: i, RetType: fts[i]}
 	}
 
-	var baseFunc builtinFunc
 	var err error
 	if funcName == ast.Cast {
 		var fc functionClass
@@ -452,7 +451,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	if err != nil {
 		panic(err)
 	}
-	result := chunk.NewColumn(eType2FieldType(testCase.retEvalType), 1024)
+	result = chunk.NewColumn(eType2FieldType(testCase.retEvalType), 1024)
 	return baseFunc, input, result
 }
 
