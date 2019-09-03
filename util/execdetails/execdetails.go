@@ -349,7 +349,7 @@ func (e *RuntimeStatsColl) ExistsCopStats(planID string) bool {
 	return exists
 }
 
-// ExistsReaderStats checks if the planID exists in the readerStats collection.
+// GetReaderStats gets the ReaderRuntimeStats specified by planID.
 func (e *RuntimeStatsColl) GetReaderStats(planID string) *ReaderRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
