@@ -258,6 +258,8 @@ type ReaderRuntimeStats struct {
 	sync.Mutex
 
 	maxCopRespTime time.Duration
+	sumCopRespTime time.Duration
+	cntCopResp     float64
 }
 
 // RecordOneCopTask record once cop response time to update maxCopRespTime
@@ -267,10 +269,12 @@ func (rrs *ReaderRuntimeStats) RecordOneCopTask(t time.Duration) {
 	if t > rrs.maxCopRespTime {
 		rrs.maxCopRespTime = t
 	}
+	rrs.sumCopRespTime += t
+	rrs.cntCopResp += 1
 }
 
 func (rrs *ReaderRuntimeStats) String() string {
-	return fmt.Sprintf("cop resp time max: %v", rrs.maxCopRespTime)
+	return fmt.Sprintf("cop resp time max: %v avg: %v", rrs.maxCopRespTime, time.Duration(float64(rrs.sumCopRespTime)/rrs.cntCopResp))
 }
 
 // RuntimeStatsColl collects executors's execution info.
@@ -328,9 +332,9 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tip
 }
 
 // RecordOneReaderStats records a specific stats for TableReader, IndexReader and IndexLookupReader.
-func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, maxCopRespTime time.Duration) {
+func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, CopRespTime time.Duration) {
 	readerStats := e.GetReaderStats(planID)
-	readerStats.RecordOneCopTask(maxCopRespTime)
+	readerStats.RecordOneCopTask(CopRespTime)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
