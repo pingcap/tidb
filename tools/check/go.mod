@@ -13,11 +13,6 @@ require (
 	github.com/nicksnyder/go-i18n v1.10.0 // indirect
 	github.com/pelletier/go-toml v1.2.0 // indirect
 	github.com/securego/gosec v0.0.0-20181211171558-12400f9a1ca7
-	golang.org/x/crypto v0.0.0-20190829043050-9756ffdc2472 // indirect
-	golang.org/x/net v0.0.0-20190827160401-ba9fcec4b297 // indirect
-	golang.org/x/sys v0.0.0-20190902133755-9109b7679e13 // indirect
-	golang.org/x/text v0.3.2 // indirect
-	golang.org/x/tools v0.0.0-20190903025054-afe7f8212f0d // indirect
 	gopkg.in/alecthomas/gometalinter.v2 v2.0.12 // indirect
 	gopkg.in/alecthomas/gometalinter.v3 v3.0.0 // indirect
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6 // indirect
