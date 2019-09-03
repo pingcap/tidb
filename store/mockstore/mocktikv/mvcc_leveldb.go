@@ -948,6 +948,10 @@ func (mvcc *MVCCLevelDB) TxnHeartBeat(key []byte, startTS uint64, adviseTTL uint
 			return 0, errors.Trace(err)
 		}
 		if ok && dec.lock.startTS == startTS {
+			if !bytes.Equal(dec.lock.primary, key) {
+				return 0, errors.New("txnHeartBeat on non-primary key, the code should not run here")
+			}
+
 			lock := dec.lock
 			batch := &leveldb.Batch{}
 			// Increase the ttl of this transaction.
