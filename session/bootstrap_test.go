@@ -16,10 +16,12 @@ package session
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -119,6 +121,9 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
+		tsoReqPool: &sync.Pool{New: func() interface{} {
+			return pd.NewReqAlloc()
+		}},
 	}
 	ss.txn.init()
 	ss.mu.values = make(map[fmt.Stringer]interface{})

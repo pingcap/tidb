@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -178,7 +179,7 @@ type session struct {
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
 
-	tsoReqPool sync.Pool
+	tsoReqPool *sync.Pool
 
 	statsCollector *handle.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
@@ -1562,6 +1563,9 @@ func createSession(store kv.Storage) (*session, error) {
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
 		client:          store.GetClient(),
+		tsoReqPool: &sync.Pool{New: func() interface{} {
+			return pd.NewReqAlloc()
+		}},
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -1587,6 +1591,9 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 		client:      store.GetClient(),
+		tsoReqPool: &sync.Pool{New: func() interface{} {
+			return pd.NewReqAlloc()
+		}},
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
