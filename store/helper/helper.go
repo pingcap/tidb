@@ -661,8 +661,8 @@ type StoreDetailStat struct {
 	LeaderScore     int64     `json:"leader_score"`
 	LeaderSize      int64     `json:"leader_size"`
 	RegionCount     int64     `json:"region_count"`
-	RegionWeight    int64     `json:"region_weight"`
-	RegionScore     int64     `json:"region_score"`
+	RegionWeight    float64   `json:"region_weight"`
+	RegionScore     float64   `json:"region_score"`
 	RegionSize      int64     `json:"region_size"`
 	StartTs         time.Time `json:"start_ts"`
 	LastHeartbeatTs time.Time `json:"last_heartbeat_ts"`

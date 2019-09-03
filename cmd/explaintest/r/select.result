@@ -382,24 +382,24 @@ drop table if exists t;
 create table t(a int, b int);
 explain select a != any (select a from t t2) from t t1;
 id	count	task	operator info
-Projection_9	10000.00	root	and(or(or(gt(col_count, 1), ne(test.t1.a, col_firstrow)), if(ne(agg_col_sum, 0), NULL, 0)), and(ne(agg_col_cnt, 0), if(isnull(test.t1.a), NULL, 1)))
-└─HashLeftJoin_10	10000.00	root	CARTESIAN inner join, inner:StreamAgg_17
-  ├─TableReader_13	10000.00	root	data:TableScan_12
-  │ └─TableScan_12	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─StreamAgg_17	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(1)
-    └─Projection_27	10000.00	root	test.t2.a, test.t2.a, cast(isnull(test.t2.a))
-      └─TableReader_24	10000.00	root	data:TableScan_23
-        └─TableScan_23	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+Projection_8	10000.00	root	and(or(or(gt(col_count, 1), ne(test.t1.a, col_firstrow)), if(ne(agg_col_sum, 0), NULL, 0)), and(ne(agg_col_cnt, 0), if(isnull(test.t1.a), NULL, 1)))
+└─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16
+  ├─TableReader_12	10000.00	root	data:TableScan_11
+  │ └─TableScan_11	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─StreamAgg_16	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(1)
+    └─Projection_26	10000.00	root	test.t2.a, test.t2.a, cast(isnull(test.t2.a))
+      └─TableReader_23	10000.00	root	data:TableScan_22
+        └─TableScan_22	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select a = all (select a from t t2) from t t1;
 id	count	task	operator info
-Projection_9	10000.00	root	or(and(and(le(col_count, 1), eq(test.t1.a, col_firstrow)), if(ne(agg_col_sum, 0), NULL, 1)), or(eq(agg_col_cnt, 0), if(isnull(test.t1.a), NULL, 0)))
-└─HashLeftJoin_10	10000.00	root	CARTESIAN inner join, inner:StreamAgg_17
-  ├─TableReader_13	10000.00	root	data:TableScan_12
-  │ └─TableScan_12	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─StreamAgg_17	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(1)
-    └─Projection_27	10000.00	root	test.t2.a, test.t2.a, cast(isnull(test.t2.a))
-      └─TableReader_24	10000.00	root	data:TableScan_23
-        └─TableScan_23	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+Projection_8	10000.00	root	or(and(and(le(col_count, 1), eq(test.t1.a, col_firstrow)), if(ne(agg_col_sum, 0), NULL, 1)), or(eq(agg_col_cnt, 0), if(isnull(test.t1.a), NULL, 0)))
+└─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16
+  ├─TableReader_12	10000.00	root	data:TableScan_11
+  │ └─TableScan_11	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─StreamAgg_16	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(1)
+    └─Projection_26	10000.00	root	test.t2.a, test.t2.a, cast(isnull(test.t2.a))
+      └─TableReader_23	10000.00	root	data:TableScan_22
+        └─TableScan_22	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
 drop table if exists s;
