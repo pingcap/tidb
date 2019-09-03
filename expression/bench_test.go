@@ -312,13 +312,13 @@ func eType2FieldType(eType types.EvalType) *types.FieldType {
 	}
 }
 
-func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (Expression, *chunk.Chunk, *chunk.Chunk) {
+func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (expr Expression, input *chunk.Chunk, output *chunk.Chunk) {
 	fts := make([]*types.FieldType, len(testCase.childrenTypes))
 	for i, eType := range testCase.childrenTypes {
 		fts[i] = eType2FieldType(eType)
 	}
 	cols := make([]Expression, len(testCase.childrenTypes))
-	input := chunk.New(fts, 1024, 1024)
+	input = chunk.New(fts, 1024, 1024)
 	for i, eType := range testCase.childrenTypes {
 		fillColumn(eType, input, i)
 		cols[i] = &Column{Index: i, RetType: fts[i]}
@@ -329,70 +329,50 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 		panic(err)
 	}
 
-	output := chunk.New([]*types.FieldType{eType2FieldType(testCase.retEvalType)}, 1024, 1024)
+	output = chunk.New([]*types.FieldType{eType2FieldType(testCase.retEvalType)}, 1024, 1024)
 	return expr, input, output
 }
 
-func TestVectorizedEvalOneVec(t *testing.T) {
+func (s *testEvaluatorSuite) TestVectorizedEvalOneVec(c *C) {
 	ctx := mock.NewContext()
 	for funcName, testCases := range vecExprBenchCases {
 		for _, testCase := range testCases {
 			expr, input, output := genVecExprBenchCase(ctx, funcName, testCase)
 			output2 := output.CopyConstruct()
-			if err := evalOneVec(ctx, expr, input, output, 0); err != nil {
-				t.Fatal(err)
-			}
+			c.Assert(evalOneVec(ctx, expr, input, output, 0), IsNil)
 			it := chunk.NewIterator4Chunk(input)
-			if err := evalOneColumn(ctx, expr, it, output2, 0); err != nil {
-				t.Fatal(err)
-			}
+			c.Assert(evalOneColumn(ctx, expr, it, output2, 0), IsNil)
 
 			c1, c2 := output.Column(0), output2.Column(0)
 			switch testCase.retEvalType {
 			case types.ETInt:
 				for i := 0; i < input.NumRows(); i++ {
-					if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetInt64(i) != c2.GetInt64(i)) {
-						t.Fatal(fmt.Sprintf("error testCase %v", testCase))
-					}
+					c.Assert(c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetInt64(i) != c2.GetInt64(i)), IsFalse)
 				}
 			case types.ETReal:
 				for i := 0; i < input.NumRows(); i++ {
-					if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetFloat64(i) != c2.GetFloat64(i)) {
-						t.Fatal(fmt.Sprintf("error testCase %v", testCase))
-					}
+					c.Assert(c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetFloat64(i) != c2.GetFloat64(i)), IsFalse)
 				}
 			case types.ETDecimal:
 				for i := 0; i < input.NumRows(); i++ {
-					if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetDecimal(i).Compare(c2.GetDecimal(i)) != 0) {
-						t.Fatal(fmt.Sprintf("error testCase %v", testCase))
-					}
+					c.Assert(c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetDecimal(i).Compare(c2.GetDecimal(i)) != 0), IsFalse)
 				}
 			case types.ETDatetime, types.ETTimestamp:
 				for i := 0; i < input.NumRows(); i++ {
-					if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetTime(i).Compare(c2.GetTime(i)) != 0) {
-						t.Fatal(fmt.Sprintf("error testCase %v", testCase))
-					}
+					c.Assert(c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetTime(i).Compare(c2.GetTime(i)) != 0), IsFalse)
 				}
 			case types.ETDuration:
 				for i := 0; i < input.NumRows(); i++ {
-					if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetDuration(i, 0) != c2.GetDuration(i, 0)) {
-						t.Fatal(fmt.Sprintf("error testCase %v", testCase))
-					}
+					c.Assert(c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetDuration(i, 0) != c2.GetDuration(i, 0)), IsFalse)
 				}
 			case types.ETJson:
 				for i := 0; i < input.NumRows(); i++ {
-					if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetJSON(i).String() != c2.GetJSON(i).String()) {
-						t.Fatal(fmt.Sprintf("error testCase %v", testCase))
-					}
+					c.Assert(c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetJSON(i).String() != c2.GetJSON(i).String()), IsFalse)
 				}
 			case types.ETString:
 				for i := 0; i < input.NumRows(); i++ {
-					if c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetString(i) != c2.GetString(i)) {
-						t.Fatal(fmt.Sprintf("error testCase %v", testCase))
-					}
+					c.Assert(c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetString(i) != c2.GetString(i)), IsFalse)
 				}
-			default:
-				t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 			}
 		}
 	}
