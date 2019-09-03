@@ -655,13 +655,21 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
+		var analyzeInfo string
 		if runtimeStatsColl.ExistsCopStats(explainID) {
-			row = append(row, runtimeStatsColl.GetCopStats(explainID).String())
+			analyzeInfo = runtimeStatsColl.GetCopStats(explainID).String()
 		} else if runtimeStatsColl.ExistsRootStats(explainID) {
-			row = append(row, runtimeStatsColl.GetRootStats(explainID).String())
+			analyzeInfo = runtimeStatsColl.GetRootStats(explainID).String()
 		} else {
-			row = append(row, "time:0ns, loops:0, rows:0")
+			analyzeInfo = "time:0ns, loops:0, rows:0"
 		}
+		switch p.(type) {
+		case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
+			if runtimeStatsColl.GetReaderStats(explainID) != nil {
+				analyzeInfo += ", " + runtimeStatsColl.GetReaderStats(explainID).String()
+			}
+		}
+		row = append(row, analyzeInfo)
 
 		tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
 		if tracker != nil {

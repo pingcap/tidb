@@ -77,6 +77,7 @@ type selectResult struct {
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
 	copPlanIDs []fmt.Stringer
+	rootPlanID fmt.Stringer
 
 	memTracker *memory.Tracker
 }

@@ -253,11 +253,32 @@ func (crs *CopRuntimeStats) String() string {
 		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalRows, totalIters, totalTasks)
 }
 
+// ReaderRuntimeStats collects stats for TableReader, IndexReader and IndexLookupReader
+type ReaderRuntimeStats struct {
+	sync.Mutex
+
+	maxCopRespTime time.Duration
+}
+
+// RecordOneCopTask record once cop response time to update maxCopRespTime
+func (rrs *ReaderRuntimeStats) RecordOneCopTask(t time.Duration) {
+	rrs.Lock()
+	defer rrs.Unlock()
+	if t > rrs.maxCopRespTime {
+		rrs.maxCopRespTime = t
+	}
+}
+
+func (rrs *ReaderRuntimeStats) String() string {
+	return fmt.Sprintf("cop resp time max: %v", rrs.maxCopRespTime)
+}
+
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	mu        sync.Mutex
-	rootStats map[string]*RuntimeStats
-	copStats  map[string]*CopRuntimeStats
+	mu          sync.Mutex
+	rootStats   map[string]*RuntimeStats
+	copStats    map[string]*CopRuntimeStats
+	readerStats map[string]*ReaderRuntimeStats
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -273,7 +294,7 @@ type RuntimeStats struct {
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
 	return &RuntimeStatsColl{rootStats: make(map[string]*RuntimeStats),
-		copStats: make(map[string]*CopRuntimeStats)}
+		copStats: make(map[string]*CopRuntimeStats), readerStats: make(map[string]*ReaderRuntimeStats)}
 }
 
 // GetRootStats gets execStat for a executor.
@@ -306,6 +327,12 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tip
 	copStats.RecordOneCopTask(address, summary)
 }
 
+// RecordOneReaderStats records a specific stats for TableReader, IndexReader and IndexLookupReader.
+func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, maxCopRespTime time.Duration) {
+	readerStats := e.GetReaderStats(planID)
+	readerStats.RecordOneCopTask(maxCopRespTime)
+}
+
 // ExistsRootStats checks if the planID exists in the rootStats collection.
 func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
 	e.mu.Lock()
@@ -320,6 +347,18 @@ func (e *RuntimeStatsColl) ExistsCopStats(planID string) bool {
 	defer e.mu.Unlock()
 	_, exists := e.copStats[planID]
 	return exists
+}
+
+// ExistsReaderStats checks if the planID exists in the readerStats collection.
+func (e *RuntimeStatsColl) GetReaderStats(planID string) *ReaderRuntimeStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	stats, exists := e.readerStats[planID]
+	if !exists {
+		stats = &ReaderRuntimeStats{maxCopRespTime: 0}
+		e.readerStats[planID] = stats
+	}
+	return stats
 }
 
 // Record records executor's execution.
