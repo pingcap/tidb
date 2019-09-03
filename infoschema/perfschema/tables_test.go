@@ -65,7 +65,6 @@ func (s *testTableSuite) TestPerfSchemaTables(c *C) {
 }
 
 func (s *testTableSuite) TestStmtSummaryTable(c *C) {
-
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("set global tidb_enable_stmt_summary = 1")
 	defer func() {
@@ -78,7 +77,6 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10))")
 
-	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 	tk.MustExec("insert into t values(1, 'a')")
 	tk.MustExec("insert into t    values(2, 'b')")
 	tk.MustExec("insert into t VALUES(3, 'c')")
