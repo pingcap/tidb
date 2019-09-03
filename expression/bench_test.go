@@ -204,6 +204,9 @@ var vecExprBenchCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
 		{types.ETInt, []types.EvalType{types.ETInt}},
 	},
+	ast.Lower: {
+		{types.ETString, []types.EvalType{types.ETString}},
+	},
 }
 
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
@@ -283,12 +286,28 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				chk.AppendString(colIdx, fmt.Sprintf("%v", rand.Int()))
+				chk.AppendString(colIdx, randString())
 			}
 		}
 	default:
 		panic(fmt.Sprintf("EvalType=%v is not supported.", eType))
 	}
+}
+
+func randString() string {
+	n := 10 + rand.Intn(10)
+	buf := make([]byte, n)
+	for i := range buf {
+		x := rand.Intn(62)
+		if x < 10 {
+			buf[i] = byte('0' + x)
+		} else if x-10 < 26 {
+			buf[i] = byte('a' + x - 10)
+		} else {
+			buf[i] = byte('A' + x - 10 - 26)
+		}
+	}
+	return string(buf)
 }
 
 func eType2FieldType(eType types.EvalType) *types.FieldType {
