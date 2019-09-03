@@ -61,14 +61,14 @@ func (s *testIntegrationSuite) TestShowSubquery(c *C) {
 }
 
 func (s *testIntegrationSuite) TestPpdWithSetVar(c *C) {
-  store, dom, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		dom.Close()
 		store.Close()
 	}()
-  tk.MustExec("use test")
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 varchar(255))")
 	tk.MustExec("insert into t values(1,'a'),(2,'d'),(3,'c')")
