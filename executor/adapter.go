@@ -633,7 +633,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		useMaxTS, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if err != nil {
 			return nil, err
 		}
@@ -793,49 +793,5 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			IndexNames: indexNames,
 			Internal:   sessVars.InRestrictedSQL,
 		})
-	}
-}
-
-// IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
-//  1. ctx is auto commit tagged
-//  2. txn is not valid
-//  2. plan is point get by pk, or point get by unique index (no double read)
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) (bool, error) {
-	// check auto commit
-	if !ctx.GetSessionVars().IsAutocommit() {
-		return false, nil
-	}
-
-	// check txn
-	txn, err := ctx.Txn(false)
-	if err != nil {
-		return false, err
-	}
-	if txn.Valid() {
-		return false, nil
-	}
-
-	// check plan
-	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
-		if len(proj.Children()) != 1 {
-			return false, nil
-		}
-		p = proj.Children()[0]
-	}
-
-	switch v := p.(type) {
-	case *plannercore.PhysicalIndexReader:
-		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
-	case *plannercore.PhysicalTableReader:
-		tableScan := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
-	case *plannercore.PointGetPlan:
-		// If the PointGetPlan needs to read data using unique index (double read), we
-		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
-		// and the data and index would be inconsistent!
-		return v.IndexInfo == nil, nil
-	default:
-		return false, nil
 	}
 }

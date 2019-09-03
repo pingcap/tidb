@@ -1195,6 +1195,12 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		logutil.Logger(ctx).Error("prepared not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
+	if prepared.PointPlan != nil {
+		cachedValue := plannercore.PSTMTPlanCacheValue{}
+		cachedValue.Plan = prepared.PointPlan.(plannercore.Plan)
+		cachedValue.OutPutNames = cachedValue.Plan.OutputNames()
+		return s.PointExec(ctx, stmtID, prepared, &cachedValue, args)
+	}
 	// try fetch from plan cache at start
 	var cachedValue *plannercore.PSTMTPlanCacheValue
 	if prepared.UseCache {
@@ -1205,7 +1211,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		}
 	}
 	if cachedValue != nil {
-		isPointExec, err := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(s, cachedValue.Plan)
+		isPointExec, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(s, cachedValue.Plan)
 		if err != nil {
 			return nil, err
 		}

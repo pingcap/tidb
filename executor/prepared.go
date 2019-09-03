@@ -223,7 +223,7 @@ func (e *ExecuteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build(b *executorBuilder) error {
-	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
+	ok, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
 	if err != nil {
 		return err
 	}

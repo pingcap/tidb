@@ -2076,7 +2076,7 @@ func (s *testSuiteP1) TestIsPointGet(c *C) {
 		c.Check(err, IsNil)
 		p, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
-		ret, err := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, result)
 	}
@@ -4531,4 +4531,42 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)
+}
+
+func (s *testSuiteP1) TestPointGetPreparedPlanText(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec(`create table t (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("insert into t values (2, 2, 2)")
+	tk1.MustExec("insert into t values (3, 3, 3)")
+
+	tk1.MustExec(`prepare pk1 from "select * from t where a = ? "`)
+	tk1.MustExec(`prepare pk2 from "select * from t where ? = a "`)
+
+	tk1.MustExec("set @p0 = 0")
+	tk1.MustExec("set @p1 = 1")
+	tk1.MustExec("set @p2 = 2")
+	tk1.MustExec("set @p3 = 3")
+	tk1.MustExec("set @p4 = 4")
+
+	// first time plan generated
+	tk1.MustQuery("execute pk1 using @p0").Check(nil)
+	// using the generated plan but with different params
+	tk1.MustQuery("execute pk1 using @p1").Check(testkit.Rows("1 1 1"))
+	tk1.MustQuery("execute pk1 using @p2").Check(testkit.Rows("2 2 2"))
+	tk1.MustQuery("execute pk2 using @p3").Check(testkit.Rows("3 3 3"))
+	tk1.MustQuery("execute pk2 using @p0").Check(nil)
+	tk1.MustQuery("execute pk2 using @p1").Check(testkit.Rows("1 1 1"))
+	tk1.MustQuery("execute pk2 using @p2").Check(testkit.Rows("2 2 2"))
+	tk1.MustQuery("execute pk2 using @p3").Check(testkit.Rows("3 3 3"))
+
+	// unique index
+	tk1.MustExec(`prepare pu1 from "select * from t where b = ? "`)
+	tk1.MustQuery("execute pu1 using @p1").Check(testkit.Rows("1 1 1"))
+	tk1.MustQuery("execute pu1 using @p2").Check(testkit.Rows("2 2 2"))
+	tk1.MustQuery("execute pu1 using @p3").Check(testkit.Rows("3 3 3"))
+	tk1.MustQuery("execute pu1 using @p0").Check(nil)
 }

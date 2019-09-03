@@ -244,6 +244,19 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) error {
+	if prepared.PointPlan != nil {
+		// expression rewrite will transfer paramMarker in select.where into Constant Expression
+		// but point get execution dose not need to evaluate where condition,
+		// so prepared.UseCache here false is ok, only for point plan
+		plan := prepared.PointPlan.(Plan)
+		err := e.rebuildRange(plan)
+		if err != nil {
+			return err
+		}
+		e.names = plan.OutputNames()
+		e.Plan = plan
+		return nil
+	}
 	cacheKey := NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	sctx.GetSessionVars().StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
@@ -274,6 +287,13 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return err
+	}
+	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+	if err != nil {
+		return err
+	}
+	if ok {
+		prepared.PointPlan = p
 	}
 	e.names = p.OutputNames()
 	e.Plan = p
@@ -794,5 +814,49 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 
 	for i := range pipelines {
 		buffer.WriteString(pipelines[i])
+	}
+}
+
+// IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
+//  1. ctx is auto commit tagged
+//  2. txn is not valid
+//  2. plan is point get by pk, or point get by unique index (no double read)
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
+	// check auto commit
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false, nil
+	}
+
+	// check txn
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return false, err
+	}
+	if txn.Valid() {
+		return false, nil
+	}
+
+	// check plan
+	if proj, ok := p.(*PhysicalProjection); ok {
+		if len(proj.Children()) != 1 {
+			return false, nil
+		}
+		p = proj.Children()[0]
+	}
+
+	switch v := p.(type) {
+	case *PhysicalIndexReader:
+		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
+	case *PhysicalTableReader:
+		tableScan := v.TablePlans[0].(*PhysicalTableScan)
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
+	case *PointGetPlan:
+		// If the PointGetPlan needs to read data using unique index (double read), we
+		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
+		// and the data and index would be inconsistent!
+		return v.IndexInfo == nil, nil
+	default:
+		return false, nil
 	}
 }
