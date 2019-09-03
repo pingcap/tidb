@@ -195,18 +195,57 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	b.ReportAllocs()
 }
 
+// gener is used to generate data for test.
+type gener interface {
+	gen() interface{}
+}
+
+type rangeInt64Gener struct {
+	begin int
+	end   int
+}
+
+func (rig *rangeInt64Gener) gen() interface{} {
+	return int64(rand.Intn(rig.end-rig.begin) + rig.begin)
+}
+
+type randLenStrGener struct {
+	lenBegin int
+	lenEnd   int
+}
+
+func (g *randLenStrGener) gen() interface{} {
+	n := rand.Intn(g.lenEnd-g.lenBegin) + g.lenBegin
+	buf := make([]byte, n)
+	for i := range buf {
+		x := rand.Intn(62)
+		if x < 10 {
+			buf[i] = byte('0' + x)
+		} else if x-10 < 26 {
+			buf[i] = byte('a' + x - 10)
+		} else {
+			buf[i] = byte('A' + x - 10 - 26)
+		}
+	}
+	return string(buf)
+}
+
 type vecExprBenchCase struct {
 	retEvalType   types.EvalType
 	childrenTypes []types.EvalType
+	geners        []gener // used to generate data for children
 }
 
 var vecExprBenchCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
-		{types.ETInt, []types.EvalType{types.ETInt}},
+		{types.ETInt, []types.EvalType{types.ETInt}, nil},
+	},
+	ast.Repeat: {
+		{types.ETString, []types.EvalType{types.ETString, types.ETInt}, []gener{&randLenStrGener{10, 50}, &rangeInt64Gener{10, 50}}},
 	},
 }
 
-func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
+func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vecExprBenchCase) {
 	nullRatio := 0.2
 	batchSize := 1024
 	switch eType {
@@ -215,10 +254,14 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				if rand.Float64() < 0.5 {
-					chk.AppendInt64(colIdx, -rand.Int63())
+				if len(testCase.geners) > colIdx && testCase.geners[colIdx] != nil {
+					chk.AppendInt64(colIdx, testCase.geners[colIdx].gen().(int64))
 				} else {
-					chk.AppendInt64(colIdx, rand.Int63())
+					if rand.Float64() < 0.5 {
+						chk.AppendInt64(colIdx, -rand.Int63())
+					} else {
+						chk.AppendInt64(colIdx, rand.Int63())
+					}
 				}
 			}
 		}
@@ -283,7 +326,11 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				chk.AppendString(colIdx, fmt.Sprintf("%v", rand.Int()))
+				if len(testCase.geners) > colIdx && testCase.geners[colIdx] != nil {
+					chk.AppendString(colIdx, testCase.geners[colIdx].gen().(string))
+				} else {
+					chk.AppendString(colIdx, fmt.Sprintf("%v", rand.Int()))
+				}
 			}
 		}
 	default:
@@ -320,7 +367,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 	cols := make([]Expression, len(testCase.childrenTypes))
 	input = chunk.New(fts, 1024, 1024)
 	for i, eType := range testCase.childrenTypes {
-		fillColumn(eType, input, i)
+		fillColumn(eType, input, i, testCase)
 		cols[i] = &Column{Index: i, RetType: fts[i]}
 	}
 
@@ -420,7 +467,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	cols := make([]Expression, childrenNumber)
 	input = chunk.New(fts, 1024, 1024)
 	for i, eType := range testCase.childrenTypes {
-		fillColumn(eType, input, i)
+		fillColumn(eType, input, i, testCase)
 		cols[i] = &Column{Index: i, RetType: fts[i]}
 	}
 
@@ -544,7 +591,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 				err := baseFunc.vecEvalString(input, output)
 				c.Assert(err, IsNil)
 				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalDuration(row)
+					val, isNull, err := baseFunc.evalString(row)
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {

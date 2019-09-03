@@ -15,7 +15,7 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 	defer b.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -24,7 +24,7 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 	defer b.put(buf2)
-	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
 		return err
 	}
 
