@@ -212,7 +212,6 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, stmtN
 //  1. ctx is auto commit tagged.
 //  2. plan is point get by pk.
 func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
-	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
 		return false
 	}
