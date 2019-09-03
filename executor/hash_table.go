@@ -197,7 +197,6 @@ func (es *entryStore) put(e entry) entryAddr {
 	sliceIdx := uint32(len(es.slices) - 1)
 	slice := es.slices[sliceIdx]
 	if len(slice) == cap(slice) {
-		// TODO: add test here.
 		size := cap(slice) * 2
 		if size >= maxEntrySliceLen {
 			size = maxEntrySliceLen
