@@ -244,6 +244,9 @@ type PhysicalIndexJoin struct {
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
+	// KeepOuterOrder indicates whether to keep the order of the join results be
+	// the same as the outer table.
+	KeepOuterOrder bool
 	// IdxColLens stores the length of each index column.
 	IdxColLens []int
 	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
@@ -291,6 +294,17 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
+	// IsPointGetUnion indicates all the children are PointGet and
+	// all of them reference the same table and use the same `unique key`
+	IsPointGetUnion bool
+}
+
+// OutputNames returns the outputting names of each column.
+func (p *PhysicalUnionAll) OutputNames() []*types.FieldName {
+	if p.IsPointGetUnion {
+		return p.children[0].OutputNames()
+	}
+	return p.physicalSchemaProducer.OutputNames()
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -400,6 +414,15 @@ type PhysicalTableDual struct {
 	// for data sources like `Show`, if true, the dual plan would be substituted by
 	// `Show` in the final plan.
 	placeHolder bool
+
+	// names is used for OutputNames() method. Dual may be inited when building point get plan.
+	// So it needs to hold names for itself.
+	names []*types.FieldName
+}
+
+// OutputNames returns the outputting names of each column.
+func (p *PhysicalTableDual) OutputNames() []*types.FieldName {
+	return p.names
 }
 
 // PhysicalWindow is the physical operator of window function.

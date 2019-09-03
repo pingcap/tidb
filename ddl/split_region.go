@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"context"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
@@ -45,14 +47,14 @@ func splitTableRegion(store kv.SplitableStore, tbInfo *model.TableInfo, scatter 
 
 func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
 	// Example:
-	// ShardRowIDBits = 5
-	// PreSplitRegions = 3
+	// ShardRowIDBits = 4
+	// PreSplitRegions = 2
 	//
-	// then will pre-split 2^(3-1) = 4 regions.
+	// then will pre-split 2^2 = 4 regions.
 	//
 	// in this code:
-	// max   = 1 << (tblInfo.ShardRowIDBits - 1) = 1 << (5-1) = 16
-	// step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions)) = 1 << (5-3) = 4;
+	// max   = 1 << tblInfo.ShardRowIDBits = 16
+	// step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions)) = 1 << (4-2) = 4;
 	//
 	// then split regionID is below:
 	// 4  << 59 = 2305843009213693952
@@ -68,21 +70,20 @@ func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scat
 	// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
 
 	// Split table region.
-	regionIDs := make([]uint64, 0, 1<<(tbInfo.PreSplitRegions-1)+len(tbInfo.Indices))
 	step := int64(1 << (tbInfo.ShardRowIDBits - tbInfo.PreSplitRegions))
-	// The highest bit is the symbol bit,and alloc _tidb_rowid will always be positive number.
-	// So we only need to split the region for the positive number.
-	max := int64(1 << (tbInfo.ShardRowIDBits - 1))
+	max := int64(1 << tbInfo.ShardRowIDBits)
+	splitTableKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions))
 	for p := int64(step); p < max; p += step {
-		recordID := p << (64 - tbInfo.ShardRowIDBits)
+		recordID := p << (64 - tbInfo.ShardRowIDBits - 1)
 		recordPrefix := tablecodec.GenTableRecordPrefix(tbInfo.ID)
 		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
-		regionID, err := store.SplitRegion(key, scatter)
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] pre split table region failed", zap.Int64("recordID", recordID), zap.Error(err))
-		} else {
-			regionIDs = append(regionIDs, regionID)
-		}
+		splitTableKeys = append(splitTableKeys, key)
+	}
+	var err error
+	regionIDs, err := store.SplitRegions(context.Background(), splitTableKeys, scatter)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] pre split some table regions failed",
+			zap.Stringer("table", tbInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
 	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter)...)
 	if scatter {
@@ -92,26 +93,27 @@ func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scat
 
 func splitRecordRegion(store kv.SplitableStore, tableID int64, scatter bool) uint64 {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
-	regionID, err := store.SplitRegion(tableStartKey, scatter)
+	regionIDs, err := store.SplitRegions(context.Background(), [][]byte{tableStartKey}, scatter)
 	if err != nil {
 		// It will be automatically split by TiKV later.
 		logutil.BgLogger().Warn("[ddl] split table region failed", zap.Error(err))
 	}
-	return regionID
+	if len(regionIDs) == 1 {
+		return regionIDs[0]
+	}
+	return 0
 }
 
 func splitIndexRegion(store kv.SplitableStore, tblInfo *model.TableInfo, scatter bool) []uint64 {
-	regionIDs := make([]uint64, 0, len(tblInfo.Indices))
+	splitKeys := make([][]byte, 0, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
-		regionID, err := store.SplitRegion(indexPrefix, scatter)
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] pre split table index region failed",
-				zap.Stringer("table", tblInfo.Name),
-				zap.Stringer("index", idx.Name),
-				zap.Error(err))
-		}
-		regionIDs = append(regionIDs, regionID)
+		splitKeys = append(splitKeys, indexPrefix)
+	}
+	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] pre split some table index regions failed",
+			zap.Stringer("table", tblInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
 	return regionIDs
 }

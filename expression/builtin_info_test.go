@@ -213,7 +213,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(f, NotNil)
-	sig, ok := f.(*vecRowConverter).builtinFunc.(*builtinRowCountSig)
+	sig, ok := f.(*builtinRowCountSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(sig, NotNil)
 	intResult, isNull, err := sig.evalInt(chunk.Row{})

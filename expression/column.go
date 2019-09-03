@@ -40,9 +40,39 @@ func (col *CorrelatedColumn) Clone() Expression {
 	return col
 }
 
-// VecEval evaluates this expression in a vectorized manner.
-func (col *CorrelatedColumn) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) (err error) {
-	return genVecFromConstExpr(ctx, col, input, result)
+// VecEvalInt evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETInt, input, result)
+}
+
+// VecEvalReal evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETReal, input, result)
+}
+
+// VecEvalString evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETString, input, result)
+}
+
+// VecEvalDecimal evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETDecimal, input, result)
+}
+
+// VecEvalTime evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETTimestamp, input, result)
+}
+
+// VecEvalDuration evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETDuration, input, result)
+}
+
+// VecEvalJSON evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETJson, input, result)
 }
 
 // Eval implements Expression interface.
@@ -130,7 +160,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 
 // ConstItem implements Expression interface.
 func (col *CorrelatedColumn) ConstItem() bool {
-	return true
+	return false
 }
 
 // Decorrelate implements Expression interface.
@@ -186,8 +216,92 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	return false
 }
 
-// VecEval evaluates this expression in a vectorized manner.
-func (col *Column) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+// VecEvalInt evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if col.RetType.Hybrid() {
+		it := chunk.NewIterator4Chunk(input)
+		result.Reset()
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			v, null, err := col.EvalInt(ctx, row)
+			if err != nil {
+				return err
+			}
+			if null {
+				result.AppendNull()
+			} else {
+				result.AppendInt64(v)
+			}
+		}
+		return nil
+	}
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalReal evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	src := input.Column(col.Index)
+	if col.GetType().Tp == mysql.TypeFloat {
+		result.ResizeFloat64(n, false)
+		f32s := src.Float32s()
+		f64s := result.Float64s()
+		for i := range f32s {
+			// TODO(zhangyuanjia): speed up the way to manipulate null-bitmaps.
+			if src.IsNull(i) {
+				result.SetNull(i, true)
+			} else {
+				f64s[i] = float64(f32s[i])
+			}
+		}
+		return nil
+	}
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalString evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if col.RetType.Hybrid() {
+		it := chunk.NewIterator4Chunk(input)
+		result.ReserveString(input.NumRows())
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			v, null, err := col.EvalString(ctx, row)
+			if err != nil {
+				return err
+			}
+			if null {
+				result.AppendNull()
+			} else {
+				result.AppendString(v)
+			}
+		}
+		return nil
+	}
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalDecimal evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalTime evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalDuration evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalJSON evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
 	return nil
 }
@@ -347,6 +461,11 @@ func (col *Column) resolveIndices(schema *Schema) error {
 		return errors.Errorf("Can't find column %s in schema %s", col, schema)
 	}
 	return nil
+}
+
+// Vectorized returns if this expression supports vectorized evaluation.
+func (col *Column) Vectorized() bool {
+	return true
 }
 
 // Column2Exprs will transfer column slice to expression slice.

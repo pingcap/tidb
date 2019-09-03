@@ -114,6 +114,7 @@ func (s *testJSONSuite) TestBinaryJSONUnquote(c *C) {
 	}{
 		{j: `3`, unquoted: "3"},
 		{j: `"3"`, unquoted: "3"},
+		{j: `"[{\"x\":\"{\\\"y\\\":12}\"}]"`, unquoted: `[{"x":"{\"y\":12}"}]`},
 		{j: `"hello, \"escaped quotes\" world"`, unquoted: "hello, \"escaped quotes\" world"},
 		{j: "\"\\u4f60\"", unquoted: "你"},
 		{j: `true`, unquoted: "true"},

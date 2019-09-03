@@ -183,6 +183,12 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Flen = len(x)
 		tp.Decimal = UnspecifiedLength
 		tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()
+	case float32:
+		tp.Tp = mysql.TypeFloat
+		s := strconv.FormatFloat(float64(x), 'f', -1, 32)
+		tp.Flen = len(s)
+		tp.Decimal = UnspecifiedLength
+		SetBinChsClnFlag(tp)
 	case float64:
 		tp.Tp = mysql.TypeDouble
 		s := strconv.FormatFloat(x, 'f', -1, 64)
@@ -201,7 +207,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case HexLiteral:
 		tp.Tp = mysql.TypeVarString
-		tp.Flen = len(x)
+		tp.Flen = len(x) * 3
 		tp.Decimal = 0
 		tp.Flag |= mysql.UnsignedFlag
 		SetBinChsClnFlag(tp)
