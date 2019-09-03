@@ -15265,10 +15265,8 @@ yynewstate:
 		{
 			x := types.NewFieldType(yyS[yypt-1].item.(byte))
 			x.Flen = yyS[yypt-0].item.(int)
-			if x.Flen == types.UnspecifiedLength || x.Flen == 0 {
+			if x.Flen == types.UnspecifiedLength {
 				x.Flen = 1
-			} else if x.Flen > mysql.MaxBitDisplayWidth {
-				yylex.AppendError(ErrTooBigDisplayWidth.GenWithStackByArgs(x.Flen))
 			}
 			parser.yyVAL.item = x
 		}
