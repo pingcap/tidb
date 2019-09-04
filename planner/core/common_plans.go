@@ -840,9 +840,6 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 
 	// check plan
 	if proj, ok := p.(*PhysicalProjection); ok {
-		if len(proj.Children()) != 1 {
-			return false, nil
-		}
 		p = proj.Children()[0]
 	}
 

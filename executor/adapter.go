@@ -203,7 +203,7 @@ type ExecStmt struct {
 	isSelectForUpdate bool
 	retryCount        uint
 
-	// will be set if using cached plan
+	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
 }
 
@@ -214,7 +214,6 @@ func (a *ExecStmt) GetPointRecord(ctx context.Context, is infoschema.InfoSchema,
 	var startTs uint64 = math.MaxUint64
 	err = sctx.InitTxnWithStartTS(startTs)
 	if err != nil {
-		logutil.Logger(ctx).Error("error init txn max", zap.Error(err))
 		return nil, err
 	}
 	sctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
