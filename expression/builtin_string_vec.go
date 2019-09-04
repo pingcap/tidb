@@ -32,6 +32,7 @@ func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 		for _, c := range str {
 			if c >= utf8.RuneSelf {
 				isASCII = false
+				break
 			}
 		}
 		if !isASCII {
