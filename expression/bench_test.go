@@ -195,11 +195,12 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	b.ReportAllocs()
 }
 
-// gener is used to generate data for test.
-type gener interface {
+// dataGenerator is used to generate data for test.
+type dataGenerator interface {
 	gen() interface{}
 }
 
+// rangeInt64Gener is used to generate int64 items in [begin, end).
 type rangeInt64Gener struct {
 	begin int
 	end   int
@@ -209,6 +210,7 @@ func (rig *rangeInt64Gener) gen() interface{} {
 	return int64(rand.Intn(rig.end-rig.begin) + rig.begin)
 }
 
+// randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
 type randLenStrGener struct {
 	lenBegin int
 	lenEnd   int
@@ -233,7 +235,11 @@ func (g *randLenStrGener) gen() interface{} {
 type vecExprBenchCase struct {
 	retEvalType   types.EvalType
 	childrenTypes []types.EvalType
-	geners        []gener // used to generate data for children
+	// geners are used to generate data for children and geners[i] generates data for children[i].
+	// if geners[i] is nil, the default dataGenerator will be used for its corresponding child.
+	// the geners slice can be shorter than the children slice, if it has 3 children, then
+	// geners[gen1, gen2] will be regarded as geners[gen1, gen2, nil].
+	geners []dataGenerator
 }
 
 var vecExprBenchCases = map[string][]vecExprBenchCase{
@@ -241,7 +247,7 @@ var vecExprBenchCases = map[string][]vecExprBenchCase{
 		{types.ETInt, []types.EvalType{types.ETInt}, nil},
 	},
 	ast.Repeat: {
-		{types.ETString, []types.EvalType{types.ETString, types.ETInt}, []gener{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
+		{types.ETString, []types.EvalType{types.ETString, types.ETInt}, []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
 	},
 }
 
