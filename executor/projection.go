@@ -172,6 +172,9 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 	if err != nil {
 		return err
 	}
+	if e.childResult.NumRows() == 0 {
+		return nil
+	}
 	err = e.evaluatorSuit.Run(e.ctx, e.childResult, chk)
 	return err
 }
