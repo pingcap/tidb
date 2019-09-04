@@ -59,6 +59,8 @@ const (
 	TypeMergeJoin = "MergeJoin"
 	// TypeIndexJoin is the type of index look up join.
 	TypeIndexJoin = "IndexJoin"
+	// TypeIndexMergeJoin is the type of index look up merge join.
+	TypeIndexMergeJoin = "IndexMergeJoin"
 	// TypeApply is the type of Apply.
 	TypeApply = "Apply"
 	// TypeMaxOneRow is the type of MaxOneRow.
@@ -401,6 +403,15 @@ func (p PhysicalIndexJoin) Init(ctx sessionctx.Context, stats *property.StatsInf
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeIndexJoin, &p)
 	p.childrenReqProps = props
 	p.stats = stats
+	return &p
+}
+
+// Init initializes PhysicalIndexMergeJoin.
+func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMergeJoin {
+	ctx.GetSessionVars().PlanID++
+	p.tp = TypeIndexMergeJoin
+	p.id = ctx.GetSessionVars().PlanID
+	p.ctx = ctx
 	return &p
 }
 
