@@ -404,7 +404,7 @@ func (h *rpcHandler) handleMvccGetByStartTS(req *kvrpcpb.MvccGetByStartTsRequest
 		}
 	}
 	var resp kvrpcpb.MvccGetByStartTsResponse
-	resp.Info, resp.Key = debugger.MvccGetByStartTS(h.startKey, h.endKey, req.StartTs)
+	resp.Info, resp.Key = debugger.MvccGetByStartTS(req.StartTs)
 	return &resp
 }
 

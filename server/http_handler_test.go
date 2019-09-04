@@ -14,7 +14,6 @@
 package server
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -364,9 +363,9 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	err = decoder.Decode(&p2)
 	c.Assert(err, IsNil)
 
-	for id, expect := range info.Values {
-		v2 := p2.Value.Info.Values[id].Value
-		c.Assert(bytes.Equal(v2, expect.Value), IsTrue)
+	for i, expect := range info.Values {
+		v2 := p2.Value.Info.Values[i].Value
+		c.Assert(v2, BytesEquals, expect.Value)
 	}
 
 	hexKey := p2.Key

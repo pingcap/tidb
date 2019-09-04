@@ -1275,16 +1275,28 @@ func (mvcc *MVCCLevelDB) doRawDeleteRange(startKey, endKey []byte) error {
 }
 
 // MvccGetByStartTS implements the MVCCDebugger interface.
-func (mvcc *MVCCLevelDB) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte) {
+func (mvcc *MVCCLevelDB) MvccGetByStartTS(starTS uint64) (*kvrpcpb.MvccInfo, []byte) {
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
-	pairs := mvcc.ReverseScan(startKey, endKey, 1, starTS, kvrpcpb.IsolationLevel_SI)
-	if len(pairs) != 1 {
+	var key []byte
+	iter := newIterator(mvcc.db, nil)
+	defer iter.Release()
+
+	// find the first committed key for which `start_ts` equals to `ts`
+	for iter.Valid() {
+		var value mvccValue
+		err := value.UnmarshalBinary(iter.Value())
+		if err == nil && value.startTS == starTS {
+			_, key, _ = codec.DecodeBytes(iter.Key(), nil)
+			break
+		}
+		iter.Next()
+	}
+	if key == nil {
 		return nil, nil
 	}
 
-	key := pairs[0].Key
 	return mvcc.MvccGetByKey(key), key
 }
 
