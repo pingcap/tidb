@@ -131,7 +131,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 
 	s.stmtSummaryByDigest.AddStatement(stmtExecInfo4)
 	c.Assert(s.stmtSummaryByDigest.summaryMap.Size(), Equals, 2)
-	summary, ok = s.stmtSummaryByDigest.summaryMap.Get(key)
+	_, ok = s.stmtSummaryByDigest.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
 
 	// Fifth statement that has a different digest
@@ -152,7 +152,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 
 	s.stmtSummaryByDigest.AddStatement(stmtExecInfo5)
 	c.Assert(s.stmtSummaryByDigest.summaryMap.Size(), Equals, 3)
-	summary, ok = s.stmtSummaryByDigest.summaryMap.Get(key)
+	_, ok = s.stmtSummaryByDigest.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
 }
 
