@@ -72,6 +72,7 @@ var (
 	_ Executor = &SortExec{}
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
+	_ Executor = &TableReaderExecutor{}
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
