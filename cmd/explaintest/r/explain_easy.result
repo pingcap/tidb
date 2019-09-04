@@ -120,15 +120,14 @@ MemTableScan_4	10000.00	root
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	count	task	operator info
 Projection_12	10000.00	root	eq(Column#2, Column#5)
-└─Apply_14	10000.00	root	CARTESIAN left outer join, inner:Limit_23
+└─Apply_14	10000.00	root	CARTESIAN left outer join, inner:Projection_43
   ├─IndexReader_18	10000.00	root	index:IndexScan_17
   │ └─IndexScan_17	10000.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
-  └─Limit_23	1.00	root	offset:0, count:1
-    └─Projection_43	1.00	root	Column#4, Column#5
-      └─IndexLookUp_42	1.00	root	
-        ├─Limit_41	1.00	cop	offset:0, count:1
-        │ └─IndexScan_39	1.00	cop	table:t2, index:c1, range: decided by [eq(Column#1, Column#4)], keep order:true, stats:pseudo
-        └─TableScan_40	1.00	cop	table:t2, keep order:false, stats:pseudo
+  └─Projection_43	1.00	root	Column#4, Column#5
+    └─IndexLookUp_42	1.00	root	limit embedded(offset:0, count:1)
+      ├─Limit_41	1.00	cop	offset:0, count:1
+      │ └─IndexScan_39	1.00	cop	table:t2, index:c1, range: decided by [eq(Column#1, Column#4)], keep order:true, stats:pseudo
+      └─TableScan_40	1.00	cop	table:t2, keep order:false, stats:pseudo
 explain select * from t1 order by c1 desc limit 1;
 id	count	task	operator info
 Limit_10	1.00	root	offset:0, count:1
