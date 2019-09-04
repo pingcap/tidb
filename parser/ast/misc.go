@@ -321,6 +321,7 @@ type Prepared struct {
 	Params        []ParamMarkerExpr
 	SchemaVersion int64
 	UseCache      bool
+	CachedPlan    interface{}
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.
