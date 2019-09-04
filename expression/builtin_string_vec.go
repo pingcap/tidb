@@ -42,6 +42,7 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if num > math.MaxInt32 {
+			// to avoid overflow when calculating uint64(byteLength)*uint64(num) later
 			num = math.MaxInt32
 		}
 
