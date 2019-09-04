@@ -44,6 +44,13 @@ func (s *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
 		for i := 0; i < n; i ++ {
+			if result.IsNull(i) {
+				continue
+			}
+			if buf.IsNull(i) {
+				result.SetNull(i, true)
+				continue
+			}
 			if uint64(as[i]) > math.MaxUint64-uint64(bs[i]) {
 				err := types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 				if err := s.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err); err != nil {
@@ -56,6 +63,13 @@ func (s *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 		}
 	case isLHSUnsigned && !isRHSUnsigned:
 		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			if buf.IsNull(i) {
+				result.SetNull(i, true)
+				continue
+			}
 			if (bs[i] < 0 && uint64(-bs[i]) > uint64(as[i])) || (bs[i] > 0 && uint64(as[i]) > math.MaxUint64-uint64(bs[i])) {
 				err := types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 				if err := s.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err); err != nil {
@@ -68,6 +82,13 @@ func (s *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 		}
 	case !isLHSUnsigned && isRHSUnsigned:
 		for i := 0; i < n; i ++ {
+			if result.IsNull(i) {
+				continue
+			}
+			if buf.IsNull(i) {
+				result.SetNull(i, true)
+				continue
+			}
 			if (as[i] < 0 && uint64(-as[i]) > uint64(bs[i])) || (as[i] > 0 && uint64(bs[i]) > math.MaxUint64-uint64(as[i])) {
 				err := types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 				if err := s.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err); err != nil {
@@ -80,6 +101,13 @@ func (s *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 		}
 	case !isLHSUnsigned && !isRHSUnsigned:
 		for i := 0; i < n; i ++ {
+			if result.IsNull(i) {
+				continue
+			}
+			if buf.IsNull(i) {
+				result.SetNull(i, true)
+				continue
+			}
 			if (as[i] > 0 && bs[i] > math.MaxInt64-as[i]) || (as[i] < 0 && bs[i] < math.MaxInt64-as[i]) {
 				err := types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 				if err := s.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err); err != nil {
