@@ -364,6 +364,53 @@ func (p *LogicalJoin) constructIndexJoin(
 	return []PhysicalPlan{join}
 }
 
+func (p *LogicalJoin) constructIndexMergeJoin(
+	prop *property.PhysicalProperty,
+	outerIdx int,
+	innerTask task,
+	ranges []*ranger.Range,
+	keyOff2IdxOff []int,
+	lens []int,
+	compareFilters *ColWithCmpFuncManager,
+) []PhysicalPlan {
+	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, lens, compareFilters)
+	indexMergeJoins := make([]PhysicalPlan, 0, len(indexJoins))
+	for _, plan := range indexJoins {
+		join := plan.(*PhysicalIndexJoin)
+		// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
+		isOuterKeysPrefix := len(join.OuterJoinKeys) <= len(prop.Items)
+		compareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
+		outerCompareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
+		for i := range join.OuterJoinKeys {
+			if isOuterKeysPrefix && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[i]) {
+				isOuterKeysPrefix = false
+			}
+			compareFuncs = append(compareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
+			outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.OuterJoinKeys[i]))
+		}
+		// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
+		canKeepOuterOrder := len(prop.Items) <= len(join.OuterJoinKeys)
+		for i := 0; canKeepOuterOrder && i < len(prop.Items); i++ {
+			if !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[i]) {
+				canKeepOuterOrder = false
+			}
+		}
+		// Since index merge join requires prop items the prefix of outer join keys
+		// or outer join keys the prefix of the prop items. So we need `canKeepOuterOrder` or
+		// `isOuterKeysPrefix` to be true.
+		if canKeepOuterOrder || isOuterKeysPrefix {
+			indexMergeJoin := PhysicalIndexMergeJoin{
+				PhysicalIndexJoin: *join,
+				NeedOuterSort:     !isOuterKeysPrefix,
+				CompareFuncs:      compareFuncs,
+				OuterCompareFuncs: outerCompareFuncs,
+			}.Init(p.ctx)
+			indexMergeJoins = append(indexMergeJoins, indexMergeJoin)
+		}
+	}
+	return indexMergeJoins
+}
+
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child.
 // First of all, we'll check whether the inner child is DataSource.
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
@@ -412,10 +459,17 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			keyOff2IdxOff[i] = 0
 		}
 		if pkMatched {
-			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us)
+			joins := make([]PhysicalPlan, 0, 2)
+
+			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false)
+			joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
+			// The index merge join's inner plan is different from index join, so we should consturct another inner plan
+			// for it.
+			innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true)
+			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
-			return p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)
+			return joins
 		}
 	}
 	helper := &indexJoinBuildHelper{join: p}
@@ -444,8 +498,15 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 		idxCols, lens := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
 		rangeInfo := helper.buildRangeDecidedByInformation(idxCols, outerJoinKeys)
-		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
-		return p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)
+		joins := make([]PhysicalPlan, 0, 2)
+
+		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false)
+		joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)...)
+		// The index merge join's inner plan is different from index join, so we should consturct another inner plan
+		// for it.
+		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true)
+		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, lens, helper.lastColManager)...)
+		return joins
 	}
 	return nil
 }
@@ -494,7 +555,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 }
 
 // constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column, us *LogicalUnionScan) task {
+func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column, us *LogicalUnionScan, keepOrder bool) task {
 	ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -504,6 +565,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 		filterCondition: ds.pushedDownConds,
 		Ranges:          ranges,
 		rangeDecidedBy:  outerJoinKeys,
+		KeepOrder:       keepOrder,
 	}.Init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	ts.stats = &property.StatsInfo{
@@ -521,6 +583,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 		indexPlanFinished: true,
 		cst:               scanFactor * rowSize * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
+		keepOrder:         ts.KeepOrder,
 	}
 	selStats := ts.stats.Scale(selectionFactor)
 	ts.addPushedDownSelection(copTask, selStats)
@@ -546,7 +609,7 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 
 // constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
 func (p *LogicalJoin) constructInnerIndexScanTask(ds *DataSource, idx *model.IndexInfo, filterConds []expression.Expression,
-	outerJoinKeys []*expression.Column, us *LogicalUnionScan, rangeInfo string) task {
+	outerJoinKeys []*expression.Column, us *LogicalUnionScan, rangeInfo string, keepOrder bool) task {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
@@ -554,7 +617,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(ds *DataSource, idx *model.Ind
 		Columns:          ds.Columns,
 		Index:            idx,
 		dataSourceSchema: ds.schema,
-		KeepOrder:        false,
+		KeepOrder:        keepOrder,
 		Ranges:           ranger.FullRange(),
 		rangeInfo:        rangeInfo,
 	}.Init(ds.ctx)
@@ -579,6 +642,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(ds *DataSource, idx *model.Ind
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
+		keepOrder:   is.KeepOrder,
 	}
 	if !isCoveringIndex(ds.schema.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
