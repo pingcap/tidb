@@ -150,7 +150,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildShowDDLJobQueries(v)
 	case *plannercore.ShowSlow:
 		return b.buildShowSlow(v)
-	case *plannercore.Show:
+	case *plannercore.PhysicalShow:
 		return b.buildShow(v)
 	case *plannercore.Simple:
 		return b.buildSimple(v)
@@ -602,7 +602,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
+func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 	e := &ShowExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		Tp:           v.Tp,
@@ -1183,15 +1183,10 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 		return nil
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = v.RowCount
 	e := &TableDualExec{
 		baseExecutor: base,
 		numDualRows:  v.RowCount,
-	}
-	if v.SourcePlan != nil {
-		sourceExec := b.build(v.SourcePlan)
-		e.sourceExec = sourceExec
-	} else {
-		base.initCap = v.RowCount
 	}
 	return e
 }

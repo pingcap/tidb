@@ -30,7 +30,7 @@ import (
 
 var (
 	stmtNodeCounterUse      = metrics.StmtNodeCounter.WithLabelValues("Use")
-	stmtNodeCounterShow     = metrics.StmtNodeCounter.WithLabelValues("Show")
+	stmtNodeCounterShow     = metrics.StmtNodeCounter.WithLabelValues("LogicalShow")
 	stmtNodeCounterBegin    = metrics.StmtNodeCounter.WithLabelValues("Begin")
 	stmtNodeCounterCommit   = metrics.StmtNodeCounter.WithLabelValues("Commit")
 	stmtNodeCounterRollback = metrics.StmtNodeCounter.WithLabelValues("Rollback")

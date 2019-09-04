@@ -68,11 +68,19 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, 
 		return invalidTask, nil
 	}
 	dual := PhysicalTableDual{
-		RowCount:   p.RowCount,
-		SourcePlan: p.sourcePlan,
+		RowCount: p.RowCount,
 	}.Init(p.ctx, p.stats)
 	dual.SetSchema(p.schema)
 	return &rootTask{p: dual}, nil
+}
+
+func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, error) {
+	if !prop.IsEmpty() {
+		return invalidTask, nil
+	}
+	pShow := PhysicalShow{baseShowContent: p.baseShowContent}.Init(p.ctx)
+	pShow.SetSchema(p.schema)
+	return &rootTask{p: pShow}, nil
 }
 
 // findBestTask implements LogicalPlan interface.

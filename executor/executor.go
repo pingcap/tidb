@@ -953,9 +953,6 @@ type TableDualExec struct {
 	// numDualRows can only be 0 or 1.
 	numDualRows int
 	numReturned int
-
-	// Temp solution to make the logic of processing show statement more reasonable.
-	sourceExec Executor
 }
 
 // Open implements the Executor Open interface.
@@ -966,9 +963,6 @@ func (e *TableDualExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.sourceExec != nil {
-		return e.sourceExec.Next(ctx, req)
-	}
 	req.Reset()
 	if e.numReturned >= e.numDualRows {
 		return nil

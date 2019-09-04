@@ -411,8 +411,6 @@ type PhysicalTableDual struct {
 
 	RowCount int
 
-	SourcePlan Plan
-
 	// names is used for OutputNames() method. Dual may be inited when building point get plan.
 	// So it needs to hold names for itself.
 	names []*types.FieldName
@@ -454,4 +452,11 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 	}
 
 	return statsInfos
+}
+
+// PhysicalShow represents a show plan.
+type PhysicalShow struct {
+	physicalSchemaProducer
+
+	baseShowContent
 }
