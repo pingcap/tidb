@@ -61,7 +61,7 @@ type joiner interface {
 	// matched with at lease one inner row.
 	tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, isNull bool, err error)
 
-	// tryToMatch tries to join an outer row with a batch of inner rows.
+	// tryToMatchOuters tries to join an outer row with a batch of inner rows.
 	tryToMatchOuters(outer chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error)
 
 	// onMissMatch operates on the unmatched outer row according to the join
@@ -202,7 +202,7 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColsLen int) (bool,
 // tryToMatch, the result is built by multiple outer row and one inner rows. The
 // returned outerRowStatusFlag slice value indicates the status of outer rows(
 // matched/unmatched/hasNull).
-func (j *baseJoiner) filterAndCheckOuterRowStatus(input, output *chunk.Chunk, outerColsLen int, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, _ error) {
+func (j *baseJoiner) filterAndCheckOuterRowStatus(input, output *chunk.Chunk, innerColsLen int, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, _ error) {
 	var err error
 	j.selected, j.isNull, err = expression.VectorizedFilterConsiderNull(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected, j.isNull)
 	if err != nil {
@@ -217,10 +217,11 @@ func (j *baseJoiner) filterAndCheckOuterRowStatus(input, output *chunk.Chunk, ou
 	}
 
 	// Batch copies selected rows to output chunk.
-	innerColOffset, outerColOffset := 0, input.NumCols()-outerColsLen
+	innerColOffset, outerColOffset := 0, innerColsLen
 	if !j.outerIsRight {
-		innerColOffset, outerColOffset = outerColsLen, 0
+		innerColOffset, outerColOffset = input.NumCols()-innerColsLen, 0
 	}
+
 	_, err = chunk.CopySelectedJoinRows(input, innerColOffset, outerColOffset, j.selected, output)
 	return outerRowStatus, err
 }
@@ -261,29 +262,25 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
 	outerRowStatus = outerRowStatus[:0]
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
-	for i := 0; i < numToAppend; i++ {
-		outerRowStatus = append(outerRowStatus, outerRowMatched)
-	}
 	if len(j.conditions) == 0 {
-		for ; outer != outers.End() && numToAppend > 0; numToAppend-- {
+		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
 			chk.AppendPartialRow(0, outer)
-			outer = outers.Next()
+			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
 		return outerRowStatus, nil
 	}
-	for outer := outers.Current(); outer != outers.End() && numToAppend > 0; numToAppend-- {
+	for outer := outers.Current(); outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
 		j.makeShallowJoinRow(j.outerIsRight, inner, outer)
-
 		// For SemiJoin, we can safely treat null result of join conditions as false,
 		// so we ignore the nullness returned by EvalBool here.
 		matched, _, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return outerRowStatus, err
 		}
+		outerRowStatus = append(outerRowStatus, outerRowMatched)
 		if matched {
 			chk.AppendPartialRow(0, outer)
 		}
-		outer = outers.Next()
 	}
 	return outerRowStatus, nil
 }
@@ -323,28 +320,27 @@ func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk 
 }
 
 func (j *antiSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
+	outerRowStatus = outerRowStatus[:0]
 	numToAppend := chk.RequiredRows() - chk.NumRows()
-	for i := 0; i < numToAppend; i++ {
-		outerRowStatus = append(outerRowStatus, outerRowMatched)
-	}
 	if len(j.conditions) == 0 {
-		outers.ReachEnd()
+		for ; outers.Current() != outers.End(); outers.Next() {
+			outerRowStatus = append(outerRowStatus, outerRowMatched)
+		}
 		return outerRowStatus, nil
 	}
-	for outer, i := outers.Current(), 0; outer != outers.End() && numToAppend > 0; numToAppend-- {
+	for outer, i := outers.Current(), 0; outer != outers.End() && numToAppend > 0; outer, numToAppend, i = outers.Next(), numToAppend-1, i+1 {
 		j.makeShallowJoinRow(j.outerIsRight, inner, outer)
-
 		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return outerRowStatus, err
 		}
-		if isNull {
-			outerRowStatus[i] = outerRowHasNull
-		} else if !matched {
-			outerRowStatus[i] = outerRowUnmatched
+		if matched {
+			outerRowStatus = append(outerRowStatus, outerRowMatched)
+		} else if isNull {
+			outerRowStatus = append(outerRowStatus, outerRowHasNull)
+		} else {
+			outerRowStatus = append(outerRowStatus, outerRowUnmatched)
 		}
-		i++
-		outer = outers.Next()
 	}
 	return outerRowStatus, nil
 }
@@ -391,18 +387,15 @@ func (j *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator,
 func (j *leftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
 	outerRowStatus = outerRowStatus[:0]
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
-	for i := 0; i < numToAppend; i++ {
-		outerRowStatus = append(outerRowStatus, outerRowMatched)
-	}
 	if len(j.conditions) == 0 {
-		for ; outer != outers.End() && numToAppend > 0; numToAppend-- {
+		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
 			j.onMatch(outer, chk)
-			outer = outers.Next()
+			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
 		return outerRowStatus, nil
 	}
 
-	for i := 0; outer != outers.End() && numToAppend > 0; numToAppend-- {
+	for i := 0; outer != outers.End() && numToAppend > 0; outer, numToAppend, i = outers.Next(), numToAppend-1, i+1 {
 		j.makeShallowJoinRow(false, inner, outer)
 		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
@@ -410,13 +403,12 @@ func (j *leftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chun
 		}
 		if matched {
 			j.onMatch(outer, chk)
+			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		} else if isNull {
-			outerRowStatus[i] = outerRowHasNull
+			outerRowStatus = append(outerRowStatus, outerRowHasNull)
 		} else {
-			outerRowStatus[i] = outerRowUnmatched
+			outerRowStatus = append(outerRowStatus, outerRowUnmatched)
 		}
-		i++
-		outer = outers.Next()
 	}
 	return outerRowStatus, nil
 }
@@ -471,18 +463,15 @@ func (j *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Itera
 func (j *antiLeftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
 	outerRowStatus = outerRowStatus[:0]
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
-	for i := 0; i < numToAppend; i++ {
-		outerRowStatus = append(outerRowStatus, outerRowMatched)
-	}
 	if len(j.conditions) == 0 {
-		for ; outer != outers.End() && numToAppend > 0; numToAppend-- {
+		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
 			j.onMatch(outer, chk)
-			outer = outers.Next()
+			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
 		return outerRowStatus, nil
 	}
 
-	for i := 0; outer != outers.End() && numToAppend > 0; numToAppend-- {
+	for i := 0; outer != outers.End() && numToAppend > 0; outer, numToAppend, i = outers.Next(), numToAppend-1, i+1 {
 		j.makeShallowJoinRow(false, inner, outer)
 		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
@@ -490,13 +479,12 @@ func (j *antiLeftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner 
 		}
 		if matched {
 			j.onMatch(outer, chk)
+			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		} else if isNull {
-			outerRowStatus[i] = outerRowHasNull
+			outerRowStatus = append(outerRowStatus, outerRowHasNull)
 		} else {
-			outerRowStatus[i] = outerRowUnmatched
+			outerRowStatus = append(outerRowStatus, outerRowUnmatched)
 		}
-		i++
-		outer = outers.Next()
 	}
 	return outerRowStatus, nil
 }
@@ -554,20 +542,19 @@ func (j *leftOuterJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Ro
 		chkForJoin = chk
 	}
 
-	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
-	for ; outer != outers.End() && numToAppend > 0; numToAppend-- {
+	outer, numToAppend, outerBatchSize := outers.Current(), chk.RequiredRows()-chk.NumRows(), 0
+	for ; outer != outers.End() && numToAppend > 0; outer, numToAppend, outerBatchSize = outers.Next(), numToAppend-1, outerBatchSize+1 {
 		j.makeJoinRowToChunk(chkForJoin, outer, inner)
-		outer = outers.Next()
 	}
 	outerRowStatus = outerRowStatus[:0]
-	for i := 0; i < numToAppend; i++ {
+	for i := 0; i < outerBatchSize; i++ {
 		outerRowStatus = append(outerRowStatus, outerRowMatched)
 	}
 	if len(j.conditions) == 0 {
 		return outerRowStatus, nil
 	}
 	// reach here, chkForJoin is j.chk
-	return j.filterAndCheckOuterRowStatus(chkForJoin, chk, outer.Len(), outerRowStatus)
+	return j.filterAndCheckOuterRowStatus(chkForJoin, chk, inner.Len(), outerRowStatus)
 }
 
 func (j *leftOuterJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
@@ -614,20 +601,19 @@ func (j *rightOuterJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.R
 		chkForJoin = chk
 	}
 
-	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
-	for ; outer != outers.End() && numToAppend > 0; numToAppend-- {
+	outer, numToAppend, outerBatchSize := outers.Current(), chk.RequiredRows()-chk.NumRows(), 0
+	for ; outer != outers.End() && numToAppend > 0; outer, numToAppend, outerBatchSize = outers.Next(), numToAppend-1, outerBatchSize+1 {
 		j.makeJoinRowToChunk(chkForJoin, inner, outer)
-		outer = outers.Next()
 	}
 	outerRowStatus = outerRowStatus[:0]
-	for i := 0; i < numToAppend; i++ {
+	for i := 0; i < outerBatchSize; i++ {
 		outerRowStatus = append(outerRowStatus, outerRowMatched)
 	}
 	if len(j.conditions) == 0 {
 		return outerRowStatus, nil
 	}
 	// reach here, chkForJoin is j.chk
-	return j.filterAndCheckOuterRowStatus(chkForJoin, chk, outer.Len(), outerRowStatus)
+	return j.filterAndCheckOuterRowStatus(chkForJoin, chk, inner.Len(), outerRowStatus)
 }
 
 func (j *rightOuterJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
@@ -675,8 +661,8 @@ func (j *innerJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, c
 	if len(j.conditions) == 0 {
 		chkForJoin = chk
 	}
-	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
-	for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
+	outer, numToAppend, outerBatchSize := outers.Current(), chk.RequiredRows()-chk.NumRows(), 0
+	for ; outer != outers.End() && numToAppend > 0; outer, numToAppend, outerBatchSize = outers.Next(), numToAppend-1, outerBatchSize+1 {
 		if j.outerIsRight {
 			j.makeJoinRowToChunk(chkForJoin, inner, outer)
 		} else {
@@ -684,14 +670,14 @@ func (j *innerJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, c
 		}
 	}
 	outerRowStatus = outerRowStatus[:0]
-	for i := 0; i < numToAppend; i++ {
+	for i := 0; i < outerBatchSize; i++ {
 		outerRowStatus = append(outerRowStatus, outerRowMatched)
 	}
 	if len(j.conditions) == 0 {
 		return outerRowStatus, nil
 	}
 	// reach here, chkForJoin is j.chk
-	return j.filterAndCheckOuterRowStatus(chkForJoin, chk, outer.Len(), outerRowStatus)
+	return j.filterAndCheckOuterRowStatus(chkForJoin, chk, inner.Len(), outerRowStatus)
 }
 
 func (j *innerJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
