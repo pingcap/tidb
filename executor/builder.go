@@ -1785,36 +1785,6 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		}
 	}
 
-	// If the inner join keys are the prefix set of the index, then return the IndexLookUpMergeJoin
-	if v.IsMergeJoin {
-		return &IndexLookUpMergeJoin{
-			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
-			outerMergeCtx: outerMergeCtx{
-				rowTypes:      outerTypes,
-				filter:        outerFilter,
-				joinKeys:      v.OuterJoinKeys,
-				keyCols:       outerKeyCols,
-				needOuterSort: v.NeedOuterSort,
-				compareFuncs:  v.OuterCompareFuncs,
-			},
-			innerMergeCtx: innerMergeCtx{
-				readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
-				rowTypes:      innerTypes,
-				joinKeys:      v.InnerJoinKeys,
-				keyCols:       innerKeyCols,
-				compareFuncs:  v.CompareFuncs,
-				colLens:       v.IdxColLens,
-				hasPrefixCol:  hasPrefixCol,
-			},
-			workerWg:      new(sync.WaitGroup),
-			isOuterJoin:   v.JoinType.IsOuterJoin(),
-			joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
-			indexRanges:   v.Ranges,
-			keyOff2IdxOff: v.KeyOff2IdxOff,
-			lastColHelper: v.CompareFilters,
-		}
-	}
-
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 		outerCtx: outerCtx{
@@ -1845,9 +1815,84 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 }
 
 func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndexMergeJoin) Executor {
-	// Now IndexLookUpMergeJoin returns IndexLookUpJoin.
-	// We will maintain it in future.
-	return b.buildIndexLookUpJoin(&v.PhysicalIndexJoin)
+	outerExec := b.build(v.Children()[v.OuterIndex])
+	if b.err != nil {
+		return nil
+	}
+	outerTypes := retTypes(outerExec)
+	innerPlan := v.Children()[1-v.OuterIndex]
+	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
+	for i, col := range innerPlan.Schema().Columns {
+		innerTypes[i] = col.RetType
+	}
+
+	var (
+		outerFilter           []expression.Expression
+		leftTypes, rightTypes []*types.FieldType
+	)
+
+	if v.OuterIndex == 1 {
+		leftTypes, rightTypes = innerTypes, outerTypes
+		outerFilter = v.RightConditions
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	} else {
+		leftTypes, rightTypes = outerTypes, innerTypes
+		outerFilter = v.LeftConditions
+		if len(v.RightConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	}
+	defaultValues := v.DefaultValues
+	if defaultValues == nil {
+		defaultValues = make([]types.Datum, len(innerTypes))
+	}
+	outerKeyCols := make([]int, len(v.OuterJoinKeys))
+	for i := 0; i < len(v.OuterJoinKeys); i++ {
+		outerKeyCols[i] = v.OuterJoinKeys[i].Index
+	}
+	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	for i := 0; i < len(v.InnerJoinKeys); i++ {
+		innerKeyCols[i] = v.InnerJoinKeys[i].Index
+	}
+	executorCounterIndexLookUpJoin.Inc()
+	hasPrefixCol := false
+	for _, l := range v.IdxColLens {
+		if l != types.UnspecifiedLength {
+			hasPrefixCol = true
+			break
+		}
+	}
+
+	return &IndexLookUpMergeJoin{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
+		outerMergeCtx: outerMergeCtx{
+			rowTypes:      outerTypes,
+			filter:        outerFilter,
+			joinKeys:      v.OuterJoinKeys,
+			keyCols:       outerKeyCols,
+			needOuterSort: v.NeedOuterSort,
+			compareFuncs:  v.OuterCompareFuncs,
+		},
+		innerMergeCtx: innerMergeCtx{
+			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
+			rowTypes:      innerTypes,
+			joinKeys:      v.InnerJoinKeys,
+			keyCols:       innerKeyCols,
+			compareFuncs:  v.CompareFuncs,
+			colLens:       v.IdxColLens,
+			hasPrefixCol:  hasPrefixCol,
+		},
+		workerWg:      new(sync.WaitGroup),
+		isOuterJoin:   v.JoinType.IsOuterJoin(),
+		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		indexRanges:   v.Ranges,
+		keyOff2IdxOff: v.KeyOff2IdxOff,
+		lastColHelper: v.CompareFilters,
+	}
 }
 
 // containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,

@@ -360,7 +360,6 @@ func (p *LogicalJoin) constructIndexJoin(
 		KeepOuterOrder:  len(prop.Items) > 0,
 		CompareFilters:  compareFilters,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
-	injectIndexMergeJoinFlag(prop.Items, join)
 	join.SetSchema(p.schema)
 	return []PhysicalPlan{join}
 }
