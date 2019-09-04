@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSES/QL-LICENSE file.
 
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,10 +45,9 @@ func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
 				if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
 					return err
-				} else {
-					result.SetNull(i, true)
-					continue
 				}
+				result.SetNull(i, true)
+				continue
 			}
 			i64s[i] = 0
 			continue
