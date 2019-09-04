@@ -604,16 +604,25 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 }
 
 func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.SplitRegionResponse {
-	key := NewMvccKey(req.GetSplitKey())
-	region, _ := h.cluster.GetRegionByKey(key)
-	if bytes.Equal(region.GetStartKey(), key) {
-		return &kvrpcpb.SplitRegionResponse{}
+	keys := req.GetSplitKeys()
+	resp := &kvrpcpb.SplitRegionResponse{Regions: make([]*metapb.Region, 0, len(keys)+1)}
+	for i, key := range keys {
+		k := NewMvccKey(key)
+		region, _ := h.cluster.GetRegionByKey(k)
+		if bytes.Equal(region.GetStartKey(), key) {
+			continue
+		}
+		if i == 0 {
+			// Set the leftmost region.
+			resp.Regions = append(resp.Regions, region)
+		}
+		newRegionID, newPeerIDs := h.cluster.AllocID(), h.cluster.AllocIDs(len(region.Peers))
+		newRegion := h.cluster.SplitRaw(region.GetId(), newRegionID, k, newPeerIDs, newPeerIDs[0])
+		// The mocktikv should return a deep copy of meta info to avoid data race
+		metaCloned := proto.Clone(newRegion.Meta)
+		resp.Regions = append(resp.Regions, metaCloned.(*metapb.Region))
 	}
-	newRegionID, newPeerIDs := h.cluster.AllocID(), h.cluster.AllocIDs(len(region.Peers))
-	newRegion := h.cluster.SplitRaw(region.GetId(), newRegionID, key, newPeerIDs, newPeerIDs[0])
-	// The mocktikv should return a deep copy of meta info to avoid data race
-	metaCloned := proto.Clone(newRegion.Meta)
-	return &kvrpcpb.SplitRegionResponse{Left: metaCloned.(*metapb.Region)}
+	return resp
 }
 
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of

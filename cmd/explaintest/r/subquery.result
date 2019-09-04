@@ -22,8 +22,8 @@ Projection_11	5.00	root	9_aux_0
   ├─TableReader_15	5.00	root	data:TableScan_14
   │ └─TableScan_14	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─IndexJoin_23	0.50	root	inner join, inner:TableReader_22, outer key:test.s.a, inner key:test.t1.a
-      ├─IndexReader_27	1.00	root	index:IndexScan_26
-      │ └─IndexScan_26	1.00	cop	table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) eq(test.s.c, 1) eq(test.s.d, test.t.a)], keep order:false
-      └─TableReader_22	1.00	root	data:TableScan_21
-        └─TableScan_21	1.00	cop	table:t1, range: decided by [test.s.a], keep order:false
+    └─IndexMergeJoin_27	0.50	root	inner join, inner:TableReader_25, outer key:test.s.a, inner key:test.t1.a
+      ├─IndexReader_31	1.00	root	index:IndexScan_30
+      │ └─IndexScan_30	1.00	cop	table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) eq(test.s.c, 1) eq(test.s.d, test.t.a)], keep order:false
+      └─TableReader_25	1.00	root	data:TableScan_24
+        └─TableScan_24	1.00	cop	table:t1, range: decided by [test.s.a], keep order:true
