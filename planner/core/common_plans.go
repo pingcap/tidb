@@ -644,6 +644,101 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 	}
 }
 
+type PlanNormalizer struct {
+	buf            bytes.Buffer
+	explainedPlans map[int]bool
+}
+
+const (
+	rootTaskType = "0"
+	copTaskType  = "1"
+)
+
+func (pn *PlanNormalizer) NormalizePlanTreeString(p PhysicalPlan) string {
+	pn.explainedPlans = make(map[int]bool)
+	pn.normalizePlanTree(p, rootTaskType, 0)
+	return pn.buf.String()
+}
+
+func (pn *PlanNormalizer) normalizePlanTree(p PhysicalPlan, taskType string, depth int) {
+	pn.buf.WriteString(strconv.Itoa(depth))
+	pn.buf.WriteString("\t")
+	pn.buf.WriteString(p.EncodeID())
+	pn.buf.WriteString("\t")
+	pn.buf.WriteString(taskType)
+	pn.buf.WriteString("\n")
+
+	pn.explainedPlans[p.ID()] = true
+
+	depth++
+	for _, child := range p.Children() {
+		if pn.explainedPlans[child.ID()] {
+			continue
+		}
+		pn.normalizePlanTree(child.(PhysicalPlan), taskType, depth)
+	}
+
+	switch copPlan := p.(type) {
+	case *PhysicalTableReader:
+		pn.normalizePlanTree(copPlan.tablePlan, copTaskType, depth)
+	case *PhysicalIndexReader:
+		pn.normalizePlanTree(copPlan.indexPlan, copTaskType, depth)
+	case *PhysicalIndexLookUpReader:
+		pn.normalizePlanTree(copPlan.indexPlan, copTaskType, depth)
+		pn.normalizePlanTree(copPlan.tablePlan, copTaskType, depth)
+	}
+}
+
+func DecodeNormalizePlanTreeString(str string) (string, error) {
+	var buf bytes.Buffer
+	nodes := strings.Split(str, "\n")
+	for _, node := range nodes {
+		fmt.Printf("node: %v\n", node)
+		if len(node) == 0 {
+			continue
+		}
+		values := strings.Split(node, "\t")
+		fmt.Printf("values: %v\n", values)
+		for i, v := range values {
+			switch i {
+			// depth
+			case 0:
+				depth, err := strconv.Atoi(v)
+				if err != nil {
+					return "", errors.Errorf("decode normalize plan error: invalid depth value: %v in node: %v, values: %v, decode depth error: %v", v, node, values, str, err.Error())
+				}
+				for i := 0; i < depth; i++ {
+					buf.WriteString("  ")
+				}
+			// plan ID
+			case 1:
+				ids := strings.Split(v, "_")
+				if len(ids) != 2 {
+					return "", errors.Errorf("decode normalize plan error: invalid plan value: %v in node: %v, plan is: %v", v, node, str)
+				}
+				planID, err := strconv.Atoi(ids[0])
+				if err != err {
+					return "", errors.Errorf("decode normalize plan error: invalid plan value: %v in node: %v, plan is: %v, decode plan id: %v, error: %v", v, node, str, ids[0], err.Error())
+				}
+				buf.WriteString(PhysicalIDToTypeString(planID) + "_" + ids[1])
+			// task type
+			case 2:
+				buf.WriteByte('\t')
+				if v == rootTaskType {
+					buf.WriteString("root")
+				} else {
+					buf.WriteString("cop")
+				}
+			default:
+				buf.WriteByte('\t')
+				buf.WriteString(v)
+			}
+		}
+		buf.WriteByte('\n')
+	}
+	return buf.String(), nil
+}
+
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, task type, operator info, and the estemated row count.
 func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {

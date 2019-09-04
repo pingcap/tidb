@@ -100,7 +100,17 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	}
 	genExplainRows(e.explain.Rows)
+	genPlanNormalizeString(e.explain.StmtPlan)
 	return e.explain.Rows, nil
+}
+
+func genPlanNormalizeString(p core.Plan) {
+	pn := core.PlanNormalizer{}
+	str := pn.NormalizePlanTreeString(p.(core.PhysicalPlan))
+	fmt.Printf("\n-----------------------\n%v\n----------------------------\n", str)
+
+	decodePlan, err := core.DecodeNormalizePlanTreeString(str)
+	fmt.Printf("decode plan \n-----------------------\n%v\n-----------err: %v -----------------\n", decodePlan, err)
 }
 
 func genExplainRows(rows [][]string) {
@@ -114,8 +124,9 @@ func genExplainRows(rows [][]string) {
 	}
 	fmt.Printf("gen explain: %v\n%v\n", buf.Len(), buf.String())
 	compressZlib(buf)
-	compressGzip(buf)
-	compressSnappy(buf)
+
+	//compressGzip(buf)
+	//compressSnappy(buf)
 }
 
 func compressZlib(buf bytes.Buffer) {

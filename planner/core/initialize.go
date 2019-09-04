@@ -16,6 +16,7 @@ package core
 import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"strconv"
 )
 
 const (
@@ -86,6 +87,189 @@ const (
 	// TypeWindow is the type of Window.
 	TypeWindow = "Window"
 )
+
+const (
+	TypeSelID int = iota + 1
+	TypeSetID
+	TypeProjID
+	TypeAggID
+	TypeStreamAggID
+	TypeHashAggID
+	TypeShowID
+	TypeJoinID
+	TypeUnionID
+	TypeTableScanID
+	TypeMemTableScanID
+	TypeUnionScanID
+	TypeIdxScanID
+	TypeSortID
+	TypeTopNID
+	TypeLimitID
+	TypeHashLeftJoinID
+	TypeHashRightJoinID
+	TypeMergeJoinID
+	TypeIndexJoinID
+	TypeIndexMergeJoinID
+	TypeApplyID
+	TypeMaxOneRowID
+	TypeExistsID
+	TypeDualID
+	TypeLockID
+	TypeInsertID
+	TypeUpdateID
+	TypeDeleteID
+	TypeIndexLookUpID
+	TypeTableReaderID
+	TypeIndexReaderID
+	TypeWindowID
+)
+
+func TypeStringToPhysicalID(tp string) int {
+	switch tp {
+	case TypeSel:
+		return TypeSelID
+	case TypeSet:
+		return TypeSetID
+	case TypeProj:
+		return TypeProjID
+	case TypeAgg:
+		return TypeAggID
+	case TypeStreamAgg:
+		return TypeStreamAggID
+	case TypeHashAgg:
+		return TypeHashAggID
+	case TypeShow:
+		return TypeShowID
+	case TypeJoin:
+		return TypeJoinID
+	case TypeUnion:
+		return TypeUnionID
+	case TypeTableScan:
+		return TypeTableScanID
+	case TypeMemTableScan:
+		return TypeMemTableScanID
+	case TypeUnionScan:
+		return TypeUnionScanID
+	case TypeIdxScan:
+		return TypeIdxScanID
+	case TypeSort:
+		return TypeSortID
+	case TypeTopN:
+		return TypeTopNID
+	case TypeLimit:
+		return TypeLimitID
+	case TypeHashLeftJoin:
+		return TypeHashLeftJoinID
+	case TypeHashRightJoin:
+		return TypeHashRightJoinID
+	case TypeMergeJoin:
+		return TypeMergeJoinID
+	case TypeIndexJoin:
+		return TypeIndexJoinID
+	case TypeIndexMergeJoin:
+		return TypeIndexMergeJoinID
+	case TypeApply:
+		return TypeApplyID
+	case TypeMaxOneRow:
+		return TypeMaxOneRowID
+	case TypeExists:
+		return TypeExistsID
+	case TypeDual:
+		return TypeDualID
+	case TypeLock:
+		return TypeLockID
+	case TypeInsert:
+		return TypeInsertID
+	case TypeUpdate:
+		return TypeUpdateID
+	case TypeDelete:
+		return TypeDeleteID
+	case TypeIndexLookUp:
+		return TypeIndexLookUpID
+	case TypeTableReader:
+		return TypeTableReaderID
+	case TypeIndexReader:
+		return TypeIndexReaderID
+	case TypeWindow:
+		return TypeWindowID
+	}
+	// Should never reach here.
+	return 0
+}
+
+func PhysicalIDToTypeString(id int) string {
+	switch id {
+	case TypeSelID:
+		return TypeSel
+	case TypeSetID:
+		return TypeSet
+	case TypeProjID:
+		return TypeProj
+	case TypeAggID:
+		return TypeAgg
+	case TypeStreamAggID:
+		return TypeStreamAgg
+	case TypeHashAggID:
+		return TypeHashAgg
+	case TypeShowID:
+		return TypeShow
+	case TypeJoinID:
+		return TypeJoin
+	case TypeUnionID:
+		return TypeUnion
+	case TypeTableScanID:
+		return TypeTableScan
+	case TypeMemTableScanID:
+		return TypeMemTableScan
+	case TypeUnionScanID:
+		return TypeUnionScan
+	case TypeIdxScanID:
+		return TypeIdxScan
+	case TypeSortID:
+		return TypeSort
+	case TypeTopNID:
+		return TypeTopN
+	case TypeLimitID:
+		return TypeLimit
+	case TypeHashLeftJoinID:
+		return TypeHashLeftJoin
+	case TypeHashRightJoinID:
+		return TypeHashRightJoin
+	case TypeMergeJoinID:
+		return TypeMergeJoin
+	case TypeIndexJoinID:
+		return TypeIndexJoin
+	case TypeIndexMergeJoinID:
+		return TypeIndexMergeJoin
+	case TypeApplyID:
+		return TypeApply
+	case TypeMaxOneRowID:
+		return TypeMaxOneRow
+	case TypeExistsID:
+		return TypeExists
+	case TypeDualID:
+		return TypeDual
+	case TypeLockID:
+		return TypeLock
+	case TypeInsertID:
+		return TypeInsert
+	case TypeUpdateID:
+		return TypeUpdate
+	case TypeDeleteID:
+		return TypeDelete
+	case TypeIndexLookUpID:
+		return TypeIndexLookUp
+	case TypeTableReaderID:
+		return TypeTableReader
+	case TypeIndexReaderID:
+		return TypeIndexReader
+	case TypeWindowID:
+		return TypeWindow
+	}
+
+	// Should never reach here.
+	return "unknowPlanID" + strconv.Itoa(id)
+}
 
 // Init initializes LogicalAggregation.
 func (la LogicalAggregation) Init(ctx sessionctx.Context) *LogicalAggregation {

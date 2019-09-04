@@ -38,6 +38,8 @@ type Plan interface {
 	ID() int
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
+	// EncodeID get the ID for encoding plan.
+	EncodeID() string
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
@@ -135,6 +137,8 @@ type PhysicalPlan interface {
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
+
+	// PhysicalID() int
 
 	//ExplainNormalizeInfo() string
 
@@ -281,6 +285,11 @@ func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
+}
+
+func (p *basePlan) EncodeID() string {
+	planID := TypeStringToPhysicalID(p.tp)
+	return strconv.Itoa(planID) + "_" + strconv.Itoa(p.id)
 }
 
 // Schema implements Plan Schema interface.
