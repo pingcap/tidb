@@ -14,8 +14,6 @@
 package perfschema_test
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -23,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"testing"
 )
 
 func TestT(t *testing.T) {
@@ -65,20 +64,24 @@ func (s *testTableSuite) TestPerfSchemaTables(c *C) {
 }
 
 func (s *testTableSuite) TestStmtSummaryTable(c *C) {
-
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("set global tidb_enable_stmt_summary = 1")
-	defer func() {
-		tk1.MustExec("set global tidb_enable_stmt_summary = 0")
-	}()
-	tk1.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-
 	tk := testkit.NewTestKit(c, s.store)
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10))")
 
-	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
+	// statement summary is disabled in default
+	tk.MustQuery("select @@session.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values(1, 'a')")
+	tk.MustQuery("select * from performance_schema.events_statements_summary_by_digest").Check(testkit.Rows())
+
+	tk.MustExec("set session tidb_enable_stmt_summary = 1")
+	defer func() {
+		tk.MustExec("set session tidb_enable_stmt_summary = 0")
+	}()
+	tk.MustQuery("select @@session.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+
+	tk.MustExec("use test")
 	tk.MustExec("insert into t values(1, 'a')")
 	tk.MustExec("insert into t    values(2, 'b')")
 	tk.MustExec("insert into t VALUES(3, 'c')")
@@ -88,5 +91,15 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		where digest_text like 'insert into t%'`,
 	).Check(testkit.Rows("test 4 4 insert into t values(1, 'a')"))
 
-	tk.MustQuery("select * from t where a=1")
+	tk.MustQuery("select * from t where a=2")
+	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("test 1 0 select * from t where a=2"))
+
+	// select ... order by
+	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest
+		order by exec_count desc limit 1`,
+	).Check(testkit.Rows("test 4 4 insert into t values(1, 'a')"))
 }
