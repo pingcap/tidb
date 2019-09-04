@@ -310,7 +310,6 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			// 2. We have a non-empty prop to match.
 			// 3. This index is forced to choose.
 			// 4. The needed columns only contain the handleCol and there is no accessCond on it.
-			// (The last may happen in SQL like `select 1 from t` or `select count(1) from t`.)
 			currentCandidate = ds.getIndexCandidate(path, prop)
 		} else {
 			continue
