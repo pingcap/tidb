@@ -533,3 +533,13 @@ func IsBinaryLiteral(expr Expression) bool {
 	con, ok := expr.(*Constant)
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
 }
+
+// EqualContains checks whether an expression is contained by given slice of expressions based on the equality.
+func EqualContains(ctx sessionctx.Context, exprs []Expression, expr Expression) bool {
+	for _, e := range exprs {
+		if e.Equal(ctx, expr) {
+			return true
+		}
+	}
+	return false
+}

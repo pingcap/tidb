@@ -1655,7 +1655,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		},
 		{
 			sql:  "select count(*) from (select sum(a), b from t group by b) tt group by b",
-			best: "DataScan(t)->Aggr(firstrow(test.t.b))->Projection->Projection",
+			best: "DataScan(t)->Aggr(firstrow(test.t.b))->Projection",
 		},
 		{
 			sql:  "select max(c), sum(sum_d) from (select b, c, sum(d) as sum_d from t group by b, c) tmp group by b",
@@ -1671,7 +1671,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		},
 		{
 			sql:  "select p, max(ct) from (select a+b as p, count(c) as ct from t group by a+b) tt group by p",
-			best: "DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a),firstrow(test.t.b))->Projection->Projection",
+			best: "DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a),firstrow(test.t.b))->Projection",
 		},
 		{
 			sql:  "select bt, max(ct) from (select b as bt, max(c) as ct from t group by c, b) tt group by bt",
@@ -1683,7 +1683,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		},
 		{
 			sql:  "select 3 from (select 1 as at, 2 as bt from t group by 1, 2) as tt group by at",
-			best: "DataScan(t)->Aggr()->Projection->Projection",
+			best: "DataScan(t)->Aggr(firstrow(1))->Projection",
 		},
 		{
 			sql: `select v.a, v.b, max(v.sm), sum(v.sm)
@@ -1694,7 +1694,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 						and    t2.c > 10
 						group by t1.a, t1.b) v
 					group by v.a, v.b`,
-			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e_str,t2.e_str)->Aggr(sum(t2.f),firstrow(t1.a),firstrow(t1.b))->Projection->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.e_str,test.t2.e_str)->Aggr(sum(test.t2.f),firstrow(test.t1.a),firstrow(test.t1.b))->Projection",
 		},
 		{
 			sql: `select v.a, v.b, sum(v.sm)
@@ -1705,7 +1705,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 						and    t2.c > 10
 						group by t1.a, t1.b) v
 					group by v.a`,
-			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e_str,t2.e_str)->Aggr(sum(t2.f),firstrow(t1.a),firstrow(t1.b))->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.e_str,test.t2.e_str)->Aggr(sum(test.t2.f),firstrow(test.t1.a),firstrow(test.t1.b))->Projection",
 		},
 		{
 			sql: `select u.a, u.b, min(u.mn), sum(u.sm)
@@ -1718,7 +1718,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 							group by t1.a, t1.b, t1.c, t1.d) v
 						group by v.a, v.b, v.c) u
 					group by u.a, u.b having u.a is not null`,
-			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e_str,t2.e_str)->Aggr(min(t1.c),sum(t2.f),firstrow(t1.a),firstrow(t1.b))->Sel([not(isnull(u.a))])->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.e_str,test.t2.e_str)->Aggr(min(test.t1.c),sum(test.t2.f),firstrow(test.t1.a),firstrow(test.t1.b))->Sel([not(isnull(test.u.a))])->Projection",
 		},
 		// cases that aggregate elimination cannot be applied
 		{
@@ -1739,7 +1739,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		{
 			// non-subset group-by items, just to test constant hashcode in rule implementation
 			sql:  "select bt, max(ct) from (select b as bt, TIMESTAMP '2000-01-01 00:00:01' as ct from t group by b, c) tt group by bt, ct",
-			best: "DataScan(t)->Aggr(firstrow(test.t.b))->Projection->Aggr(max(tt.ct),firstrow(tt.bt))->Projection",
+			best: "DataScan(t)->Aggr(firstrow(test.t.b))->Projection->Aggr(max(tt.ct),firstrow(test.tt.bt))->Projection",
 		},
 		{
 			// max(min(_))
@@ -1754,12 +1754,12 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		{
 			// max(max(_)+1)
 			sql:  "select bt, max(ct) from (select b as bt, max(c) + 1 as ct from t group by c, b) tt group by bt",
-			best: "DataScan(t)->Aggr(max(test.t.c),firstrow(test.t.b))->Projection->Aggr(max(tt.ct),firstrow(tt.bt))->Projection",
+			best: "DataScan(t)->Aggr(max(test.t.c),firstrow(test.t.b))->Projection->Aggr(max(tt.ct),firstrow(test.tt.bt))->Projection",
 		},
 		{
 			// max(max(_) - min(_))
 			sql:  "select bt, max(ct) from (select b as bt, max(c) - min(c) as ct from t group by c, b) tt group by bt",
-			best: "DataScan(t)->Aggr(max(test.t.c),min(test.t.c),firstrow(test.t.b))->Projection->Aggr(max(tt.ct),firstrow(tt.bt))->Projection",
+			best: "DataScan(t)->Aggr(max(test.t.c),min(test.t.c),firstrow(test.t.b))->Projection->Aggr(max(tt.ct),firstrow(test.tt.bt))->Projection",
 		},
 		{
 			// max(sum(_))
@@ -1771,7 +1771,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 						and    t2.c > 10
 						group by t1.a, t1.b) v
 				  group by v.a`,
-			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e_str,t2.e_str)->Aggr(sum(t2.f),firstrow(t1.a),firstrow(t1.b))->Aggr(max(sm),firstrow(t1.a),firstrow(t1.b))->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.e_str,test.t2.e_str)->Aggr(sum(test.t2.f),firstrow(test.t1.a),firstrow(test.t1.b))->Aggr(max(sm),firstrow(test.t1.a),firstrow(test.t1.b))->Projection",
 		},
 	}
 
