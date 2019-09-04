@@ -1950,7 +1950,8 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
+func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentLevel int) bool {
+	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
 		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 		indexHintList                               []indexHintInfo
@@ -2023,7 +2024,7 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
-	if b.pushTableHints(sel.TableHints) {
+	if b.pushTableHints(sel.TableHints, typeSelect, sel.QueryBlockOffset) {
 		// table hints are only visible in the current SELECT statement.
 		defer b.popTableHints()
 	}
@@ -2666,7 +2667,7 @@ func buildColumns2Handle(
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
-	if b.pushTableHints(update.TableHints) {
+	if b.pushTableHints(update.TableHints, typeUpdate, 0) {
 		// table hints are only visible in the current UPDATE statement.
 		defer b.popTableHints()
 	}
@@ -2906,7 +2907,7 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
-	if b.pushTableHints(delete.TableHints) {
+	if b.pushTableHints(delete.TableHints, typeDelete, 0) {
 		// table hints are only visible in the current DELETE statement.
 		defer b.popTableHints()
 	}

@@ -609,6 +609,16 @@ func (c *Chunk) Column(colIdx int) *Column {
 	return c.columns[colIdx]
 }
 
+// SetCol sets the colIdx Column to col and returns the old Column.
+func (c *Chunk) SetCol(colIdx int, col *Column) *Column {
+	if col == c.columns[colIdx] {
+		return nil
+	}
+	old := c.columns[colIdx]
+	c.columns[colIdx] = col
+	return old
+}
+
 // Sel returns Sel of this Chunk.
 func (c *Chunk) Sel() []int {
 	return c.sel
