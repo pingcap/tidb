@@ -65,8 +65,8 @@ explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	1985.00	root	cast(join_agg_0)
 └─HashLeftJoin_15	1985.00	root	inner join, inner:HashAgg_22, equal:[eq(test.a.c1, test.b.c2)]
-  ├─TableReader_28	1999.00	root	data:TableScan_27
-  │ └─TableScan_27	1999.00	cop	table:a, range:[-inf,+inf], keep order:false
+  ├─IndexReader_30	1999.00	root	index:IndexScan_29
+  │ └─IndexScan_29	1999.00	cop	table:a, index:c2, range:[NULL,+inf], keep order:false
   └─HashAgg_22	1985.00	root	group by:col_2, funcs:count(col_0), firstrow(col_2)
     └─TableReader_23	1985.00	root	data:HashAgg_17
       └─HashAgg_17	1985.00	cop	group by:test.b.c2, funcs:count(test.b.c2)
@@ -93,8 +93,8 @@ explain select c1 from t1 where c1 in (select c2 from t2);
 id	count	task	operator info
 Projection_9	1985.00	root	test.t1.c1
 └─HashLeftJoin_13	1985.00	root	inner join, inner:HashAgg_17, equal:[eq(test.t1.c1, test.t2.c2)]
-  ├─TableReader_26	1999.00	root	data:TableScan_25
-  │ └─TableScan_25	1999.00	cop	table:t1, range:[-inf,+inf], keep order:false
+  ├─IndexReader_28	1999.00	root	index:IndexScan_27
+  │ └─IndexScan_27	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
   └─HashAgg_17	1985.00	root	group by:test.t2.c2, funcs:firstrow(test.t2.c2)
     └─TableReader_24	1985.00	root	data:Selection_23
       └─Selection_23	1985.00	cop	not(isnull(test.t2.c2))
@@ -124,12 +124,12 @@ set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
 id	count	task	operator info
 Projection_6	1999.00	root	5_aux_0
-└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_12
-  ├─TableReader_9	1999.00	root	data:TableScan_8
-  │ └─TableScan_8	1999.00	cop	table:t1, range:[-inf,+inf], keep order:false
-  └─TableReader_12	0.00	root	data:Selection_11
-    └─Selection_11	0.00	cop	eq(1, test.t2.c2)
-      └─TableScan_10	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
+└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_14
+  ├─IndexReader_11	1999.00	root	index:IndexScan_10
+  │ └─IndexScan_10	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
+  └─TableReader_14	0.00	root	data:Selection_13
+    └─Selection_13	0.00	cop	eq(1, test.t2.c2)
+      └─TableScan_12	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
@@ -139,23 +139,23 @@ node [style=filled, color=lightgrey]
 color=black
 label = "root"
 "Projection_6" -> "HashLeftJoin_7"
-"HashLeftJoin_7" -> "TableReader_9"
-"HashLeftJoin_7" -> "TableReader_12"
+"HashLeftJoin_7" -> "IndexReader_11"
+"HashLeftJoin_7" -> "TableReader_14"
 }
-subgraph cluster8{
+subgraph cluster10{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableScan_8"
+"IndexScan_10"
 }
-subgraph cluster11{
+subgraph cluster13{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_11" -> "TableScan_10"
+"Selection_13" -> "TableScan_12"
 }
-"TableReader_9" -> "TableScan_8"
-"TableReader_12" -> "Selection_11"
+"IndexReader_11" -> "IndexScan_10"
+"TableReader_14" -> "Selection_13"
 }
 
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;

@@ -36,3 +36,9 @@ StreamAgg_13	1.00	root	funcs:max(test.access_path_selection._tidb_rowid)
   └─TableReader_27	1.00	root	data:Limit_26
     └─Limit_26	1.00	cop	offset:0, count:1
       └─TableScan_25	1.25	cop	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo
+explain select count(1) from access_path_selection;
+id	count	task	operator info
+StreamAgg_28	1.00	root	funcs:count(col_0)
+└─IndexReader_29	1.00	root	index:StreamAgg_8
+  └─StreamAgg_8	1.00	cop	funcs:count(1)
+    └─IndexScan_25	10000.00	cop	table:access_path_selection, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
