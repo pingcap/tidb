@@ -37,6 +37,10 @@ func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	i64s := result.Int64s()
 	ds := buf.Times()
 	for i := 0; i < input.NumRows(); i++ {
+		if buf.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
 		if ds[i].IsZero() {
 			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
 				if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
