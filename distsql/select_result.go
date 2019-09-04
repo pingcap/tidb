@@ -112,7 +112,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 		} else {
 			result.result = resultSubset
 			r.memConsume(int64(resultSubset.MemSize()))
-			if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+			if r.ctx != nil && r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 				r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID.String(), resultSubset.RespTime())
 			}
 		}
