@@ -10,8 +10,8 @@ github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973/go.mod h1:Dwedo/Wpr24
 github.com/bgentry/speakeasy v0.1.0/go.mod h1:+zsyZBPWlz7T6j88CTgSN5bM796AkVf0kBD4zp0CCIs=
 github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d h1:rQlvB2AYWme2bIB18r/SipGiMEVJYE9U0z+MGoU/LtQ=
 github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d/go.mod h1:VKt7CNAQxpFpSDz3sXyj9hY/GbVsQCr0sB3w59nE7lU=
-github.com/cfzjywxk/parser v0.0.0-20190903092641-78bef32cc5db h1:UCH3twIuLbq6I/DG+JUBL91Xzl7yU1kpLABVeFIQOGs=
-github.com/cfzjywxk/parser v0.0.0-20190903092641-78bef32cc5db/go.mod h1:LoM8lSJ7POQOA8WIpI6Eti5BHzZtUJhu1csFCjGkQVs=
+github.com/cfzjywxk/parser v0.0.0-20190904032234-d29736775637 h1:Pgt46Mnn+FrLu3MNvfLBNrdPM4hIeOb0NUM0fIH1e3E=
+github.com/cfzjywxk/parser v0.0.0-20190904032234-d29736775637/go.mod h1:LoM8lSJ7POQOA8WIpI6Eti5BHzZtUJhu1csFCjGkQVs=
 github.com/chzyer/logex v1.1.10/go.mod h1:+Ywpsq7O8HXn0nuIou7OrIPyXbp3wmkHB+jjWRnGsAI=
 github.com/chzyer/readline v0.0.0-20171208011716-f6d7a1f6fbf3/go.mod h1:nSuG5e5PlCu98SY8svDHJxuZscDgtXS6KTTbou5AhLI=
 github.com/chzyer/test v0.0.0-20180213035817-a1ea475d72b1/go.mod h1:Q3SI9o4m/ZMnBNeIyt5eFwwo7qiLfzFZmjNmxjkiQlU=

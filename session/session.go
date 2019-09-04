@@ -1170,7 +1170,7 @@ func (s *session) PointExec(ctx context.Context,
 		return nil, err
 	}
 	execAst.BinaryArgs = args
-	execPlan, err := planner.OptimizeExecCached(ctx, s, execAst, is, cachedValue)
+	execPlan, err := planner.OptimizeExecCached(ctx, s, execAst, is)
 	if err != nil {
 		return nil, err
 	}
@@ -1196,9 +1196,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		logutil.Logger(ctx).Error("prepared not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
-	if prepared.PointPlan != nil {
+	if prepared.CachedPlan != nil {
 		cachedValue := plannercore.PSTMTPlanCacheValue{}
-		cachedValue.Plan = prepared.PointPlan.(plannercore.Plan)
+		cachedValue.Plan = prepared.CachedPlan.(plannercore.Plan)
 		cachedValue.OutPutNames = cachedValue.Plan.OutputNames()
 		return s.PointExec(ctx, stmtID, prepared, &cachedValue, args)
 	}
@@ -1221,7 +1221,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		}
 	}
 	s.PrepareTxnCtx(ctx)
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args, cachedValue)
+	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
 	}

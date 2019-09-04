@@ -181,7 +181,6 @@ type Execute struct {
 	Stmt          ast.StmtNode
 	StmtType      string
 	Plan          Plan
-	CachedValue   *PSTMTPlanCacheValue
 }
 
 // OptimizePreparedPlan optimizes the prepared statement.
@@ -227,6 +226,9 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	}
 
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+		// schema change cached plan must be invalidated since cached plan does
+		// NOT have a "cache key" with schema version like plan cache
+		prepared.CachedPlan = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		err := Preprocess(sctx, prepared.Stmt, is, InPrepare)
@@ -244,11 +246,11 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) error {
-	if prepared.PointPlan != nil {
+	if prepared.CachedPlan != nil {
 		// expression rewrite will transfer paramMarker in select.where into Constant Expression
 		// but point get execution dose not need to evaluate where condition,
 		// so prepared.UseCache here false is ok, only for point plan
-		plan := prepared.PointPlan.(Plan)
+		plan := prepared.CachedPlan.(Plan)
 		err := e.rebuildRange(plan)
 		if err != nil {
 			return err
@@ -260,16 +262,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	cacheKey := NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	sctx.GetSessionVars().StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
-		var cachedVal *PSTMTPlanCacheValue
-		// CachedValue set in binary protocol, cache existence is checked at start
-		if e.CachedValue != nil {
-			cachedVal = e.CachedValue
-		} else {
-			if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-				cachedVal = cacheValue.(*PSTMTPlanCacheValue)
-			}
-		}
-		if cachedVal != nil {
+		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
+			cachedVal := cacheValue.(*PSTMTPlanCacheValue)
 			if metrics.ResettablePlanCacheCounterFortTest {
 				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 			} else {
@@ -293,7 +287,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		return err
 	}
 	if ok {
-		prepared.PointPlan = p
+		// just cache point plan now
+		prepared.CachedPlan = p
 	}
 	e.names = p.OutputNames()
 	e.Plan = p

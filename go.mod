@@ -76,4 +76,4 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/pingcap/parser => github.com/cfzjywxk/parser v0.0.0-20190903092641-78bef32cc5db
+replace github.com/pingcap/parser => github.com/cfzjywxk/parser v0.0.0-20190904032234-d29736775637

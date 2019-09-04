@@ -270,7 +270,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, args []types.Datum, cachedValue *plannercore.PSTMTPlanCacheValue) (sqlexec.Statement, error) {
+	ID uint32, args []types.Datum) (sqlexec.Statement, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
@@ -283,11 +283,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	is := GetInfoSchema(sctx)
 	var execPlan plannercore.Plan
 	var err error
-	if cachedValue != nil {
-		execPlan, err = planner.OptimizeExecCached(ctx, sctx, execStmt, is, cachedValue)
-	} else {
-		execPlan, err = planner.Optimize(ctx, sctx, execStmt, is)
-	}
+	execPlan, err = planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, err
 	}
