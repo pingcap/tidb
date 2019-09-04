@@ -16,6 +16,7 @@ package distsql
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -34,8 +35,10 @@ import (
 )
 
 var (
-	_ SelectResult = (*selectResult)(nil)
-	_ SelectResult = (*streamResult)(nil)
+	_        SelectResult = (*selectResult)(nil)
+	_        SelectResult = (*streamResult)(nil)
+	datasize int64        = 0
+	timecost int64        = 0
 )
 
 // DecodeType indicates the encode type.
@@ -176,6 +179,8 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
+	//fmt.Println(datasize)
+	fmt.Println(timecost)
 	chk.Reset()
 	switch r.decodeType {
 	case DecodeTypeDefault:
@@ -193,8 +198,13 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 			if err != nil || r.selectResp == nil {
 				return err
 			}
+			for i := 0; i < len(r.selectResp.Chunks); i++ {
+				atomic.AddInt64(&datasize, int64(len(r.selectResp.Chunks[i].RowsData)))
+			}
 		}
+		starttime := time.Now()
 		err := r.readRowsData(chk)
+		atomic.AddInt64(&timecost, int64(time.Since(starttime)))
 		if err != nil {
 			return err
 		}
@@ -211,8 +221,11 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 		if err != nil || r.selectResp == nil {
 			return errors.Trace(err)
 		}
+		atomic.AddInt64(&datasize, int64(len(r.selectResp.RowBatchData)))
 	}
+	starttime := time.Now()
 	r.readRowBatch(chk)
+	atomic.AddInt64(&timecost, int64(time.Since(starttime)))
 	return nil
 }
 
