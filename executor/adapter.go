@@ -781,7 +781,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 }
 
-// Collect statements for performance_schema.events_statements_summary_by_digest
+// SummaryStmt Collects statements for performance_schema.events_statements_summary_by_digest
 func (a *ExecStmt) SummaryStmt() {
 	sessVars := a.Ctx.GetSessionVars()
 	if !sessVars.EnableStmtSummary || sessVars.InRestrictedSQL {

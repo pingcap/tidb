@@ -317,11 +317,12 @@ type PessimisticTxn struct {
 	TTL string `toml:"ttl" json:"ttl"`
 }
 
+// StmtSummary is the config for statement summary.
 type StmtSummary struct {
 	// How many statements can be kept in the table
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
 	// How long can a normalizedSQL / sampleSQL be
-	MaxSqlLength uint `toml:"max-sql-length" json:"max-sql-length"`
+	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
 }
 
 var defaultConf = Config{
@@ -420,7 +421,7 @@ var defaultConf = Config{
 	},
 	StmtSummary: StmtSummary{
 		MaxStmtCount: 100,
-		MaxSqlLength: 4096,
+		MaxSQLLength: 4096,
 	},
 }
 

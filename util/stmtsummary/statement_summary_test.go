@@ -270,12 +270,12 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 }
 
 // Test max length of normalized and sample SQL.
-func (s *testStmtSummarySuite) TestMaxSqlLength(c *C) {
+func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	s.stmtSummaryByDigest.Clear()
 
 	// Create a long SQL
-	maxSqlLength := config.GetGlobalConfig().StmtSummary.MaxSqlLength
-	length := int(maxSqlLength) * 10
+	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
+	length := int(maxSQLLength) * 10
 	str := strings.Repeat("a", length)
 
 	stmtExecInfo1 := &StmtExecInfo{
@@ -296,8 +296,8 @@ func (s *testStmtSummarySuite) TestMaxSqlLength(c *C) {
 	}
 	value, ok := s.stmtSummaryByDigest.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
-	// Length of normalizedSQL and sampleSQL should be maxSqlLength
+	// Length of normalizedSQL and sampleSQL should be maxSQLLength
 	summary := value.(*stmtSummary)
-	c.Assert(len(summary.normalizedSQL), Equals, int(maxSqlLength))
-	c.Assert(len(summary.sampleSQL), Equals, int(maxSqlLength))
+	c.Assert(len(summary.normalizedSQL), Equals, int(maxSQLLength))
+	c.Assert(len(summary.sampleSQL), Equals, int(maxSQLLength))
 }

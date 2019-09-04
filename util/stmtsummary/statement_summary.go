@@ -50,6 +50,7 @@ type stmtSummaryByDigest struct {
 	summaryMap *kvcache.SimpleLRUCache
 }
 
+// StmtSummary is the global object for statement summary.
 var StmtSummary = NewStmtSummaryByDigest()
 
 // Summary of each type of statements.
@@ -71,7 +72,7 @@ type stmtSummary struct {
 	lastSeen time.Time
 }
 
-// Used for recording execution status of each statement.
+// StmtExecInfo records execution status of each statement.
 type StmtExecInfo struct {
 	SchemaName    string
 	OriginalSQL   string
@@ -84,6 +85,7 @@ type StmtExecInfo struct {
 	StartTime time.Time
 }
 
+// NewStmtSummaryByDigest creates a stmtSummaryByDigest.
 func NewStmtSummaryByDigest() *stmtSummaryByDigest {
 	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
 	return &stmtSummaryByDigest{
@@ -93,15 +95,15 @@ func NewStmtSummaryByDigest() *stmtSummaryByDigest {
 
 // Convert StmtExecInfo to stmtSummary
 func convertStmtExecInfoToSummary(sei *StmtExecInfo) *stmtSummary {
-	// Trim SQL to size MaxSqlLength
-	maxSqlLength := config.GetGlobalConfig().StmtSummary.MaxSqlLength
+	// Trim SQL to size MaxSQLLength
+	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
 	normalizedSQL := sei.NormalizedSQL
-	if len(normalizedSQL) > int(maxSqlLength) {
-		normalizedSQL = normalizedSQL[:maxSqlLength]
+	if len(normalizedSQL) > int(maxSQLLength) {
+		normalizedSQL = normalizedSQL[:maxSQLLength]
 	}
 	sampleSQL := sei.OriginalSQL
-	if len(sampleSQL) > int(maxSqlLength) {
-		sampleSQL = sampleSQL[:maxSqlLength]
+	if len(sampleSQL) > int(maxSQLLength) {
+		sampleSQL = sampleSQL[:maxSQLLength]
 	}
 
 	return &stmtSummary{
