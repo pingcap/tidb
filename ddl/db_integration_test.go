@@ -1593,6 +1593,8 @@ func (s *testIntegrationSuite3) TestAlterAlgorithm(c *C) {
 	a int,
 	b varchar(100),
 	c int,
+	d bit(1),
+	e year,
 	INDEX idx_c(c)) PARTITION BY RANGE ( a ) (
 	PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11),
@@ -1645,6 +1647,10 @@ func (s *testIntegrationSuite3) TestAlterAlgorithm(c *C) {
 	s.assertAlterWarnExec(c, "alter table t default charset = utf8mb4, ALGORITHM=COPY")
 	s.assertAlterErrorExec(c, "alter table t default charset = utf8mb4, ALGORITHM=INPLACE")
 	s.tk.MustExec("alter table t default charset = utf8mb4, ALGORITHM=INSTANT")
+
+	// Test FieldType flags
+	s.tk.MustExec("alter table t modify column d bit(20)")
+	s.tk.MustExec("alter table t modify column e year")
 }
 
 func (s *testIntegrationSuite3) TestAlterTableAddUniqueOnPartionRangeColumn(c *C) {
