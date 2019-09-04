@@ -1603,12 +1603,14 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	sessionVars.HashAggPartialConcurrency = 1
 
 	tests := []struct {
-		sql     string
-		best    string
-		warning string
+		sql         string
+		best        string
+		warning     string
+		aggPushDown bool
 	}{
 		// without Aggregation hints
 		{
+<<<<<<< HEAD
 			sql:     "select count(*) from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
 			warning: "",
@@ -1628,6 +1630,23 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 			sql:     "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
 			best:    "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t1.a,mul(test.t2.a, 2))->Sort->StreamAgg",
 			warning: "",
+=======
+			sql:  "select count(*) from t t1, t t2 where t1.a = t2.b",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
+		},
+		{
+			sql:  "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->HashAgg",
+		},
+		// with Aggregation hints
+		{
+			sql:  "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->HashAgg",
+		},
+		{
+			sql:  "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->Sort->StreamAgg",
+>>>>>>> 0872b65ff1f906ee4a642d6cb0cd5fce840aec3a
 		},
 		// test conflict warning
 		{
@@ -1635,24 +1654,50 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 			best:    "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
 			warning: "[planner:1815]Optimizer aggregation hints are conflicted",
 		},
+		// additional test
+		{
+			sql:  "select /*+ STREAM_AGG() */ distinct a from t",
+			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+		},
+		{
+			sql:  "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
+			best: "LeftHashJoin{TableReader(Table(t)->Sel([if(isnull(test.t1.a), <nil>, 1)]))->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(agg_col_cnt, 0)])}->Projection->Projection",
+		},
+		{
+			sql:  "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
+			best: "LeftHashJoin{TableReader(Table(t)->Sel([if(isnull(test.t1.a), <nil>, 1)]))->TableReader(Table(t))->Projection->HashAgg->Sel([ne(agg_col_cnt, 0)])}->Projection->Projection",
+		},
+		{
+			sql:  "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection->HashAgg}->Projection->Projection",
+		},
+		{
+			sql:         "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
+			best:        "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(test.t2.b,test.t1.b)->HashAgg",
+			warning:     "[planner:1815]Optimizer Hint STREAM_AGG is inapplicable",
+			aggPushDown: true,
+		},
 	}
 	ctx := context.Background()
 	for i, test := range tests {
 		comment := Commentf("case:%v sql:%s", i, test)
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+		se.GetSessionVars().AllowAggPushDown = test.aggPushDown
+
 		stmt, err := s.ParseOneStmt(test.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		p, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
-		c.Assert(core.ToString(p), Equals, test.best)
+		c.Assert(core.ToString(p), Equals, test.best, comment)
 
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 		if test.warning == "" {
-			c.Assert(len(warnings), Equals, 0)
+			c.Assert(len(warnings), Equals, 0, comment)
 		} else {
-			c.Assert(len(warnings), Equals, 1)
-			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning)
-			c.Assert(warnings[0].Err.Error(), Equals, test.warning)
+			c.Assert(len(warnings), Equals, 1, comment)
+			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
+			c.Assert(warnings[0].Err.Error(), Equals, test.warning, comment)
 		}
 	}
 }
