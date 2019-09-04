@@ -8,35 +8,35 @@ set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
 id	count	task	operator info
-IndexJoin_16	5.00	root	inner join, inner:IndexLookUp_15, outer key:test.t2.a, inner key:test.t1.a
-├─IndexLookUp_15	5.00	root	
-│ ├─Selection_14	5.00	cop	not(isnull(test.t1.a))
-│ │ └─IndexScan_12	5.00	cop	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
-│ └─TableScan_13	5.00	cop	table:t1, keep order:false
-└─TableReader_19	1.00	root	data:Selection_18
-  └─Selection_18	1.00	cop	not(isnull(test.t2.a))
-    └─TableScan_17	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
+IndexJoin_22	5.00	root	inner join, inner:IndexLookUp_21, outer key:test.t2.a, inner key:test.t1.a
+├─IndexLookUp_21	5.00	root	
+│ ├─Selection_20	5.00	cop	not(isnull(test.t1.a))
+│ │ └─IndexScan_18	5.00	cop	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
+│ └─TableScan_19	5.00	cop	table:t1, keep order:false
+└─TableReader_31	1.00	root	data:Selection_30
+  └─Selection_30	1.00	cop	not(isnull(test.t2.a))
+    └─TableScan_29	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
 explain select * from t1 join t2 on t1.a=t2.a;
 id	count	task	operator info
 Projection_6	5.00	root	test.t1.a, test.t1.b, test.t2.a, test.t2.b
-└─HashRightJoin_19	5.00	root	inner join, inner:TableReader_30, equal:[eq(test.t2.a, test.t1.a)]
-  ├─TableReader_30	1.00	root	data:Selection_29
-  │ └─Selection_29	1.00	cop	not(isnull(test.t2.a))
-  │   └─TableScan_28	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
-  └─TableReader_36	5.00	root	data:Selection_35
-    └─Selection_35	5.00	cop	not(isnull(test.t1.a))
-      └─TableScan_34	5.00	cop	table:t1, range:[-inf,+inf], keep order:false
+└─HashRightJoin_31	5.00	root	inner join, inner:TableReader_42, equal:[eq(test.t2.a, test.t1.a)]
+  ├─TableReader_42	1.00	root	data:Selection_41
+  │ └─Selection_41	1.00	cop	not(isnull(test.t2.a))
+  │   └─TableScan_40	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
+  └─TableReader_48	5.00	root	data:Selection_47
+    └─Selection_47	5.00	cop	not(isnull(test.t1.a))
+      └─TableScan_46	5.00	cop	table:t1, range:[-inf,+inf], keep order:false
 drop table if exists t1, t2;
 create table t1(a int not null, b int not null);
 create table t2(a int not null, b int not null, key a(a));
 set @@tidb_opt_insubq_to_join_and_agg=0;
 explain select /*+ TIDB_INLJ(t2) */ * from t1 where t1.a in (select t2.a from t2);
 id	count	task	operator info
-IndexJoin_10	8000.00	root	semi join, inner:IndexReader_9, outer key:test.t1.a, inner key:test.t2.a
-├─TableReader_12	10000.00	root	data:TableScan_11
-│ └─TableScan_11	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─IndexReader_9	10.00	root	index:IndexScan_8
-  └─IndexScan_8	10.00	cop	table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
+IndexMergeJoin_14	8000.00	root	semi join, inner:IndexReader_12, outer key:test.t1.a, inner key:test.t2.a
+├─TableReader_16	10000.00	root	data:TableScan_15
+│ └─TableScan_15	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─IndexReader_12	10.00	root	index:IndexScan_11
+  └─IndexScan_11	10.00	cop	table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo
 show warnings;
 Level	Code	Message
 set @@tidb_opt_insubq_to_join_and_agg=1;
@@ -50,7 +50,7 @@ Projection_8	10000.00	root	test.t1.a, test.t1.b
   ├─IndexLookUp_11	10.00	root	
   │ ├─IndexScan_9	10.00	cop	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo
   │ └─TableScan_10	10.00	cop	table:t1, keep order:false, stats:pseudo
-  └─StreamAgg_24	8000.00	root	group by:col_1, funcs:firstrow(col_1)
-    └─IndexReader_25	8000.00	root	index:StreamAgg_16
-      └─StreamAgg_16	8000.00	cop	group by:test.t2.a, 
-        └─IndexScan_23	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+  └─StreamAgg_29	8000.00	root	group by:col_1, funcs:firstrow(col_1)
+    └─IndexReader_30	8000.00	root	index:StreamAgg_21
+      └─StreamAgg_21	8000.00	cop	group by:test.t2.a, 
+        └─IndexScan_28	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
