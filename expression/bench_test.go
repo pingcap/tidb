@@ -195,18 +195,66 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	b.ReportAllocs()
 }
 
+// dataGenerator is used to generate data for test.
+type dataGenerator interface {
+	gen() interface{}
+}
+
+// rangeInt64Gener is used to generate int64 items in [begin, end).
+type rangeInt64Gener struct {
+	begin int
+	end   int
+}
+
+func (rig *rangeInt64Gener) gen() interface{} {
+	return int64(rand.Intn(rig.end-rig.begin) + rig.begin)
+}
+
+// randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
+type randLenStrGener struct {
+	lenBegin int
+	lenEnd   int
+}
+
+func (g *randLenStrGener) gen() interface{} {
+	n := rand.Intn(g.lenEnd-g.lenBegin) + g.lenBegin
+	buf := make([]byte, n)
+	for i := range buf {
+		x := rand.Intn(62)
+		if x < 10 {
+			buf[i] = byte('0' + x)
+		} else if x-10 < 26 {
+			buf[i] = byte('a' + x - 10)
+		} else {
+			buf[i] = byte('A' + x - 10 - 26)
+		}
+	}
+	return string(buf)
+}
+
 type vecExprBenchCase struct {
 	retEvalType   types.EvalType
 	childrenTypes []types.EvalType
+	// geners are used to generate data for children and geners[i] generates data for children[i].
+	// If geners[i] is nil, the default dataGenerator will be used for its corresponding child.
+	// The geners slice can be shorter than the children slice, if it has 3 children, then
+	// geners[gen1, gen2] will be regarded as geners[gen1, gen2, nil].
+	geners []dataGenerator
 }
 
 var vecExprBenchCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
-		{types.ETInt, []types.EvalType{types.ETInt}},
+		{types.ETInt, []types.EvalType{types.ETInt}, nil},
+	},
+	ast.Repeat: {
+		{types.ETString, []types.EvalType{types.ETString, types.ETInt}, []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
+	},
+	ast.Log10: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
 	},
 }
 
-func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
+func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vecExprBenchCase) {
 	nullRatio := 0.2
 	batchSize := 1024
 	switch eType {
@@ -215,10 +263,14 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				if rand.Float64() < 0.5 {
-					chk.AppendInt64(colIdx, -rand.Int63())
+				if len(testCase.geners) > colIdx && testCase.geners[colIdx] != nil {
+					chk.AppendInt64(colIdx, testCase.geners[colIdx].gen().(int64))
 				} else {
-					chk.AppendInt64(colIdx, rand.Int63())
+					if rand.Float64() < 0.5 {
+						chk.AppendInt64(colIdx, -rand.Int63())
+					} else {
+						chk.AppendInt64(colIdx, rand.Int63())
+					}
 				}
 			}
 		}
@@ -283,7 +335,11 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 			if rand.Float64() < nullRatio {
 				chk.AppendNull(colIdx)
 			} else {
-				chk.AppendString(colIdx, fmt.Sprintf("%v", rand.Int()))
+				if len(testCase.geners) > colIdx && testCase.geners[colIdx] != nil {
+					chk.AppendString(colIdx, testCase.geners[colIdx].gen().(string))
+				} else {
+					chk.AppendString(colIdx, fmt.Sprintf("%v", rand.Int()))
+				}
 			}
 		}
 	default:
@@ -320,7 +376,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 	cols := make([]Expression, len(testCase.childrenTypes))
 	input = chunk.New(fts, 1024, 1024)
 	for i, eType := range testCase.childrenTypes {
-		fillColumn(eType, input, i)
+		fillColumn(eType, input, i, testCase)
 		cols[i] = &Column{Index: i, RetType: fts[i]}
 	}
 
@@ -420,7 +476,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	cols := make([]Expression, childrenNumber)
 	input = chunk.New(fts, 1024, 1024)
 	for i, eType := range testCase.childrenTypes {
-		fillColumn(eType, input, i)
+		fillColumn(eType, input, i, testCase)
 		cols[i] = &Column{Index: i, RetType: fts[i]}
 	}
 
@@ -544,7 +600,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 				err := baseFunc.vecEvalString(input, output)
 				c.Assert(err, IsNil)
 				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalDuration(row)
+					val, isNull, err := baseFunc.evalString(row)
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
