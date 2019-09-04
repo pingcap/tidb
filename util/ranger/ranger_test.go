@@ -1111,7 +1111,7 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 		"      │ └─IndexScan_26 2.00 cop table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
 		"      └─TableReader_33 1.00 root data:TableScan_32",
 		"        └─TableScan_32 1.00 cop table:t1, range: decided by [test.s.a], keep order:false",
-		))
+	))
 	testKit.MustQuery("select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
 		"1",
 		"1",

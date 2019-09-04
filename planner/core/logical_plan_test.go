@@ -2607,7 +2607,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			result: "PRIMARY_KEY,f,g,f_g",
 		},
 		{
-			sql:	"select count(1) from t",
+			sql:    "select count(1) from t",
 			result: "PRIMARY_KEY,c_d_e,f,g,f_g,c_d_e_str,e_d_c_str_prefix",
 		},
 	}
