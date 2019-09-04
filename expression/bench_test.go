@@ -249,6 +249,9 @@ var vecExprBenchCases = map[string][]vecExprBenchCase{
 	ast.Repeat: {
 		{types.ETString, []types.EvalType{types.ETString, types.ETInt}, []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
 	},
+	ast.Log10: {
+		{types.ETReal, []types.EvalType{types.ETReal}},
+	},
 }
 
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vecExprBenchCase) {
