@@ -1610,27 +1610,6 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	}{
 		// without Aggregation hints
 		{
-<<<<<<< HEAD
-			sql:     "select count(*) from t t1, t t2 where t1.a = t2.b",
-			best:    "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
-			warning: "",
-		},
-		{
-			sql:     "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-			best:    "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t1.a,mul(test.t2.a, 2))->HashAgg",
-			warning: "",
-		},
-		// with Aggregation hints
-		{
-			sql:     "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
-			best:    "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t1.a,test.t2.b)->HashAgg",
-			warning: "",
-		},
-		{
-			sql:     "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-			best:    "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t1.a,mul(test.t2.a, 2))->Sort->StreamAgg",
-			warning: "",
-=======
 			sql:  "select count(*) from t t1, t t2 where t1.a = t2.b",
 			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
 		},
@@ -1646,7 +1625,6 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		{
 			sql:  "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
 			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->Sort->StreamAgg",
->>>>>>> 0872b65ff1f906ee4a642d6cb0cd5fce840aec3a
 		},
 		// test conflict warning
 		{
