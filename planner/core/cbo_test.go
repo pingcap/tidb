@@ -1043,6 +1043,7 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 		"TopN_8 1.00 root test.t.a:desc, offset:0, count:1",
 		"└─IndexReader_16 1.00 root index:TopN_15",
 		"  └─TopN_15 1.00 cop test.t.a:desc, offset:0, count:1",
+		"    └─IndexScan_14 6.00 cop table:t, index:b, range:[1,1], keep order:false",
 	))
 	// Correlation threshold not met.
 	tk.MustExec("truncate table t")

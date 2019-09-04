@@ -268,6 +268,8 @@ type PhysicalIndexMergeJoin struct {
 	// OuterCompareFuncs store the compare functions for outer join keys and outer join
 	// keys, it's for outer rows sort's convenience.
 	OuterCompareFuncs []expression.CompareFunc
+	// Desc means whether inner child keep desc order.
+	Desc bool
 }
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.

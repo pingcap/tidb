@@ -1885,6 +1885,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 			compareFuncs:  v.CompareFuncs,
 			colLens:       v.IdxColLens,
 			hasPrefixCol:  hasPrefixCol,
+			desc:          v.Desc,
 		},
 		workerWg:      new(sync.WaitGroup),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
@@ -1893,12 +1894,6 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 		lastColHelper: v.CompareFilters,
 	}
-}
-
-func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndexMergeJoin) Executor {
-	// Now IndexLookUpMergeJoin returns IndexLookUpJoin.
-	// We will maintain it in future.
-	return b.buildIndexLookUpJoin(&v.PhysicalIndexJoin)
 }
 
 // containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
