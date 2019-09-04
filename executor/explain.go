@@ -99,7 +99,7 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 	if e.analyzeExec != nil {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	}
-	genExplainRows(e.explain.Rows)
+	//genExplainRows(e.explain.Rows)
 	genPlanNormalizeString(e.explain.StmtPlan)
 	return e.explain.Rows, nil
 }
@@ -107,9 +107,10 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 func genPlanNormalizeString(p core.Plan) {
 	pn := core.PlanNormalizer{}
 	str := pn.NormalizePlanTreeString(p.(core.PhysicalPlan))
-	fmt.Printf("\n-----------------------\n%v\n----------------------------\n", str)
+	fmt.Printf("\n\n\nencode plan\n-----------------------\n%v\n----------------------------\n", str)
 
-	decodePlan, err := core.DecodeNormalizePlanTreeString(str)
+	pnd := core.PlanNormalizeDecoder{}
+	decodePlan, err := pnd.DecodeNormalizePlanTreeString(str)
 	fmt.Printf("decode plan \n-----------------------\n%v\n-----------err: %v -----------------\n", decodePlan, err)
 }
 

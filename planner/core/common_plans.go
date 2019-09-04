@@ -693,53 +693,44 @@ func (pn *PlanNormalizer) normalizePlanTree(p PhysicalPlan, taskType string, dep
 	}
 }
 
-func DecodeNormalizePlanTreeString(str string) (string, error) {
-	var buf bytes.Buffer
-	nodes := strings.Split(str, "\n")
-	rows := make([]string, 0, len(nodes))
-	depths := make([]int, 0, len(nodes))
-	for _, node := range nodes {
-		buf.Reset()
-		values := strings.Split(node, "\t")
-		for i, v := range values {
-			switch i {
-			// depth
-			case 0:
-				depth, err := strconv.Atoi(v)
-				if err != nil {
-					return "", errors.Errorf("decode normalize plan error: invalid depth value: %v in node: %v, values: %v, decode depth error: %v", v, node, values, str, err.Error())
-				}
-				depths = append(depths, depth)
-			// plan ID
-			case 1:
-				ids := strings.Split(v, "_")
-				if len(ids) != 2 {
-					return "", errors.Errorf("decode normalize plan error: invalid plan value: %v in node: %v, plan is: %v", v, node, str)
-				}
-				planID, err := strconv.Atoi(ids[0])
-				if err != err {
-					return "", errors.Errorf("decode normalize plan error: invalid plan value: %v in node: %v, plan is: %v, decode plan id: %v, error: %v", v, node, str, ids[0], err.Error())
-				}
+type PlanNormalizeDecoder struct {
+	buf     bytes.Buffer
+	depths  []int
+	rows    []string
+	indents [][]rune
+}
 
-				buf.WriteString(PhysicalIDToTypeString(planID) + "_" + ids[1])
-			// task type
-			case 2:
-				buf.WriteByte('\t')
-				if v == rootTaskType {
-					buf.WriteString("root")
-				} else {
-					buf.WriteString("cop")
-				}
-			default:
-				buf.WriteByte('\t')
-				buf.WriteString(v)
-			}
+func (pn *PlanNormalizeDecoder) DecodeNormalizePlanTreeString(str string) (string, error) {
+	nodes := strings.Split(str, "\n")
+	pn.rows = make([]string, 0, len(nodes))
+	pn.depths = make([]int, 0, len(nodes))
+	for _, node := range nodes {
+		err := pn.decodePlanTreeNode(node)
+		if err != nil {
+			return "", err
 		}
-		rows = append(rows, buf.String())
 	}
-	indents := make([][]rune, len(depths))
-	for i := 0; i < len(depths); i++ {
-		indent := make([]rune, 2*depths[i])
+	pn.initPlanTreeIndents()
+
+	for i := 1; i < len(pn.depths); i++ {
+		parentIndex := pn.findParentIndex(i)
+		pn.fillIndent(parentIndex, i)
+	}
+
+	pn.buf.Reset()
+	for i := 0; i < len(pn.rows); i++ {
+		pn.buf.WriteString(string(pn.indents[i]))
+		pn.buf.WriteString(pn.rows[i])
+		pn.buf.WriteByte('\n')
+	}
+
+	return pn.buf.String(), nil
+}
+
+func (pn *PlanNormalizeDecoder) initPlanTreeIndents() {
+	indents := make([][]rune, len(pn.depths))
+	for i := 0; i < len(pn.depths); i++ {
+		indent := make([]rune, 2*pn.depths[i])
 		indents[i] = indent
 		if len(indent) == 0 {
 			continue
@@ -750,55 +741,72 @@ func DecodeNormalizePlanTreeString(str string) (string, error) {
 		indent[len(indent)-2] = treeLastNode
 		indent[len(indent)-1] = treeNodeIdentifier
 	}
+	pn.indents = indents
+}
 
-	printIndents := func() {
-		var buf bytes.Buffer
-		for _, indent := range indents {
-			buf.WriteString(string(indent))
-			buf.WriteString("\n")
-		}
-		fmt.Printf("indents:\n%v\n", buf.String())
-	}
-
-	findParents := func(index int, depths []int) int {
-		for i := index - 1; i > 0; i-- {
-			if depths[i]+1 == depths[index] {
-				return i
+func (pn *PlanNormalizeDecoder) decodePlanTreeNode(node string) error {
+	pn.buf.Reset()
+	values := strings.Split(node, "\t")
+	// TODO: check len(values)
+	for i, v := range values {
+		switch i {
+		// depth
+		case 0:
+			depth, err := strconv.Atoi(v)
+			if err != nil {
+				return errors.Errorf("decode normalize plan error: invalid depth: %v, node: %v, error: %v", v, node, err.Error())
 			}
-		}
-		return 0
-	}
-
-	fillIndent := func(parentIndex, childIndex int, depths []int) {
-		depth := depths[childIndex]
-		idx := depth
-		if depth > 0 {
-			idx = depth*2 - 2
-		}
-		fmt.Printf("partentIndex: %v, childIndex: %v, idx:%v,depth: %v, depths: %v\n", parentIndex, childIndex, idx, depth, depths)
-		for i := childIndex - 1; i > parentIndex; i-- {
-			if indents[i][idx] == treeLastNode {
-				indents[i][idx] = treeMiddleNode
-				break
+			pn.depths = append(pn.depths, depth)
+		// plan ID
+		case 1:
+			ids := strings.Split(v, "_")
+			if len(ids) != 2 {
+				return errors.Errorf("decode normalize plan error: invalid plan value: %v, node: %v", v, node)
 			}
-			indents[i][idx] = treeBody
+			planID, err := strconv.Atoi(ids[0])
+			if err != err {
+				return errors.Errorf("decode normalize plan error: invalid plan id: %v, node: %v, error: %v", v, node, err.Error())
+			}
+
+			pn.buf.WriteString(PhysicalIDToTypeString(planID) + "_" + ids[1])
+		// task type
+		case 2:
+			pn.buf.WriteByte('\t')
+			if v == rootTaskType {
+				pn.buf.WriteString("root")
+			} else {
+				pn.buf.WriteString("cop")
+			}
+		default:
+			pn.buf.WriteByte('\t')
+			pn.buf.WriteString(v)
 		}
 	}
+	pn.rows = append(pn.rows, pn.buf.String())
+	return nil
+}
 
-	for i := 1; i < len(indents); i++ {
-		parentIndex := findParents(i, depths)
-		fillIndent(parentIndex, i, depths)
-		printIndents()
+func (pn *PlanNormalizeDecoder) findParentIndex(childIndex int) int {
+	for i := childIndex - 1; i > 0; i-- {
+		if pn.depths[i]+1 == pn.depths[childIndex] {
+			return i
+		}
 	}
-
-	buf.Reset()
-	for i := 0; i < len(rows); i++ {
-		buf.WriteString(string(indents[i]))
-		buf.WriteString(rows[i])
-		buf.WriteByte('\n')
+	return 0
+}
+func (pn *PlanNormalizeDecoder) fillIndent(parentIndex, childIndex int) {
+	depth := pn.depths[childIndex]
+	if depth == 0 {
+		return
 	}
-
-	return buf.String(), nil
+	idx := depth*2 - 2
+	for i := childIndex - 1; i > parentIndex; i-- {
+		if pn.indents[i][idx] == treeLastNode {
+			pn.indents[i][idx] = treeMiddleNode
+			break
+		}
+		pn.indents[i][idx] = treeBody
+	}
 }
 
 // prepareOperatorInfo generates the following information for every plan:
