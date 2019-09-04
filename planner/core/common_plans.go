@@ -657,7 +657,11 @@ const (
 func (pn *PlanNormalizer) NormalizePlanTreeString(p PhysicalPlan) string {
 	pn.explainedPlans = make(map[int]bool)
 	pn.normalizePlanTree(p, rootTaskType, 0)
-	return pn.buf.String()
+	str := pn.buf.String()
+	if len(str) > 0 && str[len(str)-1] == '\n' {
+		str = str[:len(str)-1]
+	}
+	return str
 }
 
 func (pn *PlanNormalizer) normalizePlanTree(p PhysicalPlan, taskType string, depth int) {
@@ -692,13 +696,11 @@ func (pn *PlanNormalizer) normalizePlanTree(p PhysicalPlan, taskType string, dep
 func DecodeNormalizePlanTreeString(str string) (string, error) {
 	var buf bytes.Buffer
 	nodes := strings.Split(str, "\n")
+	rows := make([]string, 0, len(nodes))
+	depths := make([]int, 0, len(nodes))
 	for _, node := range nodes {
-		fmt.Printf("node: %v\n", node)
-		if len(node) == 0 {
-			continue
-		}
+		buf.Reset()
 		values := strings.Split(node, "\t")
-		fmt.Printf("values: %v\n", values)
 		for i, v := range values {
 			switch i {
 			// depth
@@ -707,9 +709,7 @@ func DecodeNormalizePlanTreeString(str string) (string, error) {
 				if err != nil {
 					return "", errors.Errorf("decode normalize plan error: invalid depth value: %v in node: %v, values: %v, decode depth error: %v", v, node, values, str, err.Error())
 				}
-				for i := 0; i < depth; i++ {
-					buf.WriteString("  ")
-				}
+				depths = append(depths, depth)
 			// plan ID
 			case 1:
 				ids := strings.Split(v, "_")
@@ -720,6 +720,7 @@ func DecodeNormalizePlanTreeString(str string) (string, error) {
 				if err != err {
 					return "", errors.Errorf("decode normalize plan error: invalid plan value: %v in node: %v, plan is: %v, decode plan id: %v, error: %v", v, node, str, ids[0], err.Error())
 				}
+
 				buf.WriteString(PhysicalIDToTypeString(planID) + "_" + ids[1])
 			// task type
 			case 2:
@@ -734,8 +735,69 @@ func DecodeNormalizePlanTreeString(str string) (string, error) {
 				buf.WriteString(v)
 			}
 		}
+		rows = append(rows, buf.String())
+	}
+	indents := make([][]rune, len(depths))
+	for i := 0; i < len(depths); i++ {
+		indent := make([]rune, 2*depths[i])
+		indents[i] = indent
+		if len(indent) == 0 {
+			continue
+		}
+		for i := 0; i < len(indent)-2; i++ {
+			indent[i] = ' '
+		}
+		indent[len(indent)-2] = treeLastNode
+		indent[len(indent)-1] = treeNodeIdentifier
+	}
+
+	printIndents := func() {
+		var buf bytes.Buffer
+		for _, indent := range indents {
+			buf.WriteString(string(indent))
+			buf.WriteString("\n")
+		}
+		fmt.Printf("indents:\n%v\n", buf.String())
+	}
+
+	findParents := func(index int, depths []int) int {
+		for i := index - 1; i > 0; i-- {
+			if depths[i]+1 == depths[index] {
+				return i
+			}
+		}
+		return 0
+	}
+
+	fillIndent := func(parentIndex, childIndex int, depths []int) {
+		depth := depths[childIndex]
+		idx := depth
+		if depth > 0 {
+			idx = depth*2 - 2
+		}
+		fmt.Printf("partentIndex: %v, childIndex: %v, idx:%v,depth: %v, depths: %v\n", parentIndex, childIndex, idx, depth, depths)
+		for i := childIndex - 1; i > parentIndex; i-- {
+			if indents[i][idx] == treeLastNode {
+				indents[i][idx] = treeMiddleNode
+				break
+			}
+			indents[i][idx] = treeBody
+		}
+	}
+
+	for i := 1; i < len(indents); i++ {
+		parentIndex := findParents(i, depths)
+		fillIndent(parentIndex, i, depths)
+		printIndents()
+	}
+
+	buf.Reset()
+	for i := 0; i < len(rows); i++ {
+		buf.WriteString(string(indents[i]))
+		buf.WriteString(rows[i])
 		buf.WriteByte('\n')
 	}
+
 	return buf.String(), nil
 }
 
