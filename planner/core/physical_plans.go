@@ -257,6 +257,19 @@ type PhysicalIndexJoin struct {
 	CompareFilters *ColWithCmpFuncManager
 }
 
+// PhysicalIndexMergeJoin represents the plan of index look up merge join.
+type PhysicalIndexMergeJoin struct {
+	PhysicalIndexJoin
+
+	// NeedOuterSort means whether outer rows should be sorted to build range.
+	NeedOuterSort bool
+	// CompareFuncs store the compare functions for outer join keys and inner join key.
+	CompareFuncs []expression.CompareFunc
+	// OuterCompareFuncs store the compare functions for outer join keys and outer join
+	// keys, it's for outer rows sort's convenience.
+	OuterCompareFuncs []expression.CompareFunc
+}
+
 // PhysicalMergeJoin represents merge join for inner/ outer join.
 type PhysicalMergeJoin struct {
 	physicalSchemaProducer
