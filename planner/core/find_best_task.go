@@ -303,13 +303,12 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		var currentCandidate *candidatePath
 		if path.isTablePath {
 			currentCandidate = ds.getTableCandidate(path, prop)
-		} else if len(path.accessConds) > 0 || !prop.IsEmpty() || path.forced ||
-			(len(ds.schema.Columns) == 1 && ds.handleCol != nil && ds.handleCol == ds.schema.Columns[0] && len(path.accessConds) == 0) {
+		} else if len(path.accessConds) > 0 || !prop.IsEmpty() || path.forced || isCoveringIndex(ds.schema.Columns, path.index.Columns, ds.tableInfo.PKIsHandle) {
 			// We will use index to generate physical plan if any of the following conditions is satisfied:
 			// 1. This path's access cond is not nil.
 			// 2. We have a non-empty prop to match.
 			// 3. This index is forced to choose.
-			// 4. The needed columns only contain the handleCol and there is no accessCond on it.
+			// 4. The needed columns are all covered by index columns(and handleCol).
 			currentCandidate = ds.getIndexCandidate(path, prop)
 		} else {
 			continue
