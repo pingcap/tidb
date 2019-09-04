@@ -16,7 +16,6 @@ package core
 import (
 	"context"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -71,8 +70,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			}
 		}
 		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-			ctx:        ctx,
-			otherConds: otherConds,
+			ctx:         ctx,
+			otherConds:  otherConds,
+			blockOffset: p.SelectBlockOffset(),
 		}
 		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
 			groupSolver := &joinReorderGreedySolver{
@@ -108,6 +108,7 @@ type baseSingleGroupJoinOrderSolver struct {
 	ctx          sessionctx.Context
 	curJoinGroup []*jrNode
 	otherConds   []expression.Expression
+	blockOffset  int
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
@@ -148,7 +149,7 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.Init(s.ctx, mathutil.Min(lChild.SelectBlockOffset(), rChild.SelectBlockOffset()))
+	}.Init(s.ctx, s.blockOffset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
 	return join
