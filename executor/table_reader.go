@@ -156,6 +156,9 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		e.feedback.Invalidate()
 		return err
 	}
+
+	// TODO: If e.schema contain virtual column, compute the virtual column and rebuild the chunk
+
 	return nil
 }
 

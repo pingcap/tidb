@@ -16,6 +16,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/prometheus/common/log"
 	"math"
 	"math/bits"
 	"reflect"
@@ -2373,17 +2374,34 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		result = us
 	}
 
-	// If this table contains any virtual generated columns, we need a
-	// "Projection" to calculate these columns.
-	proj, err := b.projectVirtualColumns(ctx, ds, columns)
-	if err != nil {
-		return nil, err
+	for i, colExpr := range ds.Schema().Columns {
+		var expr expression.Expression
+		if i < len(columns) {
+			if columns[i].IsGenerated() && !columns[i].GeneratedStored {
+				var err error
+				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
+				if err != nil {
+					return nil, err
+				}
+				colExpr.VirtualExpr = expr
+
+				log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", ds.schema.Columns[i].VirtualExpr.String())
+			}
+		}
 	}
 
-	if proj != nil {
-		proj.SetChildren(result)
-		result = proj
-	}
+	// If this table contains any virtual generated columns, we need a
+	// "Projection" to calculate these columns.
+	//proj, err := b.projectVirtualColumns(ctx, ds, columns)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//
+	//if proj != nil {
+	//	proj.SetChildren(result)
+	//	result = proj
+	//}
+
 	return result, nil
 }
 

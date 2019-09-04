@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/prometheus/common/log"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -108,7 +109,31 @@ func attachPlan2Task(p PhysicalPlan, t task) task {
 			v.indexPlan = p
 		}
 	case *rootTask:
+		//log.Warnf("....%T", p)
+		//if _, ok := p.(*PhysicalProjection); ok {
+		//	for _, col := range v.p.Schema().Columns {
+		//		if col.VirtualExpr != nil {
+		//			log.Warnf("111111111111", col.VirtualExpr.String())
+		//			scalar := col.VirtualExpr.(*expression.ScalarFunction)
+		//			log.Warnf("111111111111", scalar.GetArgs()[0].(*expression.Column).Index)
+		//			log.Warnf("1111111111111", scalar.GetArgs()[1].(*expression.Column).Index)
+		//		} else {
+		//			log.Warnf("1111111111111", col.UniqueID)
+		//		}
+		//	}
+		//}
 		p.SetChildren(v.p)
+		//for _, col := range p.Children()[0].Schema().Columns {
+		//	if col.VirtualExpr != nil {
+		//		log.Warnf("2222222222222", col.VirtualExpr.String())
+		//		scalar := col.VirtualExpr.(*expression.ScalarFunction)
+		//		log.Warnf("22222222222222", scalar.GetArgs()[0].(*expression.Column).Index)
+		//		log.Warnf("22222222222222", scalar.GetArgs()[1].(*expression.Column).Index)
+		//	} else {
+		//		log.Warnf("22222222222222", col.UniqueID)
+		//	}
+		//}
+
 		v.p = p
 	}
 	return t
@@ -446,6 +471,21 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
 	}
+
+	s, ok := newTask.p.(*PhysicalTableReader)
+	if ok {
+		for _, col := range s.Schema().Columns {
+			if col.VirtualExpr != nil {
+				log.Warnf("in finishCopTask have virtual expr", col.VirtualExpr.String())
+				scalar := col.VirtualExpr.(*expression.ScalarFunction)
+				log.Warnf("in finishCopTask have virtual expr", scalar.GetArgs()[0].(*expression.Column).UniqueID)
+				log.Warnf("in finishCopTask have virtual expr", scalar.GetArgs()[1].(*expression.Column).UniqueID)
+			} else {
+				log.Warnf("in finishCopTask", col.UniqueID)
+			}
+		}
+	}
+
 	return newTask
 }
 

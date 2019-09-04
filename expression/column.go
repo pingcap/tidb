@@ -205,7 +205,8 @@ type Column struct {
 	IsReferenced bool
 	// InOperand indicates whether this column is the inner operand of column equal condition converted
 	// from `[not] in (subq)`.
-	InOperand bool
+	InOperand   bool
+	VirtualExpr Expression
 }
 
 // Equal implements Expression interface.
@@ -535,4 +536,8 @@ idLoop:
 		return retCols
 	}
 	return retCols
+}
+
+func (col *Column) EvalVirtaulColumn(row chunk.Row) (types.Datum, error) {
+	return col.VirtualExpr.Eval(row)
 }
