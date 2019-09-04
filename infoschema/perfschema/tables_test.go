@@ -14,6 +14,8 @@
 package perfschema_test
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -21,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"testing"
 )
 
 func TestT(t *testing.T) {
@@ -63,6 +64,7 @@ func (s *testTableSuite) TestPerfSchemaTables(c *C) {
 	tk.MustQuery("select * from events_stages_history_long").Check(testkit.Rows())
 }
 
+// Test events_statements_summary_by_digest
 func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
