@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -566,10 +565,6 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	if !e.workerStarted {
 		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
 			return err
@@ -801,7 +796,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 	tblInfo := w.idxLookup.table.Meta()
 	vals := make([]types.Datum, 0, len(w.idxTblCols))
 	for {
-		err := tableReader.Next(ctx, chk)
+		err := Next(ctx, tableReader, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -878,7 +873,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
 		chk := newFirstChunk(tableReader)
-		err = tableReader.Next(ctx, chk)
+		err = Next(ctx, tableReader, chk)
 		if err != nil {
 			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
 			return err

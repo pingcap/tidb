@@ -12,3 +12,6 @@ explain select a, b from access_path_selection where a < 3;
 # In this query, IDX_ab can't be used, so IDX_b is the best.
 explain select a, b from access_path_selection where b < 3;
 explain select a, b from access_path_selection where a < 3 and b < 3;
+# _tidb_rowid should also be considered as PK.
+explain select a, b from access_path_selection where a > 10 order by _tidb_rowid;
+explain select max(_tidb_rowid) from access_path_selection;

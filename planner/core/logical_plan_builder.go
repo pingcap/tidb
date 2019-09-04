@@ -97,6 +97,9 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	b.optFlag = b.optFlag | flagEliminateProjection
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx)
+	if hint := b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
@@ -149,9 +152,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	plan4Agg.GroupByItems = gbyItems
 	plan4Agg.SetSchema(schema4Agg)
 	plan4Agg.collectGroupByColumns()
-	if hint := b.TableHints(); hint != nil {
-		plan4Agg.preferAggType = hint.preferAggType
-	}
 	return plan4Agg, aggIndexMap, nil
 }
 
@@ -794,6 +794,9 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.Init(b.ctx)
+	if hint := b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
 		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
@@ -1950,7 +1953,8 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
+func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentLevel int) bool {
+	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
 		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 		indexHintList                               []indexHintInfo
@@ -2023,7 +2027,7 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
-	if b.pushTableHints(sel.TableHints) {
+	if b.pushTableHints(sel.TableHints, typeSelect, sel.QueryBlockOffset) {
 		// table hints are only visible in the current SELECT statement.
 		defer b.popTableHints()
 	}
@@ -2666,7 +2670,7 @@ func buildColumns2Handle(
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
-	if b.pushTableHints(update.TableHints) {
+	if b.pushTableHints(update.TableHints, typeUpdate, 0) {
 		// table hints are only visible in the current UPDATE statement.
 		defer b.popTableHints()
 	}
@@ -2906,7 +2910,7 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
-	if b.pushTableHints(delete.TableHints) {
+	if b.pushTableHints(delete.TableHints, typeDelete, 0) {
 		// table hints are only visible in the current DELETE statement.
 		defer b.popTableHints()
 	}

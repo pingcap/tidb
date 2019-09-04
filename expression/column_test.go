@@ -46,7 +46,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	c.Assert(corCol.Equal(nil, corCol), IsTrue)
 	c.Assert(corCol.Equal(nil, invalidCorCol), IsFalse)
 	c.Assert(corCol.IsCorrelated(), IsTrue)
-	c.Assert(corCol.ConstItem(), IsTrue)
+	c.Assert(corCol.ConstItem(), IsFalse)
 	c.Assert(corCol.Decorrelate(schema).Equal(nil, col), IsTrue)
 	c.Assert(invalidCorCol.Decorrelate(schema).Equal(nil, invalidCorCol), IsTrue)
 

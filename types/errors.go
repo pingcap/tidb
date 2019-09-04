@@ -34,7 +34,7 @@ var (
 	// ErrDivByZero is return when do division by 0.
 	ErrDivByZero = terror.ClassTypes.New(codeDivByZero, "Division by 0")
 	// ErrTooBigDisplayWidth is return when display width out of range for column.
-	ErrTooBigDisplayWidth = terror.ClassTypes.New(codeTooBigDisplayWidth, "Too Big Display width")
+	ErrTooBigDisplayWidth = terror.ClassTypes.New(codeTooBigDisplayWidth, mysql.MySQLErrName[mysql.ErrTooBigDisplaywidth])
 	// ErrTooBigFieldLength is return when column length too big for column.
 	ErrTooBigFieldLength = terror.ClassTypes.New(codeTooBigFieldLength, "Too Big Field length")
 	// ErrTooBigSet is returned when too many strings for column.
@@ -49,6 +49,8 @@ var (
 	ErrBadNumber = terror.ClassTypes.New(codeBadNumber, "Bad Number")
 	// ErrInvalidDefault is returned when meet a invalid default value.
 	ErrInvalidDefault = parser_types.ErrInvalidDefault
+	// ErrInvalidFieldSize is returned when the precision of a column is out of range.
+	ErrInvalidFieldSize = terror.ClassTypes.New(codeInvalidFieldSize, mysql.MySQLErrName[mysql.ErrInvalidFieldSize])
 	// ErrCastAsSignedOverflow is returned when positive out-of-range integer, and convert to it's negative complement.
 	ErrCastAsSignedOverflow = terror.ClassTypes.New(codeUnknown, msgCastAsSignedOverflow)
 	// ErrCastNegIntAsUnsigned is returned when a negative integer be casted to an unsigned int.
@@ -93,6 +95,7 @@ const (
 	codeTruncatedWrongValue      = terror.ErrCode(mysql.ErrTruncatedWrongValue)
 	codeUnknown                  = terror.ErrCode(mysql.ErrUnknown)
 	codeInvalidDefault           = terror.ErrCode(mysql.ErrInvalidDefault)
+	codeInvalidFieldSize         = terror.ErrCode(mysql.ErrInvalidFieldSize)
 	codeMBiggerThanD             = terror.ErrCode(mysql.ErrMBiggerThanD)
 	codeDataOutOfRange           = terror.ErrCode(mysql.ErrWarnDataOutOfRange)
 	codeDuplicatedValueInType    = terror.ErrCode(mysql.ErrDuplicatedValueInType)
