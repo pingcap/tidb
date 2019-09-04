@@ -97,6 +97,8 @@ const (
 	preferRightAsIndexInner
 	preferHashJoin
 	preferMergeJoin
+	preferHashAgg
+	preferStreamAgg
 )
 
 // LogicalJoin is the logical join plan.
@@ -215,18 +217,18 @@ type LogicalProjection struct {
 	// In *UPDATE*, we should know this to tell different projections.
 	calculateGenCols bool
 
-	// calculateNoDelay indicates this Projection is the root Plan and should be
+	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
 	// Currently it is "true" only when the current sql query is a "DO" statement.
 	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
-	calculateNoDelay bool
+	CalculateNoDelay bool
 
-	// avoidColumnRef is a temporary variable which is ONLY used to avoid
+	// AvoidColumnEvaluator is a temporary variable which is ONLY used to avoid
 	// building columnEvaluator for the expressions of Projection which is
 	// built by buildProjection4Union.
 	// This can be removed after column pool being supported.
 	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
-	avoidColumnEvaluator bool
+	AvoidColumnEvaluator bool
 }
 
 func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -245,6 +247,9 @@ type LogicalAggregation struct {
 	GroupByItems []expression.Expression
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
+
+	// preferAggType stores preferred aggregation algorithm type.
+	preferAggType uint
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
@@ -319,6 +324,8 @@ type LogicalUnionScan struct {
 	baseLogicalPlan
 
 	conditions []expression.Expression
+
+	handleCol *expression.Column
 }
 
 // DataSource represents a tableScan without condition push down.
@@ -353,6 +360,12 @@ type DataSource struct {
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
 	handleCol *expression.Column
+	// TblCols contains the original columns of table before being pruned, and it
+	// is used for estimating table scan cost.
+	TblCols []*expression.Column
+	// TblColHists contains the Histogram of all original table columns,
+	// it is converted from statisticTable, and used for IO/network cost estimating.
+	TblColHists *statistics.HistColl
 }
 
 // accessPath indicates the way we access a table: by using single index, or by using multiple indexes,
@@ -463,26 +476,6 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.
 	return noIntervalRange, err
 }
 
-func (ds *DataSource) getHandleCol() *expression.Column {
-	if ds.handleCol != nil {
-		return ds.handleCol
-	}
-
-	if !ds.tableInfo.PKIsHandle {
-		ds.handleCol = ds.newExtraHandleSchemaCol()
-		return ds.handleCol
-	}
-
-	for i, col := range ds.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) {
-			ds.handleCol = ds.schema.Columns[i]
-			break
-		}
-	}
-
-	return ds.handleCol
-}
-
 // deriveIndexPathStats will fulfill the information that the accessPath need.
 // And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.
@@ -493,7 +486,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
-		handleCol := ds.getHandleCol()
+		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
 			path.idxCols = append(path.idxCols, handleCol)
 			path.idxColLens = append(path.idxColLens, types.UnspecifiedLength)
@@ -638,6 +631,12 @@ func isColEqCorColOrConstant(filter expression.Expression, col *expression.Colum
 
 func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 	if !ds.tableInfo.PKIsHandle {
+		// If the PKIsHandle is false, return the ExtraHandleColumn.
+		for i, col := range ds.Columns {
+			if col.ID == model.ExtraHandleID {
+				return ds.schema.Columns[i]
+			}
+		}
 		return nil
 	}
 	for i, col := range ds.Columns {
@@ -699,7 +698,8 @@ type LogicalLimit struct {
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock ast.SelectLockType
+	Lock         ast.SelectLockType
+	tblID2Handle map[int64][]*expression.Column
 }
 
 // WindowFrame represents a window function frame.

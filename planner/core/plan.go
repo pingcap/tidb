@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -40,10 +41,13 @@ type Plan interface {
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
-	context() sessionctx.Context
+	SCtx() sessionctx.Context
 
 	// property.StatsInfo will return the property.StatsInfo for this plan.
 	statsInfo() *property.StatsInfo
+
+	// OutputNames returns the outputting names of each column.
+	OutputNames() []*types.FieldName
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
@@ -113,6 +117,9 @@ type LogicalPlan interface {
 
 	// SetChildren sets the children for the plan.
 	SetChildren(...LogicalPlan)
+
+	// SetChild sets the ith child for the plan.
+	SetChild(i int, child LogicalPlan)
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -250,6 +257,11 @@ type basePlan struct {
 	stats *property.StatsInfo
 }
 
+// OutputNames returns the outputting names of each column.
+func (p *basePlan) OutputNames() []*types.FieldName {
+	return nil
+}
+
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
 }
 
@@ -299,12 +311,18 @@ func (p *basePhysicalPlan) SetChildren(children ...PhysicalPlan) {
 	p.children = children
 }
 
+// SetChild implements LogicalPlan SetChild interface.
+func (p *baseLogicalPlan) SetChild(i int, child LogicalPlan) {
+	p.children[i] = child
+}
+
 // SetChild implements PhysicalPlan SetChild interface.
 func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 	p.children[i] = child
 }
 
-func (p *basePlan) context() sessionctx.Context {
+// Context implements Plan Context interface.
+func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
 }
 

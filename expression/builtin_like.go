@@ -95,7 +95,7 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
 	bf.tp.Flen = 1
 	var sig builtinFunc
-	if types.IsBinaryStr(args[0].GetType()) {
+	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType()) {
 		sig = &builtinRegexpBinarySig{bf}
 	} else {
 		sig = &builtinRegexpSig{bf}

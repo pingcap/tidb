@@ -124,8 +124,10 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
+type connIDCtxKeyType struct{}
+
 // ConnID is the key in context.
-const ConnID kv.ContextKey = "conn ID"
+var ConnID = connIDCtxKeyType{}
 
 // SetCommitCtx sets the variables for context before commit a transaction.
 func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {

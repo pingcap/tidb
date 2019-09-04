@@ -14,6 +14,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -104,7 +106,7 @@ type projectionEliminater struct {
 }
 
 // optimize implements the logicalOptRule interface.
-func (pe *projectionEliminater) optimize(lp LogicalPlan) (LogicalPlan, error) {
+func (pe *projectionEliminater) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false)
 	return root, nil
 }
@@ -135,6 +137,14 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		}
 	}
 	p.replaceExprColumns(replace)
+	if isProj {
+		if child, ok := p.Children()[0].(*LogicalProjection); ok && !exprsHasSideEffects(child.Exprs) {
+			for i := range proj.Exprs {
+				proj.Exprs[i] = replaceColumnOfExpr(proj.Exprs[i], child)
+			}
+			p.Children()[0] = child.Children()[0]
+		}
+	}
 
 	if !(isProj && canEliminate && canProjectionBeEliminatedLoose(proj)) {
 		return p
@@ -144,6 +154,21 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		replace[string(col.HashCode(nil))] = exprs[i].(*expression.Column)
 	}
 	return p.Children()[0]
+}
+
+func replaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection) expression.Expression {
+	switch v := expr.(type) {
+	case *expression.Column:
+		idx := proj.Schema().ColumnIndex(v)
+		if idx != -1 && idx < len(proj.Exprs) {
+			return proj.Exprs[idx]
+		}
+	case *expression.ScalarFunction:
+		for i := range v.GetArgs() {
+			v.GetArgs()[i] = replaceColumnOfExpr(v.GetArgs()[i], proj)
+		}
+	}
+	return expr
 }
 
 func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) {
@@ -219,4 +244,8 @@ func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column
 	for _, item := range p.OrderBy {
 		resolveColumnAndReplace(item.Col, replace)
 	}
+}
+
+func (*projectionEliminater) name() string {
+	return "projection_eliminate"
 }

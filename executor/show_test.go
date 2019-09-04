@@ -162,6 +162,18 @@ func (s *testSuite2) TestIssue10549(c *C) {
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
 }
 
+func (s *testSuite3) TestIssue11165(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE ROLE 'r_manager';")
+	tk.MustExec("CREATE USER 'manager'@'localhost';")
+	tk.MustExec("GRANT 'r_manager' TO 'manager'@'localhost';")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "manager", Hostname: "localhost", AuthUsername: "manager", AuthHostname: "localhost"}, nil, nil), IsTrue)
+	tk.MustExec("SET DEFAULT ROLE ALL TO 'manager'@'localhost';")
+	tk.MustExec("SET DEFAULT ROLE NONE TO 'manager'@'localhost';")
+	tk.MustExec("SET DEFAULT ROLE 'r_manager' TO 'manager'@'localhost';")
+}
+
 // TestShow2 is moved from session_test
 func (s *testSuite2) TestShow2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -198,6 +210,7 @@ func (s *testSuite2) TestShow2(c *C) {
 					c_timestamp timestamp,
 					c_timestamp_default timestamp default current_timestamp,
 					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
+					c_timestamp_default_4 timestamp(3) default current_timestamp(3) on update current_timestamp(3),
 					c_blob blob,
 					c_tinyblob tinyblob,
 					c_mediumblob mediumblob,
@@ -233,6 +246,7 @@ func (s *testSuite2) TestShow2(c *C) {
 			"[c_timestamp timestamp <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
 			"[c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ]\n" +
+			"[c_timestamp_default_4 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references ]\n" +
 			"[c_blob blob <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ]\n" +
@@ -267,7 +281,7 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
 	r := tk.MustQuery("show table status from test like 't'")
-	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 0 0 0 0 0 0 0 %s <nil> <nil> utf8mb4_bin   注释", createTime)))
+	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_bin   注释", createTime)))
 
 	tk.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
 
@@ -346,7 +360,7 @@ func (s *testSuite2) TestUnprivilegedShow(c *C) {
 	c.Assert(err, IsNil)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
 
-	tk.MustQuery("show table status from testshow").Check(testkit.Rows(fmt.Sprintf("t1 InnoDB 10 Compact 0 0 0 0 0 0 0 %s <nil> <nil> utf8mb4_bin   ", createTime)))
+	tk.MustQuery("show table status from testshow").Check(testkit.Rows(fmt.Sprintf("t1 InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_bin   ", createTime)))
 
 }
 
@@ -488,7 +502,9 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 		"`b` timestamp(3) default current_timestamp(3),\n" +
 		"`c` datetime default current_timestamp,\n" +
 		"`d` datetime(4) default current_timestamp(4),\n" +
-		"`e` varchar(20) default 'cUrrent_tImestamp')")
+		"`e` varchar(20) default 'cUrrent_tImestamp',\n" +
+		"`f` datetime(2) default current_timestamp(2) on update current_timestamp(2),\n" +
+		"`g` timestamp(2) default current_timestamp(2) on update current_timestamp(2))")
 	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
@@ -496,7 +512,9 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 			"  `b` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3),\n"+
 			"  `c` datetime DEFAULT CURRENT_TIMESTAMP,\n"+
 			"  `d` datetime(4) DEFAULT CURRENT_TIMESTAMP(4),\n"+
-			"  `e` varchar(20) DEFAULT 'cUrrent_tImestamp'\n"+
+			"  `e` varchar(20) DEFAULT 'cUrrent_tImestamp',\n"+
+			"  `f` datetime(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
+			"  `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop table t")

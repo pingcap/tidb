@@ -31,8 +31,8 @@ type datum struct {
 	timeValue   time.Time
 	remains     uint64
 	repeats     uint64
-	probability uint32
 	step        int64
+	probability uint32
 
 	init     bool
 	useRange bool

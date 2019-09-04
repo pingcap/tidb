@@ -264,6 +264,11 @@ const (
 	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
 		name char(100) NOT NULL
 	);`
+
+	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
+	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
+		name char(100) NOT NULL
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -342,6 +347,8 @@ const (
 	version31 = 31
 	version32 = 32
 	version33 = 33
+	version34 = 34
+	version35 = 35
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -531,6 +538,14 @@ func upgrade(s Session) {
 
 	if ver < version33 {
 		upgradeToVer33(s)
+	}
+
+	if ver < version34 {
+		upgradeToVer34(s)
+	}
+
+	if ver < version35 {
+		upgradeToVer35(s)
 	}
 
 	updateBootstrapVer(s)
@@ -839,6 +854,16 @@ func upgradeToVer33(s Session) {
 	doReentrantDDL(s, CreateExprPushdownBlacklist)
 }
 
+func upgradeToVer34(s Session) {
+	doReentrantDDL(s, CreateOptRuleBlacklist)
+}
+
+func upgradeToVer35(s Session) {
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s SET VARIABLE_NAME = '%s' WHERE VARIABLE_NAME = 'tidb_back_off_weight'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBBackOffWeight)
+	mustExecute(s, sql)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -899,6 +924,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsTopNTable)
 	// Create expr_pushdown_blacklist table.
 	mustExecute(s, CreateExprPushdownBlacklist)
+	// Create opt_rule_blacklist table.
+	mustExecute(s, CreateOptRuleBlacklist)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

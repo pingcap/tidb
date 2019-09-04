@@ -19,6 +19,10 @@ import (
 )
 
 func TestString(t *testing.T) {
+	if String([]byte{}) != "" {
+		t.Fatal("Empty byte slice is not converted to empty string.")
+	}
+
 	b := []byte("hello world")
 	a := String(b)
 
@@ -39,6 +43,10 @@ func TestString(t *testing.T) {
 }
 
 func TestByte(t *testing.T) {
+	if !bytes.Equal(Slice(""), []byte{}) {
+		t.Fatal("Empty string is not converted to empty byte slice")
+	}
+
 	a := "hello world"
 
 	b := Slice(a)

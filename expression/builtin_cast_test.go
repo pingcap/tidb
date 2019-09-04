@@ -88,7 +88,11 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
 	origSc := sc
+	oldInSelectStmt := sc.InSelectStmt
 	sc.InSelectStmt = true
+	defer func() {
+		sc.InSelectStmt = oldInSelectStmt
+	}()
 	sc.OverflowAsWarning = true
 
 	// cast('18446744073709551616' as unsigned);
@@ -317,7 +321,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	var sig builtinFunc
 
 	durationColumn := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
-	durationColumn.RetType.Decimal = types.DefaultFsp
+	durationColumn.RetType.Decimal = int(types.DefaultFsp)
 	// Test cast as Decimal.
 	castToDecCases := []struct {
 		before *Column
@@ -801,7 +805,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	for i, t := range castToTimeCases {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDatetime)
-		tp.Decimal = types.DefaultFsp
+		tp.Decimal = int(types.DefaultFsp)
 		timeFunc := newBaseBuiltinFunc(ctx, args)
 		timeFunc.tp = tp
 		switch i {
@@ -830,7 +834,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		before *Column
 		after  types.Time
 		row    chunk.MutRow
-		fsp    int
+		fsp    int8
 		tp     byte
 	}{
 		// cast real as Time(0).
@@ -885,7 +889,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	for i, t := range castToTimeCases2 {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(t.tp)
-		tp.Decimal = t.fsp
+		tp.Decimal = int(t.fsp)
 		timeFunc := newBaseBuiltinFunc(ctx, args)
 		timeFunc.tp = tp
 		switch i {
@@ -908,7 +912,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		resAfter := t.after.String()
 		if t.fsp > 0 {
 			resAfter += "."
-			for i := 0; i < t.fsp; i++ {
+			for i := 0; i < int(t.fsp); i++ {
 				resAfter += "0"
 			}
 		}
@@ -966,7 +970,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	for i, t := range castToDurationCases {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
-		tp.Decimal = types.DefaultFsp
+		tp.Decimal = int(types.DefaultFsp)
 		durationFunc := newBaseBuiltinFunc(ctx, args)
 		durationFunc.tp = tp
 		switch i {
@@ -1140,7 +1144,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	ctx := s.ctx
 
 	durationColumn0 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
-	durationColumn0.RetType.Decimal = types.DefaultFsp
+	durationColumn0.RetType.Decimal = int(types.DefaultFsp)
 	durationColumn3 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
 	durationColumn3.RetType.Decimal = 3
 	cases := []struct {
@@ -1370,4 +1374,31 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsJSON(c *C) {
 	output, ok := expr.(*Column)
 	c.Assert(ok, IsTrue)
 	c.Assert(output, Equals, input)
+}
+
+func (s *testEvaluatorSuite) TestCastIntAsIntVec(c *C) {
+	cast, input, result := genCastIntAsInt()
+	c.Assert(cast.vecEvalInt(input, result), IsNil)
+	i64s := result.Int64s()
+	it := chunk.NewIterator4Chunk(input)
+	i := 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		v, _, err := cast.evalInt(row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, i64s[i])
+		i++
+	}
+
+	cast.inUnion = true
+	cast.getRetTp().Flag |= mysql.UnsignedFlag
+	c.Assert(cast.vecEvalInt(input, result), IsNil)
+	i64s = result.Int64s()
+	it = chunk.NewIterator4Chunk(input)
+	i = 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		v, _, err := cast.evalInt(row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, i64s[i])
+		i++
+	}
 }

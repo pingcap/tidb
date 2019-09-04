@@ -46,37 +46,22 @@ func (s *testUtilSuite) checkPanic(f func()) (ret bool) {
 }
 
 func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
-	c.Assert(s.checkPanic(func() {
-		newBaseBuiltinFuncWithTp(nil, nil, types.ETTimestamp)
-	}), check.IsTrue)
-
 	ctx := mock.NewContext()
-	c.Assert(s.checkPanic(func() {
-		newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp, types.ETTimestamp)
-	}), check.IsTrue)
-
 	bf := newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp)
-	c.Assert(s.checkPanic(func() {
-		bf.evalInt(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalReal(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalString(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalDecimal(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalTime(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalDuration(chunk.Row{})
-	}), check.IsTrue)
-	c.Assert(s.checkPanic(func() {
-		bf.evalJSON(chunk.Row{})
-	}), check.IsTrue)
+	_, _, err := bf.evalInt(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalReal(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalString(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalDecimal(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalTime(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalDuration(chunk.Row{})
+	c.Assert(err, check.NotNil)
+	_, _, err = bf.evalJSON(chunk.Row{})
+	c.Assert(err, check.NotNil)
 }
 
 func (s *testUtilSuite) TestClone(c *check.C) {
@@ -135,7 +120,7 @@ func (s *testUtilSuite) TestClone(c *check.C) {
 		&builtinNameConstJSONSig{}, &builtinLogicAndSig{}, &builtinLogicOrSig{}, &builtinLogicXorSig{}, &builtinRealIsTrueSig{},
 		&builtinDecimalIsTrueSig{}, &builtinIntIsTrueSig{}, &builtinRealIsFalseSig{}, &builtinDecimalIsFalseSig{}, &builtinIntIsFalseSig{},
 		&builtinUnaryMinusIntSig{}, &builtinDecimalIsNullSig{}, &builtinDurationIsNullSig{}, &builtinIntIsNullSig{}, &builtinRealIsNullSig{},
-		&builtinStringIsNullSig{}, &builtinTimeIsNullSig{}, &builtinUnaryNotSig{}, &builtinSleepSig{}, &builtinInIntSig{},
+		&builtinStringIsNullSig{}, &builtinTimeIsNullSig{}, &builtinUnaryNotRealSig{}, &builtinUnaryNotDecimalSig{}, &builtinUnaryNotIntSig{}, &builtinSleepSig{}, &builtinInIntSig{},
 		&builtinInStringSig{}, &builtinInDecimalSig{}, &builtinInRealSig{}, &builtinInTimeSig{}, &builtinInDurationSig{},
 		&builtinInJSONSig{}, &builtinRowSig{}, &builtinSetVarSig{}, &builtinGetVarSig{}, &builtinLockSig{},
 		&builtinReleaseLockSig{}, &builtinValuesIntSig{}, &builtinValuesRealSig{}, &builtinValuesDecimalSig{}, &builtinValuesStringSig{},
@@ -210,6 +195,14 @@ func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
 	con.DeferredExpr = &Constant{Value: types.NewIntDatum(1)}
 	num, _, _ = GetUint64FromConstant(con)
 	c.Assert(num, check.Equals, uint64(1))
+
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{
+		types.NewUintDatum(100),
+	}
+	con.ParamMarker = &ParamMarker{order: 0, ctx: ctx}
+	num, _, _ = GetUint64FromConstant(con)
+	c.Assert(num, check.Equals, uint64(100))
 }
 
 func (s *testUtilSuite) TestSetExprColumnInOperand(c *check.C) {
@@ -400,6 +393,28 @@ type MockExpr struct {
 	i   interface{}
 }
 
+func (m *MockExpr) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+
 func (m *MockExpr) String() string                          { return "" }
 func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
 func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
@@ -455,3 +470,4 @@ func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
 func (m *MockExpr) ExplainInfo() string                               { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
+func (m *MockExpr) Vectorized() bool                                  { return false }

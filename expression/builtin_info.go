@@ -18,6 +18,8 @@
 package expression
 
 import (
+	"sort"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -192,8 +194,13 @@ func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (string, bool, error) 
 		return "", false, nil
 	}
 	res := ""
-	for i, r := range data.ActiveRoles {
-		res += r.String()
+	sortedRes := make([]string, 0, 10)
+	for _, r := range data.ActiveRoles {
+		sortedRes = append(sortedRes, r.String())
+	}
+	sort.Strings(sortedRes)
+	for i, r := range sortedRes {
+		res += r
 		if i != len(data.ActiveRoles)-1 {
 			res += ","
 		}

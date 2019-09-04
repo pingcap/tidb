@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
@@ -178,7 +179,12 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				p.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(x.FnName.L)
 			} else {
 				_, isValueExpr1 := x.Args[0].(*driver.ValueExpr)
-				_, isValueExpr2 := x.Args[1].(*driver.ValueExpr)
+				isValueExpr2 := false
+				switch x.Args[1].(type) {
+				case *driver.ValueExpr, *ast.UnaryOperationExpr:
+					isValueExpr2 = true
+				}
+
 				if !isValueExpr1 || !isValueExpr2 {
 					p.err = ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
 				}
@@ -290,7 +296,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		}
 	}
 	if (autoIncrementMustBeKey && !isKey) || count > 1 {
-		p.err = errors.New("Incorrect table definition; there can be only one auto column and it must be defined as a key")
+		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
 	}
 
 	switch autoIncrementCol.Tp.Tp {
@@ -622,13 +628,20 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if tp.Flen > mysql.MaxDecimalWidth {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
+	case mysql.TypeBit:
+		if tp.Flen <= 0 {
+			return types.ErrInvalidFieldSize.GenWithStackByArgs(colDef.Name.Name.O)
+		}
+		if tp.Flen > mysql.MaxBitDisplayWidth {
+			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
+		}
 	default:
 		// TODO: Add more types.
 	}
 	return nil
 }
 
-// isDefaultValNowSymFunc checks whether defaul value is a NOW() builtin function.
+// isDefaultValNowSymFunc checks whether default value is a NOW() builtin function.
 func isDefaultValNowSymFunc(expr ast.ExprNode) bool {
 	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
 		// Default value NOW() is transformed to CURRENT_TIMESTAMP() in parser.

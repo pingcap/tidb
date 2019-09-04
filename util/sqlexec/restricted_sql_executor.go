@@ -17,7 +17,6 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -36,11 +35,11 @@ import (
 // This is implemented in session.go.
 type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
-	ExecRestrictedSQL(ctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error)
 	// ExecRestrictedSQLWithSnapshot run sql statement in ctx with some restriction and with snapshot.
 	// If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
 	// Otherwise, execute with the current transaction start timestamp if the transaction is valid.
-	ExecRestrictedSQLWithSnapshot(ctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast.ResultField, error)
 }
 
 // SQLExecutor is an interface provides executing normal sql statement.
@@ -78,7 +77,7 @@ type Statement interface {
 	IsReadOnly(vars *variable.SessionVars) bool
 
 	// RebuildPlan rebuilds the plan of the statement.
-	RebuildPlan() (schemaVersion int64, err error)
+	RebuildPlan(ctx context.Context) (schemaVersion int64, err error)
 }
 
 // RecordSet is an abstract result set interface to help get data from Plan.
@@ -89,10 +88,24 @@ type RecordSet interface {
 	// Next reads records into chunk.
 	Next(ctx context.Context, req *chunk.Chunk) error
 
-	//NewChunk create a chunk.
+	// NewChunk create a chunk.
 	NewChunk() *chunk.Chunk
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
 	Close() error
+}
+
+// MultiQueryNoDelayResult is an interface for one no-delay result for one statement in multi-queries.
+type MultiQueryNoDelayResult interface {
+	// AffectedRows return affected row for one statement in multi-queries.
+	AffectedRows() uint64
+	// LastMessage return last message for one statement in multi-queries.
+	LastMessage() string
+	// WarnCount return warn count for one statement in multi-queries.
+	WarnCount() uint16
+	// Status return status when executing one statement in multi-queries.
+	Status() uint16
+	// LastInsertID return last insert id for one statement in multi-queries.
+	LastInsertID() uint64
 }

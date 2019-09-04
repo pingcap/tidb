@@ -14,49 +14,80 @@
 package planner
 
 import (
+	"context"
+	"strings"
+
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/cascades"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
-	fp := plannercore.TryFastPlan(ctx, node)
+func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
+	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
 		return fp, nil
 	}
 
+	var oriHint *bindinfo.HintsSet
+	if stmtNode, ok := node.(ast.StmtNode); ok {
+		oriHint = addHint(sctx, stmtNode)
+	}
+	plan, err := optimize(ctx, sctx, node, is)
+	// Restore the original hint in case of prepare stmt.
+	if oriHint != nil {
+		node = bindinfo.BindHint(node.(ast.StmtNode), oriHint)
+		if err != nil {
+			handleInvalidBindRecord(ctx, sctx, node.(ast.StmtNode))
+		}
+	}
+	if err == nil || oriHint == nil {
+		return plan, err
+	}
+	// Reoptimize after restore the original hint.
+	return optimize(ctx, sctx, node, is)
+}
+
+func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	// build logical plan
-	ctx.GetSessionVars().PlanID = 0
-	ctx.GetSessionVars().PlanColumnID = 0
-	builder := plannercore.NewPlanBuilder(ctx, is)
-	p, err := builder.Build(node)
+	sctx.GetSessionVars().PlanID = 0
+	sctx.GetSessionVars().PlanColumnID = 0
+	hintProcessor := &plannercore.BlockHintProcessor{Ctx: sctx}
+	node.Accept(hintProcessor)
+	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
+	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, err
 	}
 
-	ctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
-	activeRoles := ctx.GetSessionVars().ActiveRoles
+	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
+	activeRoles := sctx.GetSessionVars().ActiveRoles
 	// Check privilege. Maybe it's better to move this to the Preprocess, but
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		if err := plannercore.CheckPrivilege(activeRoles, pm, builder.GetVisitInfo()); err != nil {
 			return nil, err
 		}
 	}
 
-	if err := plannercore.CheckTableLock(ctx, is, builder.GetVisitInfo()); err != nil {
+	if err := plannercore.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
 		return nil, err
 	}
 
 	// Handle the execute statement.
 	if execPlan, ok := p.(*plannercore.Execute); ok {
-		err := execPlan.OptimizePreparedPlan(ctx, is)
+		err := execPlan.OptimizePreparedPlan(ctx, sctx, is)
 		return p, err
 	}
 
@@ -67,10 +98,109 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 	}
 
 	// Handle the logical plan statement, use cascades planner if enabled.
-	if ctx.GetSessionVars().EnableCascadesPlanner {
-		return cascades.FindBestPlan(ctx, logic)
+	if sctx.GetSessionVars().EnableCascadesPlanner {
+		return cascades.FindBestPlan(sctx, logic)
 	}
-	return plannercore.DoOptimize(builder.GetOptFlag(), logic)
+	return plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
+}
+
+func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, string, string) {
+	switch x := stmtNode.(type) {
+	case *ast.ExplainStmt:
+		switch x.Stmt.(type) {
+		case *ast.SelectStmt:
+			normalizeExplainSQL := parser.Normalize(x.Text())
+			idx := strings.Index(normalizeExplainSQL, "select")
+			normalizeSQL := normalizeExplainSQL[idx:]
+			hash := parser.DigestHash(normalizeSQL)
+			return x.Stmt.(*ast.SelectStmt), normalizeSQL, hash
+		}
+	case *ast.SelectStmt:
+		normalizedSQL, hash := parser.NormalizeDigest(x.Text())
+		return x, normalizedSQL, hash
+	}
+	return nil, "", ""
+}
+
+func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) *bindinfo.HintsSet {
+	// When the domain is initializing, the bind will be nil.
+	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
+		return nil
+	}
+	selectStmt, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmtNode)
+	if selectStmt == nil {
+		return nil
+	}
+	return addHintForSelect(ctx, selectStmt, normalizedSQL, hash)
+}
+
+func addHintForSelect(ctx sessionctx.Context, stmt ast.StmtNode, normdOrigSQL, hash string) *bindinfo.HintsSet {
+	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
+	if bindRecord != nil {
+		if bindRecord.Status == bindinfo.Invalid {
+			return nil
+		}
+		if bindRecord.Status == bindinfo.Using {
+			metrics.BindUsageCounter.WithLabelValues(metrics.ScopeSession).Inc()
+			oriHint := bindinfo.CollectHint(stmt)
+			bindinfo.BindHint(stmt, bindRecord.HintsSet)
+			return oriHint
+		}
+	}
+	globalHandle := domain.GetDomain(ctx).BindHandle()
+	bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, ctx.GetSessionVars().CurrentDB)
+	if bindRecord == nil {
+		bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
+	}
+	if bindRecord != nil {
+		metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Inc()
+		oriHint := bindinfo.CollectHint(stmt)
+		bindinfo.BindHint(stmt, bindRecord.HintsSet)
+		return oriHint
+	}
+	return nil
+}
+
+func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode) {
+	selectStmt, normdOrigSQL, hash := extractSelectAndNormalizeDigest(stmtNode)
+	if selectStmt == nil {
+		return
+	}
+	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindMeta := sessionHandle.GetBindRecord(normdOrigSQL, sctx.GetSessionVars().CurrentDB)
+	if bindMeta != nil {
+		bindMeta.Status = bindinfo.Invalid
+		return
+	}
+
+	globalHandle := domain.GetDomain(sctx).BindHandle()
+	bindMeta = globalHandle.GetBindRecord(hash, normdOrigSQL, sctx.GetSessionVars().CurrentDB)
+	if bindMeta == nil {
+		bindMeta = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
+	}
+	if bindMeta != nil {
+		record := &bindinfo.BindRecord{
+			OriginalSQL: bindMeta.OriginalSQL,
+			BindSQL:     bindMeta.BindSQL,
+			Db:          sctx.GetSessionVars().CurrentDB,
+			Charset:     bindMeta.Charset,
+			Collation:   bindMeta.Collation,
+			Status:      bindinfo.Invalid,
+		}
+
+		err := sessionHandle.AddBindRecord(record)
+		if err != nil {
+			logutil.Logger(ctx).Warn("handleInvalidBindRecord failed", zap.Error(err))
+		}
+
+		globalHandle := domain.GetDomain(sctx).BindHandle()
+		dropBindRecord := &bindinfo.BindRecord{
+			OriginalSQL: bindMeta.OriginalSQL,
+			Db:          bindMeta.Db,
+		}
+		globalHandle.AddDropInvalidBindTask(dropBindRecord)
+	}
 }
 
 func init() {

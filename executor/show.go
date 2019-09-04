@@ -58,24 +58,23 @@ var etcdDialTimeout = 5 * time.Second
 type ShowExec struct {
 	baseExecutor
 
-	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName      model.CIStr
-	Table       *ast.TableName  // Used for showing columns.
-	Column      *ast.ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr     // Used for show table regions.
-	Flag        int             // Some flag parsed from sql, such as FULL.
-	Full        bool
-	User        *auth.UserIdentity   // Used by show grants, show create user.
-	Roles       []*auth.RoleIdentity // Used for show grants.
-	IfNotExists bool                 // Used for `show create database if not exists`
-
-	// GlobalScope is used by show variables
-	GlobalScope bool
+	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName    model.CIStr
+	Table     *ast.TableName       // Used for showing columns.
+	Column    *ast.ColumnName      // Used for `desc table column`.
+	IndexName model.CIStr          // Used for show table regions.
+	Flag      int                  // Some flag parsed from sql, such as FULL.
+	Roles     []*auth.RoleIdentity // Used for show grants.
+	User      *auth.UserIdentity   // Used by show grants, show create user.
 
 	is infoschema.InfoSchema
 
 	result *chunk.Chunk
 	cursor int
+
+	Full        bool
+	IfNotExists bool // Used for `show create database if not exists`
+	GlobalScope bool // GlobalScope is used by show variables
 }
 
 // Next implements the Executor Next interface.
@@ -83,7 +82,7 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
 		e.result = newFirstChunk(e)
-		err := e.fetchAll()
+		err := e.fetchAll(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -109,14 +108,14 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *ShowExec) fetchAll() error {
+func (e *ShowExec) fetchAll(ctx context.Context) error {
 	switch e.Tp {
 	case ast.ShowCharset:
 		return e.fetchShowCharset()
 	case ast.ShowCollation:
 		return e.fetchShowCollation()
 	case ast.ShowColumns:
-		return e.fetchShowColumns()
+		return e.fetchShowColumns(ctx)
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
 	case ast.ShowCreateUser:
@@ -212,7 +211,7 @@ func (e *ShowExec) fetchShowBind() error {
 
 func (e *ShowExec) fetchShowEngines() error {
 	sql := `SELECT * FROM information_schema.engines`
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -343,7 +342,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -367,7 +366,7 @@ func createOptions(tb *model.TableInfo) string {
 	return ""
 }
 
-func (e *ShowExec) fetchShowColumns() error {
+func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	tb, err := e.getTable()
 
 	if err != nil {
@@ -383,8 +382,8 @@ func (e *ShowExec) fetchShowColumns() error {
 	if tb.Meta().IsView() {
 		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
 		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is)
-		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(e.DBName, tb.Meta())
+		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &plannercore.BlockHintProcessor{})
+		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, e.DBName, tb.Meta())
 		if err != nil {
 			return err
 		}
@@ -721,6 +720,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 			if mysql.HasOnUpdateNowFlag(col.Flag) {
 				buf.WriteString(" ON UPDATE CURRENT_TIMESTAMP")
+				buf.WriteString(table.OptionalFsp(&col.FieldType))
 			}
 		}
 		if len(col.Comment) > 0 {
@@ -963,7 +963,7 @@ func (e *ShowExec) fetchShowCreateUser() error {
 
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`,
 		mysql.SystemDB, mysql.UserTable, userName, hostName)
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1288,5 +1288,10 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 		} else {
 			e.result.AppendInt64(6, 0)
 		}
+
+		e.result.AppendInt64(7, regions[i].writtenBytes)
+		e.result.AppendInt64(8, regions[i].readBytes)
+		e.result.AppendInt64(9, regions[i].approximateSize)
+		e.result.AppendInt64(10, regions[i].approximateKeys)
 	}
 }

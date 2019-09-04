@@ -16,9 +16,14 @@ package helper
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"go.uber.org/zap"
@@ -43,6 +49,14 @@ type Helper struct {
 	RegionCache *tikv.RegionCache
 }
 
+// NewHelper get a Helper from Storage
+func NewHelper(store tikv.Storage) *Helper {
+	return &Helper{
+		Store:       store,
+		RegionCache: store.GetRegionCache(),
+	}
+}
+
 // GetMvccByEncodedKey get the MVCC value by the specific encoded key.
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
@@ -50,24 +64,19 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 		return nil, errors.Trace(err)
 	}
 
-	tikvReq := &tikvrpc.Request{
-		Type: tikvrpc.CmdMvccGetByKey,
-		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
-			Key: encodedKey,
-		},
-	}
+	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
 	kvResp, err := h.Store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
 	if err != nil {
 		logutil.BgLogger().Info("get MVCC by encoded key failed",
-			zap.Binary("encodeKey", encodedKey),
+			zap.Stringer("encodeKey", encodedKey),
 			zap.Reflect("region", keyLocation.Region),
-			zap.Binary("startKey", keyLocation.StartKey),
-			zap.Binary("endKey", keyLocation.EndKey),
+			zap.Stringer("startKey", keyLocation.StartKey),
+			zap.Stringer("endKey", keyLocation.EndKey),
 			zap.Reflect("kvResp", kvResp),
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
-	return kvResp.MvccGetByKey, nil
+	return kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse), nil
 }
 
 // StoreHotRegionInfos records all hog region stores.
@@ -404,38 +413,215 @@ type RegionsInfo struct {
 	Regions []RegionInfo `json:"regions"`
 }
 
+// TableInfo stores the information of a table or an index
+type TableInfo struct {
+	DB      *model.DBInfo
+	Table   *model.TableInfo
+	IsIndex bool
+	Index   *model.IndexInfo
+}
+
+type withKeyRange interface {
+	getStartKey() string
+	getEndKey() string
+}
+
+// isIntersecting returns true if x and y intersect.
+func isIntersecting(x, y withKeyRange) bool {
+	return isIntersectingKeyRange(x, y.getStartKey(), y.getEndKey())
+}
+
+// isIntersectingKeyRange returns true if [startKey, endKey) intersect with x.
+func isIntersectingKeyRange(x withKeyRange, startKey, endKey string) bool {
+	return !isBeforeKeyRange(x, startKey, endKey) && !isBehindKeyRange(x, startKey, endKey)
+}
+
+// IsBefore returns true is x is before y
+func inBefore(x, y withKeyRange) bool {
+	return isBeforeKeyRange(x, y.getStartKey(), y.getEndKey())
+}
+
+// isBehind returns true is x is behind y
+func isBehind(x, y withKeyRange) bool {
+	return isBehindKeyRange(x, y.getStartKey(), y.getEndKey())
+}
+
+// IsBefore returns true is x is before [startKey, endKey)
+func isBeforeKeyRange(x withKeyRange, startKey, endKey string) bool {
+	return x.getEndKey() != "" && x.getEndKey() <= startKey
+}
+
+// IsBehind returns true is x is behind [startKey, endKey)
+func isBehindKeyRange(x withKeyRange, startKey, endKey string) bool {
+	return endKey != "" && x.getStartKey() >= endKey
+}
+
+func (r *RegionInfo) getStartKey() string { return r.StartKey }
+func (r *RegionInfo) getEndKey() string   { return r.EndKey }
+
+// for sorting
+type byRegionStartKey []*RegionInfo
+
+func (xs byRegionStartKey) Len() int      { return len(xs) }
+func (xs byRegionStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
+func (xs byRegionStartKey) Less(i, j int) bool {
+	return xs[i].getStartKey() < xs[j].getStartKey()
+}
+
+// tableInfoWithKeyRange stores table or index informations with its key range.
+type tableInfoWithKeyRange struct {
+	*TableInfo
+	StartKey string
+	EndKey   string
+}
+
+func (t tableInfoWithKeyRange) getStartKey() string { return t.StartKey }
+func (t tableInfoWithKeyRange) getEndKey() string   { return t.EndKey }
+
+// for sorting
+type byTableStartKey []tableInfoWithKeyRange
+
+func (xs byTableStartKey) Len() int      { return len(xs) }
+func (xs byTableStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
+func (xs byTableStartKey) Less(i, j int) bool {
+	return xs[i].getStartKey() < xs[j].getStartKey()
+}
+
+func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) tableInfoWithKeyRange {
+	sk, ek := tablecodec.GetTableHandleKeyRange(table.ID)
+	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	return tableInfoWithKeyRange{
+		&TableInfo{
+			DB:      db,
+			Table:   table,
+			IsIndex: false,
+			Index:   nil,
+		},
+		startKey,
+		endKey,
+	}
+}
+
+func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) tableInfoWithKeyRange {
+	sk, ek := tablecodec.GetTableIndexKeyRange(table.ID, index.ID)
+	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	return tableInfoWithKeyRange{
+		&TableInfo{
+			DB:      db,
+			Table:   table,
+			IsIndex: true,
+			Index:   index,
+		},
+		startKey,
+		endKey,
+	}
+}
+
+// GetRegionsTableInfo returns a map maps region id to its tables or indices.
+// Assuming tables or indices key ranges never intersect.
+// Regions key ranges can intersect.
+func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.DBInfo) map[int64][]TableInfo {
+	tableInfos := make(map[int64][]TableInfo)
+
+	regions := []*RegionInfo{}
+	for i := 0; i < len(regionsInfo.Regions); i++ {
+		tableInfos[regionsInfo.Regions[i].ID] = []TableInfo{}
+		regions = append(regions, &regionsInfo.Regions[i])
+	}
+
+	tables := []tableInfoWithKeyRange{}
+	for _, db := range schemas {
+		for _, table := range db.Tables {
+			tables = append(tables, newTableWithKeyRange(db, table))
+			for _, index := range table.Indices {
+				tables = append(tables, newIndexWithKeyRange(db, table, index))
+			}
+		}
+	}
+
+	if len(tables) == 0 || len(regions) == 0 {
+		return tableInfos
+	}
+
+	sort.Sort(byRegionStartKey(regions))
+	sort.Sort(byTableStartKey(tables))
+
+	idx := 0
+OutLoop:
+	for _, region := range regions {
+		id := region.ID
+		for isBehind(region, &tables[idx]) {
+			idx++
+			if idx >= len(tables) {
+				break OutLoop
+			}
+		}
+		for i := idx; i < len(tables) && isIntersecting(region, &tables[i]); i++ {
+			tableInfos[id] = append(tableInfos[id], *tables[i].TableInfo)
+		}
+	}
+
+	return tableInfos
+}
+
+func bytesKeyToHex(key []byte) string {
+	return strings.ToUpper(hex.EncodeToString(key))
+}
+
+func hexKeyToBytes(key string) ([]byte, error) {
+	return hex.DecodeString(key)
+}
+
 // GetRegionsInfo gets the region information of current store by using PD's api.
 func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GET", pdapi.Regions, nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
+// GetRegionInfoByID gets the region information of the region ID by using PD's api.
+func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
+	var regionInfo RegionInfo
+	err := h.requestPD("GET", pdapi.RegionByID+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	return &regionInfo, err
+}
+
+// request PD API, decode the response body into res
+func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) error {
 	etcd, ok := h.Store.(tikv.EtcdBackend)
 	if !ok {
-		return nil, errors.WithStack(errors.New("not implemented"))
+		return errors.WithStack(errors.New("not implemented"))
 	}
 	pdHosts := etcd.EtcdAddrs()
 	if len(pdHosts) == 0 {
-		return nil, errors.New("pd unavailable")
+		return errors.New("pd unavailable")
 	}
-	req, err := http.NewRequest("GET", protocol+pdHosts[0]+pdapi.Regions, nil)
+
+	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", protocol+pdHosts[0]+uri))
+	req, err := http.NewRequest(method, protocol+pdHosts[0]+uri, body)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	timeout, cancelFunc := context.WithTimeout(context.Background(), 5*time.Second)
-	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
-	defer cancelFunc()
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
+
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
 			logutil.BgLogger().Error("close body failed", zap.Error(err))
 		}
 	}()
-	var regionsInfo RegionsInfo
-	err = json.NewDecoder(resp.Body).Decode(&regionsInfo)
+
+	err = json.NewDecoder(resp.Body).Decode(res)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return &regionsInfo, nil
+
+	return nil
 }
 
 // StoresStat stores all information get from PD's api.
@@ -475,8 +661,8 @@ type StoreDetailStat struct {
 	LeaderScore     int64     `json:"leader_score"`
 	LeaderSize      int64     `json:"leader_size"`
 	RegionCount     int64     `json:"region_count"`
-	RegionWeight    int64     `json:"region_weight"`
-	RegionScore     int64     `json:"region_score"`
+	RegionWeight    float64   `json:"region_weight"`
+	RegionScore     float64   `json:"region_score"`
 	RegionSize      int64     `json:"region_size"`
 	StartTs         time.Time `json:"start_ts"`
 	LastHeartbeatTs time.Time `json:"last_heartbeat_ts"`
@@ -497,9 +683,7 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	timeout, cancelFunc := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
-	defer cancelFunc()
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

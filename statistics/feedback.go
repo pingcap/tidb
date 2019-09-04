@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/spaolacci/murmur3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -687,8 +686,11 @@ func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 type queryFeedback struct {
 	IntRanges []int64
 	// HashValues is the murmur hash values for each index point.
+	// Note that index points will be stored in `IndexPoints`, we keep it here only for compatibility.
 	HashValues  []uint64
 	IndexRanges [][]byte
+	// IndexPoints stores the value of each equal condition.
+	IndexPoints [][]byte
 	// Counts is the number of scan keys in each range. It first stores the count for `IntRanges`, `IndexRanges` or `ColumnRanges`.
 	// After that, it stores the Ranges for `HashValues`.
 	Counts       []int64
@@ -721,8 +723,7 @@ func encodeIndexFeedback(q *QueryFeedback) *queryFeedback {
 	var pointCounts []int64
 	for _, fb := range q.Feedback {
 		if bytes.Compare(kv.Key(fb.Lower.GetBytes()).PrefixNext(), fb.Upper.GetBytes()) >= 0 {
-			h1, h2 := murmur3.Sum128(fb.Lower.GetBytes())
-			pb.HashValues = append(pb.HashValues, h1, h2)
+			pb.IndexPoints = append(pb.IndexPoints, fb.Lower.GetBytes())
 			pointCounts = append(pointCounts, fb.Count)
 		} else {
 			pb.IndexRanges = append(pb.IndexRanges, fb.Lower.GetBytes(), fb.Upper.GetBytes())
@@ -782,9 +783,18 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
 	if c != nil {
 		// decode the index point feedback, just set value count in CM Sketch
 		start := len(pb.IndexRanges) / 2
-		for i := 0; i < len(pb.HashValues); i += 2 {
-			// TODO: update using raw bytes instead of hash values.
-			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint64(pb.Counts[start+i/2]))
+		if len(pb.HashValues) > 0 {
+			// It needs raw values to update the top n, so just skip it here.
+			if len(c.topN) > 0 {
+				return
+			}
+			for i := 0; i < len(pb.HashValues); i += 2 {
+				c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint64(pb.Counts[start+i/2]))
+			}
+			return
+		}
+		for i := 0; i < len(pb.IndexPoints); i++ {
+			c.updateValueBytes(pb.IndexPoints[i], uint64(pb.Counts[start+i]))
 		}
 	}
 }
@@ -854,7 +864,7 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, ft *types.FieldTy
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 {
+	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 || len(pb.IndexPoints) > 0 {
 		decodeFeedbackForIndex(q, pb, c)
 	} else if len(pb.IntRanges) > 0 {
 		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.Flag))

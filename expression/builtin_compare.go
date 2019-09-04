@@ -1100,6 +1100,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 		Value:        dt,
 		RetType:      targetFieldType,
 		DeferredExpr: con.DeferredExpr,
+		ParamMarker:  con.ParamMarker,
 	}, false
 }
 
@@ -1117,6 +1118,9 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 
+	if targetFieldType.Tp == mysql.TypeBit {
+		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
+	}
 	var intDatum types.Datum
 	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
 	if err != nil {
@@ -1137,6 +1141,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			Value:        intDatum,
 			RetType:      &targetFieldType,
 			DeferredExpr: con.DeferredExpr,
+			ParamMarker:  con.ParamMarker,
 		}, false
 	}
 	switch op {
@@ -1151,7 +1156,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
 		}
 	case opcode.NullEQ, opcode.EQ:
-		switch con.RetType.EvalType() {
+		switch con.GetType().EvalType() {
 		// An integer value equal or NULL-safe equal to a float value which contains
 		// non-zero decimal digits is definitely false.
 		// e.g.,
@@ -1178,6 +1183,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 				Value:        intDatum,
 				RetType:      &targetFieldType,
 				DeferredExpr: con.DeferredExpr,
+				ParamMarker:  con.ParamMarker,
 			}, false
 		}
 	}
@@ -1198,7 +1204,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		finalArg1 = arg1
-		if isExceptional && arg1.RetType.EvalType() == types.ETInt {
+		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
 			// Judge it is inf or -inf
 			// For int:
 			//			inf:  01111111 & 1 == 1
@@ -1217,7 +1223,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		finalArg0 = arg0
-		if isExceptional && arg0.RetType.EvalType() == types.ETInt {
+		if isExceptional && arg0.GetType().EvalType() == types.ETInt {
 			if arg0.Value.GetInt64()&1 == 1 {
 				isNegativeInfinite = true
 			} else {
