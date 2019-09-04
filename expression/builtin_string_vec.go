@@ -10,20 +10,20 @@ import (
 
 func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.get(types.ETString, n)
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.put(buf)
+	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
 
-	buf2, err := b.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
-	defer b.put(buf2)
+	defer b.bufAllocator.put(buf2)
 	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
 		return err
 	}
