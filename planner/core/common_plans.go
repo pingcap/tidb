@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -255,20 +256,26 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		if err != nil {
 			return err
 		}
+		if metrics.ResettablePlanCacheCounterFortTest {
+			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+		} else {
+			planCacheCounter.Inc()
+		}
 		e.names = plan.OutputNames()
 		e.Plan = plan
 		return nil
 	}
-	cacheKey := NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+	var cacheKey kvcache.Key
 	sctx.GetSessionVars().StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
+		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-			cachedVal := cacheValue.(*PSTMTPlanCacheValue)
 			if metrics.ResettablePlanCacheCounterFortTest {
 				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 			} else {
 				planCacheCounter.Inc()
 			}
+			cachedVal := cacheValue.(*PSTMTPlanCacheValue)
 			err := e.rebuildRange(cachedVal.Plan)
 			if err != nil {
 				return err

@@ -207,7 +207,7 @@ type ExecStmt struct {
 	OutputNames []*types.FieldName
 }
 
-// GetPointRecord short path for point exec directly from plan
+// GetPointRecord short path for point exec directly from plan, keep only necessary steps
 func (a *ExecStmt) GetPointRecord(ctx context.Context, is infoschema.InfoSchema,
 	sctx sessionctx.Context) (*recordSet, error) {
 	var err error
