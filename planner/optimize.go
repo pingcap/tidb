@@ -66,10 +66,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 // OptimizeExecCached to optimize execute statement with plan cached
 func OptimizeExecCached(ctx context.Context, sctx sessionctx.Context,
-	node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
+	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	var err error
 	builder := plannercore.NewPlanBuilder(sctx, is, nil)
-	p, err := builder.Build(ctx, node)
+	p, err := builder.Build(ctx, execAst)
 	if err != nil {
 		return nil, err
 	}
