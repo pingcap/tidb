@@ -274,6 +274,12 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 			HintName: model.NewCIStr("inl_join"),
 			Tables:   getJoinTableNames(nodeType, pp.blockOffset, pp.children[1-pp.OuterIndex]),
 		})
+	case *PhysicalIndexMergeJoin:
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, pp.blockOffset),
+			HintName: model.NewCIStr("inl_join"),
+			Tables:   getJoinTableNames(nodeType, pp.blockOffset, pp.children[1-pp.OuterIndex]),
+		})
 	}
 	return res
 }
