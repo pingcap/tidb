@@ -236,8 +236,8 @@ type vecExprBenchCase struct {
 	retEvalType   types.EvalType
 	childrenTypes []types.EvalType
 	// geners are used to generate data for children and geners[i] generates data for children[i].
-	// if geners[i] is nil, the default dataGenerator will be used for its corresponding child.
-	// the geners slice can be shorter than the children slice, if it has 3 children, then
+	// If geners[i] is nil, the default dataGenerator will be used for its corresponding child.
+	// The geners slice can be shorter than the children slice, if it has 3 children, then
 	// geners[gen1, gen2] will be regarded as geners[gen1, gen2, nil].
 	geners []dataGenerator
 }
