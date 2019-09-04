@@ -26,17 +26,14 @@ func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 	if types.IsBinaryStr(b.args[0].GetType()) {
 		return nil
 	}
+
+Loop:
 	for i := 0; i < input.NumRows(); i++ {
 		str := result.GetBytes(i)
-		isASCII := true
 		for _, c := range str {
 			if c >= utf8.RuneSelf {
-				isASCII = false
-				break
+				continue Loop
 			}
-		}
-		if !isASCII {
-			continue
 		}
 		for i := range str {
 			if str[i] >= 'A' && str[i] <= 'Z' {
