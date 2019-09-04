@@ -35,7 +35,7 @@ func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	ds := result.Times()
+	ds := buf.Times()
 	for i := 0; i < input.NumRows(); i++ {
 		if ds[i].IsZero() {
 			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {

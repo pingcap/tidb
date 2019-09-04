@@ -204,6 +204,9 @@ var vecExprBenchCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
 		{types.ETInt, []types.EvalType{types.ETInt}},
 	},
+	ast.Month: {
+		{types.ETInt, []types.EvalType{types.ETDatetime}},
+	},
 }
 
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
