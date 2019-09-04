@@ -979,7 +979,7 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 		c.Assert(row, HasLen, 6)
 		if strings.HasSuffix(row[0].(string), "IndexLookUp_12") {
 			hasIndexLookUp12 = true
-			c.Assert(row[4], Equals, "time:0ns, loops:0, rows:0")
+			c.Assert(row[4].(string)[:25], Equals, "time:0ns, loops:0, rows:0")
 		}
 	}
 	c.Assert(hasIndexLookUp12, IsTrue)

@@ -257,24 +257,35 @@ func (crs *CopRuntimeStats) String() string {
 type ReaderRuntimeStats struct {
 	sync.Mutex
 
-	maxCopRespTime time.Duration
-	sumCopRespTime time.Duration
-	cntCopResp     float64
+	copRespTime []time.Duration
 }
 
-// RecordOneCopTask record once cop response time to update maxCopRespTime
+// RecordOneCopTask record once cop response time to update maxcopRespTime
 func (rrs *ReaderRuntimeStats) RecordOneCopTask(t time.Duration) {
 	rrs.Lock()
 	defer rrs.Unlock()
-	if t > rrs.maxCopRespTime {
-		rrs.maxCopRespTime = t
-	}
-	rrs.sumCopRespTime += t
-	rrs.cntCopResp += 1
+	rrs.copRespTime = append(rrs.copRespTime, t)
 }
 
 func (rrs *ReaderRuntimeStats) String() string {
-	return fmt.Sprintf("cop resp time max: %v avg: %v", rrs.maxCopRespTime, time.Duration(float64(rrs.sumCopRespTime)/rrs.cntCopResp))
+	sort.Slice(rrs.copRespTime, func(i, j int) bool {
+		return rrs.copRespTime[i] < rrs.copRespTime[j]
+	})
+	s := "cop resp time "
+	size := len(rrs.copRespTime)
+	if size == 0 {
+		return s + "max:0ns, min:0ns, avg:0ns, p80:0ns, p95:0ns"
+	}
+	s += fmt.Sprintf("max:%v", rrs.copRespTime[size-1])
+	s += fmt.Sprintf(", min:%v", rrs.copRespTime[0])
+	sum := 0.0
+	for _, t := range rrs.copRespTime {
+		sum += float64(t)
+	}
+	s += fmt.Sprintf(", avg:%v", time.Duration(sum/float64(size)))
+	s += fmt.Sprintf(", p80:%v", rrs.copRespTime[size*4/5])
+	s += fmt.Sprintf(", p95:%v", rrs.copRespTime[size*17/20])
+	return s
 }
 
 // RuntimeStatsColl collects executors's execution info.
@@ -332,9 +343,9 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tip
 }
 
 // RecordOneReaderStats records a specific stats for TableReader, IndexReader and IndexLookupReader.
-func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, CopRespTime time.Duration) {
+func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, copRespTime time.Duration) {
 	readerStats := e.GetReaderStats(planID)
-	readerStats.RecordOneCopTask(CopRespTime)
+	readerStats.RecordOneCopTask(copRespTime)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
@@ -359,7 +370,7 @@ func (e *RuntimeStatsColl) GetReaderStats(planID string) *ReaderRuntimeStats {
 	defer e.mu.Unlock()
 	stats, exists := e.readerStats[planID]
 	if !exists {
-		stats = &ReaderRuntimeStats{maxCopRespTime: 0}
+		stats = &ReaderRuntimeStats{copRespTime: make([]time.Duration, 0, 20)}
 		e.readerStats[planID] = stats
 	}
 	return stats
