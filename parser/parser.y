@@ -1107,6 +1107,7 @@ import (
 	NChar			"{NCHAR|NATIONAL CHARACTER|NATIONAL CHAR}"
 	Varchar			"{VARCHAR|VARCHARACTER|CHARACTER VARYING|CHAR VARYING}"
 	NVarchar		"{NATIONAL VARCHAR|NATIONAL VARCHARACTER|NVARCHAR|NCHAR VARCHAR|NATIONAL CHARACTER VARYING|NATIONAL CHAR VARYING|NCHAR VARYING}"
+	Year			"{YEAR|SQL_TSI_YEAR}"
 	DeallocateSym		"Deallocate or drop"
 	OuterOpt		"optional OUTER clause"
 	CrossOpt		"Cross join option"
@@ -8991,6 +8992,10 @@ NVarchar:
 | 	"NATIONAL" "CHAR" "VARYING"
 | 	"NCHAR" "VARYING"
 
+Year:
+	"YEAR"
+|	"SQL_TSI_YEAR"
+
 
 BlobType:
 	"TINYBLOB"
@@ -9081,7 +9086,7 @@ DateAndTimeType:
 		}
 		$$ = x
 	}
-|	"YEAR" OptFieldLen FieldOpts
+|	Year OptFieldLen FieldOpts
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		x.Flen = $2.(int)
