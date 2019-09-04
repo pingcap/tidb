@@ -95,8 +95,9 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 		}
 		if ft.Tp == mysql.TypeFloat {
 			f64s := result.Float64s()
-			buf := chunk.NewColumn(ft, input.NumRows())
-			buf.ResizeFloat32(input.NumRows())
+			n := input.NumRows()
+			buf := chunk.NewColumn(ft, n)
+			buf.ResizeFloat32(n, false)
 			f32s := buf.Float32s()
 			for i := range f64s {
 				if result.IsNull(i) {
