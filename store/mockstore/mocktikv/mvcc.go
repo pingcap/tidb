@@ -280,7 +280,7 @@ type RawKV interface {
 
 // MVCCDebugger is for debugging.
 type MVCCDebugger interface {
-	MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte)
+	MvccGetByStartTS(starTS uint64) (*kvrpcpb.MvccInfo, []byte)
 	MvccGetByKey(key []byte) *kvrpcpb.MvccInfo
 }
 
