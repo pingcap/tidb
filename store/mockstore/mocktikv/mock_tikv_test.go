@@ -655,6 +655,22 @@ func (s *testMVCCLevelDB) TestErrors(c *C) {
 	c.Assert((&ErrConflict{}).Error(), Equals, "write conflict")
 }
 
+func (s *testMVCCLevelDB) TestMvccGetByKey(c *C) {
+	s.mustPrewriteOK(c, putMutations("q1", "v5"), "p1", 5)
+	debugger, ok := s.store.(MVCCDebugger)
+	c.Assert(ok, IsTrue)
+	mvccInfo := debugger.MvccGetByKey([]byte("q1"))
+	except := &kvrpcpb.MvccInfo{
+		Lock: &kvrpcpb.MvccLock{
+			Type:       kvrpcpb.Op_Put,
+			StartTs:    5,
+			Primary:    []byte("p1"),
+			ShortValue: []byte("v5"),
+		},
+	}
+	c.Assert(mvccInfo, DeepEquals, except)
+}
+
 func (s *testMVCCLevelDB) TestTxnHeartBeat(c *C) {
 	s.mustPrewriteWithTTLOK(c, putMutations("pk", "val"), "pk", 5, 666)
 
