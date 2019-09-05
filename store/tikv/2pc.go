@@ -1062,6 +1062,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 			batchExe.tokenWaitDuration += time.Since(waitStart)
 			batch := batch1
 			go func() {
+				defer batchExe.rateLimiter.putToken()
 				var singleBatchBackoffer *Backoffer
 				if batchExe.action == actionCommit {
 					// Because the secondary batches of the commit actions are implemented to be
