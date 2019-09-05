@@ -1300,7 +1300,7 @@ func (mvcc *MVCCLevelDB) MvccGetByStartTS(starTS uint64) (*kvrpcpb.MvccInfo, []b
 	return mvcc.MvccGetByKey(key), key
 }
 
-var valueTypeOpMap = map[mvccValueType]kvrpcpb.Op{
+var valueTypeOpMap = [...]kvrpcpb.Op{
 	typePut:      kvrpcpb.Op_Put,
 	typeDelete:   kvrpcpb.Op_Del,
 	typeRollback: kvrpcpb.Op_Rollback,
