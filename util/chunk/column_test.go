@@ -926,7 +926,7 @@ func BenchmarkOrNullsVectorized(b *testing.B) {
 	}
 }
 
-func BenchmarkOrNullsNonVectorized(b *testing.B) {
+func BenchmarkMergeNullsNonVectorized(b *testing.B) {
 	cols := genNullCols(3)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
