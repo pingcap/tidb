@@ -79,7 +79,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 			chunk.MutRowFromDatums(types.MakeDatums(6)),
 		}}
 	outerFilter := expression.NewFunctionInternal(sctx, ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
-	innerFilter := outerFilter.Clone()
+	innerFilter := outerFilter
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	joiner := newJoiner(sctx, plannercore.InnerJoin, false,
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, retTypes(outerExec), retTypes(innerExec))

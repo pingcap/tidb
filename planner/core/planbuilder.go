@@ -1425,9 +1425,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		proj.names = mockTablePlan.names
 		for _, col := range mockTablePlan.schema.Columns {
 			proj.Exprs = append(proj.Exprs, col)
-			newCol := col.Clone().(*expression.Column)
-			newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
-			schema.Append(newCol)
+			schema.Append(col)
 		}
 		proj.SetSchema(schema)
 		proj.SetChildren(np)

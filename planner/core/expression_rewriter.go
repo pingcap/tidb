@@ -1437,10 +1437,9 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		// this column.
 		if isColumn && mysql.HasNotNullFlag(col.RetType.Flag) {
 			name := er.ctxNameStk[stackLen-2]
-			newCol := col.Clone().(*expression.Column)
 			er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 			er.ctxNameStk = er.ctxNameStk[:stackLen-len(v.Args)]
-			er.ctxStack = append(er.ctxStack, newCol)
+			er.ctxStack = append(er.ctxStack, arg1)
 			er.ctxNameStk = append(er.ctxNameStk, name)
 			return true
 		}
