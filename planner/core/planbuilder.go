@@ -558,6 +558,20 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 		}
 
 		hasScanHint = true
+		if hint.IndexNames == nil {
+			// If indexNames is nil, choose TablePath.
+			// For example: `select a from t use index()`.
+			if path := getTablePath(publicPaths); path != nil {
+				if hint.HintType == ast.HintIgnore {
+					ignored = append(ignored, path)
+				} else {
+					hasUseOrForce = true
+					path.forced = true
+					available = append(available, path)
+				}
+			}
+
+		}
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
