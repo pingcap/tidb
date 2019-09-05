@@ -47,7 +47,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
-	b := NewPlanBuilder(sctx, is)
+	b := NewPlanBuilder(sctx, is, &BlockHintProcessor{})
 	fakePlan := LogicalTableDual{}.Init(sctx)
 	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
 	if err != nil {
@@ -441,6 +441,9 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 // it will be rewrote to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
 	plan4Agg := LogicalAggregation{}.Init(er.sctx)
+	if hint := er.b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	plan4Agg.SetChildren(np)
 
 	// Create a "max" or "min" aggregation.
@@ -567,6 +570,9 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.sctx)
+	if hint := er.b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -601,6 +607,9 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.sctx)
+	if hint := er.b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -851,7 +860,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStack = append(er.ctxStack, value)
 	case *driver.ParamMarkerExpr:
 		var value expression.Expression
-		value, er.err = expression.GetParamExpression(er.sctx, v)
+		value, er.err = expression.ParamMarkerExpression(er.sctx, v)
 		if er.err != nil {
 			return retNode, false
 		}
@@ -999,8 +1008,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		return
 	}
 	e := expression.DatumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
-	e.RetType.Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
-	e.RetType.Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
+	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
+	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStack = append(er.ctxStack, e)
 }
 

@@ -64,6 +64,8 @@ const (
 	HintHashAgg = "hash_agg"
 	// HintStreamAgg is hint enforce stream aggregation.
 	HintStreamAgg = "stream_agg"
+	// HintIndex is hint enforce using some indexes.
+	HintIndex = "index"
 )
 
 const (
@@ -95,6 +97,9 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	b.optFlag = b.optFlag | flagEliminateProjection
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx)
+	if hint := b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
@@ -147,9 +152,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	plan4Agg.GroupByItems = gbyItems
 	plan4Agg.SetSchema(schema4Agg)
 	plan4Agg.collectGroupByColumns()
-	if hint := b.TableHints(); hint != nil {
-		plan4Agg.preferAggType = hint.preferAggType
-	}
 	return plan4Agg, aggIndexMap, nil
 }
 
@@ -591,7 +593,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		}
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
-			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil {
+			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil || ret {
 					continue
@@ -792,6 +794,9 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.Init(b.ctx)
+	if hint := b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
 		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
@@ -1045,7 +1050,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 		if !v.InExecute {
 			return 0, false, true
 		}
-		param, err := expression.GetParamExpression(ctx, v)
+		param, err := expression.ParamMarkerExpression(ctx, v)
 		if err != nil {
 			return 0, false, false
 		}
@@ -1948,30 +1953,46 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
-	var sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
-	var preferAggType uint
+func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentLevel int) bool {
+	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
+	var (
+		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
+		indexHintList                               []indexHintInfo
+		preferAggType                               uint
+	)
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
-			sortMergeTables = tableNames2HintTableInfo(hint.Tables)
+			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(hint.Tables)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
-			INLJTables = tableNames2HintTableInfo(hint.Tables)
+			INLJTables = append(INLJTables, tableNames2HintTableInfo(hint.Tables)...)
 		case TiDBHashJoin, HintHJ:
-			hashJoinTables = tableNames2HintTableInfo(hint.Tables)
+			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(hint.Tables)...)
 		case HintHashAgg:
 			preferAggType |= preferHashAgg
 		case HintStreamAgg:
 			preferAggType |= preferStreamAgg
+		case HintIndex:
+			if len(hint.Tables) != 0 && len(hint.Indexes) != 0 {
+				indexHintList = append(indexHintList, indexHintInfo{
+					tblName: hint.Tables[0].TableName,
+					indexHint: &ast.IndexHint{
+						IndexNames: hint.Indexes,
+						HintType:   ast.HintUse,
+						HintScope:  ast.HintForScan,
+					},
+				})
+			}
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 || preferAggType != 0 {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList) > 0 || preferAggType != 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
+			indexHintList:             indexHintList,
 			preferAggType:             preferAggType,
 		})
 		return true
@@ -2006,7 +2027,7 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
-	if b.pushTableHints(sel.TableHints) {
+	if b.pushTableHints(sel.TableHints, typeSelect, sel.QueryBlockOffset) {
 		// table hints are only visible in the current SELECT statement.
 		defer b.popTableHints()
 	}
@@ -2260,7 +2281,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
+	tblName := *asName
+	if tblName.L == "" {
+		tblName = tn.Name
+	}
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, tblName)
 	if err != nil {
 		return nil, err
 	}
@@ -2645,7 +2670,7 @@ func buildColumns2Handle(
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
-	if b.pushTableHints(update.TableHints) {
+	if b.pushTableHints(update.TableHints, typeUpdate, 0) {
 		// table hints are only visible in the current UPDATE statement.
 		defer b.popTableHints()
 	}
@@ -2702,14 +2727,15 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	var updateTableList []*ast.TableName
 	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
-	orderedList, np, err := b.buildUpdateLists(ctx, updateTableList, update.List, p)
+	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updateTableList, update.List, p)
 	if err != nil {
 		return nil, err
 	}
 	p = np
 
 	updt := Update{
-		OrderedList: orderedList,
+		OrderedList:               orderedList,
+		AllAssignmentsAreConstant: allAssignmentsAreConstant,
 	}.Init(b.ctx)
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved.
@@ -2733,13 +2759,22 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	return updt, err
 }
 
-func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan, error) {
+func (b *PlanBuilder) buildUpdateLists(
+	ctx context.Context,
+	tableList []*ast.TableName,
+	list []*ast.Assignment,
+	p LogicalPlan,
+) (newList []*expression.Assignment,
+	po LogicalPlan,
+	allAssignmentsAreConstant bool,
+	error error,
+) {
 	b.curClause = fieldList
 	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
 	for _, assign := range list {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName.L)
 		modifyColumns[columnFullName] = struct{}{}
@@ -2755,7 +2790,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		tableInfo := tn.TableInfo
 		tableVal, found := b.is.TableByID(tableInfo.ID)
 		if !found {
-			return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
+			return nil, nil, false, infoschema.ErrTableNotExists.GenWithStackByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
 		}
 		for i, colInfo := range tableInfo.Columns {
 			if !colInfo.IsGenerated() {
@@ -2763,7 +2798,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
 			if _, ok := modifyColumns[columnFullName]; ok {
-				return nil, nil, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
+				return nil, nil, false, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
 			for _, asName := range tableAsName[tableInfo] {
 				virtualAssignments = append(virtualAssignments, &ast.Assignment{
@@ -2774,12 +2809,13 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		}
 	}
 
-	newList := make([]*expression.Assignment, 0, p.Schema().Len())
+	allAssignmentsAreConstant = true
+	newList = make([]*expression.Assignment, 0, p.Schema().Len())
 	allAssignments := append(list, virtualAssignments...)
 	for i, assign := range allAssignments {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		var newExpr expression.Expression
 		var np LogicalPlan
@@ -2802,9 +2838,12 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess)
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
+		if _, isConst := newExpr.(*expression.Constant); !isConst {
+			allAssignmentsAreConstant = false
+		}
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col, Expr: newExpr})
 	}
@@ -2826,7 +2865,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, col.OrigTblName.L, "", nil)
 	}
-	return newList, p, nil
+	return newList, p, allAssignmentsAreConstant, nil
 }
 
 // extractTableAsNameForUpdate extracts tables' alias names for update.
@@ -2871,7 +2910,7 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
-	if b.pushTableHints(delete.TableHints) {
+	if b.pushTableHints(delete.TableHints, typeDelete, 0) {
 		// table hints are only visible in the current DELETE statement.
 		defer b.popTableHints()
 	}

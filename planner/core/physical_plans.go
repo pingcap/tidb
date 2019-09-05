@@ -244,6 +244,9 @@ type PhysicalIndexJoin struct {
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
+	// KeepOuterOrder indicates whether to keep the order of the join results be
+	// the same as the outer table.
+	KeepOuterOrder bool
 	// IdxColLens stores the length of each index column.
 	IdxColLens []int
 	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
@@ -252,6 +255,19 @@ type PhysicalIndexJoin struct {
 	//      need to be evaluated after we fetch the data of t1.
 	// This struct stores them and evaluate them to ranges.
 	CompareFilters *ColWithCmpFuncManager
+}
+
+// PhysicalIndexMergeJoin represents the plan of index look up merge join.
+type PhysicalIndexMergeJoin struct {
+	PhysicalIndexJoin
+
+	// NeedOuterSort means whether outer rows should be sorted to build range.
+	NeedOuterSort bool
+	// CompareFuncs store the compare functions for outer join keys and inner join key.
+	CompareFuncs []expression.CompareFunc
+	// OuterCompareFuncs store the compare functions for outer join keys and outer join
+	// keys, it's for outer rows sort's convenience.
+	OuterCompareFuncs []expression.CompareFunc
 }
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.
@@ -294,6 +310,14 @@ type PhysicalUnionAll struct {
 	// IsPointGetUnion indicates all the children are PointGet and
 	// all of them reference the same table and use the same `unique key`
 	IsPointGetUnion bool
+}
+
+// OutputNames returns the outputting names of each column.
+func (p *PhysicalUnionAll) OutputNames() []*types.FieldName {
+	if p.IsPointGetUnion {
+		return p.children[0].OutputNames()
+	}
+	return p.physicalSchemaProducer.OutputNames()
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -403,6 +427,15 @@ type PhysicalTableDual struct {
 	// for data sources like `Show`, if true, the dual plan would be substituted by
 	// `Show` in the final plan.
 	placeHolder bool
+
+	// names is used for OutputNames() method. Dual may be inited when building point get plan.
+	// So it needs to hold names for itself.
+	names []*types.FieldName
+}
+
+// OutputNames returns the outputting names of each column.
+func (p *PhysicalTableDual) OutputNames() []*types.FieldName {
+	return p.names
 }
 
 // PhysicalWindow is the physical operator of window function.

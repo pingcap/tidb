@@ -281,7 +281,7 @@ func parseIndex(table *table, stmt *ast.CreateIndexStmt) error {
 			table.uniqIndices[name] = table.findCol(table.columns, name)
 		} else if stmt.KeyType == ast.IndexKeyTypeNone {
 			table.indices[name] = table.findCol(table.columns, name)
-		} else{
+		} else {
 			return errors.Errorf("unsupported index type on column %s.%s", table.name, name)
 		}
 	}

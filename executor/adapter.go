@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -64,9 +65,48 @@ type recordSet struct {
 
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
-		a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
+		// The else branch will be removed after we totally remove the *Name from expression.Column.
+		if len(a.stmt.outputNames) > 0 {
+			a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.outputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
+		} else {
+			a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
+		}
 	}
 	return a.fields
+}
+
+func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*ast.ResultField {
+	rfs := make([]*ast.ResultField, 0, schema.Len())
+	defaultDBCIStr := model.NewCIStr(defaultDB)
+	for i := 0; i < schema.Len(); i++ {
+		dbName := names[i].DBName
+		if dbName.L == "" && names[i].TblName.L != "" {
+			dbName = defaultDBCIStr
+		}
+		origColName := names[i].OrigColName
+		if origColName.L == "" {
+			origColName = names[i].ColName
+		}
+		rf := &ast.ResultField{
+			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
+			ColumnAsName: names[i].ColName,
+			Table:        &model.TableInfo{Name: names[i].OrigTblName},
+			TableAsName:  names[i].TblName,
+			DBName:       dbName,
+		}
+		// This is for compatibility.
+		// See issue https://github.com/pingcap/tidb/issues/10513 .
+		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
+		}
+		// Usually the length of O equals the length of L.
+		// Add this len judgement to avoid panic.
+		if len(rf.ColumnAsName.L) > mysql.MaxAliasIdentifierLen {
+			rf.ColumnAsName.L = rf.ColumnAsName.L[:mysql.MaxAliasIdentifierLen]
+		}
+		rfs = append(rfs, rf)
+	}
+	return rfs
 }
 
 func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*ast.ResultField) {
@@ -91,6 +131,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 			},
 		}
 		// This is for compatibility.
+		// See issue https://github.com/pingcap/tidb/issues/10513 .
 		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
 			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
 		}
@@ -136,6 +177,7 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
+	a.stmt.Ctx.GetSessionVars().PrevStmt = a.stmt.OriginText()
 	a.stmt.logAudit()
 	return err
 }
@@ -160,6 +202,8 @@ type ExecStmt struct {
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
+
+	outputNames []*types.FieldName
 }
 
 // OriginText returns original statement as a string.
@@ -204,6 +248,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	a.outputNames = p.OutputNames()
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
 }
@@ -604,6 +649,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		if err != nil {
 			return nil, err
 		}
+		a.outputNames = executorExec.outputNames
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		if executorExec.lowerPriority {
@@ -637,6 +683,16 @@ func (a *ExecStmt) logAudit() {
 	}
 }
 
+// FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
+func FormatSQL(sql string, sessVars *variable.SessionVars) string {
+	cfg := config.GetGlobalConfig()
+	length := len(sql)
+	if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
+		sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
+	}
+	return QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -650,11 +706,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
 	}
-	sql := a.Text
-	if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(len(sql)) > maxQueryLen {
-		sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, len(a.Text))
-	}
-	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
+	sql := FormatSQL(a.Text, sessVars)
 
 	var tableIDs, indexNames string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
@@ -667,38 +719,28 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
+	_, digest := sessVars.StmtCtx.SQLDigest()
+	slowItems := &variable.SlowQueryLogItems{
+		TxnTS:       txnTS,
+		SQL:         sql,
+		Digest:      digest,
+		TimeTotal:   costTime,
+		TimeParse:   a.Ctx.GetSessionVars().DurationParse,
+		TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
+		IndexNames:  indexNames,
+		StatsInfos:  statsInfos,
+		CopTasks:    copTaskInfo,
+		ExecDetail:  execDetail,
+		MemMax:      memMax,
+		Succ:        succ,
+	}
+	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
+		slowItems.PrevStmt = FormatSQL(sessVars.PrevStmt, sessVars)
+	}
 	if costTime < threshold {
-		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(&variable.SlowQueryLogItems{
-			TxnTS:       txnTS,
-			SQL:         sql,
-			Digest:      digest,
-			TimeTotal:   costTime,
-			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
-			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
-			IndexNames:  indexNames,
-			StatsInfos:  statsInfos,
-			CopTasks:    copTaskInfo,
-			ExecDetail:  execDetail,
-			MemMax:      memMax,
-			Succ:        succ,
-		}))
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
 	} else {
-		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(&variable.SlowQueryLogItems{
-			TxnTS:       txnTS,
-			SQL:         sql,
-			Digest:      digest,
-			TimeTotal:   costTime,
-			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
-			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
-			IndexNames:  indexNames,
-			StatsInfos:  statsInfos,
-			CopTasks:    copTaskInfo,
-			ExecDetail:  execDetail,
-			MemMax:      memMax,
-			Succ:        succ,
-		}))
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
@@ -727,7 +769,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
 //  2. txn is not valid
-//  2. plan is point get by pk, or point get by unique index (no double read)
+//  3. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) (bool, error) {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
