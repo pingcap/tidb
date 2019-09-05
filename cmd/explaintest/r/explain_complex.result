@@ -245,17 +245,17 @@ id	count	task	operator info
 Sort_10	1.00	root	test.d.left_value:asc
 └─HashAgg_15	1.00	root	group by:test.d.id, funcs:firstrow(test.d.id), firstrow(test.d.ctx), firstrow(test.d.name), firstrow(test.d.left_value), firstrow(test.d.right_value), firstrow(test.d.depth), firstrow(test.d.leader_id), firstrow(test.d.status), firstrow(test.d.created_on), firstrow(test.d.updated_on)
   └─Selection_22	0.01	root	or(eq(test.ep.user_id, 62), or(eq(test.d.id, 20), eq(test.d.id, 20)))
-    └─HashLeftJoin_23	0.02	root	left outer join, inner:TableReader_64, equal:[eq(test.p.id, test.ep.position_id)]
+    └─HashLeftJoin_23	0.02	root	left outer join, inner:TableReader_68, equal:[eq(test.p.id, test.ep.position_id)]
       ├─IndexMergeJoin_39	0.01	root	left outer join, inner:IndexLookUp_37, outer key:test.d.id, inner key:test.p.department_id
-      │ ├─IndexLookUp_54	0.01	root	
-      │ │ ├─IndexScan_51	10.00	cop	table:d, index:ctx, range:[1,1], keep order:false, stats:pseudo
-      │ │ └─Selection_53	0.01	cop	eq(test.d.status, 1000)
-      │ │   └─TableScan_52	10.00	cop	table:d, keep order:false, stats:pseudo
+      │ ├─IndexLookUp_58	0.01	root	
+      │ │ ├─IndexScan_55	10.00	cop	table:d, index:ctx, range:[1,1], keep order:false, stats:pseudo
+      │ │ └─Selection_57	0.01	cop	eq(test.d.status, 1000)
+      │ │   └─TableScan_56	10.00	cop	table:d, keep order:false, stats:pseudo
       │ └─IndexLookUp_37	0.01	root	
       │   ├─Selection_35	9.99	cop	not(isnull(test.p.department_id))
       │   │ └─IndexScan_33	10.00	cop	table:p, index:department_id, range: decided by [eq(test.p.department_id, test.d.id)], keep order:true, stats:pseudo
       │   └─Selection_36	0.01	cop	eq(test.p.status, 1000)
       │     └─TableScan_34	9.99	cop	table:p, keep order:false, stats:pseudo
-      └─TableReader_64	9.99	root	data:Selection_63
-        └─Selection_63	9.99	cop	eq(test.ep.status, 1000), not(isnull(test.ep.position_id))
-          └─TableScan_62	10000.00	cop	table:ep, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─TableReader_68	9.99	root	data:Selection_67
+        └─Selection_67	9.99	cop	eq(test.ep.status, 1000), not(isnull(test.ep.position_id))
+          └─TableScan_66	10000.00	cop	table:ep, range:[-inf,+inf], keep order:false, stats:pseudo
