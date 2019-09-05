@@ -900,11 +900,29 @@ func genNullCols(n int) []*Column {
 	return cols
 }
 
+func (s *testChunkSuite) TestVectorizedNulls(c *check.C) {
+	for i := 0; i < 256; i++ {
+		cols := genNullCols(4)
+		lCol, rCol := cols[0], cols[1]
+		vecResult, rowResult := cols[2], cols[3]
+		vecResult.SetNulls(0, 1024, false)
+		rowResult.SetNulls(0, 1024, false)
+		vecResult.MergeNulls(lCol, rCol)
+		for i := 0; i < 1024; i++ {
+			rowResult.SetNull(i, lCol.IsNull(i) || rCol.IsNull(i))
+		}
+
+		for i := 0; i < 1024; i ++ {
+			c.Assert(rowResult.IsNull(i), check.Equals, vecResult.IsNull(i))
+		}
+	}
+}
+
 func BenchmarkOrNullsVectorized(b *testing.B) {
 	cols := genNullCols(3)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		cols[0].OrNulls(cols[1:]...)
+		cols[0].MergeNulls(cols[1:]...)
 	}
 }
 

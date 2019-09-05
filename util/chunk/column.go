@@ -629,13 +629,16 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 	return dst
 }
 
-// OrNulls does the OR operation with all columns in the arguments.
+// MergeNulls merges these columns' null bitmaps.
+// For a row, if any column of it is null, the result is null.
+// It works like: if col1.IsNull || col2.IsNull || col3.IsNull.
 // The user should ensure that all these columns have the same length, and
 // data stored in these columns are fixed-length type.
-func (c *Column) OrNulls(cols ...*Column) {
+func (c *Column) MergeNulls(cols ...*Column) {
 	for _, col := range cols {
 		for i := range c.nullBitmap {
-			c.nullBitmap[i] |= col.nullBitmap[i]
+			// 1 is null while 0 is not null, so do AND operations here.
+			c.nullBitmap[i] &= col.nullBitmap[i]
 		}
 	}
 }
