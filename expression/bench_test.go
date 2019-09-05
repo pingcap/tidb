@@ -232,6 +232,12 @@ func (g *randLenStrGener) gen() interface{} {
 	return string(buf)
 }
 
+type randDurInt struct{}
+
+func (g *randDurInt) gen() interface{} {
+	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
+}
+
 type vecExprBenchCase struct {
 	retEvalType   types.EvalType
 	childrenTypes []types.EvalType
@@ -245,6 +251,7 @@ type vecExprBenchCase struct {
 var vecExprBenchCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
 		{types.ETInt, []types.EvalType{types.ETInt}, nil},
+		{types.ETDuration, []types.EvalType{types.ETInt}, []dataGenerator{new(randDurInt)}},
 	},
 	ast.Repeat: {
 		{types.ETString, []types.EvalType{types.ETString, types.ETInt}, []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
@@ -574,13 +581,12 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			case types.ETDuration:
 				err := baseFunc.vecEvalDuration(input, output)
 				c.Assert(err, IsNil)
-				d64s := output.GoDurations()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalDuration(row)
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
-						c.Assert(val, Equals, d64s[i])
+						c.Assert(val, Equals, output.GetDuration(i, types.UnspecifiedLength))
 					}
 					i++
 				}
