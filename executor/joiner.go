@@ -62,6 +62,8 @@ type joiner interface {
 	tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, isNull bool, err error)
 
 	// tryToMatchOuters tries to join an outer row with a batch of inner rows.
+	// It's used when the join is an outer join and the hash table is built
+	// using the inner side.
 	tryToMatchOuters(outer chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error)
 
 	// onMissMatch operates on the unmatched outer row according to the join
@@ -199,9 +201,9 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColsLen int) (bool,
 }
 
 // filterAndCheckOuterRowStatus is used to filter the result constructed by
-// tryToMatch, the result is built by multiple outer row and one inner rows. The
-// returned outerRowStatusFlag slice value indicates the status of outer rows(
-// matched/unmatched/hasNull).
+// tryToMatchOuters, the result is built by multiple outer rows and one inner
+// row. The returned outerRowStatusFlag slice value indicates the status of
+// each outer row( matched/unmatched/hasNull).
 func (j *baseJoiner) filterAndCheckOuterRowStatus(input, output *chunk.Chunk, innerColsLen int, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, _ error) {
 	var err error
 	j.selected, j.isNull, err = expression.VectorizedFilterConsiderNull(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected, j.isNull)
