@@ -64,14 +64,13 @@ IndexLookUp_9	0.00	root
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	1985.00	root	cast(join_agg_0)
-└─HashLeftJoin_19	1985.00	root	inner join, inner:HashAgg_26, equal:[eq(test.a.c1, test.b.c2)]
+└─HashLeftJoin_19	1985.00	root	inner join, inner:HashAgg_23, equal:[eq(test.a.c1, test.b.c2)]
   ├─TableReader_32	1999.00	root	data:TableScan_31
   │ └─TableScan_31	1999.00	cop	table:a, range:[-inf,+inf], keep order:false
-  └─HashAgg_26	1985.00	root	group by:col_2, funcs:count(col_0), firstrow(col_2)
-    └─TableReader_27	1985.00	root	data:HashAgg_21
-      └─HashAgg_21	1985.00	cop	group by:test.b.c2, funcs:count(test.b.c2)
-        └─Selection_25	1985.00	cop	not(isnull(test.b.c2))
-          └─TableScan_24	1985.00	cop	table:b, range:[-inf,+inf], keep order:false
+  └─HashAgg_23	1985.00	root	group by:test.b.c2, funcs:count(test.b.c2), firstrow(test.b.c2)
+    └─TableReader_30	1985.00	root	data:Selection_29
+      └─Selection_29	1985.00	cop	not(isnull(test.b.c2))
+        └─TableScan_28	1985.00	cop	table:b, range:[-inf,+inf], keep order:false
 explain select * from t2 order by t2.c2 limit 0, 1;
 id	count	task	operator info
 TopN_7	1.00	root	test.t2.c2:asc, offset:0, count:1
