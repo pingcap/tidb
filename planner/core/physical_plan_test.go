@@ -1778,8 +1778,8 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		},
 		// use TablePath when the hint only contains table.
 		{
-			sql:	"select /*+ INDEX(t) */ f from t where f > 10",
-			best: 	"TableReader(Table(t)->Sel([gt(test.t.f, 10)]))",
+			sql:	 "select /*+ INDEX(t) */ f from t where f > 10",
+			best: 	 "TableReader(Table(t)->Sel([gt(test.t.f, 10)]))",
 			hasWarn: false,
 		},
 		// there will be a warning instead of error when index not exist
