@@ -650,3 +650,19 @@ func (s *testMVCCLevelDB) TestErrors(c *C) {
 	c.Assert(ErrAlreadyCommitted(0).Error(), Equals, "txn already committed")
 	c.Assert((&ErrConflict{}).Error(), Equals, "write conflict")
 }
+
+func (s *testMVCCLevelDB) TestMvccGetByKey(c *C) {
+	s.mustPrewriteOK(c, putMutations("q1", "v5"), "p1", 5)
+	debugger, ok := s.store.(MVCCDebugger)
+	c.Assert(ok, IsTrue)
+	mvccInfo := debugger.MvccGetByKey([]byte("q1"))
+	except := &kvrpcpb.MvccInfo{
+		Lock: &kvrpcpb.MvccLock{
+			Type:       kvrpcpb.Op_Put,
+			StartTs:    5,
+			Primary:    []byte("p1"),
+			ShortValue: []byte("v5"),
+		},
+	}
+	c.Assert(mvccInfo, DeepEquals, except)
+}
