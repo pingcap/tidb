@@ -579,6 +579,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		col.Flag &= ^mysql.BinaryFlag
 		col.Flag |= mysql.ZerofillFlag
 	}
+
 	// If you specify ZEROFILL for a numeric column, MySQL automatically adds the UNSIGNED attribute to the column.
 	// See https://dev.mysql.com/doc/refman/5.7/en/numeric-type-overview.html for more details.
 	// But some types like bit and year, won't show its unsigned flag in `show create table`.
@@ -1983,11 +1984,21 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
+<<<<<<< HEAD
 // setDefaultAndComment is only used in getModifiableColumnJob.
 func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	if len(options) == 0 {
 		return nil
 	}
+=======
+// processColumnOptions is only used in getModifiableColumnJob.
+func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+		format.RestoreSpacesAroundBinaryOperation
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+
+>>>>>>> 2ef6f46... ddl: fix modify bit column (#12008)
 	var hasDefaultValue, setOnUpdateNow bool
 	var err error
 	for _, opt := range options {
@@ -2046,6 +2057,10 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
 	setNoDefaultValueFlag(col, hasDefaultValue)
+
+	if col.Tp == mysql.TypeBit {
+		col.Flag |= mysql.UnsignedFlag
+	}
 
 	if hasDefaultValue {
 		return errors.Trace(checkDefaultValue(ctx, col, true))
