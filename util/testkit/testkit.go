@@ -258,8 +258,9 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	tk.c.Assert(err, check.NotNil)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
-	tk.c.Assert(ok, check.IsTrue, check.Commentf("err: %T", originErr))
-	tk.c.Assert(tErr.ToSQLError().Code, check.Equals, uint16(errCode), check.Commentf("MySQL code:%v", tErr.ToSQLError()))
+	tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T'", originErr))
+	sqlErr := tErr.ToSQLError()
+	tk.c.Assert(int(sqlErr.Code), check.Equals, errCode, check.Commentf("Assertion failed, origin err:\n  %v", sqlErr))
 }
 
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
