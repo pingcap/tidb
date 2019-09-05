@@ -918,7 +918,7 @@ func (s *testChunkSuite) TestVectorizedNulls(c *check.C) {
 	}
 }
 
-func BenchmarkOrNullsVectorized(b *testing.B) {
+func BenchmarkMergeNullsVectorized(b *testing.B) {
 	cols := genNullCols(3)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
