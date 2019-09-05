@@ -203,7 +203,7 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColsLen int) (bool,
 // filterAndCheckOuterRowStatus is used to filter the result constructed by
 // tryToMatchOuters, the result is built by multiple outer rows and one inner
 // row. The returned outerRowStatusFlag slice value indicates the status of
-// each outer row(matched/unmatched/hasNull).
+// each outer row (matched/unmatched/hasNull).
 func (j *baseJoiner) filterAndCheckOuterRowStatus(input, output *chunk.Chunk, innerColsLen int, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, _ error) {
 	var err error
 	j.selected, j.isNull, err = expression.VectorizedFilterConsiderNull(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected, j.isNull)
