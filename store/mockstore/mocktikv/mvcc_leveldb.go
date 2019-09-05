@@ -933,6 +933,9 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
 
 // TxnHeartBeat implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) TxnHeartBeat(key []byte, startTS uint64, adviseTTL uint64) (uint64, error) {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
 	startKey := mvccEncode(key, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
 		Start: startKey,
