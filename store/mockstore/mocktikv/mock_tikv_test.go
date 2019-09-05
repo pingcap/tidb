@@ -656,7 +656,7 @@ func (s *testMVCCLevelDB) TestErrors(c *C) {
 }
 
 func (s *testMVCCLevelDB) TestTxnHeartBeat(c *C) {
-	s.mustPrewriteOKWithTTL(c, putMutations("pk", "val"), "pk", 5, 666)
+	s.mustPrewriteWithTTLOK(c, putMutations("pk", "val"), "pk", 5, 666)
 
 	// Update the ttl
 	ttl, err := s.store.TxnHeartBeat([]byte("pk"), 5, 888)
