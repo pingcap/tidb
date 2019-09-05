@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -45,7 +44,6 @@ type testPessimisticSuite struct {
 
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	config.GetGlobalConfig().PessimisticTxn.Enable = true
 	// Set it to 300ms for testing lock resolve.
 	tikv.PessimisticLockTTL = 300
 	s.cluster = mocktikv.NewCluster()
@@ -67,7 +65,6 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	config.GetGlobalConfig().PessimisticTxn.Enable = false
 	testleak.AfterTest(c)()
 }
 
