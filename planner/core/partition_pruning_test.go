@@ -91,6 +91,7 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 	c.Assert(err, IsNil)
 	succ, err = s.canBePruned(ctx, nil, partitionExpr[0], queryExpr)
 	c.Assert(err, IsNil)
+	_ = succ
 	// c.Assert(succ, IsTrue)
 	// TODO: Uncomment the check after fixing issue https://github.com/pingcap/tidb/issues/12028
 	// report_updated > unix_timestamp('2008-05-01 00:00:00') is converted to gt(t.t.report_updated, <nil>)
