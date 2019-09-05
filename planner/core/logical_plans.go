@@ -773,9 +773,9 @@ type baseShowContent struct {
 	User        *auth.UserIdentity   // Used for show grants.
 	Roles       []*auth.RoleIdentity // Used for show grants.
 	Full        bool
-	IfNotExists bool // Used for `show create database if not exists`
+	IfNotExists bool // Used for `show create database if not exists`.
 
-	GlobalScope bool // Used by show variables
+	GlobalScope bool // Used by show variables.
 }
 
 // LogicalShow represents a show plan.

@@ -43,6 +43,7 @@ func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo) (*prope
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+	// A fake count, just to avoid panic now.
 	profile := &property.StatsInfo{
 		RowCount:    1,
 		Cardinality: make([]float64, p.Schema().Len()),
