@@ -1843,7 +1843,12 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	s.tk.MustExec("create table t3 (a int, b int);")
 	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
 	s.tk.MustGetErrCode(failSQL, tmysql.ErrKeyColumnDoesNotExits)
-	s.tk.MustExec("drop table if exists t1,t2,t3;")
+	// test add foreign key to generated column
+	failSQL = "create table t4 (a int, b int as (a+1) virtual, foreign key (b) references t1(a));"
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrCannotAddForeign)
+	failSQL = "create table t5 (a int, b int as (a+1) stored, foreign key (b) references t1(a));"
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrCannotAddForeign)
+	s.tk.MustExec("drop table if exists t1,t2,t3,t4,t5;")
 }
 
 func (s *testDBSuite3) TestTruncateTable(c *C) {

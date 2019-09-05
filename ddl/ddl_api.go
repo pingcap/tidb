@@ -997,14 +997,32 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, fo
 	}
 }
 
-func checkConstraintNames(constraints []*ast.Constraint) error {
+func checkAddFKOnGeneratedColumn(constr *ast.Constraint, colDefs []*ast.ColumnDef) error {
+	for _, key := range constr.Keys {
+		for _, colDef := range colDefs {
+			for _, option := range colDef.Options {
+				if option.Tp == ast.ColumnOptionGenerated && colDef.Name.Name.L == key.Column.Name.L {
+					return infoschema.ErrCannotAddForeign
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func checkConstraintNames(constraints []*ast.Constraint, colDefs []*ast.ColumnDef) error {
 	constrNames := map[string]bool{}
 	fkNames := map[string]bool{}
 
 	// Check not empty constraint name whether is duplicated.
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
-			err := checkDuplicateConstraint(fkNames, constr.Name, true)
+			// Check add foreign key to generated columns
+			err := checkAddFKOnGeneratedColumn(constr, colDefs)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = checkDuplicateConstraint(fkNames, constr.Name, true)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1274,7 +1292,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		return nil, errors.Trace(err)
 	}
 
-	err = checkConstraintNames(newConstraints)
+	err = checkConstraintNames(newConstraints, colDefs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
