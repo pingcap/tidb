@@ -213,15 +213,13 @@ func (g *defaultGener) gen() interface{} {
 	case types.ETInt:
 		if rand.Float64() < 0.5 {
 			return -rand.Int63()
-		} else {
-			return rand.Int63()
 		}
+		return rand.Int63()
 	case types.ETReal:
 		if rand.Float64() < 0.5 {
 			return -rand.Float64()
-		} else {
-			return rand.Float64()
 		}
+		return rand.Float64()
 	case types.ETDecimal:
 		d := new(types.MyDecimal)
 		f := rand.Float64() * 100000
