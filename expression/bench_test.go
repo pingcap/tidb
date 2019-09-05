@@ -503,16 +503,18 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
-	ctx := mock.NewContext()
 	for funcName, testCases := range vecExprBenchCases {
 		for _, testCase := range testCases {
+			ctx := mock.NewContext()
 			baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			it := chunk.NewIterator4Chunk(input)
 			i := 0
+			var vecWarnCnt uint16
 			switch testCase.retEvalType {
 			case types.ETInt:
 				err := baseFunc.vecEvalInt(input, output)
 				c.Assert(err, IsNil)
+				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				i64s := output.Int64s()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalInt(row)
@@ -526,6 +528,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			case types.ETReal:
 				err := baseFunc.vecEvalReal(input, output)
 				c.Assert(err, IsNil)
+				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				f64s := output.Float64s()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalReal(row)
@@ -539,6 +542,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			case types.ETDecimal:
 				err := baseFunc.vecEvalDecimal(input, output)
 				c.Assert(err, IsNil)
+				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				d64s := output.Decimals()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalDecimal(row)
@@ -552,6 +556,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			case types.ETDatetime, types.ETTimestamp:
 				err := baseFunc.vecEvalTime(input, output)
 				c.Assert(err, IsNil)
+				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				t64s := output.Times()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalTime(row)
@@ -565,6 +570,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			case types.ETDuration:
 				err := baseFunc.vecEvalDuration(input, output)
 				c.Assert(err, IsNil)
+				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				d64s := output.GoDurations()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalDuration(row)
@@ -578,6 +584,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			case types.ETJson:
 				err := baseFunc.vecEvalJSON(input, output)
 				c.Assert(err, IsNil)
+				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalDuration(row)
 					c.Assert(err, IsNil)
@@ -590,6 +597,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			case types.ETString:
 				err := baseFunc.vecEvalString(input, output)
 				c.Assert(err, IsNil)
+				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalString(row)
 					c.Assert(err, IsNil)
@@ -601,6 +609,14 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 				}
 			default:
 				c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+			}
+
+			// check warnings
+			totalWarns := ctx.GetSessionVars().StmtCtx.WarningCount()
+			c.Assert(2*vecWarnCnt, Equals, totalWarns)
+			warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			for i := 0; i < int(vecWarnCnt); i++ {
+				c.Assert(warns[i].Err.Error(), Equals, warns[i+int(vecWarnCnt)].Err.Error())
 			}
 		}
 	}
