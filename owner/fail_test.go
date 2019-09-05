@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -40,19 +41,32 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	ln net.Listener
+	ln  net.Listener
+	srv *grpc.Server
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
 	ln, err := net.Listen("unix", "new_session:12379")
 	c.Assert(err, IsNil)
 	s.ln = ln
+	s.srv = grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
+	go func() {
+		if err = s.srv.Serve(s.ln); err != nil {
+			logutil.BgLogger().Error(
+				"can't serve gRPC requests",
+				zap.Error(err),
+			)
+		}
+	}()
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
 	if s.ln != nil {
 		err := s.ln.Close()
 		c.Assert(err, IsNil)
+	}
+	if s.srv != nil {
+		s.srv.Stop()
 	}
 }
 
