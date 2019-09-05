@@ -32,10 +32,11 @@ func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
 		if len(path.idxCols) == 0 {
 			continue
 		}
-
-		result = append(result, path.idxCols)
+		result = append(result, make([]*expression.Column, len(path.idxCols)))
+		copy(result[len(result)-1], path.idxCols)
 		for i := 0; i < path.eqCondCount && i+1 < len(path.idxCols); i++ {
-			result = append(result, path.idxCols[i+1:])
+			result = append(result, make([]*expression.Column, len(path.idxCols)-i-1))
+			copy(result[len(result)-1], path.idxCols[i+1:])
 		}
 	}
 	return result
