@@ -182,12 +182,7 @@ func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
 
 // Column represents a column.
 type Column struct {
-	OrigColName model.CIStr
-	ColName     model.CIStr
-	DBName      model.CIStr
-	OrigTblName model.CIStr
-	TblName     model.CIStr
-	RetType     *types.FieldType
+	RetType *types.FieldType
 	// ID is used to specify whether this column is ExtraHandleColumn or to access histogram.
 	// We'll try to remove it in the future.
 	ID int64

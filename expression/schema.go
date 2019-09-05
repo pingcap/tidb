@@ -29,6 +29,12 @@ func (ki KeyInfo) Clone() KeyInfo {
 	return result
 }
 
+func (ki KeyInfo) Shallow() KeyInfo {
+	result := make([]*Column, len(ki))
+	copy(result, ki)
+	return result
+}
+
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
 	Columns []*Column
@@ -61,6 +67,18 @@ func (s *Schema) Clone() *Schema {
 	}
 	for _, key := range s.Keys {
 		keys = append(keys, key.Clone())
+	}
+	schema := NewSchema(cols...)
+	schema.SetUniqueKeys(keys)
+	return schema
+}
+
+func (s *Schema) Shallow() *Schema {
+	cols := make([]*Column, s.Len())
+	keys := make([]KeyInfo, 0, len(s.Keys))
+	copy(cols, s.Columns)
+	for _, key := range s.Keys {
+		keys = append(keys, key.Shallow())
 	}
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
@@ -168,13 +186,13 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 		return nil
 	}
 	if lSchema == nil {
-		return rSchema.Clone()
+		return rSchema.Shallow()
 	}
 	if rSchema == nil {
-		return lSchema.Clone()
+		return lSchema.Shallow()
 	}
-	tmpL := lSchema.Clone()
-	tmpR := rSchema.Clone()
+	tmpL := lSchema.Shallow()
+	tmpR := rSchema.Shallow()
 	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)
 	return ret
 }
