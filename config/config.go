@@ -100,6 +100,9 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	// For repair mode
+	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
+	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -525,6 +528,9 @@ var defaultConf = Config{
 		MaxStmtCount: 100,
 		MaxSQLLength: 4096,
 	},
+	// For Repair Mode.
+	RepairMode:      false,
+	RepairTableList: []string{},
 }
 
 var (

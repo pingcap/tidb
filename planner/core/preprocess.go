@@ -15,6 +15,8 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/util/admin"
 	"math"
 	"strings"
 
@@ -66,6 +68,8 @@ const (
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
 	parentIsJoin
+	// inRepairTable is set when visiting repair table statement
+	inRepairTable
 )
 
 // preprocessor is an ast.Visitor that preprocess
@@ -126,6 +130,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
 		return in, true
+	case *ast.RepairTableStmt:
+		// RepairTable should be consist of create table and rename table's logic
+		p.flag |= inRepairTable
+		p.checkRepairTableGrammar(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -203,6 +211,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				x.Args[0] = ast.NewValueExpr(0)
 			}
 		}
+	case *ast.RepairTableStmt:
+		p.flag &= ^inRepairTable
 	}
 
 	return in, p.err == nil
@@ -497,6 +507,10 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 	oldTable := stmt.OldTable.Name.String()
 	newTable := stmt.NewTable.Name.String()
 
+	p.checkRenameTable(oldTable, newTable)
+}
+
+func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 	if isIncorrectName(oldTable) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(oldTable)
 		return
@@ -506,6 +520,23 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(newTable)
 		return
 	}
+}
+
+func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
+	// check create table stmt whether it's is in REPAIR MODE
+	if !domain.GetDomain(p.ctx).InRepairMode() {
+		p.err = errors.New("TiDB is not in repair mode")
+		return
+	}
+	if len(domain.GetDomain(p.ctx).GetTablesInRepair()) == 0 {
+		p.err = errors.New("Repair list is empty")
+		return
+	}
+
+	// check rename action like rename stmt does
+	oldTable := stmt.Table.Name.String()
+	newTable := stmt.CreateStmt.Table.Name.String()
+	p.checkRenameTable(oldTable, newTable)
 }
 
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
@@ -718,6 +749,13 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		// Skip resolving the table to avoid error.
 		return
 	}
+	// repairStmt: admin repair table A create table B ...
+	// repairStmt's tableName is whether inCreateOrDropTable(B) or inRepairTable(A) flag.
+	if p.flag&inRepairTable > 0 {
+		p.handleRepairName(tn)
+		return
+	}
+
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		p.err = err
@@ -726,6 +764,34 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	tn.TableInfo = table.Meta()
 	dbInfo, _ := p.is.SchemaByName(tn.Schema)
 	tn.DBInfo = dbInfo
+}
+
+func (p *preprocessor) handleRepairName(tn *ast.TableName) {
+	dbMap := domain.GetDomain(p.ctx).GetTablesInRepair()
+	// tn only has the DBName here.
+	var dbInfo *model.DBInfo
+	for _, v := range dbMap {
+		if v.Name.L == tn.Schema.L {
+			dbInfo = v
+		}
+	}
+	if dbInfo == nil {
+		p.err = errors.New("unknown database to repair")
+		return
+	}
+	var repairTable *model.TableInfo
+	for _, t := range dbInfo.Tables {
+		if t.Name.L == tn.Name.L {
+			repairTable = t
+			break
+		}
+	}
+	if repairTable == nil {
+		p.err = errors.New("unknown table to repair")
+		return
+	}
+	p.ctx.SetValue(admin.RepairedTable, repairTable)
+	p.ctx.SetValue(admin.RepairedDatabase, dbInfo)
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {

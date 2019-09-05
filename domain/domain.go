@@ -16,6 +16,7 @@ package domain
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -76,6 +77,13 @@ type Domain struct {
 	wg                   sync.WaitGroup
 	statsUpdating        sync2.AtomicInt32
 }
+
+// Repair variable will ignore repaired table meta
+var (
+	RepairMode      bool
+	RepairTableList []string
+	RepairDBInfoMap map[int64]*model.DBInfo
+)
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
 // infoschema version, if it is the same as the schema version at startTS, we don't need to reload again.
@@ -207,6 +215,32 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 				continue
 			}
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
+			// check the repair mode.
+			if RepairMode {
+				inRepair := false
+				for _, tn := range RepairTableList {
+					// use dbName and tableName to specified a table.
+					if strings.ToLower(tn) == di.Name.L+"."+tbl.Name.L {
+						// this table is in repair table list.
+						inRepair = true
+						break
+					}
+				}
+				if inRepair {
+					// record the repaired table in Map.
+					if repairedDB, ok := RepairDBInfoMap[di.ID]; ok {
+						repairedDB.Tables = append(repairedDB.Tables, tbl)
+					} else {
+						// shallow copy the DB.
+						repairedDB := di.Copy()
+						// clean the table and set repaired table.
+						repairedDB.Tables = []*model.TableInfo{}
+						repairedDB.Tables = append(repairedDB.Tables, tbl)
+						RepairDBInfoMap[di.ID] = repairedDB
+					}
+					continue
+				}
+			}
 			di.Tables = append(di.Tables, tbl)
 		}
 	}
@@ -1137,4 +1171,18 @@ func init() {
 		mysql.ErrInfoSchemaChanged: mysql.ErrInfoSchemaChanged,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDomain] = domainMySQLErrCodes
+
+	RepairMode = false
+	RepairTableList = []string{}
+	RepairDBInfoMap = make(map[int64]*model.DBInfo, 0)
+}
+
+// InRepairMode judge whether tidb now is in repairMode.
+func (do *Domain) InRepairMode() bool {
+	return RepairMode
+}
+
+// GetTablesInRepair get the repaired table in repair.
+func (do *Domain) GetTablesInRepair() map[int64]*model.DBInfo {
+	return RepairDBInfoMap
 }

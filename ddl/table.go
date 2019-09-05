@@ -92,6 +92,15 @@ func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 	return t.CreateTableOrView(schemaID, tbInfo)
 }
 
+func repairTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
+	err := checkTableInfoValid(tbInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return t.UpdateTable(schemaID, tbInfo)
+}
+
 func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
@@ -895,4 +904,51 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 		}
 	}
 	return nil
+}
+
+func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	// todo add failpoint here
+
+	schemaID := job.SchemaID
+	tbInfo := &model.TableInfo{}
+
+	// 从job的参数中直接把这个表的信息拿出来
+	if err := job.DecodeArgs(tbInfo); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	// 仍然用这种从无到有的模式变更
+	tbInfo.State = model.StateNone
+
+	// repair require the db and table exists
+	_, err := getTableInfo(t, job.TableID, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Repair table will still update the schema version, although ddl job done in whatever server started, it must be in the REPAIR MODE.
+	// So the repaired table is blind to user, won't causing the "schema has changed" error when in concurrency circumstance.
+	// The table after repairing will remove from repair list.
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	switch tbInfo.State {
+	case model.StateNone:
+		// none -> public
+		tbInfo.State = model.StatePublic
+		tbInfo.UpdateTS = t.StartTS
+		err = repairTableOrViewWithCheck(t, job, schemaID, tbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRepairTable, TableInfo: tbInfo})
+		return ver, nil
+	default:
+		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
+	}
 }

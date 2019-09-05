@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/admin"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -3928,4 +3929,77 @@ func extractCollateFromOption(def *ast.ColumnDef) []string {
 		}
 	}
 	return specifiedCollates
+}
+
+func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
+	// we have check the repair table in preprocess, so get the result directly here.
+	oldTableInfo, ok := (ctx.Value(admin.RepairedTable)).(*model.TableInfo)
+	if !ok || oldTableInfo == nil {
+		return errors.New("can't get tableInfo in ctx")
+	}
+	oldDBInfo, ok := (ctx.Value(admin.RepairedDatabase)).(*model.DBInfo)
+	if !ok || oldDBInfo == nil {
+		return errors.New("can't get dbInfo in ctx")
+	}
+	// now only support same db repair
+	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
+		return errors.New("repaired table should in same db with the old one")
+	}
+	// create new tableInfo with ast.CreateStmt, that means we can't support partitioned table by now.
+	newTableInfo, err := BuildTableInfoFromAST(createStmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// override newTableInfo with oldTableInfo's necessary element
+	// todo: maybe more
+	newTableInfo.ID = oldTableInfo.ID
+	//newTableInfo.Name = oldTableInfo.Name
+	//newTableInfo.State = oldTableInfo.State   //状态是不能复用
+	//newTableInfo.AutoIncID = oldTableInfo.AutoIncID   // updateTS应该也不能复用
+	ctx.SetValue(admin.RepairedTable, newTableInfo)
+
+	for _, i := range newTableInfo.Indices { //表的顺坏，一般都是在建立在缺失的因素上引起的,所以旧的id基本上都复用
+		for _, j := range oldTableInfo.Indices {
+			if i.Name.L == j.Name.L {
+				i.ID = j.ID
+				break
+			}
+		}
+	}
+
+	// before update the tableInfo into TiKV, exec the select stmt check the data
+	//sql := "select * from " + oldDBInfo.Name.L + "." + oldTableInfo.Name.L
+	//se, err := d.sessPool.get()
+	//if err != nil {
+	//	return errors.Trace(err)
+	//}
+
+	// 目前先放弃数据自检
+	//a, b, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	//if err != nil {
+	//	return errors.New("pull data through the new TableInfo error, please check the create table statement")
+	//}
+	//fmt.Println(a, b)
+
+	// data parsed the new TableInfo, update the new one.
+	job := &model.Job{
+		SchemaID:   oldDBInfo.ID,
+		TableID:    newTableInfo.ID,
+		SchemaName: oldDBInfo.Name.L,
+		Type:       model.ActionRepairTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTableInfo},
+	}
+
+	// todo kv store is write without overriding, need a new action here!
+	err = d.doDDLJob(ctx, job)
+
+	// table exists, but if_not_exists flags is true, so we ignore this error.
+	if infoschema.ErrTableExists.Equal(err) && createStmt.IfNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }

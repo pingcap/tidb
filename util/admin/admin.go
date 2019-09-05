@@ -774,3 +774,17 @@ var (
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = terror.ClassAdmin.New(codeCannotCancelDDLJob, "This job:%v is almost finished, can't be cancelled now")
 )
+
+// This is keyType for admin repair table
+type repairKeyType int
+
+const (
+	// RepairedTable is the key type, caching the target repaired table in sessionCtx.
+	RepairedTable repairKeyType = iota
+	// RepairedDatabase is the key type, caching the target repaired database in sessionCtx.
+	RepairedDatabase
+)
+
+func (t repairKeyType) String() string {
+	return "repairedTable"
+}
