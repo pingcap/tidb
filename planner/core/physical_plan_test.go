@@ -1214,8 +1214,8 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 		sc.IgnoreTruncate = false
 		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
-		c.Assert(err, IsNil)
-		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(err, IsNil, comment)
+		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
 }
 
