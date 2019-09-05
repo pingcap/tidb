@@ -557,7 +557,6 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 	return ds.TblColHists.GetAvgRowSize(scanCols, true)
 }
 
-// TODO: refactor this part, we should not call Clone in fact.
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(is.IdxCols), len(idx.Columns)+1)
 	copy(indexCols, is.IdxCols)
@@ -565,6 +564,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, idxExprCol
 		if idxExprCols[i] != nil {
 			indexCols = append(indexCols, idxExprCols[i])
 		} else {
+			// TODO: try to reuse the col generated when building the DataSource.
 			indexCols = append(indexCols, &expression.Column{
 				ColName:  idx.Columns[i].Name,
 				RetType:  &is.Table.Columns[idx.Columns[i].Offset].FieldType,
