@@ -948,7 +948,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 				zap.Uint64("txnStartTS", c.startTS))
 			return errors.Trace(err)
 		}
-		logutil.Logger(ctx).Debug("2PC succeed with error",
+		logutil.Logger(ctx).Debug("got some exceptions, but 2pc was still successful",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
 	}
