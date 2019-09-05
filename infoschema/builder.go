@@ -71,7 +71,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, oldTableID)
 	}
-	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
+	dbInfo, err := b.copySchemaTables(roDBInfo.Name.L)
+	if err != nil {
+		return nil, err
+	}
 	b.copySortedTables(oldTableID, newTableID)
 
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
@@ -87,7 +90,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
 			}
-			oldDBInfo := b.copySchemaTables(oldRoDBInfo.Name.L)
+			oldDBInfo, err := b.copySchemaTables(oldRoDBInfo.Name.L)
+			if err != nil {
+				return nil, err
+			}
 			b.applyDropTable(oldDBInfo, oldTableID)
 		} else {
 			b.applyDropTable(dbInfo, oldTableID)
@@ -140,7 +146,10 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.copySchemaTables(di.Name.O)
+	newDbInfo, err := b.copySchemaTables(di.Name.O)
+	if err != nil {
+		return err
+	}
 	newDbInfo.Charset = di.Charset
 	newDbInfo.Collate = di.Collate
 	return nil
@@ -204,13 +213,10 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		return errors.Trace(err)
 	}
 
-	// Copy and Set
 	st, ok := b.is.schemaMap.Get(dbInfo.Name.L)
 	if !ok {
-		return errors.New("infoSchema error")
+		return ErrDatabaseNotExists.GenWithStackByArgs(dbInfo.Name)
 	}
-
-	// Copied
 	st.(*schemaTables).tables.Set(tblInfo.Name.L, tbl)
 
 	bucketIdx := tableBucketIdx(tableID)
@@ -265,21 +271,7 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64) {
 		return
 	}
 	if tn, ok := b.is.schemaMap.Get(dbInfo.Name.L); ok {
-		oldSchemaTables := tn.(*schemaTables)
-
-		// newSchemaTables := &schemaTables{
-		// 	dbInfo: oldSchemaTables.dbInfo.Copy(),
-		// 	tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
-		// }
-		// for k, v := range oldSchemaTables.tables {
-		// 	if k != sortedTbls[idx].Meta().Name.L {
-		// 		newSchemaTables.tables[k] = v
-		// 	}
-		// }
-		// b.is.schemaMap.Set(dbInfo.Name.L, newSchemaTables)
-		// dbInfo = newSchemaTables.dbInfo
-
-		oldSchemaTables.tables.Delete(sortedTbls[idx].Meta().Name.L)
+		tn.(*schemaTables).tables.Delete(sortedTbls[idx].Meta().Name.L)
 	}
 	// Remove the table in sorted table slice.
 	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTbls[0:idx], sortedTbls[idx+1:]...)
@@ -308,10 +300,10 @@ func (b *Builder) InitWithOldInfoSchema() *Builder {
 
 // copySchemaTables creates a new schemaTables instance when a table in the database has changed.
 // It also does modifications on the new one because old schemaTables must be read-only.
-func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
+func (b *Builder) copySchemaTables(dbName string) (*model.DBInfo, error) {
 	st, ok := b.is.schemaMap.Get(dbName)
 	if !ok {
-		panic(fmt.Sprintf("Cannot find DB: %v", dbName))
+		return nil, ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
 	oldSchemaTables := st.(*schemaTables)
 	newSchemaTables := &schemaTables{
@@ -319,7 +311,7 @@ func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 		tables: *oldSchemaTables.tables.Spawn(),
 	}
 	b.is.schemaMap.Set(dbName, newSchemaTables)
-	return newSchemaTables.dbInfo
+	return newSchemaTables.dbInfo, nil
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo and schema version.
