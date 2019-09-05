@@ -524,8 +524,8 @@ func (b *PlanBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan Logic
 
 // coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
 func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, rightJoin bool, filter map[string]bool) error {
-	lsc := leftPlan.Schema().Clone()
-	rsc := rightPlan.Schema().Clone()
+	lsc := leftPlan.Schema().Shallow()
+	rsc := rightPlan.Schema().Shallow()
 	lColumns, rColumns := lsc.Columns, rsc.Columns
 	lNames, rNames := leftPlan.OutputNames().Shallow(), rightPlan.OutputNames().Shallow()
 	if rightJoin {
@@ -846,7 +846,7 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 	b.optFlag = b.optFlag | flagPushDownAgg
 	plan4Agg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
-		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
+		GroupByItems: expression.Column2Exprs(child.Schema().Shallow().Columns[:length]),
 	}.Init(b.ctx)
 	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
@@ -857,12 +857,15 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, aggDesc)
 	}
 	plan4Agg.SetChildren(child)
-	plan4Agg.SetSchema(child.Schema().Clone())
+	plan4Agg.schema = expression.NewSchema(make([]*expression.Column, 0, child.Schema().Len())...)
 	plan4Agg.names = child.OutputNames()
 	// Distinct will be rewritten as first_row, we reset the type here since the return type
 	// of first_row is not always the same as the column arg of first_row.
-	for i, col := range plan4Agg.schema.Columns {
-		col.RetType = plan4Agg.AggFuncs[i].RetTp
+	for i := range child.Schema().Columns {
+		plan4Agg.schema.Columns = append(plan4Agg.schema.Columns, &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  plan4Agg.AggFuncs[i].RetTp,
+		})
 	}
 	return plan4Agg, nil
 }
@@ -924,7 +927,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 		}
 		b.optFlag |= flagEliminateProjection
 		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx)
-		proj.SetSchema(u.schema.Clone())
+		proj.SetSchema(u.schema.Shallow())
 		proj.SetChildren(child)
 		u.children[childID] = proj
 	}
@@ -980,10 +983,7 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, union *ast.UnionStmt) (Log
 	if oldLen != unionPlan.Schema().Len() {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(unionPlan.Schema().Columns[:oldLen])}.Init(b.ctx)
 		proj.SetChildren(unionPlan)
-		schema := expression.NewSchema(unionPlan.Schema().Clone().Columns[:oldLen]...)
-		for _, col := range schema.Columns {
-			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
-		}
+		schema := expression.NewSchema(unionPlan.Schema().Shallow().Columns[:oldLen]...)
 		proj.names = unionPlan.OutputNames()[:oldLen]
 		proj.SetSchema(schema)
 		return proj, nil
@@ -2263,10 +2263,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if oldLen != p.Schema().Len() {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx)
 		proj.SetChildren(p)
-		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
-		for _, col := range schema.Columns {
-			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
-		}
+		schema := expression.NewSchema(p.Schema().Shallow().Columns[:oldLen]...)
 		proj.names = p.OutputNames()[:oldLen]
 		proj.SetSchema(schema)
 		return proj, nil
@@ -2598,7 +2595,7 @@ func (b *PlanBuilder) projectVirtualColumns(ctx context.Context, ds *DataSource,
 		proj.Exprs[i] = expression.ColumnSubstitute(expr, ds.Schema(), proj.Exprs)
 	}
 
-	proj.SetSchema(ds.Schema().Clone())
+	proj.SetSchema(ds.Schema().Shallow())
 	proj.names = ds.names
 	for _, cols := range b.handleHelper.tailMap() {
 		cols[0] = proj.schema.RetrieveColumn(cols[0])
@@ -2649,7 +2646,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.names = make([]*types.FieldName, outerPlan.Schema().Len(), outerPlan.Schema().Len()+innerPlan.Schema().Len()+1)
 	copy(joinPlan.names, outerPlan.OutputNames())
 	if asScalar {
-		newSchema := outerPlan.Schema().Clone()
+		newSchema := outerPlan.Schema().Shallow()
 		newSchema.Append(&expression.Column{
 			RetType:  types.NewFieldType(mysql.TypeTiny),
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -2662,7 +2659,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			joinPlan.JoinType = LeftOuterSemiJoin
 		}
 	} else {
-		joinPlan.SetSchema(outerPlan.Schema().Clone())
+		joinPlan.SetSchema(outerPlan.Schema().Shallow())
 		if not {
 			joinPlan.JoinType = AntiSemiJoin
 		} else {
@@ -3051,7 +3048,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	if !delete.IsMultiTable && oldLen != p.Schema().Len() {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx)
 		proj.SetChildren(p)
-		proj.SetSchema(oldSchema.Clone())
+		proj.SetSchema(oldSchema.Shallow())
 		proj.names = p.OutputNames()[:oldLen]
 		p = proj
 	}
@@ -3558,7 +3555,7 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 		}.Init(b.ctx)
 		window.names = make([]*types.FieldName, np.Schema().Len()+len(funcs))
 		copy(window.names, np.OutputNames())
-		schema := np.Schema().Clone()
+		schema := np.Schema().Shallow()
 		descs := make([]*aggregation.WindowFuncDesc, 0, len(funcs))
 		preArgs := 0
 		for _, windowFunc := range funcs {

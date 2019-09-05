@@ -76,7 +76,7 @@ func (a *aggregationEliminateChecker) convertAggToProj(agg *LogicalAggregation) 
 		expr := a.rewriteExpr(agg.ctx, fun)
 		proj.Exprs = append(proj.Exprs, expr)
 	}
-	proj.SetSchema(agg.schema.Clone())
+	proj.SetSchema(agg.schema.Shallow())
 	return proj
 }
 

@@ -262,7 +262,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 
 func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.SubqueryExpr) (LogicalPlan, error) {
 	if er.schema != nil {
-		outerSchema := er.schema.Clone()
+		outerSchema := er.schema.Shallow()
 		er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
 		er.b.outerNames = append(er.b.outerNames, er.names)
 		defer func() {
@@ -568,11 +568,11 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	er.p = er.b.buildApplyWithJoinType(er.p, plan4Agg, InnerJoin)
 	joinSchema := er.p.Schema()
 	proj := LogicalProjection{
-		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
+		Exprs: expression.Column2Exprs(joinSchema.Columns[:outerSchemaLen]),
 	}.Init(er.sctx)
 	proj.names = make([]*types.FieldName, outerSchemaLen, outerSchemaLen+1)
 	copy(proj.names, er.p.OutputNames())
-	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
+	proj.SetSchema(expression.NewSchema(joinSchema.Shallow().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
@@ -733,6 +733,17 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		er.err = err
 		return v, true
 	}
+	rewriteInAndAgg := er.sctx.GetSessionVars().AllowInSubqToJoinAndAgg && !v.Not && !asScalar && len(extractCorColumnsBySchema(np, er.p.Schema())) == 0
+	if rewriteInAndAgg {
+		er.b.optFlag |= flagEliminateAgg
+		// Build distinct for the inner query.
+		agg, err := er.b.buildDistinct(np, np.Schema().Len())
+		if err != nil {
+			er.err = err
+			return v, true
+		}
+		np = agg
+	}
 	lLen := expression.GetRowLen(lexpr)
 	if lLen != np.Schema().Len() {
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
@@ -772,24 +783,17 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
 	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
 	// and don't need to append a scalar value, we can rewrite it to inner join.
-	if er.sctx.GetSessionVars().AllowInSubqToJoinAndAgg && !v.Not && !asScalar && len(extractCorColumnsBySchema(np, er.p.Schema())) == 0 {
+	if rewriteInAndAgg {
 		// We need to try to eliminate the agg and the projection produced by this operation.
-		er.b.optFlag |= flagEliminateAgg
 		er.b.optFlag |= flagEliminateProjection
 		er.b.optFlag |= flagJoinReOrder
-		// Build distinct for the inner query.
-		agg, err := er.b.buildDistinct(np, np.Schema().Len())
-		if err != nil {
-			er.err = err
-			return v, true
-		}
 		// Build inner join above the aggregation.
 		join := LogicalJoin{JoinType: InnerJoin}.Init(er.sctx)
-		join.SetChildren(er.p, agg)
-		join.SetSchema(expression.MergeSchema(er.p.Schema(), agg.schema))
-		join.names = make([]*types.FieldName, er.p.Schema().Len()+agg.Schema().Len())
+		join.SetChildren(er.p, np)
+		join.SetSchema(expression.MergeSchema(er.p.Schema(), np.Schema()))
+		join.names = make([]*types.FieldName, er.p.Schema().Len()+np.Schema().Len())
 		copy(join.names, er.p.OutputNames())
-		copy(join.names[er.p.Schema().Len():], agg.OutputNames())
+		copy(join.names[er.p.Schema().Len():], np.OutputNames())
 		join.attachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {

@@ -822,7 +822,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblReaderCols, schema.Columns, idx)
 	fullIdxCols, _ := expression.IndexInfo2Cols(tblReaderCols, schema.Columns, idx)
 	// Add generated columns to tblSchema and tblReaderCols.
-	tblSchema := schema.Clone()
+	tblSchema := schema.Shallow()
 	for _, col := range genCols {
 		if _, ok := colsMap[col.ID]; !ok {
 			info := findColumnInfoByID(tblInfo.Columns, col.ID)

@@ -288,10 +288,10 @@ func (p *LogicalJoin) mergeSchema() {
 	rChild := p.children[1]
 	composedSchema := expression.MergeSchema(lChild.Schema(), rChild.Schema())
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
-		p.schema = lChild.Schema().Clone()
+		p.schema = lChild.Schema().Shallow()
 	} else if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
-		p.schema = lChild.Schema().Clone()
+		p.schema = lChild.Schema().Shallow()
 		p.schema.Append(joinCol)
 	} else {
 		p.schema = composedSchema
@@ -375,7 +375,7 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error 
 		return err
 	}
 
-	p.SetSchema(p.children[0].Schema().Clone())
+	p.SetSchema(p.children[0].Schema().Shallow())
 	p.Schema().Append(windowColumns...)
 	return nil
 }
