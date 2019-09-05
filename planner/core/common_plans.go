@@ -349,11 +349,10 @@ func (e *Execute) rebuildRange(p Plan) error {
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
-	idxCols, colLengths := expression.IndexInfo2PrefixCols(is.Columns, is.schema.Columns, is.Index)
-	if len(idxCols) == 0 {
+	if len(is.IdxCols) == 0 {
 		return ranger.FullRange(), nil
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens)
 	if err != nil {
 		return nil, err
 	}
