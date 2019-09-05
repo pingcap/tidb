@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -1169,7 +1168,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		return nil, err
 	}
 	execAst.BinaryArgs = args
-	execPlan, err := planner.OptimizeExecCached(ctx, s, execAst, is)
+	execPlan, err := plannercore.OptimizeExecStmt(ctx, s, execAst, is)
 	if err != nil {
 		return nil, err
 	}

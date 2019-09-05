@@ -17,7 +17,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
@@ -62,23 +61,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	// Reoptimize after restore the original hint.
 	return optimize(ctx, sctx, node, is)
-}
-
-// OptimizeExecCached to optimize execute statement with plan cached
-func OptimizeExecCached(ctx context.Context, sctx sessionctx.Context,
-	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
-	var err error
-	builder := plannercore.NewPlanBuilder(sctx, is, nil)
-	p, err := builder.Build(ctx, execAst)
-	if err != nil {
-		return nil, err
-	}
-	if execPlan, ok := p.(*plannercore.Execute); ok {
-		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		return execPlan.Plan, err
-	}
-	err = errors.Errorf("invalid execPlan type")
-	return nil, err
 }
 
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {

@@ -184,6 +184,25 @@ type Execute struct {
 	Plan          Plan
 }
 
+// OptimizeExecStmt to optimize ps execute statement
+// this is a short path ONLY does things filling ps params
+// for point select like plan which does not need extra things
+func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
+	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (Plan, error) {
+	var err error
+	builder := NewPlanBuilder(sctx, is, nil)
+	p, err := builder.Build(ctx, execAst)
+	if err != nil {
+		return nil, err
+	}
+	if execPlan, ok := p.(*Execute); ok {
+		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
+		return execPlan.Plan, err
+	}
+	err = errors.Errorf("invalid execPlan type")
+	return nil, err
+}
+
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := sctx.GetSessionVars()
