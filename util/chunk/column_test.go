@@ -885,3 +885,35 @@ func BenchmarkTimeVec(b *testing.B) {
 		}
 	}
 }
+
+func genNullCols(n int) []*Column {
+	cols := make([]*Column, n)
+	for i := range cols {
+		cols[i] = NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+		cols[i].ResizeInt64(1024, false)
+		for j := 0; j < 1024; j++ {
+			if rand.Intn(10) < 5 {
+				cols[i].SetNull(j, true)
+			}
+		}
+	}
+	return cols
+}
+
+func BenchmarkOrNullsVectorized(b *testing.B) {
+	cols := genNullCols(3)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		cols[0].OrNulls(cols[1:]...)
+	}
+}
+
+func BenchmarkOrNullsNonVectorized(b *testing.B) {
+	cols := genNullCols(3)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for i := 0; i < 1024; i++ {
+			cols[0].SetNull(i, cols[1].IsNull(i) || cols[2].IsNull(i))
+		}
+	}
+}

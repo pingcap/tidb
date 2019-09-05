@@ -628,3 +628,13 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 	}
 	return dst
 }
+
+// OrNulls does the OR operation with all columns in the arguments.
+// The user should ensure that all these columns have the same length.
+func (c *Column) OrNulls(cols ...*Column) {
+	for _, col := range cols {
+		for i := range c.nullBitmap {
+			c.nullBitmap[i] |= col.nullBitmap[i]
+		}
+	}
+}
