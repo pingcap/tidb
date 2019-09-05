@@ -43,7 +43,7 @@ func (s *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 	bs := buf.Int64s()
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
-		for i := 0; i < n; i ++ {
+		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
 				continue
 			}
@@ -81,7 +81,7 @@ func (s *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 			as[i] += bs[i]
 		}
 	case !isLHSUnsigned && isRHSUnsigned:
-		for i := 0; i < n; i ++ {
+		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
 				continue
 			}
@@ -100,7 +100,7 @@ func (s *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 			as[i] += bs[i]
 		}
 	case !isLHSUnsigned && !isRHSUnsigned:
-		for i := 0; i < n; i ++ {
+		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
 				continue
 			}
