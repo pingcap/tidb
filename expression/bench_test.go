@@ -317,6 +317,7 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vec
 		v := gen.gen()
 		if v == nil {
 			col.AppendNull()
+			continue
 		}
 		switch eType {
 		case types.ETInt:
