@@ -637,7 +637,7 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 func (c *Column) MergeNulls(cols ...*Column) {
 	for _, col := range cols {
 		for i := range c.nullBitmap {
-			// 1 is null while 0 is not null, so do AND operations here.
+			// bit 0 is null, 1 is not null, so do AND operations here.
 			c.nullBitmap[i] &= col.nullBitmap[i]
 		}
 	}
