@@ -300,7 +300,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
-			best: "IndexMergeJoin{IndexJoin{TableReader(Table(t)->Sel([eq(Column#2, 1)]))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(Column#25,Column#1)->TableReader(Table(t))}(Column#1,Column#13)->Projection",
+			best: "IndexMergeJoin{IndexMergeJoin{TableReader(Table(t)->Sel([eq(Column#2, 1)]))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(Column#25,Column#1)->TableReader(Table(t))}(Column#1,Column#13)->Projection",
 		},
 		{
 			sql:  "select * from t where t.c in (select b from t s where s.a = t.a)",
@@ -1366,14 +1366,14 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		},
 		// Test Index Join + UnionScan + DoubleRead.
 		{
-			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
-			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(Column#1,Column#15)",
+			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.c",
+			best: "IndexJoin{TableReader(Table(t))->UnionScan([])->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->UnionScan([])}(Column#1,Column#15)",
 			is:   s.is,
 		},
 		// Test Index Join + UnionScan + IndexScan.
 		{
-			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
-			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(Column#1,Column#15)->Projection",
+			sql:  "select /*+ TIDB_INLJ(t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
+			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(Column#1,Column#15)->Projection",
 			is:   s.is,
 		},
 		// Index Join + Union Scan + Union All is not supported now.
@@ -1639,11 +1639,11 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		},
 		{
 			sql:  "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
-			best: "LeftHashJoin{TableReader(Table(t)->Sel([if(isnull(test.t1.a), <nil>, 1)]))->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(agg_col_cnt, 0)])}->Projection->Projection",
+			best: "LeftHashJoin{TableReader(Table(t)->Sel([if(isnull(Column#1), <nil>, 1)]))->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#28, 0)])}->Projection->Projection",
 		},
 		{
 			sql:  "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
-			best: "LeftHashJoin{TableReader(Table(t)->Sel([if(isnull(test.t1.a), <nil>, 1)]))->TableReader(Table(t))->Projection->HashAgg->Sel([ne(agg_col_cnt, 0)])}->Projection->Projection",
+			best: "LeftHashJoin{TableReader(Table(t)->Sel([if(isnull(Column#1), <nil>, 1)]))->TableReader(Table(t))->Projection->HashAgg->Sel([ne(Column#29, 0)])}->Projection->Projection",
 		},
 		{
 			sql:  "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)",
@@ -1651,7 +1651,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		},
 		{
 			sql:         "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
-			best:        "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(test.t2.b,test.t1.b)->HashAgg",
+			best:        "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(Column#14,Column#2)->HashAgg",
 			warning:     "[planner:1815]Optimizer Hint STREAM_AGG is inapplicable",
 			aggPushDown: true,
 		},
@@ -1817,39 +1817,39 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 	}{
 		{
 			sql:  "select /*+ SM_JOIN(@sel_1 t1), INL_JOIN(@sel_2 t3) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "MergeInnerJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			plan: "MergeInnerJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
 		},
 		{
 			sql:  "select /*+ SM_JOIN(@sel_1 t1), INL_JOIN(@qb t3) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "MergeInnerJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			plan: "MergeInnerJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
 		},
 		{
 			sql:  "select /*+ HASH_JOIN(@sel_1 t1), SM_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			plan: "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
 		},
 		{
 			sql:  "select /*+ HASH_JOIN(@sel_1 t1), SM_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t1.a,test.t2.a)->Projection",
+			plan: "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
 		},
 		{
 			sql:  "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "IndexMergeJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
+			plan: "IndexMergeJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(Column#13,Column#27)}(Column#13,Column#1)->Projection",
 		},
 		{
 			sql:  "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "IndexMergeJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
+			plan: "IndexMergeJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(Column#13,Column#27)}(Column#13,Column#1)->Projection",
 		},
 		{
 			sql:  "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
-			plan: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(test.t1.a, test.t2.a)])->StreamAgg)->StreamAgg->Sel([not(isnull(count(*)))])}->HashAgg",
+			plan: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(Column#1, Column#13)])->StreamAgg)->StreamAgg->Sel([not(isnull(Column#25))])}->HashAgg",
 		},
 		{
 			sql:  "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
-			plan: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(test.t1.a, test.t2.a)])->HashAgg)->HashAgg->Sel([not(isnull(count(*)))])}->StreamAgg",
+			plan: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(Column#1, Column#13)])->HashAgg)->HashAgg->Sel([not(isnull(Column#25))])}->StreamAgg",
 		},
 		{
 			sql:  "select /*+ HASH_AGG(@sel_2) */ a, (select count(*) from t t1 where t1.b > t.a) from t where b > (select b from t t2 where t2.b = t.a limit 1)",
-			plan: "Apply{Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(test.t2.b, test.t.a)])->Limit)->Limit}->TableReader(Table(t)->Sel([gt(test.t1.b, test.t.a)])->HashAgg)->HashAgg}->Projection",
+			plan: "Apply{Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(Column#14, Column#1)])->Limit)->Limit}->TableReader(Table(t)->Sel([gt(Column#28, Column#1)])->HashAgg)->HashAgg}->Projection",
 		},
 	}
 	ctx := context.TODO()

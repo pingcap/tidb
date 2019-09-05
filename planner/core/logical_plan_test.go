@@ -202,11 +202,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select a, b from (select a, b, min(a) over(partition by b) as min_a from t)as tt where a < 10 and b > 10 and b = min_a",
-			best: "DataScan(t)->Projection->Projection->Window(min(test.t.a))->Sel([lt(test.tt.a, 10) eq(test.tt.b, 4_window_3)])->Projection->Projection",
+			best: "DataScan(t)->Projection->Projection->Window(min(Column#13))->Sel([lt(Column#13, 10) eq(Column#14, Column#16)])->Projection->Projection",
 		},
 		{
 			sql:  "select a, b from (select a, b, c, d, sum(a) over(partition by b, c) as sum_a from t)as tt where b + c > 10 and b in (1, 2) and sum_a > b",
-			best: "DataScan(t)->Projection->Projection->Window(sum(cast(test.t.a)))->Sel([gt(4_window_5, cast(test.tt.b))])->Projection->Projection",
+			best: "DataScan(t)->Projection->Projection->Window(sum(cast(Column#13)))->Sel([gt(Column#18, cast(Column#14))])->Projection->Projection",
 		},
 	}
 	s.Parser.EnableWindowFunc(true)
@@ -848,20 +848,20 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		},
 		{
 			sql:  "select t1.b from t t1 where t1.b = (select max(t2.a) from t t2 where t1.b=t2.b order by t1.a)",
-			best: "Join{DataScan(t1)->DataScan(t2)->Aggr(max(test.t2.a),firstrow(test.t2.b))}(test.t1.b,test.t2.b)->Projection->Sel([eq(test.t1.b, max(t2.a))])->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)->Aggr(max(Column#13),firstrow(Column#14))}(Column#2,Column#14)->Projection->Sel([eq(Column#2, Column#26)])->Projection",
 		},
 		{
 			sql:  "select t1.b from t t1 where t1.b in (select t2.b from t t2 where t2.a = t1.a order by t2.a)",
-			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)(test.t1.b,test.t2.b)->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)}(Column#1,Column#13)(Column#2,Column#14)->Projection",
 		},
 		{
 			sql:  "select t1.b from t t1 where exists(select t2.b from t t2 where t2.a = t1.a order by t2.a)",
-			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)}(Column#1,Column#13)->Projection",
 		},
 		{
 			// `Sort` will not be eliminated, if it is not the top level operator.
 			sql:  "select t1.b from t t1 where t1.b = (select t2.b from t t2 where t2.a = t1.a order by t2.a limit 1)",
-			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t2.a, test.t1.a)])->Projection->Sort->Limit}->Projection->Sel([eq(test.t1.b, test.t2.b)])->Projection",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(Column#13, Column#1)])->Projection->Sort->Limit}->Projection->Sel([eq(Column#2, Column#27)])->Projection",
 		},
 	}
 
@@ -939,7 +939,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",
-			plan: "Dual->Sel([eq(cast(Column#4), 0)])->Projection",
+			plan: "Show->Sel([eq(cast(Column#4), 0)])",
 		},
 		{
 			sql:  "do sleep(5)",
