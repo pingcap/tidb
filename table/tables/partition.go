@@ -167,7 +167,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 			fmt.Fprintf(&buf, " or ((%s) is null)", partStr)
 
 			// Extracts the column of the partition expression, it will be used by partition prunning.
-			if tmps, err1 := expression.ParseSimpleExprsWithSchema(ctx, partStr, schema); err1 == nil {
+			if tmps, err1 := expression.ParseSimpleExprsWithNames(ctx, partStr, schema, names); err1 == nil {
 				if col, ok := tmps[0].(*expression.Column); ok {
 					column = col
 				}
