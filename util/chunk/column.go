@@ -630,7 +630,8 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 }
 
 // OrNulls does the OR operation with all columns in the arguments.
-// The user should ensure that all these columns have the same length.
+// The user should ensure that all these columns have the same length, and
+// data stored in these columns are fixed-length type.
 func (c *Column) OrNulls(cols ...*Column) {
 	for _, col := range cols {
 		for i := range c.nullBitmap {
