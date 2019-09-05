@@ -408,6 +408,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		}
 		return errors.Trace(e)
 	}
+
 	rateLim := len(batches) // this will be used for LargeTxn, set rateLim here
 	batchExecutor := newBatchExecutor(rateLim, c, action, singleBatchActionFunc, bo)
 	err = batchExecutor.process(batches)
@@ -797,6 +798,10 @@ func (c *twoPhaseCommitter) prewriteKeys(bo *Backoffer, keys [][]byte) error {
 		span1 := span.Tracer().StartSpan("twoPhaseCommitter.prewriteKeys", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
+	}
+
+	if true {
+		return c.prewriteBatches(bo, keys)
 	}
 
 	return c.doActionOnKeys(bo, actionPrewrite, keys)

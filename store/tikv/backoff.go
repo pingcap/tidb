@@ -86,14 +86,14 @@ func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
 // NewBackoffFn creates a backoff func which implements exponential backoff with
 // optional jitters.
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html
-func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs int) int {
+func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs int) (realSleep int) {
 	if base < 2 {
 		// Top prevent panic in 'rand.Intn'.
 		base = 2
 	}
 	attempts := 0
 	lastSleep := base
-	return func(ctx context.Context, maxSleepMs int) int {
+	return func(ctx context.Context, maxSleepMs int) (realSleep int) {
 		var sleep int
 		switch jitter {
 		case NoJitter:
@@ -111,19 +111,14 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 			zap.Int("base", base),
 			zap.Int("sleep", sleep))
 
-		realSleep := sleep
+		realSleep = sleep
 		// when set maxSleepMs >= 0 in `tikv.BackoffWithMaxSleep` will force sleep maxSleepMs milliseconds.
 		if maxSleepMs >= 0 && realSleep > maxSleepMs {
 			realSleep = maxSleepMs
 		}
-		select {
-		case <-time.After(time.Duration(realSleep) * time.Millisecond):
-			attempts++
-			lastSleep = sleep
-			return realSleep
-		case <-ctx.Done():
-			return 0
-		}
+		attempts++
+		lastSleep = sleep
+		return realSleep
 	}
 }
 
@@ -320,6 +315,12 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	}
 
 	realSleep := f(b.ctx, maxSleepMs)
+
+	select {
+	case <-time.After(time.Duration(realSleep) * time.Millisecond):
+	case <-b.ctx.Done():
+	}
+
 	backoffDuration.Observe(float64(realSleep) / 1000)
 	b.totalSleep += realSleep
 
@@ -334,6 +335,63 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		zap.Stringer("type", typ),
 		zap.Reflect("txnStartTS", startTs))
 	return nil
+}
+
+// BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
+// and never sleep more than maxSleepMs for each sleep.
+func (b *Backoffer) BackoffWithMaxSleepAsync(typ backoffType, maxSleepMs int, err error) (int, error) {
+	if strings.Contains(err.Error(), mismatchClusterID) {
+		logutil.BgLogger().Fatal("critical error", zap.Error(err))
+	}
+	select {
+	case <-b.ctx.Done():
+		return 0, errors.Trace(err)
+	default:
+	}
+
+	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
+	b.types = append(b.types, typ)
+	if b.noop || (b.maxSleep > 0 && b.totalSleep >= b.maxSleep) {
+		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
+		for i, err := range b.errors {
+			// Print only last 3 errors for non-DEBUG log levels.
+			if log.GetLevel() == zapcore.DebugLevel || i >= len(b.errors)-3 {
+				errMsg += "\n" + err.Error()
+			}
+		}
+		logutil.BgLogger().Warn(errMsg)
+		// Use the first backoff type to generate a MySQL error.
+		return 0, b.types[0].(backoffType).TError()
+	}
+
+	backoffCounter, backoffDuration := typ.metric()
+	backoffCounter.Inc()
+	// Lazy initialize.
+	if b.fn == nil {
+		b.fn = make(map[backoffType]func(context.Context, int) int)
+	}
+	f, ok := b.fn[typ]
+	if !ok {
+		f = typ.createFn(b.vars)
+		b.fn[typ] = f
+	}
+
+	realSleep := f(b.ctx, maxSleepMs)
+
+	backoffDuration.Observe(float64(realSleep) / 1000)
+	b.totalSleep += realSleep
+
+	var startTs interface{}
+	if ts := b.ctx.Value(txnStartKey); ts != nil {
+		startTs = ts
+	}
+	logutil.BgLogger().Debug("retry later",
+		zap.Error(err),
+		zap.Int("totalSleep", b.totalSleep),
+		zap.Int("maxSleep", b.maxSleep),
+		zap.Stringer("type", typ),
+		zap.Reflect("txnStartTS", startTs))
+	return realSleep, nil
 }
 
 func (b *Backoffer) String() string {

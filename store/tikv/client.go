@@ -67,6 +67,11 @@ type Client interface {
 	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
 }
 
+type PipelineClient interface {
+	SendRequestPipeline(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (ResponseFuture, error)
+	SendRequestsPipeline(ctx context.Context, addr string, reqs []*tikvrpc.Request, timeout time.Duration) ([]ResponseFuture, error)
+}
+
 type connArray struct {
 	// The target host.
 	target string
@@ -267,6 +272,32 @@ func (c *rpcClient) closeConns() {
 		}
 	}
 	c.Unlock()
+}
+
+func (c *rpcClient) SendRequestsPipeline(ctx context.Context, addr string, reqs []*tikvrpc.Request, timeout time.Duration) ([]ResponseFuture, error) {
+	connArray, err := c.getConnArray(addr)
+	if err != nil {
+		return nil, err
+	}
+	futures := make([]ResponseFuture, 0, len(reqs))
+	for _, req := range reqs {
+		batchReq := req.ToBatchCommandsRequest()
+		f, err := sendBatchRequestPipeline(ctx, addr, connArray.batchConn, batchReq, timeout)
+		if err != nil {
+			return nil, err
+		}
+		futures = append(futures, f)
+	}
+	return futures, nil
+}
+
+func (c *rpcClient) SendRequestPipeline(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (ResponseFuture, error) {
+	connArray, err := c.getConnArray(addr)
+	if err != nil {
+		return nil, err
+	}
+	batchReq := req.ToBatchCommandsRequest()
+	return sendBatchRequestPipeline(ctx, addr, connArray.batchConn, batchReq, timeout)
 }
 
 // SendRequest sends a Request to server and receives Response.

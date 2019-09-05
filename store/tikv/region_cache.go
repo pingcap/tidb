@@ -845,6 +845,45 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 	return
 }
 
+func (c *RegionCache) OnRegionEpochNotMatch2(bo *Backoffer, ctx *RPCContext, currentRegions []*metapb.Region) (int, error) {
+	// Find whether the region epoch in `ctx` is ahead of TiKV's. If so, backoff.
+	for _, meta := range currentRegions {
+		if meta.GetId() == ctx.Region.id &&
+			(meta.GetRegionEpoch().GetConfVer() < ctx.Region.confVer ||
+				meta.GetRegionEpoch().GetVersion() < ctx.Region.ver) {
+			err := errors.Errorf("region epoch is ahead of tikv. rpc ctx: %+v, currentRegions: %+v", ctx, currentRegions)
+			logutil.BgLogger().Info("region epoch is ahead of tikv", zap.Error(err))
+			return bo.BackoffWithMaxSleepAsync(BoRegionMiss, -1, err)
+		}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	needInvalidateOld := true
+	// If the region epoch is not ahead of TiKV's, replace region meta in region cache.
+	for _, meta := range currentRegions {
+		if _, ok := c.pdClient.(*codecPDClient); ok {
+			if err := decodeRegionMetaKey(meta); err != nil {
+				return 0, errors.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
+			}
+		}
+		region := &Region{meta: meta}
+		region.init(c)
+		c.switchToPeer(region, ctx.Store.storeID)
+		c.insertRegionToCache(region)
+		if ctx.Region == region.VerID() {
+			needInvalidateOld = false
+		}
+	}
+	if needInvalidateOld {
+		cachedRegion, ok := c.mu.regions[ctx.Region]
+		if ok {
+			cachedRegion.invalidate()
+		}
+	}
+	return 0, nil
+}
+
 // OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
 func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, currentRegions []*metapb.Region) error {
 	// Find whether the region epoch in `ctx` is ahead of TiKV's. If so, backoff.

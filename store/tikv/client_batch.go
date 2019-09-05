@@ -511,6 +511,48 @@ func sendBatchRequest(
 	}
 }
 
+type ResponseFuture func() (*tikvrpc.Response, error)
+
+func sendBatchRequestPipeline(
+	ctx context.Context,
+	addr string,
+	batchConn *batchConn,
+	req *tikvpb.BatchCommandsRequest_Request,
+	timeout time.Duration,
+) (ResponseFuture, error) {
+	entry := &batchCommandsEntry{
+		ctx:      ctx,
+		req:      req,
+		res:      make(chan *tikvpb.BatchCommandsResponse_Response, 1),
+		canceled: 0,
+		err:      nil,
+	}
+	ctx1, cancel := context.WithTimeout(ctx, timeout)
+	select {
+	case batchConn.batchCommandsCh <- entry:
+	case <-ctx1.Done():
+		logutil.BgLogger().Warn("send request is cancelled",
+			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
+		cancel()
+		return nil, errors.Trace(ctx1.Err())
+	}
+	return func() (*tikvrpc.Response, error) {
+		defer cancel()
+		select {
+		case res, ok := <-entry.res:
+			if !ok {
+				return nil, errors.Trace(entry.err)
+			}
+			return tikvrpc.FromBatchCommandsResponse(res), nil
+		case <-ctx1.Done():
+			atomic.StoreInt32(&entry.canceled, 1)
+			logutil.BgLogger().Warn("wait response is cancelled",
+				zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
+			return nil, errors.Trace(ctx1.Err())
+		}
+	}, nil
+}
+
 func (c *rpcClient) recycleIdleConnArray() {
 	var addrs []string
 	c.RLock()
