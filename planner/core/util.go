@@ -157,9 +157,9 @@ func (s *baseSchemaProducer) setSchemaAndNames(schema *expression.Schema, names 
 func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Schema {
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
-		return join.Children()[0].Schema().Clone()
+		return join.Children()[0].Schema().Shallow()
 	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		newSchema := join.Children()[0].Schema().Clone()
+		newSchema := join.Children()[0].Schema().Shallow()
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}
@@ -169,9 +169,9 @@ func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Sch
 func buildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.Schema {
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
-		return join.Children()[0].Schema().Clone()
+		return join.Children()[0].Schema().Shallow()
 	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		newSchema := join.Children()[0].Schema().Clone()
+		newSchema := join.Children()[0].Schema().Shallow()
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}

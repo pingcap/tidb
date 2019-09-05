@@ -392,7 +392,7 @@ func (p PhysicalIndexReader) Init(ctx sessionctx.Context) *PhysicalIndexReader {
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
 		p.schema = is.dataSourceSchema
 	}
-	p.OutputColumns = p.schema.Clone().Columns
+	p.OutputColumns = p.schema.Shallow().Columns
 	return &p
 }
 

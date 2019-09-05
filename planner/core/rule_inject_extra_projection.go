@@ -160,7 +160,7 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 		Exprs:                topProjExprs,
 		AvoidColumnEvaluator: false,
 	}.Init(p.SCtx(), p.statsInfo(), nil)
-	topProj.SetSchema(p.Schema().Clone())
+	topProj.SetSchema(p.Schema().Shallow())
 	topProj.SetChildren(p)
 
 	childPlan := p.Children()[0]

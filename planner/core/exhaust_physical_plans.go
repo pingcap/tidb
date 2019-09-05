@@ -1210,7 +1210,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 			GroupByItems: la.GroupByItems,
 			AggFuncs:     la.AggFuncs,
 		}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
-		agg.SetSchema(la.schema.Clone())
+		agg.SetSchema(la.schema)
 		enforcedAggs = append(enforcedAggs, agg)
 	}
 	return enforcedAggs
@@ -1259,7 +1259,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 				GroupByItems: la.GroupByItems,
 				AggFuncs:     la.AggFuncs,
 			}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
-			agg.SetSchema(la.schema.Clone())
+			agg.SetSchema(la.schema)
 			streamAggs = append(streamAggs, agg)
 		}
 	}
@@ -1281,7 +1281,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 			GroupByItems: la.GroupByItems,
 			AggFuncs:     la.AggFuncs,
 		}.initForHash(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
-		agg.SetSchema(la.schema.Clone())
+		agg.SetSchema(la.schema)
 		hashAggs = append(hashAggs, agg)
 	}
 	return hashAggs

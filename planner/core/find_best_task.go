@@ -502,7 +502,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx)
-		ts.SetSchema(ds.schema.Clone())
+		ts.SetSchema(ds.schema.Shallow())
 		cop.tablePlan = ts
 	}
 	is.initSchema(ds.id, idx, path.fullIdxCols, cop.tablePlan != nil)

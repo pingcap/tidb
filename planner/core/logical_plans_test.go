@@ -162,10 +162,10 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 	for _, tt := range testCases {
 		comment := Commentf("failed at case:\nexpr: %v\ncorColIDs: %v\nidxColIDs: %v\nidxColLens: %v\naccess: %v\nremained: %v\n", tt.expr, tt.corColIDs, tt.idxColIDs, tt.idxColLens, tt.access, tt.remained)
 		filters, err := expression.ParseSimpleExprsWithSchema(s.ctx, tt.expr, totalSchema)
+		c.Assert(err, IsNil, comment)
 		if sf, ok := filters[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			filters = expression.FlattenCNFConditions(sf)
 		}
-		c.Assert(err, IsNil, comment)
 		trueFilters := make([]expression.Expression, 0, len(filters))
 		idMap := make(map[int64]struct{})
 		for _, id := range tt.corColIDs {

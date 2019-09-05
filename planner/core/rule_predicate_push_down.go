@@ -272,7 +272,7 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
-	proj.SetSchema(child.Schema().Clone())
+	proj.SetSchema(child.Schema().Shallow())
 	proj.SetChildren(child)
 	p.children[idx] = proj
 	return proj
