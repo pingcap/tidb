@@ -988,7 +988,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			}
 			newIdxHist, err := idxHist.newIndexBySelectivity(sc, node)
 			if err != nil {
-				logutil.BgLogger().Warn("[Histogram-in-plan]: something wrong happened when calculating row count, " +
+				logutil.BgLogger().Warn("[Histogram-in-plan]: something wrong happened when calculating row count, "+
 					"failed to build histogram for index %v of table %v",
 					zap.String("index", idxHist.Info.Name.O), zap.String("table", idxHist.Info.Table.O), zap.Error(err))
 				continue
