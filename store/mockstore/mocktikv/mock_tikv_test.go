@@ -157,10 +157,10 @@ func (s *testMockTiKVSuite) mustRangeReverseScanOK(c *C, start, end string, limi
 }
 
 func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
-	s.mustPrewriteOK1(c, mutations, primary, startTS, 0)
+	s.mustPrewriteWithTTLOK(c, mutations, primary, startTS, 0)
 }
 
-func (s *testMockTiKVSuite) mustPrewriteOK1(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64, ttl uint64) {
+func (s *testMockTiKVSuite) mustPrewriteWithTTLOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64, ttl uint64) {
 	req := &kvrpcpb.PrewriteRequest{
 		Mutations:    mutations,
 		PrimaryLock:  []byte(primary),
@@ -656,7 +656,7 @@ func (s *testMVCCLevelDB) TestErrors(c *C) {
 }
 
 func (s *testMVCCLevelDB) TestTxnHeartBeat(c *C) {
-	s.mustPrewriteOK1(c, putMutations("pk", "val"), "pk", 5, 666)
+	s.mustPrewriteOKWithTTL(c, putMutations("pk", "val"), "pk", 5, 666)
 
 	// Update the ttl
 	ttl, err := s.store.TxnHeartBeat([]byte("pk"), 5, 888)
