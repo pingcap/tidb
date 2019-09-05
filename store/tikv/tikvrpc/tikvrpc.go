@@ -430,6 +430,8 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 		return &Response{Resp: res.PessimisticRollback}
 	case *tikvpb.BatchCommandsResponse_Response_Empty:
 		return &Response{Resp: res.Empty}
+	case *tikvpb.BatchCommandsResponse_Response_TxnHeartBeat:
+		return &Response{Resp: res.TxnHeartBeat}
 	}
 	return nil
 }
@@ -633,6 +635,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 			RegionError: e,
 		}
 	case CmdEmpty:
+	case CmdTxnHeartBeat:
+		p = &kvrpcpb.TxnHeartBeatResponse{
+			RegionError: e,
+		}
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
