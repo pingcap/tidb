@@ -1698,26 +1698,45 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	c.Assert(err, IsNil)
 
 	tests := []struct {
-		sql  string
-		best string
+		sql     string
+		best    string
+		warning string
 	}{
 		{
-			sql:  "select /*+ AGG_TO_COP(), STREAM_AGG() */ sum(a) from t group by a",
-			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+			sql:  "select /*+ AGG_TO_COP(), HASH_AGG() */ sum(a) from t group by a",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:     "select /*+ AGG_TO_COP(), HASH_AGG() */ distinct a from t group by a",
+			best:    "TableReader(Table(t)->HashAgg)->HashAgg->HashAgg",
+			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
+		},
+		{
+			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1) */ sum(t1.a) from t t1, t t2 where t1.a = t2.b group by t1.a",
+			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->Projection->HashAgg",
+			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
 		},
 	}
 	ctx := context.Background()
 	for i, test := range tests {
 		comment := Commentf("case:%v sql:%s", i, test)
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+
 		stmt, err := s.ParseOneStmt(test.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		p, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
-		c.Assert(core.ToString(p), Equals, test.best)
+		c.Assert(core.ToString(p), Equals, test.best, comment)
 
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
-		c.Assert(len(warnings), Equals, 0)
+		if test.warning == "" {
+			c.Assert(len(warnings), Equals, 0, comment)
+		} else {
+			c.Assert(len(warnings), Equals, 1, comment)
+			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
+			c.Assert(warnings[0].Err.Error(), Equals, test.warning, comment)
+		}
 	}
 }
 
