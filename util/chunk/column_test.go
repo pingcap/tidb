@@ -912,7 +912,7 @@ func (s *testChunkSuite) TestVectorizedNulls(c *check.C) {
 			rowResult.SetNull(i, lCol.IsNull(i) || rCol.IsNull(i))
 		}
 
-		for i := 0; i < 1024; i ++ {
+		for i := 0; i < 1024; i++ {
 			c.Assert(rowResult.IsNull(i), check.Equals, vecResult.IsNull(i))
 		}
 	}
