@@ -530,7 +530,7 @@ func (p *NominalSort) attach2Task(tasks ...task) task {
 func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 	newByItems := make([]*ByItems, 0, len(p.ByItems))
 	for _, expr := range p.ByItems {
-		newByItems = append(newByItems, expr.Clone())
+		newByItems = append(newByItems, expr.Shallow())
 	}
 	newCount := p.Offset + p.Count
 	childProfile := childPlan.statsInfo()

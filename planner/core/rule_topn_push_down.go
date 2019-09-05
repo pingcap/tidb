@@ -144,7 +144,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 		ByItems: make([]*ByItems, len(topN.ByItems)),
 	}.Init(topN.ctx)
 	for i := range topN.ByItems {
-		newTopN.ByItems[i] = topN.ByItems[i].Clone()
+		newTopN.ByItems[i] = topN.ByItems[i].Shallow()
 	}
 	return p.children[idx].pushDownTopN(newTopN)
 }

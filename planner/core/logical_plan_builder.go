@@ -1046,9 +1046,9 @@ func (by *ByItems) String() string {
 	return by.Expr.String()
 }
 
-// Clone makes a copy of ByItems.
-func (by *ByItems) Clone() *ByItems {
-	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
+// Shallow makes a copy of ByItems.
+func (by *ByItems) Shallow() *ByItems {
+	return &ByItems{Expr: by.Expr, Desc: by.Desc}
 }
 
 // itemTransformer transforms ParamMarkerExpr to PositionExpr in the context of ByItem
