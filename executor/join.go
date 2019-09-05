@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"hash"
 	"hash/fnv"
 	"sync"
 	"sync/atomic"
@@ -25,10 +24,8 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -42,16 +39,16 @@ var (
 type HashJoinExec struct {
 	baseExecutor
 
-	outerExec   Executor
-	innerExec   Executor
-	outerFilter expression.CNFExprs
-	outerKeys   []*expression.Column
-	innerKeys   []*expression.Column
+	outerExec     Executor
+	innerExec     Executor
+	innerEstCount float64
+	outerFilter   expression.CNFExprs
+	outerKeys     []*expression.Column
+	innerKeys     []*expression.Column
 
 	// concurrency is the number of partition, build and join workers.
 	concurrency   uint
-	hashTable     *rowHashMap
-	joinKeyBuf    [][]byte
+	rowContainer  *hashRowContainer
 	innerFinished chan error
 	// joinWorkerWaitGroup is for sync multiple join workers.
 	joinWorkerWaitGroup sync.WaitGroup
@@ -65,9 +62,6 @@ type HashJoinExec struct {
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	joiners []joiner
 
-	outerKeyColIdx     []int
-	innerKeyColIdx     []int
-	innerResult        *chunk.List
 	outerChkResourceCh chan *outerChkResource
 	outerResultChs     []chan *chunk.Chunk
 	joinChkResourceCh  []chan *chunk.Chunk
@@ -141,43 +135,11 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.joinKeyBuf = make([][]byte, e.concurrency)
-	for i := range e.joinKeyBuf {
-		e.joinKeyBuf[i] = make([]byte, 1)
-	}
 
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.joinWorkerWaitGroup = sync.WaitGroup{}
 	return nil
-}
-
-func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, h hash.Hash64, buf []byte) (hasNull bool, key uint64, err error) {
-	var keyColIdx []int
-	var allTypes []*types.FieldType
-	if isOuterKey {
-		keyColIdx = e.outerKeyColIdx
-		allTypes = retTypes(e.outerExec)
-	} else {
-		keyColIdx = e.innerKeyColIdx
-		allTypes = retTypes(e.innerExec)
-	}
-
-	for _, i := range keyColIdx {
-		if row.IsNull(i) {
-			return true, 0, nil
-		}
-	}
-	h.Reset()
-	err = codec.HashChunkRow(e.ctx.GetSessionVars().StmtCtx, h, row, allTypes, keyColIdx, buf)
-	return false, h.Sum64(), err
-}
-
-func (e *HashJoinExec) matchJoinKey(inner, outer chunk.Row) (ok bool, err error) {
-	innerAllTypes, outerAllTypes := retTypes(e.innerExec), retTypes(e.outerExec)
-	return codec.EqualChunkRow(e.ctx.GetSessionVars().StmtCtx,
-		inner, innerAllTypes, e.innerKeyColIdx,
-		outer, outerAllTypes, e.outerKeyColIdx)
 }
 
 // fetchOuterChunks get chunks from fetches chunks from the big table in a background goroutine
@@ -245,7 +207,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 			return false, err
 		}
 	}
-	if e.hashTable.Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
+	if e.rowContainer.Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
 		return true, nil
 	}
 	return false, nil
@@ -257,16 +219,13 @@ var innerResultLabel fmt.Stringer = stringutil.StringerStr("innerResult")
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh <-chan struct{}) {
 	defer close(chkCh)
-	e.innerResult = chunk.NewList(e.innerExec.base().retFieldTypes, e.initCap, e.maxChunkSize)
-	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
-	e.innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	var err error
 	for {
 		if e.finished.Load().(bool) {
 			return
 		}
 		chk := chunk.NewChunkWithCapacity(e.innerExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
-		err = e.innerExec.Next(ctx, chk)
+		err = Next(ctx, e.innerExec, chk)
 		if err != nil {
 			e.innerFinished <- errors.Trace(err)
 			return
@@ -280,7 +239,6 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 		case <-e.closeCh:
 			return
 		case chkCh <- chk:
-			e.innerResult.Add(chk)
 		}
 	}
 }
@@ -315,11 +273,6 @@ func (e *HashJoinExec) initializeForProbe() {
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
-
-	e.outerKeyColIdx = make([]int, len(e.outerKeys))
-	for i := range e.outerKeys {
-		e.outerKeyColIdx[i] = e.outerKeys[i].Index
-	}
 }
 
 func (e *HashJoinExec) fetchOuterAndProbeHashTable(ctx context.Context) {
@@ -327,12 +280,17 @@ func (e *HashJoinExec) fetchOuterAndProbeHashTable(ctx context.Context) {
 	e.joinWorkerWaitGroup.Add(1)
 	go util.WithRecovery(func() { e.fetchOuterChunks(ctx) }, e.handleOuterFetcherPanic)
 
+	outerKeyColIdx := make([]int, len(e.outerKeys))
+	for i := range e.outerKeys {
+		outerKeyColIdx[i] = e.outerKeys[i].Index
+	}
+
 	// Start e.concurrency join workers to probe hash table and join inner and
 	// outer rows.
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joinWorkerWaitGroup.Add(1)
 		workID := i
-		go util.WithRecovery(func() { e.runJoinWorker(workID) }, e.handleJoinWorkerPanic)
+		go util.WithRecovery(func() { e.runJoinWorker(workID, outerKeyColIdx) }, e.handleJoinWorkerPanic)
 	}
 	go util.WithRecovery(e.waitJoinWorkersAndCloseResultChan, nil)
 }
@@ -359,11 +317,10 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	close(e.joinResultCh)
 }
 
-func (e *HashJoinExec) runJoinWorker(workerID uint) {
+func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 	var (
 		outerResult *chunk.Chunk
 		selected    = make([]bool, 0, chunk.InitialCapacity)
-		h           = fnv.New64()
 	)
 	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
@@ -373,6 +330,12 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 	// Read and filter outerResult, and join the outerResult with the inner rows.
 	emptyOuterResult := &outerChkResource{
 		dest: e.outerResultChs[workerID],
+	}
+	hCtx := &hashContext{
+		allTypes:  retTypes(e.outerExec),
+		keyColIdx: outerKeyColIdx,
+		h:         fnv.New64(),
+		buf:       make([]byte, 1),
 	}
 	for ok := true; ok; {
 		if e.finished.Load().(bool) {
@@ -386,7 +349,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 		if !ok {
 			break
 		}
-		ok, joinResult = e.join2Chunk(workerID, outerResult, joinResult, selected, h)
+		ok, joinResult = e.join2Chunk(workerID, outerResult, hCtx, joinResult, selected)
 		if !ok {
 			break
 		}
@@ -401,36 +364,14 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 	}
 }
 
-func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row,
-	joinResult *hashjoinWorkerResult, h hash.Hash64) (bool, *hashjoinWorkerResult) {
-	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, h, e.joinKeyBuf[workerID])
+func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row, hCtx *hashContext,
+	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
+	innerRows, err := e.rowContainer.GetMatchedRows(outerRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
 	}
-	if hasNull {
-		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
-		return true, joinResult
-	}
-	innerPtrs := e.hashTable.Get(joinKey)
-	if len(innerPtrs) == 0 {
-		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
-		return true, joinResult
-	}
-	innerRows := make([]chunk.Row, 0, len(innerPtrs))
-	for _, ptr := range innerPtrs {
-		matchedInner := e.innerResult.GetRow(ptr)
-		ok, err := e.matchJoinKey(matchedInner, outerRow)
-		if err != nil {
-			joinResult.err = err
-			return false, joinResult
-		}
-		if !ok {
-			continue
-		}
-		innerRows = append(innerRows, matchedInner)
-	}
-	if len(innerRows) == 0 { // TODO(fengliyuan): add test case
+	if len(innerRows) == 0 {
 		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
 		return true, joinResult
 	}
@@ -472,8 +413,8 @@ func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerRes
 	return ok, joinResult
 }
 
-func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResult *hashjoinWorkerResult,
-	selected []bool, h hash.Hash64) (ok bool, _ *hashjoinWorkerResult) {
+func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult,
+	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
 	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
 	if err != nil {
@@ -484,7 +425,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 		if !selected[i] { // process unmatched outer rows
 			e.joiners[workerID].onMissMatch(false, outerChk.GetRow(i), joinResult.chk)
 		} else { // process matched outer rows
-			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), joinResult, h)
+			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), hCtx, joinResult)
 			if !ok {
 				return false, joinResult
 			}
@@ -556,40 +497,30 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 }
 
 // buildHashTableForList builds hash table from `list`.
-// key of hash table: hash value of key columns
-// value of hash table: RowPtr of the corresponded row
 func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) error {
-	e.hashTable = newRowHashMap()
-	e.innerKeyColIdx = make([]int, len(e.innerKeys))
+	innerKeyColIdx := make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
-		e.innerKeyColIdx[i] = e.innerKeys[i].Index
+		innerKeyColIdx[i] = e.innerKeys[i].Index
 	}
-	var (
-		hasNull bool
-		err     error
-		key     uint64
-		buf     = make([]byte, 1)
-	)
-
-	h := fnv.New64()
-	chkIdx := uint32(0)
+	allTypes := e.innerExec.base().retFieldTypes
+	hCtx := &hashContext{
+		allTypes:  allTypes,
+		keyColIdx: innerKeyColIdx,
+		h:         fnv.New64(),
+		buf:       make([]byte, 1),
+	}
+	initList := chunk.NewList(allTypes, e.initCap, e.maxChunkSize)
+	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx, initList)
+	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
+	e.rowContainer.GetMemTracker().SetLabel(innerResultLabel)
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {
 			return nil
 		}
-		numRows := chk.NumRows()
-		for j := 0; j < numRows; j++ {
-			hasNull, key, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), h, buf)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if hasNull {
-				continue
-			}
-			rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(j)}
-			e.hashTable.Put(key, rowPtr)
+		err := e.rowContainer.PutChunk(chk)
+		if err != nil {
+			return err
 		}
-		chkIdx++
 	}
 	return nil
 }

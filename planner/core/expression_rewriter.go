@@ -441,6 +441,9 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 // it will be rewrote to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
 	plan4Agg := LogicalAggregation{}.Init(er.sctx)
+	if hint := er.b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	plan4Agg.SetChildren(np)
 
 	// Create a "max" or "min" aggregation.
@@ -567,6 +570,9 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.sctx)
+	if hint := er.b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -601,6 +607,9 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.sctx)
+	if hint := er.b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),

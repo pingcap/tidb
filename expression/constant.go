@@ -162,7 +162,7 @@ func (c *Constant) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, resul
 // VecEvalDuration evaluates this expression in a vectorized manner.
 func (c *Constant) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	if c.DeferredExpr == nil {
-		return genVecFromConstExpr(ctx, c, types.ETDecimal, input, result)
+		return genVecFromConstExpr(ctx, c, types.ETDuration, input, result)
 	}
 	return c.DeferredExpr.VecEvalDuration(ctx, input, result)
 }
@@ -443,5 +443,8 @@ func (c *Constant) resolveIndices(_ *Schema) error {
 
 // Vectorized returns if this expression supports vectorized evaluation.
 func (c *Constant) Vectorized() bool {
+	if c.DeferredExpr != nil {
+		return c.DeferredExpr.Vectorized()
+	}
 	return true
 }
