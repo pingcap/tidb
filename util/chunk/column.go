@@ -628,3 +628,17 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 	}
 	return dst
 }
+
+// MergeNulls merges these columns' null bitmaps.
+// For a row, if any column of it is null, the result is null.
+// It works like: if col1.IsNull || col2.IsNull || col3.IsNull.
+// The user should ensure that all these columns have the same length, and
+// data stored in these columns are fixed-length type.
+func (c *Column) MergeNulls(cols ...*Column) {
+	for _, col := range cols {
+		for i := range c.nullBitmap {
+			// bit 0 is null, 1 is not null, so do AND operations here.
+			c.nullBitmap[i] &= col.nullBitmap[i]
+		}
+	}
+}
