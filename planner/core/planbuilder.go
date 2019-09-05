@@ -864,12 +864,16 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		pkOffset = len(tblReaderCols) - 1
 	}
 
+	idxCols, idxColLens := expression.IndexInfo2PrefixCols(schema.Columns, idx)
+	fullIdxCols, _ := expression.IndexInfo2Cols(schema.Columns, idx)
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
 		TableAsName:      &tblInfo.Name,
 		DBName:           dbName,
 		Columns:          idxReaderCols,
 		Index:            idx,
+		IdxCols:          idxCols,
+		IdxColLens:       idxColLens,
 		dataSourceSchema: schema,
 		Ranges:           ranger.FullRange(),
 		GenExprs:         genExprsMap,
@@ -885,7 +889,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		tblColHists: is.stats.HistColl,
 	}
 	ts.HandleIdx = pkOffset
-	is.initSchema(id, idx, true)
+	is.initSchema(id, idx, fullIdxCols, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
 	return rootT.p, nil
 }
