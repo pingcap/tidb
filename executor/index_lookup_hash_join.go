@@ -425,11 +425,11 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 		rowIdx := int(ptr.RowIdx)
 		outerRow := task.outerResult.GetRow(rowIdx)
 		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx, innerRow, iw.rowTypes, iw.keyCols, outerRow, iw.outerCtx.rowTypes, iw.outerCtx.keyCols)
-		if !ok {
-			continue
-		}
 		if err != nil {
 			return nil, nil, err
+		}
+		if !ok {
+			continue
 		}
 		matchedRows = append(matchedRows, outerRow)
 		matchedRowIdx = append(matchedRowIdx, rowIdx)

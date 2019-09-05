@@ -330,7 +330,7 @@ func (j *antiSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row
 		}
 		return outerRowStatus, nil
 	}
-	for outer, i := outers.Current(), 0; outer != outers.End() && numToAppend > 0; outer, numToAppend, i = outers.Next(), numToAppend-1, i+1 {
+	for outer := outers.Current(); outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
 		j.makeShallowJoinRow(j.outerIsRight, inner, outer)
 		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
@@ -397,7 +397,7 @@ func (j *leftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chun
 		return outerRowStatus, nil
 	}
 
-	for i := 0; outer != outers.End() && numToAppend > 0; outer, numToAppend, i = outers.Next(), numToAppend-1, i+1 {
+	for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
 		j.makeShallowJoinRow(false, inner, outer)
 		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
