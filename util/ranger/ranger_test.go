@@ -596,7 +596,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(sctx, cond, false))
 		}
-		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		cols, lengths := expression.IndexInfo2PrefixCols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
 		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
@@ -717,7 +717,7 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(sctx, cond, false))
 		}
-		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		cols, lengths := expression.IndexInfo2PrefixCols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
 		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
@@ -1106,11 +1106,11 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 		"  ├─TableReader_15 2.00 root data:TableScan_14",
 		"  │ └─TableScan_14 2.00 cop table:t, range:[-inf,+inf], keep order:false",
 		"  └─StreamAgg_20 1.00 root funcs:count(1)",
-		"    └─IndexJoin_32 2.00 root inner join, inner:TableReader_31, outer key:test.s.a, inner key:test.t1.a",
-		"      ├─IndexReader_27 2.00 root index:IndexScan_26",
-		"      │ └─IndexScan_26 2.00 cop table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
-		"      └─TableReader_31 1.00 root data:TableScan_30",
-		"        └─TableScan_30 1.00 cop table:t1, range: decided by [test.s.a], keep order:false",
+		"    └─IndexMergeJoin_40 2.00 root inner join, inner:TableReader_38, outer key:test.s.a, inner key:test.t1.a",
+		"      ├─IndexReader_31 2.00 root index:IndexScan_30",
+		"      │ └─IndexScan_30 2.00 cop table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
+		"      └─TableReader_38 1.00 root data:TableScan_37",
+		"        └─TableScan_37 1.00 cop table:t1, range: decided by [test.s.a], keep order:true",
 	))
 	testKit.MustQuery("select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
 		"1",

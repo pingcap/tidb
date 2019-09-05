@@ -633,7 +633,15 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	ctx := context.Background()
 	callback := &ddlCallback{do: do}
 	d := do.ddl
-	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
+	do.ddl = ddl.NewDDL(
+		ctx,
+		ddl.WithEtcdClient(do.etcdClient),
+		ddl.WithStore(do.store),
+		ddl.WithInfoHandle(do.infoHandle),
+		ddl.WithHook(callback),
+		ddl.WithLease(ddlLease),
+		ddl.WithResourcePool(sysCtxPool),
+	)
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			if err := do.ddl.Stop(); err != nil {
