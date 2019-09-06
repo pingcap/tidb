@@ -257,7 +257,7 @@ func (e *InsertValues) autoIDAllocN(ctx context.Context, rows [][]types.Datum) (
 			// Find consecutive num.
 			start := i
 			cnt := 1
-			for i+1 <= length && e.cache[i].kind == AutoIDNull {
+			for i+1 < length && e.cache[i].kind == AutoIDNull {
 				i++
 				cnt++
 			}
