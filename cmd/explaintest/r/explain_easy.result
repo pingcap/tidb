@@ -356,7 +356,7 @@ Projection_11	5.00	root	9_aux_0
   ├─TableReader_15	5.00	root	data:TableScan_14
   │ └─TableScan_14	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─MergeJoin_55	2.40	root	inner join, left key:test.s.a, right key:test.t1.a
+    └─MergeJoin_58	2.40	root	inner join, left key:test.s.a, right key:test.t1.a
       ├─IndexReader_45	2.40	root	index:Selection_44
       │ └─Selection_44	2.40	cop	eq(3, test.t.a)
       │   └─IndexScan_43	3.00	cop	table:s, index:b, range:[3,3], keep order:true
@@ -370,7 +370,7 @@ Projection_10	5.00	root	9_aux_0
   ├─TableReader_14	5.00	root	data:TableScan_13
   │ └─TableScan_13	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_19	1.00	root	funcs:count(1)
-    └─MergeJoin_44	2.40	root	left outer join, left key:test.s.a, right key:test.t1.a
+    └─MergeJoin_47	2.40	root	left outer join, left key:test.s.a, right key:test.t1.a
       ├─IndexReader_34	2.40	root	index:Selection_33
       │ └─Selection_33	2.40	cop	eq(3, test.t.a)
       │   └─IndexScan_32	3.00	cop	table:s, index:b, range:[3,3], keep order:true
