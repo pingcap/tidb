@@ -2163,6 +2163,11 @@ func (s *testSuite4) TestSplitRegionTimeout(c *C) {
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout"), IsNil)
+
+	// Test scatter regions timeout.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
+	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
 }
 
 func (s *testSuiteP1) TestRow(c *C) {
@@ -4092,7 +4097,7 @@ func (s *testSuiteP1) TestSplitRegion(c *C) {
 
 	// Test for split table region.
 	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
-	// Check the ower value is more than the upper value.
+	// Check the lower value is more than the upper value.
 	_, err = tk.Exec(`split table t between (2) and (1) regions 10`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split table `t` region lower value 2 should less than the upper value 1")
