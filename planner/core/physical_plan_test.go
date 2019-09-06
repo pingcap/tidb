@@ -1747,34 +1747,59 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	}{
 		// simple case
 		{
-			sql:     "select /*+ INDEX(t, c_d_e) */ * from t",
+			sql:     "select /*+ USE_INDEX(t, c_d_e) */ * from t",
 			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
 			hasWarn: false,
 		},
 		{
-			sql:     "select /*+ INDEX(t, c_d_e) */ * from t t1",
+			sql:     "select /*+ IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+			best:    "TableReader(Table(t))->Sort",
+			hasWarn: false,
+		},
+		{
+			sql:     "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
 			best:    "TableReader(Table(t))",
 			hasWarn: false,
 		},
 		{
-			sql:     "select /*+ INDEX(t1, c_d_e) */ * from t t1",
+			sql:     "select /*+ IGNORE_INDEX(t, c_d_e) */ t1.c from t t1 order by t1.c",
+			best:    "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
+			hasWarn: false,
+		},
+		{
+			sql:     "select /*+ USE_INDEX(t1, c_d_e) */ * from t t1",
 			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
 			hasWarn: false,
 		},
 		{
-			sql:     "select /*+ INDEX(t1, c_d_e), INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+			sql:     "select /*+ IGNORE_INDEX(t1, c_d_e) */ t1.c from t t1 order by t1.c",
+			best:    "TableReader(Table(t))->Sort",
+			hasWarn: false,
+		},
+		{
+			sql:     "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f), HASH_JOIN(t1) */ * from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
+			hasWarn: false,
+		},
+		{
+			sql:     "select /*+ IGNORE_INDEX(t1, c_d_e), IGNORE_INDEX(t2, f), HASH_JOIN(t1) */ * from t t1, t t2 where t1.a = t2.b",
+			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)",
 			hasWarn: false,
 		},
 		// test multiple indexes
 		{
-			sql:     "select /*+ INDEX(t, c_d_e, f, g) */ * from t order by f",
+			sql:     "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
 			best:    "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
 			hasWarn: false,
 		},
 		// there will be a warning instead of error when index not exist
 		{
-			sql:     "select /*+ INDEX(t, no_such_index) */ * from t",
+			sql:     "select /*+ USE_INDEX(t, no_such_index) */ * from t",
+			best:    "TableReader(Table(t))",
+			hasWarn: true,
+		},
+		{
+			sql:     "select /*+ IGNORE_INDEX(t, no_such_index) */ * from t",
 			best:    "TableReader(Table(t))",
 			hasWarn: true,
 		},
@@ -1782,6 +1807,8 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	ctx := context.Background()
 	for i, test := range tests {
 		comment := Commentf("case:%v sql:%s", i, test)
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+
 		stmt, err := s.ParseOneStmt(test.sql, "", "")
 		c.Assert(err, IsNil, comment)
 

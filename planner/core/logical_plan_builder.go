@@ -64,8 +64,10 @@ const (
 	HintHashAgg = "hash_agg"
 	// HintStreamAgg is hint enforce stream aggregation.
 	HintStreamAgg = "stream_agg"
-	// HintIndex is hint enforce using some indexes.
-	HintIndex = "index"
+	// HintUseIndex is hint enforce using some indexes.
+	HintUseIndex = "use_index"
+	// HintIgnoreIndex is hint enforce ignoring some indexes.
+	HintIgnoreIndex = "ignore_index"
 )
 
 const (
@@ -1972,13 +1974,24 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			preferAggType |= preferHashAgg
 		case HintStreamAgg:
 			preferAggType |= preferStreamAgg
-		case HintIndex:
+		case HintUseIndex:
 			if len(hint.Tables) != 0 && len(hint.Indexes) != 0 {
 				indexHintList = append(indexHintList, indexHintInfo{
 					tblName: hint.Tables[0].TableName,
 					indexHint: &ast.IndexHint{
 						IndexNames: hint.Indexes,
 						HintType:   ast.HintUse,
+						HintScope:  ast.HintForScan,
+					},
+				})
+			}
+		case HintIgnoreIndex:
+			if len(hint.Tables) != 0 && len(hint.Indexes) != 0 {
+				indexHintList = append(indexHintList, indexHintInfo{
+					tblName: hint.Tables[0].TableName,
+					indexHint: &ast.IndexHint{
+						IndexNames: hint.Indexes,
+						HintType:   ast.HintIgnore,
 						HintScope:  ast.HintForScan,
 					},
 				})
