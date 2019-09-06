@@ -17,6 +17,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/parser/terror"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -614,7 +615,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 			c.Assert(2*vecWarnCnt, Equals, totalWarns)
 			warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
 			for i := 0; i < int(vecWarnCnt); i++ {
-				c.Assert(warns[i].Err.Error(), Equals, warns[i+int(vecWarnCnt)].Err.Error())
+				c.Assert(terror.ErrorEqual(warns[i].Err, warns[i+int(vecWarnCnt)].Err), IsTrue)
 			}
 		}
 	}
