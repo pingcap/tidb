@@ -509,9 +509,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 		joins := make([]PhysicalPlan, 0, 2)
 		rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.idxCols, outerJoinKeys)
-		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false)
-
-    innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, false)
+		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, false)
 		joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 		// The index merge join's inner plan is different from index join, so we should consturct another inner plan
 		// for it.
@@ -629,7 +627,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	us *LogicalUnionScan,
 	rangeInfo string,
 	keepOrder bool,
-  desc bool,
+	desc bool,
 ) task {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
