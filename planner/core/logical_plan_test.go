@@ -2619,12 +2619,12 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			c.Assert(err.Error(), Equals, tt.result, comment)
 			continue
 		}
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		lp := p.(LogicalPlan)
 		_, err = lp.recursiveDeriveStats()
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		var ds *DataSource
 		var byItems []*ByItems
 		for ds == nil {
@@ -2634,12 +2634,23 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			case *LogicalSort:
 				byItems = v.ByItems
 				lp = lp.Children()[0]
+			case *LogicalProjection:
+				newItems := make([]*ByItems, 0, len(byItems))
+				for _, col := range byItems {
+					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
+					switch expr := v.Exprs[idx].(type) {
+					case *expression.Column:
+						newItems = append(newItems, &ByItems{Expr: expr, Desc: col.Desc})
+					}
+				}
+				byItems = newItems
+				lp = lp.Children()[0]
 			default:
 				lp = lp.Children()[0]
 			}
 		}
 		paths := ds.skylinePruning(byItemsToProperty(byItems))
-		c.Assert(pathsName(paths), Equals, tt.result)
+		c.Assert(pathsName(paths), Equals, tt.result, comment)
 	}
 }
 

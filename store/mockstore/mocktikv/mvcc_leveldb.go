@@ -1273,3 +1273,107 @@ func (mvcc *MVCCLevelDB) doRawDeleteRange(startKey, endKey []byte) error {
 
 	return mvcc.db.Write(batch, nil)
 }
+
+// MvccGetByStartTS implements the MVCCDebugger interface.
+func (mvcc *MVCCLevelDB) MvccGetByStartTS(starTS uint64) (*kvrpcpb.MvccInfo, []byte) {
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
+	var key []byte
+	iter := newIterator(mvcc.db, nil)
+	defer iter.Release()
+
+	// find the first committed key for which `start_ts` equals to `ts`
+	for iter.Valid() {
+		var value mvccValue
+		err := value.UnmarshalBinary(iter.Value())
+		if err == nil && value.startTS == starTS {
+			_, key, _ = codec.DecodeBytes(iter.Key(), nil)
+			break
+		}
+		iter.Next()
+	}
+	if key == nil {
+		return nil, nil
+	}
+
+	return mvcc.MvccGetByKey(key), key
+}
+
+var valueTypeOpMap = [...]kvrpcpb.Op{
+	typePut:      kvrpcpb.Op_Put,
+	typeDelete:   kvrpcpb.Op_Del,
+	typeRollback: kvrpcpb.Op_Rollback,
+}
+
+// MvccGetByKey implements the MVCCDebugger interface.
+func (mvcc *MVCCLevelDB) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
+	info := &kvrpcpb.MvccInfo{}
+
+	startKey := mvccEncode(key, lockVer)
+	iter := newIterator(mvcc.db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	dec1 := lockDecoder{expectKey: key}
+	ok, err := dec1.Decode(iter)
+	if err != nil {
+		return nil
+	}
+	if ok {
+		var shortValue []byte
+		if isShortValue(dec1.lock.value) {
+			shortValue = dec1.lock.value
+		}
+		info.Lock = &kvrpcpb.MvccLock{
+			Type:       dec1.lock.op,
+			StartTs:    dec1.lock.startTS,
+			Primary:    dec1.lock.primary,
+			ShortValue: shortValue,
+		}
+	}
+
+	dec2 := valueDecoder{expectKey: key}
+	var writes []*kvrpcpb.MvccWrite
+	var values []*kvrpcpb.MvccValue
+	for iter.Valid() {
+		ok, err := dec2.Decode(iter)
+		if err != nil {
+			return nil
+		}
+		if !ok {
+			iter.Next()
+			break
+		}
+		var shortValue []byte
+		if isShortValue(dec2.value.value) {
+			shortValue = dec2.value.value
+		}
+		write := &kvrpcpb.MvccWrite{
+			Type:       valueTypeOpMap[dec2.value.valueType],
+			StartTs:    dec2.value.startTS,
+			CommitTs:   dec2.value.commitTS,
+			ShortValue: shortValue,
+		}
+		writes = append(writes, write)
+		value := &kvrpcpb.MvccValue{
+			StartTs: dec2.value.startTS,
+			Value:   dec2.value.value,
+		}
+		values = append(values, value)
+	}
+	info.Writes = writes
+	info.Values = values
+
+	return info
+}
+
+const shortValueMaxLen = 64
+
+func isShortValue(value []byte) bool {
+	return len(value) <= shortValueMaxLen
+}
