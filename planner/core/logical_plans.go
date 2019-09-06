@@ -397,6 +397,16 @@ type accessPath struct {
 	partialIndexPaths []*accessPath
 }
 
+// getTablePath finds the TablePath from a group of accessPaths.
+func getTablePath(paths []*accessPath) *accessPath {
+	for _, path := range paths {
+		if path.isTablePath {
+			return path
+		}
+	}
+	return nil
+}
+
 // deriveTablePathStats will fulfill the information that the accessPath need.
 // And it will check whether the primary key is covered only by point query.
 func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.Expression) (bool, error) {
