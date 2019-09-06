@@ -640,7 +640,7 @@ func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, 
 				return errors.Trace(err)
 			}
 		}
-		if i%rowsPerChunk == 0 {
+		if i%rowsPerChunk == rowsPerChunk-1 {
 			rowBatchData = append(rowBatchData, encoder.Encode(chk)...)
 			chk.Reset()
 		}

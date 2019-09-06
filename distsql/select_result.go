@@ -179,8 +179,8 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
-	//fmt.Println(datasize)
-	fmt.Println(timecost)
+	//	fmt.Println(datasize)
+	//	fmt.Println(timecost)
 	chk.Reset()
 	switch r.decodeType {
 	case DecodeTypeDefault:

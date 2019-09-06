@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/planner/core"
 	"math/rand"
 
 	"github.com/cznic/mathutil"
@@ -128,7 +129,11 @@ func buildTableReader(sctx sessionctx.Context) Executor {
 
 func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
 	builder := newExecutorBuilder(sctx, nil)
-	req, _, err := builder.constructDAGReq(nil)
+	req, _, err := builder.constructDAGReq([]core.PhysicalPlan{&core.PhysicalTableScan{
+		Columns: []*model.ColumnInfo{},
+		Table:   &model.TableInfo{ID: 12345, PKIsHandle: false},
+		Desc:    false,
+	}})
 	if err != nil {
 		panic(err)
 	}
