@@ -61,8 +61,12 @@ type InsertValues struct {
 	evalBuffer      chunk.MutRow
 	evalBufferTypes []*types.FieldType
 
-	// Cache datumLazy for consecutive autoid batch alloc
+	// Cache datumLazy for consecutive autoid batch alloc.
 	cache []datumLazy
+	// Fill the autoID lazily to datum.
+	// This is used for being compatible with JDBC using getGeneratedKeys().
+	// By now, we can guarantee consecutive autoID in a batch.
+	lazyFillAutoID bool
 }
 
 type defaultVal struct {
@@ -202,13 +206,14 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
 
+	e.lazyFillAutoID = true
 	evalRowFunc := e.fastEvalRow
 	if !e.allAssignmentsAreConstant {
 		evalRowFunc = e.evalRow
 	}
 
 	rows := make([][]types.Datum, 0, len(e.Lists))
-	// Cache for consecutive autoID batch alloc
+	// Cache for consecutive autoID batch alloc.
 	e.cache = make([]datumLazy, 0, len(e.Lists))
 
 	for i, list := range e.Lists {
@@ -220,8 +225,8 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		}
 		rows = append(rows, row)
 		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
-			// Before batch insert, should fill the batch allocated autoIDs
-			rows, err := e.autoIDAllocN(ctx, rows)
+			// Before batch insert, should fill the batch allocated autoIDs.
+			rows, err = e.autoIDAllocN(ctx, rows)
 			if err != nil {
 				return err
 			}
@@ -235,7 +240,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			}
 		}
 	}
-	// Fill the batch allocated autoIDs
+	// Fill the batch allocated autoIDs.
 	rows, err = e.autoIDAllocN(ctx, rows)
 	if err != nil {
 		return err
@@ -250,25 +255,18 @@ func (e *InsertValues) autoIDAllocN(ctx context.Context, rows [][]types.Datum) (
 		switch e.cache[i].kind {
 		case AutoIDNull:
 			// Find consecutive num.
-			var cnt int
-			var start int
-			start = i
-			for i < length {
-				if e.cache[i].kind == AutoIDNull {
-					cnt++
-					i++
-				} else {
-					break
-				}
+			start := i
+			cnt := 1
+			for i+1 <= length && e.cache[i].kind == AutoIDNull {
+				i++
+				cnt++
 			}
-			// Fix the index i
-			i--
 			// Alloc batch N consecutive autoIDs.
 			recordIDs, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
 			if e.filterErr(err) != nil {
 				return nil, err
 			}
-			// Distribute autoIDs to rows.
+			// Assign autoIDs to rows.
 			var d types.Datum
 			var c *table.Column
 			for j := 0; j < cnt; j++ {
@@ -299,11 +297,11 @@ func (e *InsertValues) autoIDAllocN(ctx context.Context, rows [][]types.Datum) (
 				rows[rowIdx][colIdx] = d
 			}
 		case AutoIDRebase:
-			// Rebase action
+			// Rebase action.
 			rowIdx := e.cache[i].rowIdx
 			colIdx := e.cache[i].colIdx
 
-			// recordID has been casted in evalRow
+			// recordID has been casted in evalRow.
 			recordID := e.cache[i].recordID
 			d := e.cache[i].datum
 			c := e.Table.Cols()[colIdx]
@@ -319,14 +317,14 @@ func (e *InsertValues) autoIDAllocN(ctx context.Context, rows [][]types.Datum) (
 			if d, err = c.HandleBadNull(d, e.ctx.GetSessionVars().StmtCtx); err != nil {
 				return nil, err
 			}
-			// Cause d may changed in HandleBadNull, do assignment here
+			// Cause d may changed in HandleBadNull, do assignment here.
 			rows[rowIdx][colIdx] = d
 		case AutoIDZero:
-			// Don't change value 0 to auto id, if NoAutoValueOnZero SQL mode is set.
+			// Won't change value 0 to auto id, if NO_AUTO_VALUE_ON_ZERO SQL mode is set.
 			rowIdx := e.cache[i].rowIdx
 			colIdx := e.cache[i].colIdx
 
-			// recordID has been casted in evalRow
+			// recordID has been casted in evalRow.
 			recordID := e.cache[i].recordID
 			d := e.cache[i].datum
 			c := e.Table.Cols()[colIdx]
