@@ -72,9 +72,12 @@ func (s *testSuite) TestFailNewSession(c *C) {
 		stop.Done()
 	}()
 
-	defer srv.Stop()
-	defer stop.Wait()
-	defer testleak.AfterTest(c)()
+	leakFunc := testleak.AfterTest(c)
+	defer func() {
+		srv.Stop()
+		stop.Wait()
+		leakFunc()
+	}()
 
 	func() {
 		cli, err := clientv3.New(clientv3.Config{
