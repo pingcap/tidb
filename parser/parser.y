@@ -3199,6 +3199,10 @@ PartDefOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3.(string)}
 	}
+|	"STORAGE" "ENGINE" EqOpt StringName
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $4.(string)}
+	}
 |	"INSERT_METHOD" EqOpt StringName
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionInsertMethod, StrValue: $3.(string)}
@@ -3248,7 +3252,7 @@ PartDefValuesOpt:
 	{
 		$$ = &ast.PartitionDefinitionClauseIn{}
 	}
-|	"VALUES" "IN" '(' ExpressionList ')'
+|	"VALUES" "IN" '(' MaxValueOrExpressionList ')'
 	{
 		exprs := $4.([]ast.ExprNode)
 		values := make([][]ast.ExprNode, 0, len(exprs))
