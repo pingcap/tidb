@@ -17,7 +17,6 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/parser/terror"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
