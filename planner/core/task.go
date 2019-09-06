@@ -873,22 +873,12 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
 func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool) float64 {
-	aggFactorSum := 0.0
-	for _, agg := range p.AggFuncs {
-		if fac, ok := aggFuncFactor[agg.Name]; ok {
-			aggFactorSum += fac
-		} else {
-			aggFactorSum += aggFuncFactor["default"]
-		}
-	}
-	if aggFactorSum == 0 {
-		aggFactorSum = 1.0
-	}
+	aggFuncFactor := p.getAggFuncCostFactor()
 	var cpuCost float64
 	if isRoot {
-		cpuCost = inputRows * cpuFactor * aggFactorSum
+		cpuCost = inputRows * cpuFactor * aggFuncFactor
 	} else {
-		cpuCost = inputRows * copCPUFactor * aggFactorSum
+		cpuCost = inputRows * copCPUFactor * aggFuncFactor
 	}
 	rowsPerGroup := inputRows / p.statsInfo().RowCount
 	memoryCost := rowsPerGroup * distinctFactor * memoryFactor * float64(p.numDistinctFunc())
@@ -961,20 +951,10 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	cardinality := p.statsInfo().RowCount
 	numDistinctFunc := p.numDistinctFunc()
-	aggFactorSum := 0.0
-	for _, agg := range p.AggFuncs {
-		if fac, ok := aggFuncFactor[agg.Name]; ok {
-			aggFactorSum += fac
-		} else {
-			aggFactorSum += aggFuncFactor["default"]
-		}
-	}
-	if aggFactorSum == 0 {
-		aggFactorSum = 1.0
-	}
+	aggFuncFactor := p.getAggFuncCostFactor()
 	var cpuCost float64
 	if isRoot {
-		cpuCost = inputRows * cpuFactor * aggFactorSum
+		cpuCost = inputRows * cpuFactor * aggFuncFactor
 		divisor, con := p.cpuCostDivisor(numDistinctFunc > 0)
 		if divisor > 0 {
 			cpuCost /= divisor
@@ -982,9 +962,9 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 			cpuCost += (con + 1) * concurrencyFactor
 		}
 	} else {
-		cpuCost = inputRows * copCPUFactor * aggFactorSum
+		cpuCost = inputRows * copCPUFactor * aggFuncFactor
 	}
-	memoryCost := cardinality * memoryFactor * aggFactorSum
+	memoryCost := cardinality * memoryFactor * float64(len(p.AggFuncs))
 	// When aggregation has distinct flag, we would allocate a map for each group to
 	// check duplication.
 	memoryCost += inputRows * distinctFactor * memoryFactor * float64(numDistinctFunc)
