@@ -42,7 +42,6 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	ln   net.Listener
 	srv  *grpc.Server
 	stop sync.WaitGroup
 }
@@ -50,11 +49,10 @@ type testSuite struct {
 func (s *testSuite) SetUpSuite(c *C) {
 	ln, err := net.Listen("unix", "new_session:12379")
 	c.Assert(err, IsNil)
-	s.ln = ln
 	s.srv = grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
 	s.stop.Add(1)
 	go func() {
-		if err = s.srv.Serve(s.ln); err != nil {
+		if err = s.srv.Serve(ln); err != nil {
 			logutil.BgLogger().Error(
 				"can't serve gRPC requests",
 				zap.Error(err),
@@ -67,10 +65,6 @@ func (s *testSuite) SetUpSuite(c *C) {
 func (s *testSuite) TearDownSuite(c *C) {
 	if s.srv != nil {
 		s.srv.Stop()
-	}
-	if s.ln != nil {
-		err := s.ln.Close()
-		c.Assert(err, IsNil)
 	}
 	s.stop.Wait()
 }
