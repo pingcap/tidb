@@ -100,7 +100,8 @@ type lookUpMergeJoinTask struct {
 	hasMatch    bool
 	hasNull     bool
 
-	results chan *chunk.Chunk
+	wgSetResultsSize sync.WaitGroup
+	results          chan *chunk.Chunk
 
 	memTracker *memory.Tracker
 }
@@ -245,6 +246,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 	req.Reset()
 	task := e.getFinishedTask(ctx)
 	breakFlag := false
+	task.wgSetResultsSize.Wait()
 	for task != nil && !breakFlag {
 		select {
 		case chk := <-task.results:
@@ -335,10 +337,10 @@ func (omw *outerMergeWorker) pushToChan(ctx context.Context, task *lookUpMergeJo
 func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
 	newFirstChunk(omw.executor)
 	task := &lookUpMergeJoinTask{
-		results:     make(chan *chunk.Chunk, 1),
 		doneErr:     make(chan error, 1),
 		outerResult: newFirstChunk(omw.executor),
 	}
+	task.wgSetResultsSize.Add(1)
 	task.memTracker = memory.NewTracker(stringutil.MemoizeStr(func() string { return fmt.Sprintf("lookup join task %p", task) }), -1)
 	task.memTracker.AttachTo(omw.parentMemTracker)
 
@@ -460,6 +462,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	}
 
 	task.results = make(chan *chunk.Chunk, task.innerResult.NumChunks()+1)
+	task.wgSetResultsSize.Done()
 	err = imw.handleMergeJoin(ctx, task)
 	return err
 }
