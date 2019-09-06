@@ -343,7 +343,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if len(keys) == 0 {
 		return nil
 	}
-	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys)
+	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1074,6 +1074,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 			batchExe.tokenWaitDuration += time.Since(waitStart)
 			batch := batch1
 			go func() {
+				defer batchExe.rateLimiter.putToken()
 				var singleBatchBackoffer *Backoffer
 				if batchExe.action == actionCommit {
 					// Because the secondary batches of the commit actions are implemented to be

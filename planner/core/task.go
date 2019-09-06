@@ -162,10 +162,87 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	}
 }
 
+func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
+	innerTask := p.innerTask
+	outerTask := finishCopTask(p.ctx, tasks[1-p.InnerChildIdx].copy())
+	if p.InnerChildIdx == 1 {
+		p.SetChildren(outerTask.plan(), innerTask.plan())
+	} else {
+		p.SetChildren(innerTask.plan(), outerTask.plan())
+	}
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	return &rootTask{
+		p:   p,
+		cst: p.GetCost(outerTask, innerTask),
+	}
+}
+
+// GetCost computes the cost of index merge join operator and its children.
+func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
+	var cpuCost float64
+	outerCnt, innerCnt := outerTask.count(), innerTask.count()
+	// Add the cost of evaluating outer filter, since inner filter of index join
+	// is always empty, we can simply tell whether outer filter is empty using the
+	// summed length of left/right conditions.
+	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
+		cpuCost += cpuFactor * outerCnt
+		outerCnt *= selectionFactor
+	}
+	// Cost of extracting lookup keys.
+	innerCPUCost := cpuFactor * outerCnt
+	// Cost of sorting and removing duplicate lookup keys:
+	// (outerCnt / batchSize) * (sortFactor + 1.0) * batchSize * cpuFactor
+	// If `p.NeedOuterSort` is true, the sortFactor is batchSize * Log2(batchSize).
+	// Otherwise, it's 0.
+	batchSize := math.Min(float64(p.ctx.GetSessionVars().IndexJoinBatchSize), outerCnt)
+	sortFactor := 0.0
+	if p.NeedOuterSort {
+		sortFactor = math.Log2(float64(batchSize))
+	}
+	if batchSize > 2 {
+		innerCPUCost += outerCnt * (sortFactor + 1.0) * cpuFactor
+	}
+	// Add cost of building inner executors. CPU cost of building copTasks:
+	// (outerCnt / batchSize) * (batchSize * distinctFactor) * cpuFactor
+	// Since we don't know the number of copTasks built, ignore these network cost now.
+	innerCPUCost += outerCnt * distinctFactor * cpuFactor
+	innerConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency)
+	cpuCost += innerCPUCost / innerConcurrency
+	// Cost of merge join in inner worker.
+	numPairs := outerCnt * innerCnt
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin ||
+		p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		if len(p.OtherConditions) > 0 {
+			numPairs *= 0.5
+		} else {
+			numPairs = 0
+		}
+	}
+	avgProbeCnt := numPairs / outerCnt
+	var probeCost float64
+	// Inner workers do merge join in parallel, but they can only save ONE outer batch
+	// results. So as the number of outer batch exceeds inner concurrency, it would fall back to
+	// linear execution. In a word, the merge join only run in parallel for the first
+	// `innerConcurrency` number of inner tasks.
+	if outerCnt/batchSize >= innerConcurrency {
+		probeCost = (numPairs - batchSize*avgProbeCnt*(innerConcurrency-1)) * cpuFactor
+	} else {
+		probeCost = batchSize * avgProbeCnt * cpuFactor
+	}
+	cpuCost += probeCost + (innerConcurrency+1.0)*concurrencyFactor
+
+	// Index merge join save the join results in inner worker.
+	// So the memory cost consider the results size for each batch.
+	memoryCost := innerConcurrency * (batchSize * avgProbeCnt) * memoryFactor
+
+	innerPlanCost := outerCnt * innerTask.cost()
+	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
+}
+
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	innerTask := p.innerTask
-	outerTask := finishCopTask(p.ctx, tasks[p.OuterIndex].copy())
-	if p.OuterIndex == 0 {
+	outerTask := finishCopTask(p.ctx, tasks[1-p.InnerChildIdx].copy())
+	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.plan(), innerTask.plan())
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
@@ -291,12 +368,12 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 // GetCost computes cost of merge join operator itself.
 func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 	outerCnt := lCnt
-	innerKeys := p.RightKeys
+	innerKeys := p.RightJoinKeys
 	innerSchema := p.children[1].Schema()
 	innerStats := p.children[1].statsInfo()
 	if p.JoinType == RightOuterJoin {
 		outerCnt = rCnt
-		innerKeys = p.LeftKeys
+		innerKeys = p.LeftJoinKeys
 		innerSchema = p.children[0].Schema()
 		innerStats = p.children[0].statsInfo()
 	}
@@ -304,8 +381,8 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 		cartesian:     false,
 		leftProfile:   p.children[0].statsInfo(),
 		rightProfile:  p.children[1].statsInfo(),
-		leftJoinKeys:  p.LeftKeys,
-		rightJoinKeys: p.RightKeys,
+		leftJoinKeys:  p.LeftJoinKeys,
+		rightJoinKeys: p.RightJoinKeys,
 		leftSchema:    p.children[0].Schema(),
 		rightSchema:   p.children[1].Schema(),
 	}
@@ -341,6 +418,38 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
+	}
+}
+
+// splitCopAvg2CountAndSum splits the cop avg function to count and sum.
+// Now it's only used for TableReader.
+func splitCopAvg2CountAndSum(p PhysicalPlan) {
+	var baseAgg *basePhysicalAgg
+	if agg, ok := p.(*PhysicalStreamAgg); ok {
+		baseAgg = &agg.basePhysicalAgg
+	}
+	if agg, ok := p.(*PhysicalHashAgg); ok {
+		baseAgg = &agg.basePhysicalAgg
+	}
+	if baseAgg == nil {
+		return
+	}
+
+	schemaCursor := len(baseAgg.Schema().Columns) - len(baseAgg.GroupByItems)
+	for i := len(baseAgg.AggFuncs) - 1; i >= 0; i-- {
+		f := baseAgg.AggFuncs[i]
+		schemaCursor--
+		if f.Name == ast.AggFuncAvg {
+			schemaCursor--
+			sumAgg := *f
+			sumAgg.Name = ast.AggFuncSum
+			sumAgg.RetTp = baseAgg.Schema().Columns[schemaCursor+1].RetType
+			cntAgg := *f
+			cntAgg.Name = ast.AggFuncCount
+			cntAgg.RetTp = baseAgg.Schema().Columns[schemaCursor].RetType
+			cntAgg.RetTp.Flag = f.RetTp.Flag
+			baseAgg.AggFuncs = append(baseAgg.AggFuncs[:i], append([]*aggregation.AggFuncDesc{&cntAgg, &sumAgg}, baseAgg.AggFuncs[i+1:]...)...)
+		}
 	}
 }
 
@@ -413,6 +522,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
+		splitCopAvg2CountAndSum(t.tablePlan)
 		p := PhysicalTableReader{tablePlan: t.tablePlan}.Init(ctx)
 		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p

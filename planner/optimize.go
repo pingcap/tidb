@@ -36,8 +36,13 @@ import (
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
+		if !isPointGetWithoutDoubleRead(sctx, fp) {
+			sctx.PrepareTxnFuture(ctx)
+		}
 		return fp, nil
 	}
+
+	sctx.PrepareTxnFuture(ctx)
 
 	var oriHint *bindinfo.HintsSet
 	if stmtNode, ok := node.(ast.StmtNode); ok {
@@ -201,6 +206,18 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, stmtN
 		}
 		globalHandle.AddDropInvalidBindTask(dropBindRecord)
 	}
+}
+
+// isPointGetWithoutDoubleRead returns true when meets following conditions:
+//  1. ctx is auto commit tagged.
+//  2. plan is point get by pk.
+func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false
+	}
+
+	v, ok := p.(*plannercore.PointGetPlan)
+	return ok && v.IndexInfo == nil
 }
 
 func init() {
