@@ -133,6 +133,9 @@ type LogicalJoin struct {
 	// redundantSchema contains columns which are eliminated in join.
 	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
 	redundantSchema *expression.Schema
+
+	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
+	equalCondOutCnt float64
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
@@ -371,10 +374,12 @@ type DataSource struct {
 // accessPath indicates the way we access a table: by using single index, or by using multiple indexes,
 // or just by using table scan.
 type accessPath struct {
-	index      *model.IndexInfo
-	idxCols    []*expression.Column
-	idxColLens []int
-	ranges     []*ranger.Range
+	index          *model.IndexInfo
+	fullIdxCols    []*expression.Column
+	fullIdxColLens []int
+	idxCols        []*expression.Column
+	idxColLens     []int
+	ranges         []*ranger.Range
 	// countAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	countAfterAccess float64
 	// countAfterIndex is the row count after we apply filters on index and before we apply the table filters.
@@ -390,6 +395,16 @@ type accessPath struct {
 	// partialIndexPaths store all index access paths.
 	// If there are extra filters, store them in tableFilters.
 	partialIndexPaths []*accessPath
+}
+
+// getTablePath finds the TablePath from a group of accessPaths.
+func getTablePath(paths []*accessPath) *accessPath {
+	for _, path := range paths {
+		if path.isTablePath {
+			return path
+		}
+	}
+	return nil
 }
 
 // deriveTablePathStats will fulfill the information that the accessPath need.
@@ -484,7 +499,8 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
-	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+	path.idxCols, path.idxColLens = expression.IndexInfo2PrefixCols(ds.schema.Columns, path.index)
+	path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
 		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
@@ -529,7 +545,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.
 			}
 		}
 	}
-	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
+	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo)
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.countAfterAccess < ds.stats.RowCount {
