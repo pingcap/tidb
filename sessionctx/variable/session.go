@@ -99,15 +99,17 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
-	forUpdateTS   uint64
-	DirtyDB       interface{}
-	Binlog        interface{}
-	InfoSchema    interface{}
-	History       interface{}
-	SchemaVersion int64
-	StartTS       uint64
-	Shard         *int64
-	TableDeltaMap map[int64]TableDelta
+	forUpdateTS uint64
+	DirtyDB     interface{}
+	// HasUntouchedIndex indicate whether exists the untouched index when executing update statement.
+	HasUntouchedIndex bool
+	Binlog            interface{}
+	InfoSchema        interface{}
+	History           interface{}
+	SchemaVersion     int64
+	StartTS           uint64
+	Shard             *int64
+	TableDeltaMap     map[int64]TableDelta
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
@@ -138,6 +140,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 func (tc *TransactionContext) Cleanup() {
 	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
 	tc.DirtyDB = nil
+	tc.HasUntouchedIndex = false
 	tc.Binlog = nil
 	tc.History = nil
 	tc.TableDeltaMap = nil

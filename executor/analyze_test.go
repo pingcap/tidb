@@ -472,9 +472,8 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	tk.MustExec("analyze table t")
 	// 4 regions will be sampled, and it will retry the last failed region.
 	c.Assert(s.cli.mu.count, Equals, int64(5))
-	rows := tk.MustQuery(`show stats_meta where db_name = "test" and table_name = "t"`).Rows()
-	c.Assert(len(rows) > 0, IsTrue)
-	c.Assert(rows[0][5], Equals, "30")
+	row := tk.MustQuery(`show stats_meta where db_name = "test" and table_name = "t"`).Rows()[0]
+	c.Assert(row[5], Equals, "30")
 }
 
 func (s *testSuite1) TestFailedAnalyzeRequest(c *C) {

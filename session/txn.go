@@ -50,8 +50,8 @@ type TxnState struct {
 	buf          kv.MemBuffer
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
-	// updateUntouchedIndex records the untouched index when update. the key is table ID and index ID.
-	updateUntouchedIndex map[int64]map[int64]struct{}
+	// hasUntouchedIndex indicate whether exists the untouched index when executing update statement.
+	hasUntouchedIndex bool
 
 	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	// doNotCommit flag may be set when StmtCommit fail.
@@ -323,7 +323,7 @@ func (st *TxnState) cleanup() {
 		}
 		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
-	st.updateUntouchedIndex = nil
+	st.hasUntouchedIndex = false
 }
 
 // KeysNeedToLock returns the keys need to be locked.
@@ -388,15 +388,6 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 		dt.AddRow(op.handle)
 	case table.DirtyTableDeleteRow:
 		dt.DeleteRow(op.handle)
-	}
-}
-
-func mergeUntouchedIndexToDirtyDB(dirtyDB *executor.DirtyDB, untouchedIndex map[int64]map[int64]struct{}) {
-	for tid, idxs := range untouchedIndex {
-		dt := dirtyDB.GetDirtyTable(tid)
-		for idxID := range idxs {
-			dt.AddUntouchedIndex(idxID)
-		}
 	}
 }
 
@@ -481,9 +472,9 @@ func (s *session) StmtCommit() error {
 		for _, op := range st.dirtyTableOP {
 			mergeToDirtyDB(dirtyDB, op)
 		}
-		if len(st.updateUntouchedIndex) > 0 {
-			mergeUntouchedIndexToDirtyDB(dirtyDB, st.updateUntouchedIndex)
-		}
+	}
+	if st.hasUntouchedIndex {
+		s.GetSessionVars().TxnCtx.HasUntouchedIndex = true
 	}
 	st.ConfirmAssertions(true)
 	return nil
@@ -509,12 +500,6 @@ func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
 	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
 }
 
-func (s *session) UpdateStmtUntouchedIndex(tid, indexID int64) {
-	if s.txn.updateUntouchedIndex == nil {
-		s.txn.updateUntouchedIndex = make(map[int64]map[int64]struct{})
-	}
-	if s.txn.updateUntouchedIndex[tid] == nil {
-		s.txn.updateUntouchedIndex[tid] = make(map[int64]struct{})
-	}
-	s.txn.updateUntouchedIndex[tid][indexID] = struct{}{}
+func (s *session) StmtHasUntouchedIndex() {
+	s.txn.hasUntouchedIndex = true
 }

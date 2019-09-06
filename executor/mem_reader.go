@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 type memIndexReader struct {
@@ -164,17 +163,6 @@ func buildMemTableReader(us *UnionScanExec, kvRanges []kv.KeyRange) *memTableRea
 		colIDs:        colIDs,
 		handleBytes:   make([]byte, 0, 16),
 	}
-}
-
-func buildMemTableReaderWithFullRange(us *UnionScanExec) *memTableReader {
-	pkIsUnsigned := false
-	if us.table.Meta().PKIsHandle {
-		if pkColInfo := us.table.Meta().GetPkColInfo(); pkColInfo != nil {
-			pkIsUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
-		}
-	}
-	fullTableRange := distsql.TableRangesToKVRanges(getPhysicalTableID(us.table), ranger.FullIntRange(pkIsUnsigned), nil)
-	return buildMemTableReader(us, fullTableRange)
 }
 
 // TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.

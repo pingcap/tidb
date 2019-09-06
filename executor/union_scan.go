@@ -37,10 +37,9 @@ func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 	dt, ok := udb.tables[tid]
 	if !ok {
 		dt = &DirtyTable{
-			tid:            tid,
-			addedRows:      make(map[int64]struct{}),
-			deletedRows:    make(map[int64]struct{}),
-			untouchedIndex: make(map[int64]struct{}),
+			tid:         tid,
+			addedRows:   make(map[int64]struct{}),
+			deletedRows: make(map[int64]struct{}),
 		}
 		udb.tables[tid] = dt
 	}
@@ -54,8 +53,6 @@ type DirtyTable struct {
 	// the key is handle.
 	addedRows   map[int64]struct{}
 	deletedRows map[int64]struct{}
-	// untouchedIndex is the untouched index when update. The key is index ID.
-	untouchedIndex map[int64]struct{}
 }
 
 // AddRow adds a row to the DirtyDB.
@@ -69,11 +66,6 @@ func (dt *DirtyTable) DeleteRow(handle int64) {
 	dt.deletedRows[handle] = struct{}{}
 }
 
-// AddUntouchedIndex adds a untouched index ID to the DirtyDB.
-func (dt *DirtyTable) AddUntouchedIndex(indexID int64) {
-	dt.untouchedIndex[indexID] = struct{}{}
-}
-
 // GetDirtyDB returns the DirtyDB bind to the context.
 func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
 	var udb *DirtyDB
@@ -85,11 +77,6 @@ func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
 		udb = x.(*DirtyDB)
 	}
 	return udb
-}
-
-func (dt *DirtyTable) isUntouchedIndex(indexID int64) bool {
-	_, ok := dt.untouchedIndex[indexID]
-	return ok
 }
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.

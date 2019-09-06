@@ -365,7 +365,6 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		return err
 	}
 	for _, idx := range t.DeletableIndices() {
-		writeIndex := false
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
@@ -377,11 +376,7 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, rm, h, oldVs, idx, txn); err != nil {
 				return err
 			}
-			writeIndex = true
 			break
-		}
-		if !writeIndex {
-			ctx.UpdateStmtUntouchedIndex(t.physicalTableID, idx.Meta().ID)
 		}
 	}
 	for _, idx := range t.WritableIndices() {
@@ -401,7 +396,7 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			return err
 		}
 		if untouched {
-			ctx.UpdateStmtUntouchedIndex(t.physicalTableID, idx.Meta().ID)
+			ctx.StmtHasUntouchedIndex()
 		}
 	}
 	return nil
