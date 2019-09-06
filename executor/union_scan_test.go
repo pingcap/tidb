@@ -213,4 +213,24 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustQuery("select a,b from t1 use index(idx) where b>1 and c is not null;").Check(testkit.Rows("3 3"))
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t1;")
+
+	// Test insert and update with untouched index.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int,b int,c int,index idx(b));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2);")
+	tk.MustExec("update t1 set c=c+1 where a=1;")
+	tk.MustQuery("select * from t1 use index(idx);").Check(testkit.Rows("1 1 2", "2 2 2"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t1;")
+
+	// Test insert and update with untouched unique index.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int,b int,c int,unique index idx(b));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2);")
+	tk.MustExec("update t1 set c=c+1 where a=1;")
+	tk.MustQuery("select * from t1 use index(idx);").Check(testkit.Rows("1 1 2", "2 2 2"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t1;")
 }

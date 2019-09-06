@@ -210,6 +210,17 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	if err != nil {
 		return 0, err
 	}
+
+	ctx := opt.Ctx
+	if opt.Untouched {
+		// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
+		// no need to re-write the index kv.
+		_, err := rm.GetFromTxnMem(ctx, key)
+		if err == nil {
+			return 0, nil
+		}
+	}
+
 	// save the key buffer to reuse.
 	writeBufs.IndexKeyBuf = key
 	if !distinct {
@@ -237,7 +248,6 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		return 0, err
 	}
 
-	ctx := opt.Ctx
 	if ctx != nil {
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("index.Create", opentracing.ChildOf(span.Context()))

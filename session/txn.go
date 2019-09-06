@@ -227,6 +227,24 @@ func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
+// GetFromTxnMem implements the Retriever interface.
+func (st *TxnState) GetFromTxnMem(ctx context.Context, k kv.Key) ([]byte, error) {
+	val, err := st.buf.GetFromTxnMem(ctx, k)
+	if kv.IsErrNotFound(err) {
+		val, err = st.Transaction.GetFromTxnMem(ctx, k)
+		if kv.IsErrNotFound(err) {
+			return nil, err
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(val) == 0 {
+		return nil, kv.ErrNotExist
+	}
+	return val, nil
+}
+
 // BatchGet overrides the Transaction interface.
 func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	bufferValues := make([][]byte, len(keys))

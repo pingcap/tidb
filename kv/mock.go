@@ -66,6 +66,11 @@ func (t *mockTxn) Get(ctx context.Context, k Key) ([]byte, error) {
 	return nil, nil
 }
 
+// GetFromTxnMem implements the Retriever interface.
+func (t *mockTxn) GetFromTxnMem(ctx context.Context, key Key) ([]byte, error) {
+	return nil, nil
+}
+
 func (t *mockTxn) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
 	return nil, nil
 }
@@ -201,6 +206,11 @@ type mockSnapshot struct {
 
 func (s *mockSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
 	return s.store.Get(ctx, k)
+}
+
+// GetFromTxnMem implements the Retriever interface.
+func (s *mockSnapshot) GetFromTxnMem(ctx context.Context, k Key) ([]byte, error) {
+	return s.store.GetFromTxnMem(ctx, k)
 }
 
 func (s *mockSnapshot) SetPriority(priority int) {

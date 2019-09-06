@@ -438,7 +438,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
 
 	if len(s.txn.updateUntouchedIndex) > 0 {
-		s.txn.SetOption(kv.HasUntouchedIndexKV, true)
+		//s.txn.SetOption(kv.HasUntouchedIndexKV, true)
 	}
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }

@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -173,10 +172,11 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		vLen := len(v)
 		if vLen > 0 {
-			if c.hasUntouchedIndexKV && (vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag {
+			//if c.hasUntouchedIndexKV && (vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag {
+			if (vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag {
 				// check index key type.
 				if len(k) > 11 && k[0] == 't' && k[9] == '_' && k[10] == 'i' {
-					fmt.Printf("\n-------------\nskip commit key: %v, value: %v\n", string(k), string(v))
+					//fmt.Printf("\n-------------\nskip commit key: %v, value: %v\n", string(k), string(v))
 					return nil
 				}
 			}

@@ -133,6 +133,15 @@ func (lmb *lazyMemBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	return lmb.mb.Get(ctx, k)
 }
 
+// GetFromTxnMem implements the Retriever interface.
+func (lmb *lazyMemBuffer) GetFromTxnMem(ctx context.Context, k Key) ([]byte, error) {
+	if lmb.mb == nil {
+		return nil, ErrNotExist
+	}
+
+	return lmb.mb.GetFromTxnMem(ctx, k)
+}
+
 func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {
 		lmb.mb = NewMemDbBuffer(lmb.cap)
@@ -199,6 +208,28 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 			return nil, ErrNotExist
 		}
 		v, err = us.BufferStore.r.Get(ctx, k)
+	}
+	if err != nil {
+		return v, err
+	}
+	if len(v) == 0 {
+		return nil, ErrNotExist
+	}
+	return v, nil
+}
+
+// GetFromTxnMem implements the Retriever interface.
+func (us *unionStore) GetFromTxnMem(ctx context.Context, k Key) ([]byte, error) {
+	v, err := us.MemBuffer.GetFromTxnMem(ctx, k)
+	if IsErrNotFound(err) {
+		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
+			e, ok := us.opts.Get(PresumeKeyNotExistsError)
+			if ok {
+				us.keyExistErrs[string(k)] = e.(*existErrInfo)
+			}
+			return nil, ErrNotExist
+		}
+		v, err = us.BufferStore.r.GetFromTxnMem(ctx, k)
 	}
 	if err != nil {
 		return v, err
