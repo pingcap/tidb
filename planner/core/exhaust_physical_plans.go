@@ -96,8 +96,8 @@ func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Exp
 
 // Only if the input required prop is the prefix fo join keys, we can pass through this property.
 func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty) ([]*property.PhysicalProperty, bool) {
-	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftKeys, false, math.MaxFloat64, false)
-	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightKeys, false, math.MaxFloat64, false)
+	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftJoinKeys, false, math.MaxFloat64, false)
+	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightJoinKeys, false, math.MaxFloat64, false)
 	if !prop.IsEmpty() {
 		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
 		all, desc := prop.AllSameOrder()
@@ -138,14 +138,15 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 		leftKeys = leftKeys[:prefixLen]
 		rightKeys = rightKeys[:prefixLen]
 		offsets = offsets[:prefixLen]
-		mergeJoin := PhysicalMergeJoin{
+		baseJoin := basePhysicalJoin{
 			JoinType:        p.JoinType,
 			LeftConditions:  p.LeftConditions,
 			RightConditions: p.RightConditions,
 			DefaultValues:   p.DefaultValues,
-			LeftKeys:        leftKeys,
-			RightKeys:       rightKeys,
-		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+			LeftJoinKeys:    leftKeys,
+			RightJoinKeys:   rightKeys,
+		}
+		mergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 		mergeJoin.SetSchema(p.schema)
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		mergeJoin.initCompareFuncs()
@@ -232,15 +233,16 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 	rightKeys := getNewJoinKeysByOffsets(p.RightJoinKeys, offsets)
 	lProp := property.NewPhysicalProperty(property.RootTaskType, leftKeys, desc, math.MaxFloat64, true)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, rightKeys, desc, math.MaxFloat64, true)
-	enforcedPhysicalMergeJoin := PhysicalMergeJoin{
+	baseJoin := basePhysicalJoin{
 		JoinType:        p.JoinType,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		DefaultValues:   p.DefaultValues,
-		LeftKeys:        leftKeys,
-		RightKeys:       rightKeys,
+		LeftJoinKeys:    leftKeys,
+		RightJoinKeys:   rightKeys,
 		OtherConditions: p.OtherConditions,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	}
+	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	enforcedPhysicalMergeJoin.SetSchema(p.schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
 	enforcedPhysicalMergeJoin.initCompareFuncs()
@@ -248,9 +250,9 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 }
 
 func (p *PhysicalMergeJoin) initCompareFuncs() {
-	p.CompareFuncs = make([]expression.CompareFunc, 0, len(p.LeftKeys))
-	for i := range p.LeftKeys {
-		p.CompareFuncs = append(p.CompareFuncs, expression.GetCmpFunction(p.LeftKeys[i], p.RightKeys[i]))
+	p.CompareFuncs = make([]expression.CompareFunc, 0, len(p.LeftJoinKeys))
+	for i := range p.LeftJoinKeys {
+		p.CompareFuncs = append(p.CompareFuncs, expression.GetCmpFunction(p.LeftJoinKeys[i], p.RightJoinKeys[i]))
 	}
 }
 
@@ -279,17 +281,20 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int)
 		expCntScale := prop.ExpectedCnt / p.stats.RowCount
 		chReqProps[1-innerIdx].ExpectedCnt = p.children[1-innerIdx].statsInfo().RowCount * expCntScale
 	}
-	hashJoin := PhysicalHashJoin{
-		EqualConditions: p.EqualConditions,
+	baseJoin := basePhysicalJoin{
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		LeftJoinKeys:    p.LeftJoinKeys,
 		RightJoinKeys:   p.RightJoinKeys,
 		JoinType:        p.JoinType,
-		Concurrency:     uint(p.ctx.GetSessionVars().HashJoinConcurrency),
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
+	}
+	hashJoin := PhysicalHashJoin{
+		basePhysicalJoin: baseJoin,
+		EqualConditions:  p.EqualConditions,
+		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency),
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	return hashJoin
@@ -344,8 +349,8 @@ func (p *LogicalJoin) constructIndexJoin(
 		newOuterKeys = append(newOuterKeys, outerJoinKeys[keyOff])
 		newKeyOff = append(newKeyOff, idxOff)
 	}
-	join := PhysicalIndexJoin{
-		OuterIndex:      outerIdx,
+	baseJoin := basePhysicalJoin{
+		InnerChildIdx:   1 - outerIdx,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: newOtherConds,
@@ -353,11 +358,14 @@ func (p *LogicalJoin) constructIndexJoin(
 		OuterJoinKeys:   newOuterKeys,
 		InnerJoinKeys:   newInnerKeys,
 		DefaultValues:   p.DefaultValues,
-		innerTask:       innerTask,
-		KeyOff2IdxOff:   newKeyOff,
-		Ranges:          ranges,
-		KeepOuterOrder:  len(prop.Items) > 0,
-		CompareFilters:  compareFilters,
+	}
+	join := PhysicalIndexJoin{
+		basePhysicalJoin: baseJoin,
+		innerTask:        innerTask,
+		KeyOff2IdxOff:    newKeyOff,
+		Ranges:           ranges,
+		KeepOuterOrder:   len(prop.Items) > 0,
+		CompareFilters:   compareFilters,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.idxColLens
