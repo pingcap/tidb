@@ -28,6 +28,7 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	ctx.GetSessionVars().StmtCtx = new(stmtctx.StatementContext)
 	sr := selectResult{ctx: ctx}
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, IsNil)
+	sr.rootPlanID = copPlan{}
 	sr.updateCopRuntimeStats("a", 0)
 
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
