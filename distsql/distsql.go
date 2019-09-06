@@ -160,9 +160,6 @@ func useChunkIPC(dagReq *tipb.DAGRequest) bool {
 	if config.GetGlobalConfig().EnableStreaming == true {
 		return false
 	}
-	if len(dagReq.Executors) == 0 {
-		return false
-	}
 	root := dagReq.Executors[len(dagReq.Executors)-1]
 	if root.Aggregation != nil {
 		hashAgg := root.Aggregation
