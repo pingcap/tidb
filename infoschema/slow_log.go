@@ -46,7 +46,7 @@ var slowQueryCols = []columnInfo{
 	{execdetails.TotalKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{execdetails.ProcessKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogDBStr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{variable.SlowLogIndexIDsStr, mysql.TypeVarchar, 100, 0, nil, nil},
+	{variable.SlowLogIndexNamesStr, mysql.TypeVarchar, 100, 0, nil, nil},
 	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
 	{variable.SlowLogDigestStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogStatsInfoStr, mysql.TypeVarchar, 512, 0, nil, nil},
@@ -228,7 +228,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.processKeys, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogDBStr:
 		st.db = value
-	case variable.SlowLogIndexIDsStr:
+	case variable.SlowLogIndexNamesStr:
 		st.indexIDs = value
 	case variable.SlowLogIsInternalStr:
 		st.isInternal = value == "true"
