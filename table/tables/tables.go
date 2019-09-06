@@ -385,22 +385,22 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		}
 	}
 	for _, idx := range t.WritableIndices() {
-		writeIndex := false
+		untouched := true
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
 			}
-			newVs, err := idx.FetchValues(newData, nil)
-			if err != nil {
-				return err
-			}
-			if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn); err != nil {
-				return err
-			}
-			writeIndex = true
+			untouched = false
 			break
 		}
-		if !writeIndex {
+		newVs, err := idx.FetchValues(newData, nil)
+		if err != nil {
+			return err
+		}
+		if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn, untouched); err != nil {
+			return err
+		}
+		if untouched {
 			ctx.UpdateStmtUntouchedIndex(t.physicalTableID, idx.Meta().ID)
 		}
 	}
@@ -843,8 +843,12 @@ func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	if _, err := idx.Create(ctx, rm, vals, h, table.WithAssertion(txn)); err != nil {
+func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool) error {
+	opts := []table.CreateIdxOptFunc{table.WithAssertion(txn)}
+	if untouched {
+		opts = append(opts, table.IndexIsUntouched)
+	}
+	if _, err := idx.Create(ctx, rm, vals, h, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)

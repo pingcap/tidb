@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -113,6 +114,8 @@ type twoPhaseCommitter struct {
 	isFirstLock   bool
 	// regionTxnSize stores the number of keys involved in each region
 	regionTxnSize map[uint64]int
+	// hasUntouchedIndexKV uses to indicate whether exists the unchanged index key/value in this transaction.
+	hasUntouchedIndexKV bool
 }
 
 // batchExecutor is txn controller providing rate control like utils
@@ -137,11 +140,12 @@ type mutationEx struct {
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
 	return &twoPhaseCommitter{
-		store:         txn.store,
-		txn:           txn,
-		startTS:       txn.StartTS(),
-		connID:        connID,
-		regionTxnSize: map[uint64]int{},
+		store:               txn.store,
+		txn:                 txn,
+		startTS:             txn.StartTS(),
+		connID:              connID,
+		regionTxnSize:       map[uint64]int{},
+		hasUntouchedIndexKV: txn.hasUntouchedIndexKV,
 	}, nil
 }
 
@@ -167,7 +171,15 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		}
 	}
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
-		if len(v) > 0 {
+		vLen := len(v)
+		if vLen > 0 {
+			if c.hasUntouchedIndexKV && (vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag {
+				// check index key type.
+				if len(k) > 11 && k[0] == 't' && k[9] == '_' && k[10] == 'i' {
+					fmt.Printf("\n-------------\nskip commit key: %v, value: %v\n", string(k), string(v))
+					return nil
+				}
+			}
 			op := pb.Op_Put
 			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
 				op = pb.Op_Insert

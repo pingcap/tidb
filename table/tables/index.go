@@ -214,7 +214,11 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	writeBufs.IndexKeyBuf = key
 	if !distinct {
 		// non-unique index doesn't need store value, write a '0' to reduce space
-		err = rm.Set(key, []byte{'0'})
+		value := []byte{'0'}
+		if opt.Untouched {
+			value = []byte{kv.UnCommitIndexKVFlag}
+		}
+		err = rm.Set(key, value)
 		if ss != nil {
 			ss.SetAssertion(key, kv.None)
 		}
@@ -222,7 +226,11 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	}
 
 	if skipCheck {
-		err = rm.Set(key, EncodeHandle(h))
+		value := EncodeHandle(h)
+		if opt.Untouched {
+			value = append(value, kv.UnCommitIndexKVFlag)
+		}
+		err = rm.Set(key, value)
 		if ss != nil {
 			ss.SetAssertion(key, kv.None)
 		}
@@ -242,8 +250,12 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 
 	var value []byte
 	value, err = rm.Get(ctx, key)
-	if kv.IsErrNotFound(err) {
-		err = rm.Set(key, EncodeHandle(h))
+	if kv.IsErrNotFound(err) || (opt.Untouched && err == nil) {
+		v := EncodeHandle(h)
+		if opt.Untouched {
+			v = append(v, kv.UnCommitIndexKVFlag)
+		}
+		err = rm.Set(key, v)
 		if ss != nil {
 			ss.SetAssertion(key, kv.NotExist)
 		}
