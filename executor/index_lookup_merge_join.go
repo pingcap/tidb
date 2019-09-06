@@ -267,9 +267,11 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 
 func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) *lookUpMergeJoinTask {
 	task := e.task
-	task.wgSetResultsSize.Wait()
-	if task != nil && (!task.done || len(task.results) > 0) {
-		return task
+	if task != nil {
+		task.wgSetResultsSize.Wait()
+		if !task.done || len(task.results) > 0 {
+			return task
+		}
 	}
 
 	select {
