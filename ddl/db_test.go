@@ -137,15 +137,6 @@ type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
 
-func assertErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {
-	_, err := tk.Exec(sql)
-	c.Assert(err, NotNil)
-	originErr := errors.Cause(err)
-	tErr, ok := originErr.(*terror.Error)
-	c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
-	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
-}
-
 func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
@@ -183,13 +174,13 @@ func (s *testDBSuite1) TestRenameIndex(c *C) {
 	s.tk.MustExec("admin check index t k3")
 
 	// Test rename on non-exists keys
-	assertErrorCode(c, s.tk, "alter table t rename index x to x", mysql.ErrKeyDoesNotExist)
+	s.tk.MustGetErrCode("alter table t rename index x to x", mysql.ErrKeyDoesNotExist)
 
 	// Test rename on already-exists keys
-	assertErrorCode(c, s.tk, "alter table t rename index k3 to k2", mysql.ErrDupKeyName)
+	s.tk.MustGetErrCode("alter table t rename index k3 to k2", mysql.ErrDupKeyName)
 
 	s.tk.MustExec("alter table t rename index k2 to K2")
-	assertErrorCode(c, s.tk, "alter table t rename key k3 to K2", mysql.ErrDupKeyName)
+	s.tk.MustGetErrCode("alter table t rename key k3 to K2", mysql.ErrDupKeyName)
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
@@ -1320,7 +1311,7 @@ func (s *testDBSuite1) TestAddColumnTooMany(c *C) {
 	s.tk.MustExec(createSQL)
 	s.tk.MustExec("alter table t_column_too_many add column a_512 int")
 	alterSQL := "alter table t_column_too_many add column a_513 int"
-	assertErrorCode(c, s.tk, alterSQL, tmysql.ErrTooManyFields)
+	s.tk.MustGetErrCode(alterSQL, tmysql.ErrTooManyFields)
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
@@ -1617,23 +1608,23 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 
 	// for failing tests
 	sql := "alter table t3 change aa a bigint default ''"
-	assertErrorCode(c, s.tk, sql, tmysql.ErrInvalidDefault)
+	s.tk.MustGetErrCode(sql, tmysql.ErrInvalidDefault)
 	sql = "alter table t3 change a testx.t3.aa bigint"
-	assertErrorCode(c, s.tk, sql, tmysql.ErrWrongDBName)
+	s.tk.MustGetErrCode(sql, tmysql.ErrWrongDBName)
 	sql = "alter table t3 change t.a aa bigint"
-	assertErrorCode(c, s.tk, sql, tmysql.ErrWrongTableName)
+	s.tk.MustGetErrCode(sql, tmysql.ErrWrongTableName)
 	s.mustExec(c, "create table t4 (c1 int, c2 int, c3 int default 1, index (c1));")
 	s.tk.MustExec("insert into t4(c2) values (null);")
 	sql = "alter table t4 change c1 a1 int not null;"
-	assertErrorCode(c, s.tk, sql, tmysql.ErrInvalidUseOfNull)
+	s.tk.MustGetErrCode(sql, tmysql.ErrInvalidUseOfNull)
 	sql = "alter table t4 change c2 a bigint not null;"
-	assertErrorCode(c, s.tk, sql, tmysql.WarnDataTruncated)
+	s.tk.MustGetErrCode(sql, tmysql.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
-	assertErrorCode(c, s.tk, sql, tmysql.ErrUnknown)
+	s.tk.MustGetErrCode(sql, tmysql.ErrUnknown)
 	// Rename to an existing column.
 	s.mustExec(c, "alter table t3 add column a bigint")
 	sql = "alter table t3 change aa a bigint"
-	assertErrorCode(c, s.tk, sql, tmysql.ErrDupFieldName)
+	s.tk.MustGetErrCode(sql, tmysql.ErrDupFieldName)
 
 	s.tk.MustExec("drop table t3")
 }
@@ -1715,15 +1706,15 @@ func (s *testDBSuite5) TestCreateTableWithLike(c *C) {
 
 	// for failure cases
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table t1 like test.t_not_exist")
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table t1 (like test_not_exist.t)")
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table test_not_exis.t1 like ctwl_db.t")
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrBadDB)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrBadDB)
 	failSQL = fmt.Sprintf("create table t1 like ctwl_db.t")
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrTableExists)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrTableExists)
 
 	s.tk.MustExec("drop database ctwl_db")
 	s.tk.MustExec("drop database ctwl_db1")
@@ -1825,18 +1816,18 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 
 	// test for enum column
 	failSQL := "create table t_enum (a enum('e','e'));"
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrDuplicatedValueInType)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a enum('e','E'));"
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrDuplicatedValueInType)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a enum('abc','Abc'));"
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrDuplicatedValueInType)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
 	// test for set column
 	failSQL = "create table t_enum (a set('e','e'));"
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrDuplicatedValueInType)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a set('e','E'));"
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrDuplicatedValueInType)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a set('abc','Abc'));"
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrDuplicatedValueInType)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
 	_, err = s.tk.Exec("create table t_enum (a enum('B','b'));")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
 }
@@ -1847,11 +1838,11 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	s.tk.MustExec("create table t1 (a int, b int);")
 	// test create table with foreign key.
 	failSQL := "create table t2 (c int, foreign key (a) references t1(a));"
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrKeyColumnDoesNotExits)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrKeyColumnDoesNotExits)
 	// test add foreign key.
 	s.tk.MustExec("create table t3 (a int, b int);")
 	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrKeyColumnDoesNotExits)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrKeyColumnDoesNotExits)
 	s.tk.MustExec("drop table if exists t1,t2,t3;")
 }
 
@@ -1952,46 +1943,46 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	// for failure case
 	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
 	if isAlterTable {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	} else {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrFileNotFound)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrFileNotFound)
 	}
 	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
 	if isAlterTable {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	} else {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrFileNotFound)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrFileNotFound)
 	}
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
 	if isAlterTable {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	} else {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrFileNotFound)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrFileNotFound)
 	}
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrErrorOnRename)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrErrorOnRename)
 
 	s.tk.MustExec("use test1")
 	s.tk.MustExec("create table if not exists t_exist (c1 int, c2 int)")
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t_exist")
-	assertErrorCode(c, s.tk, failSQL, tmysql.ErrTableExists)
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrTableExists)
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test1.t_exist")
 	if isAlterTable {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	} else {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrTableExists)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrTableExists)
 	}
 	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_exist")
 	if isAlterTable {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	} else {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrTableExists)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrTableExists)
 	}
 	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_not_exist")
 	if isAlterTable {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	} else {
-		assertErrorCode(c, s.tk, failSQL, tmysql.ErrFileNotFound)
+		s.tk.MustGetErrCode(failSQL, tmysql.ErrFileNotFound)
 	}
 
 	// for the same table name
@@ -2002,8 +1993,8 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 		s.tk.MustExec(fmt.Sprintf(sql, "test1.t", "t"))
 		s.tk.MustExec(fmt.Sprintf(sql, "test1.t1", "test1.T1"))
 	} else {
-		assertErrorCode(c, s.tk, fmt.Sprintf(sql, "test1.t", "t"), tmysql.ErrTableExists)
-		assertErrorCode(c, s.tk, fmt.Sprintf(sql, "test1.t1", "test1.T1"), tmysql.ErrTableExists)
+		s.tk.MustGetErrCode(fmt.Sprintf(sql, "test1.t", "t"), tmysql.ErrTableExists)
+		s.tk.MustGetErrCode(fmt.Sprintf(sql, "test1.t1", "test1.T1"), tmysql.ErrTableExists)
 	}
 
 	s.tk.MustExec("drop database test1")
@@ -2134,7 +2125,7 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 		{`alter table test_gv_ddl modify column b int as (a + 8) stored`, mysql.ErrUnsupportedOnGeneratedColumn},
 	}
 	for _, tt := range genExprTests {
-		assertErrorCode(c, s.tk, tt.stmt, tt.err)
+		s.tk.MustGetErrCode(tt.stmt, tt.err)
 	}
 
 	// Check alter table modify/change generated column.
@@ -2167,9 +2158,9 @@ func (s *testDBSuite4) TestComment(c *C) {
 	s.tk.MustExec("create index i on ct (d) comment '" + validComment + "'")
 	s.tk.MustExec("alter table ct add key (e) comment '" + validComment + "'")
 
-	assertErrorCode(c, s.tk, "create table ct1 (c int, key (c) comment '"+invalidComment+"')", tmysql.ErrTooLongIndexComment)
-	assertErrorCode(c, s.tk, "create index i1 on ct (d) comment '"+invalidComment+"b"+"'", tmysql.ErrTooLongIndexComment)
-	assertErrorCode(c, s.tk, "alter table ct add key (e) comment '"+invalidComment+"'", tmysql.ErrTooLongIndexComment)
+	s.tk.MustGetErrCode("create table ct1 (c int, key (c) comment '"+invalidComment+"')", tmysql.ErrTooLongIndexComment)
+	s.tk.MustGetErrCode("create index i1 on ct (d) comment '"+invalidComment+"b"+"'", tmysql.ErrTooLongIndexComment)
+	s.tk.MustGetErrCode("alter table ct add key (e) comment '"+invalidComment+"'", tmysql.ErrTooLongIndexComment)
 
 	s.tk.MustExec("set @@sql_mode=''")
 	s.tk.MustExec("create table ct1 (c int, d int, e int, key (c) comment '" + invalidComment + "')")
@@ -2214,23 +2205,23 @@ func (s *testDBSuite4) TestRebaseAutoID(c *C) {
 	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1", "16000 1"))
 
 	s.tk.MustExec("create table tidb.test2 (a int);")
-	assertErrorCode(c, s.tk, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
+	s.tk.MustGetErrCode("alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
 }
 
 func (s *testDBSuite5) TestCheckColumnDefaultValue(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
 	s.tk.MustExec("drop table if exists text_default_text;")
-	assertErrorCode(c, s.tk, "create table text_default_text(c1 text not null default '');", tmysql.ErrBlobCantHaveDefault)
-	assertErrorCode(c, s.tk, "create table text_default_text(c1 text not null default 'scds');", tmysql.ErrBlobCantHaveDefault)
+	s.tk.MustGetErrCode("create table text_default_text(c1 text not null default '');", tmysql.ErrBlobCantHaveDefault)
+	s.tk.MustGetErrCode("create table text_default_text(c1 text not null default 'scds');", tmysql.ErrBlobCantHaveDefault)
 
 	s.tk.MustExec("drop table if exists text_default_json;")
-	assertErrorCode(c, s.tk, "create table text_default_json(c1 json not null default '');", tmysql.ErrBlobCantHaveDefault)
-	assertErrorCode(c, s.tk, "create table text_default_json(c1 json not null default 'dfew555');", tmysql.ErrBlobCantHaveDefault)
+	s.tk.MustGetErrCode("create table text_default_json(c1 json not null default '');", tmysql.ErrBlobCantHaveDefault)
+	s.tk.MustGetErrCode("create table text_default_json(c1 json not null default 'dfew555');", tmysql.ErrBlobCantHaveDefault)
 
 	s.tk.MustExec("drop table if exists text_default_blob;")
-	assertErrorCode(c, s.tk, "create table text_default_blob(c1 blob not null default '');", tmysql.ErrBlobCantHaveDefault)
-	assertErrorCode(c, s.tk, "create table text_default_blob(c1 blob not null default 'scds54');", tmysql.ErrBlobCantHaveDefault)
+	s.tk.MustGetErrCode("create table text_default_blob(c1 blob not null default '');", tmysql.ErrBlobCantHaveDefault)
+	s.tk.MustGetErrCode("create table text_default_blob(c1 blob not null default 'scds54');", tmysql.ErrBlobCantHaveDefault)
 
 	s.tk.MustExec("set sql_mode='';")
 	s.tk.MustExec("create table text_default_text(c1 text not null default '');")
@@ -2342,8 +2333,8 @@ func (s *testDBSuite3) TestColumnModifyingDefinition(c *C) {
 	s.tk.MustExec("drop table if exists test2;")
 	s.tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
 	s.tk.MustExec("insert into test2(c2) values (null);")
-	assertErrorCode(c, s.tk, "alter table test2 change c2 a int not null", tmysql.ErrInvalidUseOfNull)
-	assertErrorCode(c, s.tk, "alter table test2 change c1 a1 bigint not null;", tmysql.WarnDataTruncated)
+	s.tk.MustGetErrCode("alter table test2 change c2 a int not null", tmysql.ErrInvalidUseOfNull)
+	s.tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", tmysql.WarnDataTruncated)
 }
 
 func (s *testDBSuite4) TestCheckTooBigFieldLength(c *C) {
@@ -2360,11 +2351,11 @@ func (s *testDBSuite4) TestCheckTooBigFieldLength(c *C) {
 
 	s.tk.MustExec("drop table if exists tr_04;")
 	s.tk.MustExec("create table tr_04 (a varchar(20000) ) default charset utf8;")
-	assertErrorCode(c, s.tk, "alter table tr_04 add column b varchar(20000) charset utf8mb4;", tmysql.ErrTooBigFieldlength)
-	assertErrorCode(c, s.tk, "alter table tr_04 convert to character set utf8mb4;", tmysql.ErrTooBigFieldlength)
-	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(30000), purchased date )  default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
-	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
-	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(65536), purchased date ) default charset=latin1;", tmysql.ErrTooBigFieldlength)
+	s.tk.MustGetErrCode("alter table tr_04 add column b varchar(20000) charset utf8mb4;", tmysql.ErrTooBigFieldlength)
+	s.tk.MustGetErrCode("alter table tr_04 convert to character set utf8mb4;", tmysql.ErrTooBigFieldlength)
+	s.tk.MustGetErrCode("create table tr (id int, name varchar(30000), purchased date )  default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
+	s.tk.MustGetErrCode("create table tr (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
+	s.tk.MustGetErrCode("create table tr (id int, name varchar(65536), purchased date ) default charset=latin1;", tmysql.ErrTooBigFieldlength)
 
 	s.tk.MustExec("drop table if exists tr_05;")
 	s.tk.MustExec("create table tr_05 (a varchar(16000) charset utf8);")
@@ -2415,7 +2406,7 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 			}
 		}
 		if mysql.HasPreventNullInsertFlag(c2.Flag) {
-			assertErrorCode(c, s.tk, "insert into t1(c2) values (null);", tmysql.ErrBadNull)
+			s.tk.MustGetErrCode("insert into t1(c2) values (null);", tmysql.ErrBadNull)
 		}
 
 		hookCtx := mock.NewContext()
@@ -2734,7 +2725,7 @@ func (s *testDBSuite4) TestIfNotExists(c *C) {
 	// ADD COLUMN
 	sql := "alter table t1 add column b int"
 	s.mustExec(c, sql)
-	assertErrorCode(c, s.tk, sql, tmysql.ErrDupFieldName)
+	s.tk.MustGetErrCode(sql, tmysql.ErrDupFieldName)
 	s.mustExec(c, "alter table t1 add column if not exists b int")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1060|Duplicate column name 'b'"))
@@ -2742,14 +2733,14 @@ func (s *testDBSuite4) TestIfNotExists(c *C) {
 	// ADD INDEX
 	sql = "alter table t1 add index idx_b (b)"
 	s.mustExec(c, sql)
-	assertErrorCode(c, s.tk, sql, tmysql.ErrDupKeyName)
+	s.tk.MustGetErrCode(sql, tmysql.ErrDupKeyName)
 	s.mustExec(c, "alter table t1 add index if not exists idx_b (b)")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b"))
 
 	// CREATE INDEX
 	sql = "create index idx_b on t1 (b)"
-	assertErrorCode(c, s.tk, sql, tmysql.ErrDupKeyName)
+	s.tk.MustGetErrCode(sql, tmysql.ErrDupKeyName)
 	s.mustExec(c, "create index if not exists idx_b on t1 (b)")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b"))
@@ -2759,7 +2750,7 @@ func (s *testDBSuite4) TestIfNotExists(c *C) {
 	s.mustExec(c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
 	sql = "alter table t2 add partition (partition p2 values less than (30))"
 	s.mustExec(c, sql)
-	assertErrorCode(c, s.tk, sql, tmysql.ErrSameNamePartition)
+	s.tk.MustGetErrCode(sql, tmysql.ErrSameNamePartition)
 	s.mustExec(c, "alter table t2 add partition if not exists (partition p2 values less than (30))")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1517|Duplicate partition name p2"))
@@ -2774,14 +2765,14 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	// DROP COLUMN
 	sql := "alter table t1 drop column b"
 	s.mustExec(c, sql)
-	assertErrorCode(c, s.tk, sql, tmysql.ErrCantDropFieldOrKey)
+	s.tk.MustGetErrCode(sql, tmysql.ErrCantDropFieldOrKey)
 	s.mustExec(c, "alter table t1 drop column if exists b") // only `a` exists now
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|column b doesn't exist"))
 
 	// CHANGE COLUMN
 	sql = "alter table t1 change column b c int"
-	assertErrorCode(c, s.tk, sql, tmysql.ErrBadField)
+	s.tk.MustGetErrCode(sql, tmysql.ErrBadField)
 	s.mustExec(c, "alter table t1 change column if exists b c int")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1054|Unknown column 'b' in 't1'"))
@@ -2789,7 +2780,7 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 
 	// MODIFY COLUMN
 	sql = "alter table t1 modify column a bigint"
-	assertErrorCode(c, s.tk, sql, tmysql.ErrBadField)
+	s.tk.MustGetErrCode(sql, tmysql.ErrBadField)
 	s.mustExec(c, "alter table t1 modify column if exists a bigint")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1054|Unknown column 'a' in 't1'"))
@@ -2799,7 +2790,7 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	s.mustExec(c, "alter table t1 add index idx_c (c)")
 	sql = "alter table t1 drop index idx_c"
 	s.mustExec(c, sql)
-	assertErrorCode(c, s.tk, sql, tmysql.ErrCantDropFieldOrKey)
+	s.tk.MustGetErrCode(sql, tmysql.ErrCantDropFieldOrKey)
 	s.mustExec(c, "alter table t1 drop index if exists idx_c")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|index idx_c doesn't exist"))
@@ -2809,7 +2800,7 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	s.mustExec(c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
 	sql = "alter table t2 drop partition p1"
 	s.mustExec(c, sql)
-	assertErrorCode(c, s.tk, sql, tmysql.ErrDropPartitionNonExistent)
+	s.tk.MustGetErrCode(sql, tmysql.ErrDropPartitionNonExistent)
 	s.mustExec(c, "alter table t2 drop partition if exists p1")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to p1"))
