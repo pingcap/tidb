@@ -133,6 +133,9 @@ type LogicalJoin struct {
 	// redundantSchema contains columns which are eliminated in join.
 	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
 	redundantSchema *expression.Schema
+
+	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
+	equalCondOutCnt float64
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
