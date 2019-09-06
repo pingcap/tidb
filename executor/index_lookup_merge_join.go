@@ -309,6 +309,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		task, err := omw.buildTask(ctx)
 		if err != nil {
 			task.doneErr <- err
+			task.wgSetResultsSize.Done()
 			omw.pushToChan(ctx, task, omw.resultCh)
 			return
 		}
