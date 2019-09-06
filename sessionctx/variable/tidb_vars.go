@@ -29,7 +29,8 @@ import (
 	5. Update the `NewSessionVars` function to set the field to its default value.
 	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
 	7. If it is a global variable, add it in `session.loadCommonGlobalVarsSQL`.
-	8. Use this variable to control the behavior in code.
+	8. Update ValidateSetSystemVar if the variable's value need to be validated.
+	9. Use this variable to control the behavior in code.
 */
 
 // TiDB system variable names that only in session scope.

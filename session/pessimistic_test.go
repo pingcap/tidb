@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -45,7 +44,6 @@ type testPessimisticSuite struct {
 
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	config.GetGlobalConfig().PessimisticTxn.Enable = true
 	// Set it to 300ms for testing lock resolve.
 	tikv.PessimisticLockTTL = 300
 	s.cluster = mocktikv.NewCluster()
@@ -60,13 +58,13 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
+	s.dom.GetGlobalVarsCache().Disable()
 	c.Assert(err, IsNil)
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	config.GetGlobalConfig().PessimisticTxn.Enable = false
 	testleak.AfterTest(c)()
 }
 
@@ -121,30 +119,19 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 	tests := []struct {
 		beginStmt     string
 		txnMode       string
-		configDefault bool
 		isPessimistic bool
 	}{
-		{"pessimistic", "pessimistic", false, true},
-		{"pessimistic", "pessimistic", true, true},
-		{"pessimistic", "optimistic", false, true},
-		{"pessimistic", "optimistic", true, true},
-		{"pessimistic", "", false, true},
-		{"pessimistic", "", true, true},
-		{"optimistic", "pessimistic", false, false},
-		{"optimistic", "pessimistic", true, false},
-		{"optimistic", "optimistic", false, false},
-		{"optimistic", "optimistic", true, false},
-		{"optimistic", "", false, false},
-		{"optimistic", "", true, false},
-		{"", "pessimistic", false, true},
-		{"", "pessimistic", true, true},
-		{"", "optimistic", false, false},
-		{"", "optimistic", true, false},
-		{"", "", false, false},
-		{"", "", true, true},
+		{"pessimistic", "pessimistic", true},
+		{"pessimistic", "optimistic", true},
+		{"pessimistic", "", true},
+		{"optimistic", "pessimistic", false},
+		{"optimistic", "optimistic", false},
+		{"optimistic", "", false},
+		{"", "pessimistic", true},
+		{"", "optimistic", false},
+		{"", "", false},
 	}
 	for _, tt := range tests {
-		config.GetGlobalConfig().PessimisticTxn.Default = tt.configDefault
 		tk.MustExec(fmt.Sprintf("set @@tidb_txn_mode = '%s'", tt.txnMode))
 		tk.MustExec("begin " + tt.beginStmt)
 		c.Check(tk.Se.GetSessionVars().TxnCtx.IsPessimistic, Equals, tt.isPessimistic)
@@ -155,24 +142,30 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 	tk.MustExec("create table if not exists txn_mode (a int)")
 	tests2 := []struct {
 		txnMode       string
-		configDefault bool
 		isPessimistic bool
 	}{
-		{"pessimistic", false, true},
-		{"pessimistic", true, true},
-		{"optimistic", false, false},
-		{"optimistic", true, false},
-		{"", false, false},
-		{"", true, true},
+		{"pessimistic", true},
+		{"optimistic", false},
+		{"", false},
 	}
 	for _, tt := range tests2 {
-		config.GetGlobalConfig().PessimisticTxn.Default = tt.configDefault
 		tk.MustExec(fmt.Sprintf("set @@tidb_txn_mode = '%s'", tt.txnMode))
 		tk.MustExec("rollback")
 		tk.MustExec("insert txn_mode values (1)")
 		c.Check(tk.Se.GetSessionVars().TxnCtx.IsPessimistic, Equals, tt.isPessimistic)
 		tk.MustExec("rollback")
 	}
+	tk.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustQuery("select @@tidb_txn_mode").Check(testkit.Rows("pessimistic"))
+	tk1.MustExec("set @@autocommit = 0")
+	tk1.MustExec("insert txn_mode values (2)")
+	c.Check(tk1.Se.GetSessionVars().TxnCtx.IsPessimistic, IsTrue)
+	tk1.MustExec("set @@tidb_txn_mode = ''")
+	tk1.MustExec("rollback")
+	tk1.MustExec("insert txn_mode values (2)")
+	c.Check(tk1.Se.GetSessionVars().TxnCtx.IsPessimistic, IsFalse)
+	tk1.MustExec("rollback")
 }
 
 func (s *testPessimisticSuite) TestDeadlock(c *C) {
