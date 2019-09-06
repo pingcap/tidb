@@ -42,31 +42,12 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	srv  *grpc.Server
-	stop sync.WaitGroup
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
-	ln, err := net.Listen("unix", "new_session:12379")
-	c.Assert(err, IsNil)
-	s.srv = grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
-	s.stop.Add(1)
-	go func() {
-		if err = s.srv.Serve(ln); err != nil {
-			logutil.BgLogger().Error(
-				"can't serve gRPC requests",
-				zap.Error(err),
-			)
-		}
-		s.stop.Done()
-	}()
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	if s.srv != nil {
-		s.srv.Stop()
-	}
-	s.stop.Wait()
 }
 
 var (
@@ -76,6 +57,23 @@ var (
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {
+	ln, err := net.Listen("unix", "new_session:12379")
+	c.Assert(err, IsNil)
+	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
+	var stop sync.WaitGroup
+	stop.Add(1)
+	go func() {
+		if err = srv.Serve(ln); err != nil {
+			logutil.BgLogger().Error(
+				"can't serve gRPC requests ",
+				zap.Error(err),
+			)
+		}
+		stop.Done()
+	}()
+
+	defer srv.Stop()
+	defer stop.Wait()
 	defer testleak.AfterTest(c)()
 
 	func() {
