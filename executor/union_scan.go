@@ -115,7 +115,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	reader := us.children[0]
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		us.addedRows, err = buildMemTableReader(us, x.kvRanges).getMemRows()
+		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
 	case *IndexReaderExecutor:
 		mIdxReader := buildMemIndexReader(us, x)
 		us.addedRows, err = mIdxReader.getMemRows()

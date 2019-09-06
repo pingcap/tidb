@@ -145,7 +145,7 @@ type memTableReader struct {
 	handleBytes []byte
 }
 
-func buildMemTableReader(us *UnionScanExec, kvRanges []kv.KeyRange) *memTableReader {
+func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *memTableReader {
 	colIDs := make(map[int64]int)
 	for i, col := range us.columns {
 		colIDs[col.ID] = i
@@ -155,7 +155,7 @@ func buildMemTableReader(us *UnionScanExec, kvRanges []kv.KeyRange) *memTableRea
 		ctx:           us.ctx,
 		table:         us.table.Meta(),
 		columns:       us.columns,
-		kvRanges:      kvRanges,
+		kvRanges:      tblReader.kvRanges,
 		desc:          us.desc,
 		conditions:    us.conditions,
 		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),

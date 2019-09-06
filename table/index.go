@@ -60,6 +60,7 @@ func WithAssertion(x kv.AssertionProto) CreateIdxOptFunc {
 	}
 }
 
+// IndexIsUntouched uses to indicate the index kv is untouched.
 var IndexIsUntouched CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.Untouched = true
 }
