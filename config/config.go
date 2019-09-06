@@ -69,6 +69,7 @@ type Config struct {
 	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
+	MemQuotaHashJoin int64           `toml:"mem-quota-hashjoin" json:"mem-quota-hashjoin"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
@@ -338,6 +339,7 @@ var defaultConf = Config{
 	TokenLimit:                   1000,
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
+	MemQuotaHashJoin:             32 << 30,
 	EnableStreaming:              false,
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,

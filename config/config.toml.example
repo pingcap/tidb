@@ -38,6 +38,10 @@ oom-action = "log"
 # Set the memory quota for a query in bytes. Default: 32GB
 mem-quota-query = 34359738368
 
+# Set the memory threshold for hash join. Default: 32GB
+# If a hash join exceeds the threshold, it will spill over to the temporary directory.
+mem-quota-hashjoin = 34359738368
+
 # Enable coprocessor streaming.
 enable-streaming = false
 

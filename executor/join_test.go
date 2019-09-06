@@ -35,6 +35,22 @@ func (s *testSuite2) TestJoinPanic(c *C) {
 	c.Check(err, NotNil)
 }
 
+func (s *testSuite2) TestJoinInDisk(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_mem_quota_hashjoin = 1")
+	c.Assert(tk.Se.GetSessionVars().MemQuotaHashJoin, Equals, int64(1))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	result := tk.MustQuery("select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1")
+	result.Check(testkit.Rows("2 2 2 3"))
+}
+
 func (s *testSuite2) TestJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 

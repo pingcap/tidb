@@ -53,8 +53,8 @@ type joiner interface {
 	// rows are appended to `chk`. The size of `chk` is limited to MaxChunkSize.
 	// Note that when the outer row is considered unmatched, we need to differentiate
 	// whether the join conditions return null or false, because that matters for
-	// AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, and the result is reflected
-	// by the second return value; for other join types, we always return false.
+	// AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, by setting the return
+	// value isNull; for other join types, isNull is always false.
 	//
 	// NOTE: Callers need to call this function multiple times to consume all
 	// the inner rows for an outer row, and decide whether the outer row can be

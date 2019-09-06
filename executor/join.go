@@ -118,8 +118,8 @@ func (e *HashJoinExec) Close() error {
 		}
 		e.outerChkResourceCh = nil
 		e.joinChkResourceCh = nil
+		terror.Call(e.rowContainer.Close)
 	}
-	e.memTracker = nil
 
 	err := e.baseExecutor.Close()
 	return err
@@ -132,7 +132,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
+	e.memTracker = memory.NewTracker(e.id, -1) // memory is limited by hashRowContainer.SetSpillToDisk
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.closeCh = make(chan struct{})
@@ -212,7 +212,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 	return false, nil
 }
 
-var innerResultLabel fmt.Stringer = stringutil.StringerStr("innerResult")
+var innerResultLabel fmt.Stringer = stringutil.StringerStr("hashJoin.innerResult")
 
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
@@ -504,10 +504,10 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 		allTypes:  allTypes,
 		keyColIdx: innerKeyColIdx,
 	}
-	initList := chunk.NewList(allTypes, e.initCap, e.maxChunkSize)
-	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx, initList)
+	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(innerResultLabel)
+	e.rowContainer.SetSpillToDisk(e.ctx.GetSessionVars().MemQuotaHashJoin)
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {
 			return nil

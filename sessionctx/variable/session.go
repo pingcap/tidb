@@ -492,7 +492,7 @@ func NewSessionVars() *SessionVars {
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
-		MemQuotaHashJoin:          DefTiDBMemQuotaHashJoin,
+		MemQuotaHashJoin:          config.GetGlobalConfig().MemQuotaHashJoin,
 		MemQuotaMergeJoin:         DefTiDBMemQuotaMergeJoin,
 		MemQuotaSort:              DefTiDBMemQuotaSort,
 		MemQuotaTopn:              DefTiDBMemQuotaTopn,
@@ -831,7 +831,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
-		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
+		s.MemQuotaHashJoin = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaHashJoin)
 	case TIDBMemQuotaMergeJoin:
 		s.MemQuotaMergeJoin = tidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
 	case TIDBMemQuotaSort:
