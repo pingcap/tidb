@@ -247,6 +247,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 	task := e.getFinishedTask(ctx)
 	breakFlag := false
 	for task != nil && !breakFlag {
+		task.wgSetResultsSize.Wait()
 		select {
 		case chk := <-task.results:
 			req.Append(chk, 0, chk.NumRows())
