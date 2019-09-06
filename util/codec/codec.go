@@ -352,6 +352,240 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	return
 }
 
+func writeColumn(w io.Writer, flag, data []byte) (err error) {
+	_, err = w.Write(flag)
+	if err != nil {
+		return
+	}
+	_, err = w.Write(data)
+	return
+}
+
+// HashChunkColumns writes the encoded value of each row's column, which of index `colIdx`, to w.
+// `nullBitmap` used to save the rows whose column of index `colIdx` is `Null`.
+func HashChunkColumns(sc *stmtctx.StatementContext, w []io.Writer, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf, nullBitmap []byte) (err error) {
+	var (
+		b       []byte
+		numRows int
+		row     chunk.Row
+	)
+	numRows = chk.NumRows()
+	switch tp.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		for i := 0; i < numRows; i++ {
+			row = chk.GetRow(i)
+			if row.IsNull(colIdx) {
+				buf[0], b = NilFlag, nil
+				nullBitmap[i/8] |= 1 << uint(i%8)
+			} else {
+				buf[0] = varintFlag
+				if mysql.HasUnsignedFlag(tp.Flag) {
+					if integer := row.GetInt64(colIdx); integer < 0 {
+						buf[0] = uvarintFlag
+					}
+				}
+				b = row.GetRaw(colIdx)
+			}
+
+			err = writeColumn(w[i], buf, b)
+			if err != nil {
+				return err
+			}
+		}
+	case mysql.TypeFloat:
+		for i := 0; i < numRows; i++ {
+			row = chk.GetRow(i)
+			if row.IsNull(colIdx) {
+				buf[0], b = NilFlag, nil
+				nullBitmap[i/8] |= 1 << uint(i%8)
+			} else {
+				buf[0] = floatFlag
+				f := float64(row.GetFloat32(colIdx))
+				b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
+			}
+
+			err = writeColumn(w[i], buf, b)
+			if err != nil {
+				return err
+			}
+		}
+	case mysql.TypeDouble:
+		for i := 0; i < numRows; i++ {
+			row = chk.GetRow(i)
+			if row.IsNull(colIdx) {
+				buf[0], b = NilFlag, nil
+				nullBitmap[i/8] |= 1 << uint(i%8)
+			} else {
+				row = chk.GetRow(i)
+				buf[0] = floatFlag
+				b = row.GetRaw(colIdx)
+			}
+
+			err = writeColumn(w[i], buf, b)
+			if err != nil {
+				return err
+			}
+		}
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		for i := 0; i < numRows; i++ {
+			row = chk.GetRow(i)
+			if row.IsNull(colIdx) {
+				buf[0], b = NilFlag, nil
+				nullBitmap[i/8] |= 1 << uint(i%8)
+			} else {
+				buf[0] = compactBytesFlag
+				b = row.GetBytes(colIdx)
+			}
+
+			err = writeColumn(w[i], buf, b)
+			if err != nil {
+				return err
+			}
+		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		for i := 0; i < numRows; i++ {
+			row = chk.GetRow(i)
+			if row.IsNull(colIdx) {
+				buf[0], b = NilFlag, nil
+				nullBitmap[i/8] |= 1 << uint(i%8)
+			} else {
+				buf[0] = uintFlag
+				t := row.GetTime(colIdx)
+				// Encoding timestamp need to consider timezone.
+				// If it's not in UTC, transform to UTC first.
+				if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+					err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
+					if err != nil {
+						return
+					}
+				}
+				var v uint64
+				v, err = t.ToPackedUint()
+				if err != nil {
+					return
+				}
+				b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
+			}
+
+			err = writeColumn(w[i], buf, b)
+			if err != nil {
+				return err
+			}
+		}
+	case mysql.TypeDuration:
+		for i := 0; i < numRows; i++ {
+			row = chk.GetRow(i)
+			if row.IsNull(colIdx) {
+				buf[0], b = NilFlag, nil
+				nullBitmap[i/8] |= 1 << uint(i%8)
+			} else {
+				buf[0] = durationFlag
+				// duration may have negative value, so we cannot use String to encode directly.
+				b = row.GetRaw(colIdx)
+			}
+
+			err = writeColumn(w[i], buf, b)
+			if err != nil {
+				return err
+			}
+		}
+	case mysql.TypeNewDecimal:
+		for i := 0; i < numRows; i++ {
+			row = chk.GetRow(i)
+			if row.IsNull(colIdx) {
+				buf[0], b = NilFlag, nil
+				nullBitmap[i/8] |= 1 << uint(i%8)
+			} else {
+				buf[0] = decimalFlag
+				// If hash is true, we only consider the original value of this decimal and ignore it's precision.
+				dec := row.GetMyDecimal(colIdx)
+				b, err = dec.ToHashKey()
+				if err != nil {
+					return
+				}
+			}
+
+			err = writeColumn(w[i], buf, b)
+			if err != nil {
+				return err
+			}
+		}
+	case mysql.TypeEnum:
+		for i := 0; i < numRows; i++ {
+			row = chk.GetRow(i)
+			if row.IsNull(colIdx) {
+				buf[0], b = NilFlag, nil
+				nullBitmap[i/8] |= 1 << uint(i%8)
+			} else {
+				buf[0] = uvarintFlag
+				v := uint64(row.GetEnum(colIdx).ToNumber())
+				b = (*[8]byte)(unsafe.Pointer(&v))[:]
+			}
+
+			err = writeColumn(w[i], buf, b)
+			if err != nil {
+				return err
+			}
+		}
+	case mysql.TypeSet:
+		for i := 0; i < numRows; i++ {
+			row = chk.GetRow(i)
+			if row.IsNull(colIdx) {
+				buf[0], b = NilFlag, nil
+				nullBitmap[i/8] |= 1 << uint(i%8)
+			} else {
+				buf[0] = uvarintFlag
+				v := uint64(row.GetSet(colIdx).ToNumber())
+				b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
+			}
+
+			err = writeColumn(w[i], buf, b)
+			if err != nil {
+				return err
+			}
+		}
+	case mysql.TypeBit:
+		for i := 0; i < numRows; i++ {
+			row = chk.GetRow(i)
+			if row.IsNull(colIdx) {
+				buf[0], b = NilFlag, nil
+				nullBitmap[i/8] |= 1 << uint(i%8)
+			} else {
+				// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
+				buf[0] = uvarintFlag
+				v, err1 := types.BinaryLiteral(row.GetBytes(colIdx)).ToInt(sc)
+				terror.Log(errors.Trace(err1))
+				b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
+			}
+
+			err = writeColumn(w[i], buf, b)
+			if err != nil {
+				return err
+			}
+		}
+	case mysql.TypeJSON:
+		for i := 0; i < numRows; i++ {
+			row = chk.GetRow(i)
+			if row.IsNull(colIdx) {
+				buf[0], b = NilFlag, nil
+				nullBitmap[i/8] |= 1 << uint(i%8)
+			} else {
+				row = chk.GetRow(i)
+				buf[0] = jsonFlag
+				b = row.GetBytes(colIdx)
+			}
+
+			err = writeColumn(w[i], buf, b)
+			if err != nil {
+				return err
+			}
+		}
+	default:
+		return errors.Errorf("unsupport column type for encode %d", tp.Tp)
+	}
+	return err
+}
+
 // HashChunkRow writes the encoded values to w.
 // If two rows are logically equal, it will generate the same bytes.
 func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {

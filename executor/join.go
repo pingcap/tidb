@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"sync"
 	"sync/atomic"
 
@@ -334,8 +333,8 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 	hCtx := &hashContext{
 		allTypes:  retTypes(e.outerExec),
 		keyColIdx: outerKeyColIdx,
-		h:         fnv.New64(),
-		buf:       make([]byte, 1),
+		//h:         fnv.New64(),
+		//buf:       make([]byte, 1),
 	}
 	for ok := true; ok; {
 		if e.finished.Load().(bool) {
@@ -506,8 +505,9 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 	hCtx := &hashContext{
 		allTypes:  allTypes,
 		keyColIdx: innerKeyColIdx,
-		h:         fnv.New64(),
-		buf:       make([]byte, 1),
+		hashVals:  nil,
+		buf:       nil,
+		//nullRow:   bitmap{},
 	}
 	initList := chunk.NewList(allTypes, e.initCap, e.maxChunkSize)
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx, initList)

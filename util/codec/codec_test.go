@@ -15,7 +15,10 @@ package codec
 
 import (
 	"bytes"
+	"hash"
 	"hash/crc32"
+	"hash/fnv"
+	"io"
 	"math"
 	"testing"
 	"time"
@@ -1157,5 +1160,58 @@ func (s *testCodecSuite) TestValueSizeOfUnsignedInt(c *C) {
 
 		b = encodeUnsignedInt(b[:0], v+10, false)
 		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v+10))
+	}
+}
+
+func (s *testCodecSuite) TestHashChunkColumns(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	buf := make([]byte, 1)
+	datums, tps := datumsForTest(sc)
+	chk := chunkForTest(c, sc, datums, tps, 3)
+
+	colIdx := make([]int, len(tps))
+	for i := 0; i < len(tps); i++ {
+		colIdx[i] = i
+	}
+	nullBitmap := []byte{0}
+	vecHash := []io.Writer{fnv.New64(), fnv.New64(), fnv.New64()}
+	rowHash := []io.Writer{fnv.New64(), fnv.New64(), fnv.New64()}
+
+	// Test hash value of the first `Null` column
+	c.Assert(chk.GetRow(0).IsNull(0), Equals, true)
+	err1 := HashChunkColumns(sc, vecHash, chk, tps[0], 0, buf, nullBitmap)
+	err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[0:1], buf)
+	err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[0:1], buf)
+	err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[0:1], buf)
+	c.Assert(err1, IsNil)
+	c.Assert(err2, IsNil)
+	c.Assert(err3, IsNil)
+	c.Assert(err4, IsNil)
+
+	c.Assert(nullBitmap[0], Equals, byte(0x07))
+	c.Assert(vecHash[0].(hash.Hash64).Sum64(), Equals, rowHash[0].(hash.Hash64).Sum64())
+	c.Assert(vecHash[1].(hash.Hash64).Sum64(), Equals, rowHash[1].(hash.Hash64).Sum64())
+	c.Assert(vecHash[2].(hash.Hash64).Sum64(), Equals, rowHash[2].(hash.Hash64).Sum64())
+
+	// Test hash value of every single column that is not `Null`
+	for i := 1; i < len(tps); i++ {
+		nullBitmap[0] = byte(0)
+		vecHash = []io.Writer{fnv.New64(), fnv.New64(), fnv.New64()}
+		rowHash = []io.Writer{fnv.New64(), fnv.New64(), fnv.New64()}
+
+		c.Assert(chk.GetRow(0).IsNull(i), Equals, false)
+		err1 = HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, nullBitmap)
+		err2 = HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
+		err3 = HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
+		err4 = HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		c.Assert(err3, IsNil)
+		c.Assert(err4, IsNil)
+
+		c.Assert(nullBitmap[0], Equals, byte(0))
+		c.Assert(vecHash[0].(hash.Hash64).Sum64(), Equals, rowHash[0].(hash.Hash64).Sum64())
+		c.Assert(vecHash[1].(hash.Hash64).Sum64(), Equals, rowHash[1].(hash.Hash64).Sum64())
+		c.Assert(vecHash[2].(hash.Hash64).Sum64(), Equals, rowHash[2].(hash.Hash64).Sum64())
 	}
 }

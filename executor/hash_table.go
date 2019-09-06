@@ -15,6 +15,8 @@ package executor
 
 import (
 	"hash"
+	"hash/fnv"
+	"io"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
@@ -43,12 +45,60 @@ const (
 	estCountDivisor = 8
 )
 
+type bitmap struct {
+	bits []byte
+}
+
+func (bm *bitmap) clear() {
+	for i := 0; i < len(bm.bits); i++ {
+		bm.bits[i] = byte(0)
+	}
+}
+
+func (bm *bitmap) reserve(size int) {
+	size = (size + 7) / 8
+	if len(bm.bits) < size {
+		bm.bits = make([]byte, size)
+	} else {
+		bm.clear()
+	}
+}
+
+func (bm *bitmap) isSet(idx int) bool {
+	b := bm.bits[idx/8] & (1 << uint(idx%8))
+	return b != 0
+}
+
 // hashContext keeps the needed hash context of a db table in hash join.
 type hashContext struct {
 	allTypes  []*types.FieldType
 	keyColIdx []int
-	h         hash.Hash64
-	buf       []byte
+
+	// hashVals stores the encoded value of each chunk row
+	// The real element type of hashVals must be `hash.Hash64`.
+	hashVals   []io.Writer
+	buf        []byte
+	nullBitmap bitmap
+}
+
+func (hc *hashContext) initHash(numRows int) {
+	hc.nullBitmap.reserve(numRows)
+
+	if hc.buf == nil {
+		hc.buf = make([]byte, 1)
+	}
+
+	if len(hc.hashVals) < numRows {
+		hc.hashVals = make([]io.Writer, numRows)
+		for i := 0; i < numRows; i++ {
+			hc.hashVals[i] = fnv.New64()
+		}
+	} else {
+		for i := 0; i < numRows; i++ {
+			h := hc.hashVals[i].(hash.Hash64)
+			h.Reset()
+		}
+	}
 }
 
 // hashRowContainer handles the rows and the hash map of a table.
@@ -133,22 +183,24 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 // value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 	chkIdx := uint32(c.records.NumChunks())
-	c.records.Add(chk)
-	var (
-		hasNull bool
-		err     error
-		key     uint64
-	)
 	numRows := chk.NumRows()
-	for j := 0; j < numRows; j++ {
-		hasNull, key, err = c.getJoinKeyFromChkRow(c.sc, chk.GetRow(j), c.hCtx)
+
+	c.records.Add(chk)
+	c.hCtx.initHash(numRows)
+
+	hCtx := c.hCtx
+	for _, colIdx := range c.hCtx.keyColIdx {
+		err := codec.HashChunkColumns(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.nullBitmap.bits)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if hasNull {
+	}
+	for i := 0; i < numRows; i++ {
+		if c.hCtx.nullBitmap.isSet(i) {
 			continue
 		}
-		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(j)}
+		key := c.hCtx.hashVals[i].(hash.Hash64).Sum64()
+		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
 		c.hashTable.Put(key, rowPtr)
 	}
 	return nil
@@ -161,9 +213,9 @@ func (*hashRowContainer) getJoinKeyFromChkRow(sc *stmtctx.StatementContext, row 
 			return true, 0, nil
 		}
 	}
-	hCtx.h.Reset()
-	err = codec.HashChunkRow(sc, hCtx.h, row, hCtx.allTypes, hCtx.keyColIdx, hCtx.buf)
-	return false, hCtx.h.Sum64(), err
+	hCtx.initHash(1)
+	err = codec.HashChunkRow(sc, hCtx.hashVals[0], row, hCtx.allTypes, hCtx.keyColIdx, hCtx.buf)
+	return false, hCtx.hashVals[0].(hash.Hash64).Sum64(), err
 }
 
 func (c hashRowContainer) Len() int {
