@@ -88,6 +88,7 @@ func (ts *testMiscSuite) TestDDLVisitorCover(c *C) {
 	sql := `
 create table t (c1 smallint unsigned, c2 int unsigned);
 alter table t add column a smallint unsigned after b;
+alter table t add column (a int, constraint check (a > 0));
 create index t_i on t (id);
 create database test character set utf8;
 drop database test;

@@ -1284,12 +1284,24 @@ AlterTableSpec:
 			Position:	$5.(*ast.ColumnPosition),
 		}
 	}
-|	"ADD" ColumnKeywordOpt IfNotExists '(' ColumnDefList ')'
+|	"ADD" ColumnKeywordOpt IfNotExists '(' TableElementList ')'
 	{
+		tes := $5.([]interface {})
+		var columnDefs []*ast.ColumnDef
+		var constraints []*ast.Constraint
+		for _, te := range tes {
+			switch te := te.(type) {
+			case *ast.ColumnDef:
+				columnDefs = append(columnDefs, te)
+			case *ast.Constraint:
+				constraints = append(constraints, te)
+			}
+		}
 		$$ = &ast.AlterTableSpec{
 			IfNotExists: 	$3.(bool),
 			Tp: 		ast.AlterTableAddColumns,
-			NewColumns:	$5.([]*ast.ColumnDef),
+			NewColumns:	columnDefs,
+			NewConstraints: constraints,
 		}
 	}
 |	"ADD" Constraint
@@ -2333,7 +2345,7 @@ ColumnOption:
 	{
 		$$ =  &ast.ColumnOption{Tp: ast.ColumnOptionComment, Expr: ast.NewValueExpr($2)}
 	}
-|	"CHECK" '(' Expression ')' EnforcedOrNotOrNotNullOpt
+|	ConstraintKeywordOpt "CHECK" '(' Expression ')' EnforcedOrNotOrNotNullOpt
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		// The CHECK clause is parsed but ignored by all storage engines.
@@ -2341,10 +2353,10 @@ ColumnOption:
 
 		optionCheck := &ast.ColumnOption{
 			Tp: ast.ColumnOptionCheck,
-			Expr: $3,
+			Expr: $4,
 			Enforced: true,
 		}
-		switch $5.(int) {
+		switch $6.(int) {
 		case 0:
 			$$ = []*ast.ColumnOption{optionCheck, {Tp: ast.ColumnOptionNotNull}}
 		case 1:
