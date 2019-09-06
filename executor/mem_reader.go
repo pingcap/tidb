@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/set"
 )
 
 type memIndexReader struct {
@@ -43,8 +42,6 @@ type memIndexReader struct {
 	outputOffset  []int
 	// cache for decode handle.
 	handleBytes []byte
-	// memIdxHandles is uses to store the handle ids that has been processed by memIndexReader.
-	memIdxHandles set.Int64Set
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 }
@@ -66,7 +63,6 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		retFieldTypes:    retTypes(us),
 		outputOffset:     outputOffset,
 		handleBytes:      make([]byte, 0, 16),
-		memIdxHandles:    set.NewInt64Set(),
 		belowHandleIndex: us.belowHandleIndex,
 	}
 }
@@ -95,8 +91,6 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 		if err != nil {
 			return err
 		}
-		handle := data[m.belowHandleIndex].GetInt64()
-		m.memIdxHandles.Insert(handle)
 
 		mutableRow.SetDatums(data...)
 		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
@@ -336,7 +330,6 @@ func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
 			return err
 		}
 		handles = append(handles, handle)
-		m.memIdxHandles.Insert(handle)
 		return nil
 	})
 	if err != nil {
@@ -376,7 +369,6 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		retFieldTypes:    retTypes(us),
 		outputOffset:     outputOffset,
 		handleBytes:      make([]byte, 0, 16),
-		memIdxHandles:    set.NewInt64Set(),
 		belowHandleIndex: us.belowHandleIndex,
 	}
 

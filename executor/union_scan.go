@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/set"
 )
 
 // DirtyDB stores uncommitted write operations for a transaction.
@@ -98,8 +96,7 @@ func (dt *DirtyTable) isUntouchedIndex(indexID int64) bool {
 type UnionScanExec struct {
 	baseExecutor
 
-	dirty           *DirtyTable
-	needGetMissRows bool
+	dirty *DirtyTable
 	// usedIndex is the column offsets of the index which Src executor has used.
 	usedIndex  []int
 	desc       bool
@@ -109,9 +106,7 @@ type UnionScanExec struct {
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 
-	addedRows [][]types.Datum
-	// memIdxHandles is uses to store the handle ids that has been read by memIndexReader.
-	memIdxHandles       set.Int64Set
+	addedRows           [][]types.Datum
 	cursor4AddRows      int
 	sortErr             error
 	snapshotRows        [][]types.Datum
@@ -135,17 +130,11 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	case *TableReaderExecutor:
 		us.addedRows, err = buildMemTableReader(us, x.kvRanges).getMemRows()
 	case *IndexReaderExecutor:
-		us.needGetMissRows = us.dirty.isUntouchedIndex(x.index.ID)
 		mIdxReader := buildMemIndexReader(us, x)
 		us.addedRows, err = mIdxReader.getMemRows()
-		us.memIdxHandles = mIdxReader.memIdxHandles
 	case *IndexLookUpExecutor:
-		if us.dirty.isUntouchedIndex(x.index.ID) {
-			err = us.buildAndSortAddedRows()
-		} else {
-			idxLookup := buildMemIndexLookUpReader(us, x)
-			us.addedRows, err = idxLookup.getMemRows()
-		}
+		idxLookup := buildMemIndexLookUpReader(us, x)
+		us.addedRows, err = idxLookup.getMemRows()
 	}
 	if err != nil {
 		return err
@@ -228,47 +217,17 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			snapshotHandle := row.GetInt64(us.belowHandleIndex)
 			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
-				err = us.getMissIndexRowsByHandle(ctx, snapshotHandle)
-				if err != nil {
-					return nil, err
-				}
 				continue
 			}
 			if _, ok := us.dirty.addedRows[snapshotHandle]; ok {
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.
-				err = us.getMissIndexRowsByHandle(ctx, snapshotHandle)
-				if err != nil {
-					return nil, err
-				}
 				continue
 			}
 			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
 		}
 	}
 	return us.snapshotRows[0], nil
-}
-
-// For index reader, update doesn't write index to txn memBuffer when the idx column
-// is unchanged. So the `memIndexReader` can't read the index from txn memBuffer.
-// This function is used to get the missing row by the handle if the handle is in dirtyTable.addedRows.
-func (us *UnionScanExec) getMissIndexRowsByHandle(ctx context.Context, handle int64) error {
-	if !us.needGetMissRows {
-		return nil
-	}
-	if _, ok := us.dirty.addedRows[handle]; !ok {
-		return nil
-	}
-	// Don't miss in memBuffer reader.
-	if us.memIdxHandles.Exist(handle) {
-		return nil
-	}
-	memRow, err := us.getMemRow(ctx, handle)
-	if memRow == nil || err != nil {
-		return err
-	}
-	us.snapshotRows = append(us.snapshotRows, memRow)
-	return nil
 }
 
 func (us *UnionScanExec) getAddedRow() []types.Datum {
@@ -324,70 +283,6 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 		cmp = -1
 	}
 	return cmp, nil
-}
-
-// rowWithColsInTxn gets the row from the transaction buffer.
-func (us *UnionScanExec) rowWithColsInTxn(ctx context.Context, t table.Table, h int64) ([]types.Datum, error) {
-	key := t.RecordKey(h)
-	txn, err := us.ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	value, err := txn.GetMemBuffer().Get(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	colIDs := make(map[int64]int)
-	for i, col := range us.columns {
-		colIDs[col.ID] = i
-	}
-	return decodeRowData(us.ctx, us.table.Meta(), us.columns, colIDs, h, []byte{}, value)
-}
-
-func (us *UnionScanExec) getMemRow(ctx context.Context, h int64) ([]types.Datum, error) {
-	data, err := us.rowWithColsInTxn(ctx, us.table, h)
-	if err != nil {
-		return nil, err
-	}
-	us.mutableRow.SetDatums(data...)
-	matched, _, err := expression.EvalBool(us.ctx, us.conditions, us.mutableRow.ToRow())
-	if err != nil {
-		return nil, err
-	}
-	if !matched {
-		return nil, nil
-	}
-	return data, nil
-}
-
-func (us *UnionScanExec) buildAndSortAddedRows() error {
-	tableReaderWithFullRange := buildMemTableReaderWithFullRange(us)
-	rows, err := tableReaderWithFullRange.getMemRows()
-	if err != nil {
-		return err
-	}
-	us.addedRows = make([][]types.Datum, 0, len(rows))
-	mutableRow := chunk.MutRowFromTypes(retTypes(us))
-	for _, row := range rows {
-		mutableRow.SetDatums(row...)
-		matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
-		if err != nil {
-			return err
-		}
-		if !matched {
-			continue
-		}
-		us.addedRows = append(us.addedRows, row)
-	}
-	if us.desc {
-		sort.Sort(sort.Reverse(us))
-	} else {
-		sort.Sort(us)
-	}
-	if us.sortErr != nil {
-		return errors.Trace(us.sortErr)
-	}
-	return nil
 }
 
 // Len implements sort.Interface interface.
