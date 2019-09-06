@@ -215,15 +215,19 @@ func splitCopAvg2CountAndSum(p PhysicalPlan) {
 	if baseAgg == nil {
 		return
 	}
+
+	schemaCursor := len(baseAgg.Schema().Columns) - len(baseAgg.GroupByItems)
 	for i := len(baseAgg.AggFuncs) - 1; i >= 0; i-- {
 		f := baseAgg.AggFuncs[i]
+		schemaCursor--
 		if f.Name == ast.AggFuncAvg {
+			schemaCursor--
 			sumAgg := *f
 			sumAgg.Name = ast.AggFuncSum
-			sumAgg.RetTp = baseAgg.Schema().Columns[i+1].RetType
+			sumAgg.RetTp = baseAgg.Schema().Columns[schemaCursor+1].RetType
 			cntAgg := *f
 			cntAgg.Name = ast.AggFuncCount
-			cntAgg.RetTp = baseAgg.Schema().Columns[i].RetType
+			cntAgg.RetTp = baseAgg.Schema().Columns[schemaCursor].RetType
 			cntAgg.RetTp.Flag = f.RetTp.Flag
 			baseAgg.AggFuncs = append(baseAgg.AggFuncs[:i], append([]*aggregation.AggFuncDesc{&cntAgg, &sumAgg}, baseAgg.AggFuncs[i+1:]...)...)
 		}
