@@ -942,8 +942,8 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 		isOuterJoin: v.JoinType.IsOuterJoin(),
 	}
 
-	leftKeys := v.LeftKeys
-	rightKeys := v.RightKeys
+	leftKeys := v.LeftJoinKeys
+	rightKeys := v.RightJoinKeys
 
 	e.outerIdx = 0
 	innerFilter := v.RightConditions
@@ -1733,12 +1733,12 @@ func (b *executorBuilder) corColInAccess(p plannercore.PhysicalPlan) bool {
 }
 
 func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin) Executor {
-	outerExec := b.build(v.Children()[v.OuterIndex])
+	outerExec := b.build(v.Children()[1-v.InnerChildIdx])
 	if b.err != nil {
 		return nil
 	}
 	outerTypes := retTypes(outerExec)
-	innerPlan := v.Children()[1-v.OuterIndex]
+	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType
@@ -1749,7 +1749,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		leftTypes, rightTypes []*types.FieldType
 	)
 
-	if v.OuterIndex == 1 {
+	if v.InnerChildIdx == 0 {
 		leftTypes, rightTypes = innerTypes, outerTypes
 		outerFilter = v.RightConditions
 		if len(v.LeftConditions) > 0 {
@@ -1788,7 +1788,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			hasPrefixCol:  hasPrefixCol,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		joiner:        newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
