@@ -45,6 +45,7 @@ type IndexNestedLoopHashJoin struct {
 	IndexLookUpJoin
 	resultCh          chan *indexHashJoinResult
 	joinChkResourceCh []chan *chunk.Chunk
+	joiners           []joiner
 }
 
 type indexHashJoinOuterWorker struct {
@@ -266,7 +267,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 			keyOff2IdxOff: e.keyOff2IdxOff,
 		},
 		taskCh:            taskCh,
-		joiner:            e.joiner,
+		joiner:            e.joiners[workerID],
 		joinChkResourceCh: e.joinChkResourceCh[workerID],
 		resultCh:          e.resultCh,
 		matchedOuterPtrs:  make([]chunk.RowPtr, 0, e.maxChunkSize),
