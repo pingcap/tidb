@@ -558,6 +558,17 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 		}
 
 		hasScanHint = true
+
+		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
+		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
+		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
+		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
+			if path := getTablePath(publicPaths); path != nil {
+				hasUseOrForce = true
+				path.forced = true
+				available = append(available, path)
+			}
+		}
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
@@ -864,12 +875,16 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		pkOffset = len(tblReaderCols) - 1
 	}
 
+	idxCols, idxColLens := expression.IndexInfo2PrefixCols(schema.Columns, idx)
+	fullIdxCols, _ := expression.IndexInfo2Cols(schema.Columns, idx)
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
 		TableAsName:      &tblInfo.Name,
 		DBName:           dbName,
 		Columns:          idxReaderCols,
 		Index:            idx,
+		IdxCols:          idxCols,
+		IdxColLens:       idxColLens,
 		dataSourceSchema: schema,
 		Ranges:           ranger.FullRange(),
 		GenExprs:         genExprsMap,
@@ -885,7 +900,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		tblColHists: is.stats.HistColl,
 	}
 	ts.HandleIdx = pkOffset
-	is.initSchema(id, idx, true)
+	is.initSchema(id, idx, fullIdxCols, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
 	return rootT.p, nil
 }
