@@ -117,6 +117,7 @@ type Session interface {
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
 	SetProcessInfo(string, time.Time, byte, uint64)
+	ResetProcessInfo(time.Time, bool)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -990,6 +991,26 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
+	}
+	s.processInfo.Store(&pi)
+}
+
+// ResetProcessInfo implements Session ResetProcessInfo method.
+func (s *session) ResetProcessInfo(t time.Time, resetStartTS bool) {
+	pi := util.ProcessInfo{
+		ID:               s.sessionVars.ConnectionID,
+		DB:               s.sessionVars.CurrentDB,
+		Command:          mysql.ComSleep,
+		Time:             t,
+		State:            s.Status(),
+		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+	}
+	if s.sessionVars.User != nil {
+		pi.User = s.sessionVars.User.Username
+		pi.Host = s.sessionVars.User.Hostname
+	}
+	if resetStartTS {
+		pi.CurTxnStartTS = 0
 	}
 	s.processInfo.Store(&pi)
 }

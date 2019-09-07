@@ -54,6 +54,8 @@ type QueryCtx interface {
 
 	SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64)
 
+	ResetProcessInfo(t time.Time, resetStartTS bool)
+
 	// CommitTxn commits the transaction operations.
 	CommitTxn(ctx context.Context) error
 
