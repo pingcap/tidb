@@ -282,7 +282,7 @@ batch-wait-size = 8
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
-enabled = true
+enabled = false
 capacity = 2048000
 
 [binlog]
