@@ -998,12 +998,12 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 // ResetProcessInfo implements Session ResetProcessInfo method.
 func (s *session) ResetProcessInfo(t time.Time, resetStartTS bool) {
 	pi := util.ProcessInfo{
-		ID:               s.sessionVars.ConnectionID,
-		DB:               s.sessionVars.CurrentDB,
-		Command:          mysql.ComSleep,
-		Time:             t,
-		State:            s.Status(),
-		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+		ID:            s.sessionVars.ConnectionID,
+		DB:            s.sessionVars.CurrentDB,
+		Command:       mysql.ComSleep,
+		Time:          t,
+		State:         s.Status(),
+		CurTxnStartTS: s.sessionVars.TxnCtx.StartTS,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
