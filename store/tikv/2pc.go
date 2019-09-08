@@ -113,6 +113,8 @@ type twoPhaseCommitter struct {
 	isFirstLock   bool
 	// regionTxnSize stores the number of keys involved in each region
 	regionTxnSize map[uint64]int
+	// Used by pessimistic transaction and large transaction.
+	ttlManager
 }
 
 // batchExecutor is txn controller providing rate control like utils
@@ -142,6 +144,10 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		startTS:       txn.StartTS(),
 		connID:        connID,
 		regionTxnSize: map[uint64]int{},
+		ttlManager: ttlManager{
+			ch:  make(chan struct{}),
+			ttl: defaultLockTTL,
+		},
 	}, nil
 }
 
@@ -539,6 +545,10 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
+			isPrimary := bytes.Equal(batch.keys[0], c.primary())
+			if isPrimary && c.isPessimistic {
+				c.ttlManager.run(c)
+			}
 			return nil
 		}
 		var locks []*Lock
@@ -574,6 +584,55 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			if err != nil {
 				return errors.Trace(err)
 			}
+		}
+	}
+}
+
+type ttlManager struct {
+	// 0 uninitialized, 1 running, 2 closed
+	initialized uint32
+	ttl         uint64
+	ch          chan struct{}
+}
+
+func (tm *ttlManager) run(c *twoPhaseCommitter) {
+	// Run only once.
+	if !atomic.CompareAndSwapUint32(&tm.initialized, 0, 1) {
+		return
+	}
+	go tm.keepAlive(c)
+}
+
+func (tm *ttlManager) close() {
+	if !atomic.CompareAndSwapUint32(&tm.initialized, 1, 2) {
+		return
+	}
+	close(tm.ch)
+}
+
+func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
+	bo := NewBackoffer(context.Background(), CommitMaxBackoff)
+	ticker := time.NewTicker(2 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-tm.ch:
+			return
+		case <-ticker.C:
+			ms := c.store.GetOracle().UntilExpired(c.startTS, c.ttl)
+			if ms > 0 && uint64(ms) > defaultLockTTL {
+				continue
+			}
+
+			adviseTTL := c.ttl + 2000
+			realTTL, err := sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, adviseTTL)
+			if err != nil {
+				logutil.BgLogger().Warn("send TxnHeartBeat failed",
+					zap.Error(err),
+					zap.Uint64("txnStartTS", c.startTS))
+				return
+			}
+			c.ttl = realTTL
 		}
 	}
 }
@@ -623,6 +682,10 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 		lockResp := resp.Resp.(*pb.PessimisticLockResponse)
 		keyErrs := lockResp.GetErrors()
 		if len(keyErrs) == 0 {
+			isPrimary := bytes.Equal(batch.keys[0], c.primary())
+			if isPrimary { // No need to check isPessimistic because this function is only called in that case.
+				c.ttlManager.run(c)
+			}
 			return nil
 		}
 		var locks []*Lock
@@ -880,6 +943,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		committed := c.mu.committed
 		undetermined := c.mu.undeterminedErr != nil
 		c.mu.RUnlock()
+		c.ttlManager.close()
 		if !committed && !undetermined {
 			c.cleanWg.Add(1)
 			go func() {
