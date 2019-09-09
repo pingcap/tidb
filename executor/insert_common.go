@@ -65,8 +65,10 @@ type InsertValues struct {
 	cache []datumLazy
 	// Fill the autoID lazily to datum.
 	// This is used for being compatible with JDBC using getGeneratedKeys().
-	// By now, we can guarantee consecutive autoID in a batch.
+	// By now in insert multiple values, TiDB can guarantee consecutive autoID in a batch.
 	lazyFillAutoID bool
+	// RowIdx
+	rowIdx int
 }
 
 type defaultVal struct {
@@ -402,9 +404,11 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		row[offset], hasValue[offset] = *val1.Copy(), true
 		e.evalBuffer.SetDatum(offset, val1)
 	}
-
+	if e.lazyFillAutoID {
+		e.rowIdx = rowIdx
+	}
 	// Row may lack of generated column、autoIncrement column、empty column here.
-	return e.fillRowLazy(ctx, row, hasValue, rowIdx)
+	return e.fillRow(ctx, row, hasValue)
 }
 
 var emptyRow chunk.Row
@@ -428,6 +432,10 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		}
 		offset := e.insertColumns[i].Offset
 		row[offset], hasValue[offset] = val1, true
+	}
+	// rowIdx for lazy autoID datum allocation.
+	if e.lazyFillAutoID {
+		e.rowIdx = rowIdx
 	}
 	return e.fillRow(ctx, row, hasValue)
 }
@@ -633,6 +641,8 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 
 // fillRow fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
+// When lazyFillAutoID is true, fill row will cache auto increment datum for lazy
+// batch allocation. This case is used in insert|replace into values (row),(row),(row)...
 func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool) ([]types.Datum, error) {
 	gCols := make([]*table.Column, 0)
 	for i, c := range e.Table.Cols() {
@@ -642,13 +652,32 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			gCols = append(gCols, c)
 		} else {
 			// Get the default value for all no value columns, the auto increment column is different from the others.
-			row[i], err = e.fillColValue(ctx, row[i], i, c, hasValue[i])
-			if err != nil {
-				return nil, err
-			}
-			// Handle the bad null error.
-			if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
-				return nil, err
+			if e.lazyFillAutoID {
+				var datumLazyTmp datumLazy
+				if datumLazyTmp, err = e.fillColValueLazy(ctx, row[i], i, c, hasValue[i]); err != nil {
+					return nil, err
+				}
+				if !datumLazyTmp.isInAutoIncrement {
+					// Store the plain datum.
+					row[i] = datumLazyTmp.datum
+					// Handle the bad null error.
+					if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+						return nil, err
+					}
+				} else {
+					// Cache the autoIncrement datum for lazy batch alloc
+					datumLazyTmp.rowIdx = e.rowIdx
+					datumLazyTmp.colIdx = i
+					e.cache = append(e.cache, datumLazyTmp)
+				}
+			} else {
+				if row[i], err = e.fillColValue(ctx, row[i], i, c, hasValue[i]); err != nil {
+					return nil, err
+				}
+				// Handle the bad null error.
+				if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
