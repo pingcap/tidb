@@ -844,9 +844,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBExpensiveQueryTimeThreshold:
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
-		if err := s.setTxnMode(val); err != nil {
-			return err
-		}
+		s.TxnMode = strings.ToUpper(val)
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:

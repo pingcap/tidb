@@ -93,9 +93,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			id = "MergeInnerJoin"
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
-		for i := range x.LeftKeys {
-			l := x.LeftKeys[i].String()
-			r := x.RightKeys[i].String()
+		for i := range x.LeftJoinKeys {
+			l := x.LeftJoinKeys[i].String()
+			r := x.RightJoinKeys[i].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalApply, *PhysicalApply:
