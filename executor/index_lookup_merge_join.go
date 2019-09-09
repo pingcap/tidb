@@ -245,13 +245,12 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 	}
 	req.Reset()
 	task := e.getFinishedTask(ctx)
-	breakFlag := false
-	for task != nil && !breakFlag {
+	for task != nil {
 		task.wgSetResultsSize.Wait()
 		select {
 		case chk := <-task.results:
 			req.Append(chk, 0, chk.NumRows())
-			breakFlag = true
+			return nil
 		case err := <-task.doneErr:
 			task.done = true
 			if err != nil {
@@ -259,7 +258,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 			}
 			task = e.getFinishedTask(ctx)
 		case <-ctx.Done():
-			breakFlag = true
+			return nil
 		}
 	}
 
@@ -461,9 +460,6 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	if err != nil {
 		return err
 	}
-	if err != nil {
-		return err
-	}
 
 	task.results = make(chan *chunk.Chunk, task.innerResult.NumChunks()+1)
 	task.wgSetResultsSize.Done()
@@ -471,9 +467,18 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	return err
 }
 
-func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) error {
+func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
 	chk := chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
-	var err error
+	defer func() {
+		if chk.NumRows() > 0 {
+			select {
+			case task.results <- chk:
+			case <-ctx.Done():
+				return
+			}
+		}
+		return
+	}()
 	if task.innerResult.Len() == 0 {
 		for task.cursor < task.outerResult.NumRows() {
 			imw.joiner.onMissMatch(false, task.outerResult.GetRow(task.cursor), chk)
@@ -487,14 +492,7 @@ func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMe
 			}
 			task.cursor++
 		}
-		if chk.NumRows() > 0 {
-			select {
-			case task.results <- chk:
-			case <-ctx.Done():
-				return nil
-			}
-		}
-		return nil
+		return
 	}
 
 	task.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
@@ -520,14 +518,14 @@ func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMe
 			if (cmpResult >= 0 && !imw.innerMergeCtx.desc) || (cmpResult <= 0 && imw.innerMergeCtx.desc) {
 				err = imw.fetchNextOuterRows(task, outerRow)
 				if err != nil {
-					return err
+					return
 				}
 			} else {
 				cmp := -1
 				if task.sameKeyIter != nil && len(task.sameKeyRows) > 0 {
 					cmp, err = imw.compare(outerRow, task.sameKeyIter.Begin())
 					if err != nil {
-						return err
+						return
 					}
 				}
 				if cmp != 0 {
@@ -590,13 +588,6 @@ func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMe
 				return nil
 			}
 			chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
-		}
-	}
-	if chk.NumRows() > 0 {
-		select {
-		case task.results <- chk:
-		case <-ctx.Done():
-			return nil
 		}
 	}
 
