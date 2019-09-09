@@ -299,6 +299,9 @@ var vecExprBenchCases = map[string][]vecExprBenchCase{
 	ast.Log10: {
 		{types.ETReal, []types.EvalType{types.ETReal}, nil},
 	},
+	ast.If: {
+		{types.ETJson, []types.EvalType{types.ETInt, types.ETJson, types.ETJson}, nil},
+	},
 }
 
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vecExprBenchCase) {
@@ -585,11 +588,13 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 				c.Assert(err, IsNil)
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalDuration(row)
+					val, isNull, err := baseFunc.evalJSON(row)
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
-						c.Assert(val, Equals, output.GetJSON(i))
+						var cmp int
+						cmp = json.CompareBinary(val, output.GetJSON(i))
+						c.Assert(cmp, Equals, 0)
 					}
 					i++
 				}
