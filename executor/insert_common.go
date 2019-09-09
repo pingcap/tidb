@@ -208,6 +208,8 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
 
+	// rowIdx and lazyFillAutoID are correlated.
+	e.rowIdx = -1
 	e.lazyFillAutoID = true
 	evalRowFunc := e.fastEvalRow
 	if !e.allAssignmentsAreConstant {
@@ -217,8 +219,9 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	// Cache for consecutive autoID batch alloc.
 	e.cache = make([]datumAutoIDLazy, 0, len(e.Lists))
-
 	for i, list := range e.Lists {
+		// rowIdx for lazy autoID datum allocation, it will reset after batch insert.
+		e.rowIdx++
 		e.rowCount++
 		var row []types.Datum
 		row, err = evalRowFunc(ctx, list, i)
@@ -240,6 +243,8 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err = e.doBatchInsert(ctx); err != nil {
 				return err
 			}
+			// Reset colIdx cause rows has been cut.
+			e.rowIdx = -1
 		}
 	}
 	// Fill the batch allocated autoIDs.
@@ -404,9 +409,6 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		row[offset], hasValue[offset] = *val1.Copy(), true
 		e.evalBuffer.SetDatum(offset, val1)
 	}
-	if e.lazyFillAutoID {
-		e.rowIdx = rowIdx
-	}
 	// Row may lack of generated column、autoIncrement column、empty column here.
 	return e.fillRow(ctx, row, hasValue)
 }
@@ -432,10 +434,6 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		}
 		offset := e.insertColumns[i].Offset
 		row[offset], hasValue[offset] = val1, true
-	}
-	// rowIdx for lazy autoID datum allocation.
-	if e.lazyFillAutoID {
-		e.rowIdx = rowIdx
 	}
 	return e.fillRow(ctx, row, hasValue)
 }
@@ -665,7 +663,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 						return nil, err
 					}
 				} else {
-					// Cache the autoIncrement datum for lazy batch alloc
+					// Cache the autoIncrement datum for lazy batch alloc.
 					datumLazyTmp.rowIdx = e.rowIdx
 					datumLazyTmp.colIdx = i
 					e.cache = append(e.cache, datumLazyTmp)
