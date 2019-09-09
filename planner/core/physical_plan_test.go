@@ -1268,7 +1268,6 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 		// Min + Max to Limit + Sort + Join.
 		{
 			sql:  "select max(a), min(a) from t;",
-<<<<<<< HEAD
 			best: "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}",
 		},
 		// Min + Max with range condition.
@@ -1284,9 +1283,6 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 		{
 			sql:  "select max(a), max(b) from t",
 			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
-=======
-			best: "IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg",
->>>>>>> 0f2434660c509ec0b493d8c7ee0bbbf8e8549184
 		},
 		// Do nothing if any column has a non-range condition.
 		{
