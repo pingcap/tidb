@@ -14,6 +14,7 @@
 package perfschema
 
 import (
+	"fmt"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -174,6 +175,7 @@ func (vt *perfSchemaTable) RecordKey(h int64) kv.Key {
 
 // AddRecord implements table.Table AddRecord interface.
 func (vt *perfSchemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
+	fmt.Println("add record")
 	return 0, table.ErrUnsupportedOp
 }
 
@@ -184,6 +186,7 @@ func (vt *perfSchemaTable) RemoveRecord(ctx sessionctx.Context, h int64, r []typ
 
 // UpdateRecord implements table.Table UpdateRecord interface.
 func (vt *perfSchemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+	fmt.Println("update record")
 	return table.ErrUnsupportedOp
 }
 

@@ -89,6 +89,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	l.elements[hash] = element
 	l.size++
 
+	// Getting used memory is expensive and can be avoided by setting quota to 0.
 	if l.quota <= 0 {
 		if l.size > l.capacity {
 			lru := l.cache.Back()
