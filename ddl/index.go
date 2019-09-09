@@ -1026,7 +1026,8 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 		}
 
 		if result.err != nil {
-			logutil.BgLogger().Warn("[ddl] add index worker return error", zap.Int("workerID", worker.id), zap.Error(result.err))
+			logutil.BgLogger().Warn("[ddl] add index worker failed", zap.Int("workerID", worker.id),
+				zap.Error(result.err))
 		}
 
 		if firstErr == nil {
