@@ -37,10 +37,9 @@ type memIndexReader struct {
 	desc          bool
 	conditions    []expression.Expression
 	addedRows     [][]types.Datum
+	addedRowsLen  int
 	retFieldTypes []*types.FieldType
 	outputOffset  []int
-	// cache for decode handle.
-	handleBytes []byte
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 }
@@ -61,7 +60,6 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
 		retFieldTypes:    retTypes(us),
 		outputOffset:     outputOffset,
-		handleBytes:      make([]byte, 0, 16),
 		belowHandleIndex: us.belowHandleIndex,
 	}
 }
@@ -311,7 +309,7 @@ func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
 			}
 		}
 	}
-	handles := make([]int64, 0, cap(m.addedRows))
+	handles := make([]int64, 0, m.addedRowsLen)
 	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
 		handle, err := tablecodec.DecodeIndexHandle(key, value, len(m.index.Columns), pkTp)
 		if err != nil {
@@ -353,10 +351,9 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		table:            idxLookUpReader.table.Meta(),
 		kvRanges:         kvRanges,
 		desc:             idxLookUpReader.desc,
-		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		addedRowsLen:     len(us.dirty.addedRows),
 		retFieldTypes:    retTypes(us),
 		outputOffset:     outputOffset,
-		handleBytes:      make([]byte, 0, 16),
 		belowHandleIndex: us.belowHandleIndex,
 	}
 
@@ -393,7 +390,7 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		addedRows:     make([][]types.Datum, 0, len(handles)),
 		retFieldTypes: m.retFieldTypes,
 		colIDs:        colIDs,
-		handleBytes:   m.idxReader.handleBytes,
+		handleBytes:   make([]byte, 0, 16),
 	}
 
 	return memTblReader.getMemRows()

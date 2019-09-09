@@ -258,6 +258,9 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 
 	var value []byte
 	value, err = rm.Get(ctx, key)
+	// If (opt.Untouched && err == nil) is true, means the key is exists and exists in TiKV, not in txn mem-buffer,
+	// then should also write the untouched index key/value to mem-buffer to make sure the data
+	// is consistent with the index in txn mem-buffer.
 	if kv.IsErrNotFound(err) || (opt.Untouched && err == nil) {
 		v := EncodeHandle(h)
 		if opt.Untouched {
