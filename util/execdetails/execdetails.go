@@ -222,8 +222,7 @@ type CopRuntimeStats struct {
 func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.ExecutorExecutionSummary) {
 	crs.Lock()
 	defer crs.Unlock()
-	crs.stats[address] = append(crs.stats[address],
-		&RuntimeStats{int32(*summary.NumIterations), int64(*summary.TimeProcessedNs), int64(*summary.NumProducedRows)})
+	crs.stats[address] = append(crs.stats[address], &RuntimeStats{int32(*summary.NumIterations), int64(*summary.TimeProcessedNs), int64(*summary.NumProducedRows), 0})
 }
 
 func (crs *CopRuntimeStats) String() string {
