@@ -113,8 +113,6 @@ type twoPhaseCommitter struct {
 	isFirstLock   bool
 	// regionTxnSize stores the number of keys involved in each region
 	regionTxnSize map[uint64]int
-	// hasUntouchedIndexKV uses to indicate whether exists the unchanged index key/value in this transaction.
-	hasUntouchedIndexKV bool
 }
 
 // batchExecutor is txn controller providing rate control like utils
@@ -144,7 +142,6 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		startTS:             txn.StartTS(),
 		connID:              connID,
 		regionTxnSize:       map[uint64]int{},
-		hasUntouchedIndexKV: txn.hasUntouchedIndexKV,
 	}, nil
 }
 
@@ -209,7 +206,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		vLen := len(v)
 		if vLen > 0 {
-			if c.hasUntouchedIndexKV && tablecodec.IsUntouchedIndexKValue(k, v) {
+			if tablecodec.IsUntouchedIndexKValue(k, v) {
 				return nil
 			}
 			op := pb.Op_Put

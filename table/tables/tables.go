@@ -395,9 +395,6 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn, untouched); err != nil {
 			return err
 		}
-		if untouched {
-			ctx.StmtHasUntouchedIndex()
-		}
 	}
 	return nil
 }

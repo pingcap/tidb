@@ -74,9 +74,6 @@ type tikvTxn struct {
 
 	valid bool
 	dirty bool
-
-	// hasUntouchedIndexKV uses to indicate whether exists the unchanged index key/value in this transaction.
-	hasUntouchedIndexKV bool
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -266,8 +263,6 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.keyOnly = val.(bool)
 	case kv.SnapshotTS:
 		txn.snapshot.version.Ver = val.(uint64)
-	case kv.HasUntouchedIndexKV:
-		txn.hasUntouchedIndexKV = val.(bool)
 	}
 }
 

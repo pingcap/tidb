@@ -52,8 +52,6 @@ const (
 	SnapshotTS
 	// Set replica read
 	ReplicaRead
-	// HasUntouchedIndexKV uses to indicate whether exists the unchanged index key/value in this transaction.
-	HasUntouchedIndexKV
 )
 
 // Priority value for transaction priority.

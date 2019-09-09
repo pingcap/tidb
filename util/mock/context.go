@@ -215,10 +215,6 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
 }
 
-// StmtHasUntouchedIndex implements the sessionctx.Context interface.
-func (c *Context) StmtHasUntouchedIndex() {
-}
-
 // AddTableLock implements the sessionctx.Context interface.
 func (c *Context) AddTableLock(_ []model.TableLockTpInfo) {
 }

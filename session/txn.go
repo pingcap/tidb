@@ -50,8 +50,6 @@ type TxnState struct {
 	buf          kv.MemBuffer
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
-	// hasUntouchedIndex indicate whether exists the untouched index when executing update statement.
-	hasUntouchedIndex bool
 
 	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	// doNotCommit flag may be set when StmtCommit fail.
@@ -323,7 +321,6 @@ func (st *TxnState) cleanup() {
 		}
 		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
-	st.hasUntouchedIndex = false
 }
 
 // KeysNeedToLock returns the keys need to be locked.
@@ -472,9 +469,6 @@ func (s *session) StmtCommit() error {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
-	if st.hasUntouchedIndex {
-		s.GetSessionVars().TxnCtx.HasUntouchedIndex = true
-	}
 	st.ConfirmAssertions(true)
 	return nil
 }
@@ -497,8 +491,4 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 
 func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
 	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
-}
-
-func (s *session) StmtHasUntouchedIndex() {
-	s.txn.hasUntouchedIndex = true
 }
