@@ -1434,7 +1434,7 @@ func extractStmtHintsFromStmtNode(stmtNode ast.StmtNode) (stmtHints stmtctx.Stmt
 			warns = append(warns, warn)
 		}
 		stmtHints.HasReplicaReadHint = true
-		stmtHints.ReplicaRead = kv.ReplicaReadFollower
+		stmtHints.ReplicaRead = byte(kv.ReplicaReadFollower)
 	}
 	return
 }

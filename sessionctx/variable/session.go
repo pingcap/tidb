@@ -543,7 +543,7 @@ func (s *SessionVars) SetEnableIndexMerge(val bool) {
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
-		return s.StmtCtx.ReplicaRead
+		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
 	return s.replicaRead
 }

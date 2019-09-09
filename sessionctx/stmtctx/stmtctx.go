@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -151,7 +150,7 @@ type StmtHints struct {
 	AllowInSubqToJoinAndAgg bool
 	EnableIndexMerge        bool
 	MemQuotaQuery           int64
-	ReplicaRead             kv.ReplicaReadType
+	ReplicaRead             byte
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
