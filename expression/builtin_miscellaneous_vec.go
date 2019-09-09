@@ -35,13 +35,13 @@ func (b *builtinInetNtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 
 	result.ReserveString(n)
 	i64s := buf.Int64s()
+	ip := make(net.IP, net.IPv4len)
 	for i := 0; i < n; i++ {
 		val := i64s[i]
 		if buf.IsNull(i) || val < 0 || uint64(val) > math.MaxUint32 {
 			result.AppendNull()
 			continue
 		}
-		ip := make(net.IP, net.IPv4len)
 		binary.BigEndian.PutUint32(ip, uint32(val))
 		ipv4 := ip.To4()
 		if ipv4 == nil {
