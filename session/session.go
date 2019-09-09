@@ -1146,6 +1146,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
+	s.PrepareTxnFuture(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -1708,6 +1709,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBExpensiveQueryTimeThreshold,
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
+	variable.TiDBTxnMode,
 }
 
 var (
@@ -1785,8 +1787,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		return
 	}
 
-	txnFuture := s.getTxnFuture(ctx)
-	s.txn.changeInvalidToPending(txnFuture)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -1796,15 +1796,21 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	if !s.sessionVars.IsAutocommit() {
 		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
 		if pessTxnConf.Enable {
-			txnMode := s.sessionVars.TxnMode
-			if txnMode == "" && pessTxnConf.Default {
-				txnMode = ast.Pessimistic
-			}
-			if txnMode == ast.Pessimistic {
+			if s.sessionVars.TxnMode == ast.Pessimistic {
 				s.sessionVars.TxnCtx.IsPessimistic = true
 			}
 		}
 	}
+}
+
+// PrepareTxnFuture uses to try to get txn future.
+func (s *session) PrepareTxnFuture(ctx context.Context) {
+	if s.txn.validOrPending() {
+		return
+	}
+
+	txnFuture := s.getTxnFuture(ctx)
+	s.txn.changeInvalidToPending(txnFuture)
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.

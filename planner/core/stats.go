@@ -390,6 +390,16 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo) (*pr
 // every matched bucket.
 func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	leftProfile, rightProfile := childStats[0], childStats[1]
+	helper := &fullJoinRowCountHelper{
+		cartesian:     0 == len(p.EqualConditions),
+		leftProfile:   leftProfile,
+		rightProfile:  rightProfile,
+		leftJoinKeys:  p.LeftJoinKeys,
+		rightJoinKeys: p.RightJoinKeys,
+		leftSchema:    p.children[0].Schema(),
+		rightSchema:   p.children[1].Schema(),
+	}
+	p.equalCondOutCnt = helper.estimate()
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.stats = &property.StatsInfo{
 			RowCount:    leftProfile.RowCount * selectionFactor,
@@ -409,16 +419,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		p.stats.Cardinality[len(p.stats.Cardinality)-1] = 2.0
 		return p.stats, nil
 	}
-	helper := &fullJoinRowCountHelper{
-		cartesian:     0 == len(p.EqualConditions),
-		leftProfile:   leftProfile,
-		rightProfile:  rightProfile,
-		leftJoinKeys:  p.LeftJoinKeys,
-		rightJoinKeys: p.RightJoinKeys,
-		leftSchema:    p.children[0].Schema(),
-		rightSchema:   p.children[1].Schema(),
-	}
-	count := helper.estimate()
+	count := p.equalCondOutCnt
 	if p.JoinType == LeftOuterJoin {
 		count = math.Max(count, leftProfile.RowCount)
 	} else if p.JoinType == RightOuterJoin {

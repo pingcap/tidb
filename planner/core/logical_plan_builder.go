@@ -97,6 +97,9 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	b.optFlag = b.optFlag | flagEliminateProjection
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx)
+	if hint := b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
@@ -149,9 +152,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	plan4Agg.GroupByItems = gbyItems
 	plan4Agg.SetSchema(schema4Agg)
 	plan4Agg.collectGroupByColumns()
-	if hint := b.TableHints(); hint != nil {
-		plan4Agg.preferAggType = hint.preferAggType
-	}
 	return plan4Agg, aggIndexMap, nil
 }
 
@@ -794,6 +794,9 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.Init(b.ctx)
+	if hint := b.TableHints(); hint != nil {
+		plan4Agg.preferAggType = hint.preferAggType
+	}
 	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
 		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
@@ -1970,7 +1973,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		case HintStreamAgg:
 			preferAggType |= preferStreamAgg
 		case HintIndex:
-			if len(hint.Tables) != 0 && len(hint.Indexes) != 0 {
+			if len(hint.Tables) != 0 {
 				indexHintList = append(indexHintList, indexHintInfo{
 					tblName: hint.Tables[0].TableName,
 					indexHint: &ast.IndexHint{
