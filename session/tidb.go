@@ -173,10 +173,7 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 	}
 
 	if !sessVars.InTxn() {
-		if err := se.CommitTxn(ctx); err != nil {
-			return errors.Annotatef(err, "previous statement: %s", sessVars.PrevStmt)
-		}
-		return nil
+		return se.CommitTxn(ctx)
 	}
 
 	return checkStmtLimit(ctx, sctx, se)
