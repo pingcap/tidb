@@ -1395,6 +1395,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		}
 	}
 	if np != p {
+		b.optFlag |= flagEliminateProjection
 		fieldsLen := len(p.schema.Columns)
 		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx)
 		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
