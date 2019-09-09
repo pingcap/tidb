@@ -88,7 +88,8 @@ type Config struct {
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
-	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	TreatOldVersionUTF8AsUTF8MB4 bool   `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	SplitRegionMaxNum            uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
 }
 
 // Log is the log section of config.
@@ -299,8 +300,6 @@ type Plugin struct {
 type PessimisticTxn struct {
 	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
 	Enable bool `toml:"enable" json:"enable"`
-	// Starts a pessimistic transaction by default when Enable is true.
-	Default bool `toml:"default" json:"default"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
 	// The pessimistic lock ttl.
@@ -323,8 +322,9 @@ var defaultConf = Config{
 	EnableStreaming:              false,
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,
+	SplitRegionMaxNum:            1000,
 	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  true,
+		Enabled:  false,
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
@@ -392,8 +392,7 @@ var defaultConf = Config{
 		Strategy:     "range",
 	},
 	PessimisticTxn: PessimisticTxn{
-		Enable:        false,
-		Default:       false,
+		Enable:        true,
 		MaxRetryCount: 256,
 		TTL:           "40s",
 	},
