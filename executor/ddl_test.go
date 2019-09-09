@@ -67,7 +67,7 @@ func (s *testSuite3) TestInTxnExecDDLFail(c *C) {
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t values (1);")
 	_, err := tk.Exec("truncate table t;")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "previous statement: insert into t values (1);: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 	result := tk.MustQuery("select count(*) from t")
 	result.Check(testkit.Rows("1"))
 }
