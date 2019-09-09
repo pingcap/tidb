@@ -144,15 +144,7 @@ func (s *baseTestSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-func enablePessimisticTxn(enable bool) {
-	newConf := config.NewConfig()
-	newConf.PessimisticTxn.Enable = enable
-	config.StoreGlobalConfig(newConf)
-}
-
 func (s *testSuiteP1) TestPessimisticSelectForUpdate(c *C) {
-	defer func() { enablePessimisticTxn(false) }()
-	enablePessimisticTxn(true)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
