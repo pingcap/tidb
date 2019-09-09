@@ -173,7 +173,10 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 	}
 
 	if !sessVars.InTxn() {
-		return se.CommitTxn(ctx)
+		if err := se.CommitTxn(ctx); err != nil {
+			return errors.Annotatef(err, "previous statement: %s", sessVars.PrevStmt)
+		}
+		return nil
 	}
 
 	return checkStmtLimit(ctx, sctx, se)
@@ -218,7 +221,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// then it could include the transaction commit time.
 		if rs == nil {
 			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil)
-			sessVars.PrevStmt = s.OriginText()
+			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), sessVars)
 		}
 	}()
 
