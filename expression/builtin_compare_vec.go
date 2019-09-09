@@ -32,12 +32,11 @@ func (b *builtinGreatestDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 	}
 
 	d64s := result.Decimals()
-	colLength := len(d64s)
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalDecimal(b.ctx, input, buf); err != nil {
 			return err
 		}
-		for i := 0; i < colLength; i++ {
+		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
 				continue
 			} else if buf.IsNull(i) {
