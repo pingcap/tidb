@@ -407,10 +407,6 @@ type PhysicalTableDual struct {
 	physicalSchemaProducer
 
 	RowCount int
-	// placeHolder indicates if this dual plan is a place holder in query optimization
-	// for data sources like `Show`, if true, the dual plan would be substituted by
-	// `Show` in the final plan.
-	placeHolder bool
 
 	// names is used for OutputNames() method. Dual may be inited when building point get plan.
 	// So it needs to hold names for itself.
@@ -453,6 +449,13 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 	}
 
 	return statsInfos
+}
+
+// PhysicalShow represents a show plan.
+type PhysicalShow struct {
+	physicalSchemaProducer
+
+	baseShowContent
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.

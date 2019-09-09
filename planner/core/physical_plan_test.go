@@ -1230,7 +1230,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestAggEliminater(c *C) {
+func (s *testPlanSuite) TestAggEliminator(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
