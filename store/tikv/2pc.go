@@ -131,6 +131,46 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	}, nil
 }
 
+func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, ttl uint64) (uint64, error) {
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdTxnHeartBeat,
+		TxnHeartBeat: &pb.TxnHeartBeatRequest{
+			PrimaryLock:   primary,
+			StartVersion:  startTS,
+			AdviseLockTtl: ttl,
+		},
+	}
+	for {
+		loc, err := store.GetRegionCache().LocateKey(bo, primary)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		resp, err := store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if regionErr != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			continue
+		}
+		if resp.TxnHeartBeat == nil {
+			return 0, errors.Trace(ErrBodyMissing)
+		}
+		cmdResp := resp.TxnHeartBeat
+		if keyErr := cmdResp.GetError(); keyErr != nil {
+			return 0, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, primary, keyErr.Abort)
+		}
+		return cmdResp.GetLockTtl(), nil
+	}
+}
+
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	var (
 		keys    [][]byte
