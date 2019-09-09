@@ -2802,9 +2802,9 @@ func (s *testSessionSuite) TestReplicaRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadLeader)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
 	tk.MustExec("set @@tidb_replica_read = 'follower';")
-	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadFollower)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 	tk.MustExec("set @@tidb_replica_read = 'leader';")
-	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadLeader)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
 }
