@@ -14,6 +14,7 @@
 package autoid
 
 import (
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -426,6 +427,8 @@ func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) 
 }
 
 func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error) {
+	fmt.Println("base", uint64(alloc.base))
+	fmt.Println("end", uint64(alloc.end))
 	N1 := int64(N)
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
 	if math.MaxUint64-uint64(alloc.base) < N {
@@ -476,6 +479,10 @@ func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error
 		zap.Int64("database ID", alloc.dbID))
 	resN := make([]int64, 0, N1)
 	for i := uint64(alloc.base) + 1; i <= uint64(alloc.base)+N; i++ {
+		// fix bug : maxUint64 will be allocated
+		if i == math.MaxUint64 {
+			return nil, ErrAutoincReadFailed
+		}
 		resN = append(resN, int64(i))
 	}
 	// Use uint64 N directly.
