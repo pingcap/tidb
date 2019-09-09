@@ -23,6 +23,10 @@
         "HasWarn": false
       },
       {
+        "Best": "TableReader(Table(t)-\u003eSel([gt(test.t.f, 10)]))",
+        "HasWarn": false
+      },
+      {
         "Best": "TableReader(Table(t))",
         "HasWarn": true
       }
