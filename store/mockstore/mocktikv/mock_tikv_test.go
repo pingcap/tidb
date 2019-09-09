@@ -157,6 +157,10 @@ func (s *testMockTiKVSuite) mustRangeReverseScanOK(c *C, start, end string, limi
 }
 
 func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
+	s.mustPrewriteWithTTLOK(c, mutations, primary, startTS, 0)
+}
+
+func (s *testMockTiKVSuite) mustPrewriteWithTTLOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64, ttl uint64) {
 	req := &kvrpcpb.PrewriteRequest{
 		Mutations:    mutations,
 		PrimaryLock:  []byte(primary),
@@ -649,4 +653,39 @@ func (s *testMVCCLevelDB) TestErrors(c *C) {
 	c.Assert(ErrAbort("txn").Error(), Equals, "abort: txn")
 	c.Assert(ErrAlreadyCommitted(0).Error(), Equals, "txn already committed")
 	c.Assert((&ErrConflict{}).Error(), Equals, "write conflict")
+}
+
+func (s *testMVCCLevelDB) TestMvccGetByKey(c *C) {
+	s.mustPrewriteOK(c, putMutations("q1", "v5"), "p1", 5)
+	debugger, ok := s.store.(MVCCDebugger)
+	c.Assert(ok, IsTrue)
+	mvccInfo := debugger.MvccGetByKey([]byte("q1"))
+	except := &kvrpcpb.MvccInfo{
+		Lock: &kvrpcpb.MvccLock{
+			Type:       kvrpcpb.Op_Put,
+			StartTs:    5,
+			Primary:    []byte("p1"),
+			ShortValue: []byte("v5"),
+		},
+	}
+	c.Assert(mvccInfo, DeepEquals, except)
+}
+
+func (s *testMVCCLevelDB) TestTxnHeartBeat(c *C) {
+	s.mustPrewriteWithTTLOK(c, putMutations("pk", "val"), "pk", 5, 666)
+
+	// Update the ttl
+	ttl, err := s.store.TxnHeartBeat([]byte("pk"), 5, 888)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Greater, uint64(666))
+
+	// Advise ttl is small
+	ttl, err = s.store.TxnHeartBeat([]byte("pk"), 5, 300)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Greater, uint64(300))
+
+	// The lock has already been clean up
+	c.Assert(s.store.Cleanup([]byte("pk"), 5), IsNil)
+	_, err = s.store.TxnHeartBeat([]byte("pk"), 5, 1000)
+	c.Assert(err, NotNil)
 }

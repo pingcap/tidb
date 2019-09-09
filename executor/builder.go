@@ -172,6 +172,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildMergeJoin(v)
 	case *plannercore.PhysicalIndexJoin:
 		return b.buildIndexLookUpJoin(v)
+	case *plannercore.PhysicalIndexMergeJoin:
+		return b.buildIndexLookUpMergeJoin(v)
 	case *plannercore.PhysicalSelection:
 		return b.buildSelection(v)
 	case *plannercore.PhysicalHashAgg:
@@ -232,7 +234,8 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 
 func (b *executorBuilder) buildChange(v *plannercore.Change) Executor {
 	return &ChangeExec{
-		ChangeStmt: v.ChangeStmt,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		ChangeStmt:   v.ChangeStmt,
 	}
 }
 
@@ -596,6 +599,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		id:           v.ExecID,
 		stmt:         v.Stmt,
 		plan:         v.Plan,
+		outputNames:  v.OutputNames(),
 	}
 	return e
 }
@@ -675,15 +679,16 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	baseExec.initCap = chunk.ZeroCapacity
 
 	ivs := &InsertValues{
-		baseExecutor: baseExec,
-		Table:        v.Table,
-		Columns:      v.Columns,
-		Lists:        v.Lists,
-		SetList:      v.SetList,
-		GenColumns:   v.GenCols.Columns,
-		GenExprs:     v.GenCols.Exprs,
-		hasRefCols:   v.NeedFillDefaultValue,
-		SelectExec:   selectExec,
+		baseExecutor:              baseExec,
+		Table:                     v.Table,
+		Columns:                   v.Columns,
+		Lists:                     v.Lists,
+		SetList:                   v.SetList,
+		GenColumns:                v.GenCols.Columns,
+		GenExprs:                  v.GenCols.Exprs,
+		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
+		hasRefCols:                v.NeedFillDefaultValue,
+		SelectExec:                selectExec,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
@@ -937,8 +942,8 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 		isOuterJoin: v.JoinType.IsOuterJoin(),
 	}
 
-	leftKeys := v.LeftKeys
-	rightKeys := v.RightKeys
+	leftKeys := v.LeftJoinKeys
+	rightKeys := v.RightJoinKeys
 
 	e.outerIdx = 0
 	innerFilter := v.RightConditions
@@ -988,10 +993,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 
 	e := &HashJoinExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-		concurrency:  v.Concurrency,
-		joinType:     v.JoinType,
-		isOuterJoin:  v.JoinType.IsOuterJoin(),
+		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
+		concurrency:   v.Concurrency,
+		joinType:      v.JoinType,
+		isOuterJoin:   v.JoinType.IsOuterJoin(),
+		innerEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
 	}
 
 	defaultValues := v.DefaultValues
@@ -1397,10 +1403,11 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	updateExec := &UpdateExec{
-		baseExecutor:   base,
-		OrderedList:    v.OrderedList,
-		tblID2table:    tblID2table,
-		tblColPosInfos: v.TblColPosInfos,
+		baseExecutor:              base,
+		OrderedList:               v.OrderedList,
+		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
+		tblID2table:               tblID2table,
+		tblColPosInfos:            v.TblColPosInfos,
 	}
 	return updateExec
 }
@@ -1726,12 +1733,12 @@ func (b *executorBuilder) corColInAccess(p plannercore.PhysicalPlan) bool {
 }
 
 func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin) Executor {
-	outerExec := b.build(v.Children()[v.OuterIndex])
+	outerExec := b.build(v.Children()[1-v.InnerChildIdx])
 	if b.err != nil {
 		return nil
 	}
 	outerTypes := retTypes(outerExec)
-	innerPlan := v.Children()[1-v.OuterIndex]
+	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType
@@ -1742,7 +1749,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		leftTypes, rightTypes []*types.FieldType
 	)
 
-	if v.OuterIndex == 1 {
+	if v.InnerChildIdx == 0 {
 		leftTypes, rightTypes = innerTypes, outerTypes
 		outerFilter = v.RightConditions
 		if len(v.LeftConditions) > 0 {
@@ -1781,7 +1788,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			hasPrefixCol:  hasPrefixCol,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		joiner:        newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
@@ -1799,7 +1806,16 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
-	return e
+	if v.KeepOuterOrder {
+		return e
+	}
+	return &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
+}
+
+func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndexMergeJoin) Executor {
+	// Now IndexLookUpMergeJoin returns IndexLookUpJoin.
+	// We will maintain it in future.
+	return b.buildIndexLookUpJoin(&v.PhysicalIndexJoin)
 }
 
 // containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
@@ -1929,7 +1945,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	ret.ranges = is.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
+	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	return ret
 }
 
@@ -2008,7 +2024,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	ret.ranges = is.Ranges
 	executorCounterIndexLookUpExecutor.Inc()
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
+	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	return ret
 }

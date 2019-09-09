@@ -29,7 +29,8 @@ import (
 	5. Update the `NewSessionVars` function to set the field to its default value.
 	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
 	7. If it is a global variable, add it in `session.loadCommonGlobalVarsSQL`.
-	8. Use this variable to control the behavior in code.
+	8. Update ValidateSetSystemVar if the variable's value need to be validated.
+	9. Use this variable to control the behavior in code.
 */
 
 // TiDB system variable names that only in session scope.
@@ -271,6 +272,9 @@ const (
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
 
+	// tidb_enable_vectorized_expression is used to control whether to enable the vectorized expression evaluation.
+	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
+
 	// TIDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
@@ -336,14 +340,15 @@ const (
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBTxnMode                     = ""
-	DefTiDBDDLReorgWorkerCount         = 16
-	DefTiDBDDLReorgBatchSize           = 1024
+	DefTiDBDDLReorgWorkerCount         = 4
+	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
+	DefEnableVectorizedExpression      = true
 	DefTiDBOptJoinReorderThreshold     = 0
 	DefTiDBDDLSlowOprThreshold         = 300
 	DefTiDBUseFastAnalyze              = false

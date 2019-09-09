@@ -144,15 +144,7 @@ func (s *baseTestSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-func enablePessimisticTxn(enable bool) {
-	newConf := config.NewConfig()
-	newConf.PessimisticTxn.Enable = enable
-	config.StoreGlobalConfig(newConf)
-}
-
 func (s *testSuiteP1) TestPessimisticSelectForUpdate(c *C) {
-	defer func() { enablePessimisticTxn(false) }()
-	enablePessimisticTxn(true)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -198,6 +190,16 @@ func (s *testSuiteP1) TestChange(c *C) {
 	tk.MustExec("alter table t change a b int")
 	tk.MustExec("alter table t change b c bigint")
 	c.Assert(tk.ExecToErr("alter table t change c d varchar(100)"), NotNil)
+}
+
+func (s *testSuiteP1) TestChangePumpAndDrainer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// change pump or drainer's state need connect to etcd
+	// so will meet error "URL scheme must be http, https, unix, or unixs: /tmp/tidb"
+	err := tk.ExecToErr("change pump to node_state ='paused' for node_id 'pump1'")
+	c.Assert(err, ErrorMatches, "URL scheme must be http, https, unix, or unixs.*")
+	err = tk.ExecToErr("change drainer to node_state ='paused' for node_id 'drainer1'")
+	c.Assert(err, ErrorMatches, "URL scheme must be http, https, unix, or unixs.*")
 }
 
 func (s *testSuiteP1) TestLoadStats(c *C) {
@@ -2143,7 +2145,7 @@ func (s *testSuiteP1) TestBatchPointGetRepeatableRead(c *C) {
 }
 
 func (s *testSuite4) TestSplitRegionTimeout(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2152,7 +2154,7 @@ func (s *testSuite4) TestSplitRegionTimeout(c *C) {
 	tk.MustExec(`set @@tidb_wait_split_region_timeout=1`)
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout"), IsNil)
 }
 
 func (s *testSuiteP1) TestRow(c *C) {
@@ -4040,7 +4042,7 @@ func (s *testSuiteP1) TestReadPartitionedTable(c *C) {
 func (s *testSuiteP1) TestSplitRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
 	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
 	_, err := tk.Exec(`split table t index idx1 by ("abcd");`)
@@ -4117,36 +4119,40 @@ func (s *testSuiteP1) TestSplitRegion(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split table `t` region step value should more than 1000, step 10 is invalid")
 
-	// Test split region by syntax
+	// Test split region by syntax.
 	tk.MustExec(`split table t by (0),(1000),(1000000)`)
+
+	// Test split region twice to test for multiple batch split region requests.
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustQuery("split table t1 between(0) and (10000) regions 10;").Check(testkit.Rows("9 1"))
+	tk.MustQuery("split table t1 between(10) and (10010) regions 5;").Check(testkit.Rows("4 1"))
 }
 
 func (s *testSuite) TestShowTableRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_regions1, t_regions")
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-	tk.MustExec("create table t_regions1 (a int key, b int, index idx(b))")
-	tk.MustExec("create table t_regions (a int key, b int, index idx(b))")
+	tk.MustExec("drop table if exists t_regions")
+	tk.MustExec("create table t_regions (a int key, b int, c int, index idx(b), index idx2(c))")
 
 	// Test show table regions.
-	tk.MustExec(`split table t_regions1 by (0)`)
-	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("3 1"))
+	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
 	re := tk.MustQuery("show table t_regions regions")
 	rows := re.Rows()
-	// Table t_regions should have 4 regions now.
-	c.Assert(len(rows), Equals, 4)
-	c.Assert(len(rows[0]), Equals, 7)
-	tbl1 := testGetTableByName(c, tk.Se, "test", "t_regions1")
+	// Table t_regions should have 5 regions now.
+	// 4 regions to store record data.
+	// 1 region to store index data.
+	c.Assert(len(rows), Equals, 5)
+	c.Assert(len(rows[0]), Equals, 11)
 	tbl := testGetTableByName(c, tk.Se, "test", "t_regions")
 	// Check the region start key.
-	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", tbl1.Meta().ID))
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
+	c.Assert(rows[4][2], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 
 	// Test show table index regions.
-	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("4 1"))
+	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("5 1"))
 	re = tk.MustQuery("show table t_regions index idx regions")
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
@@ -4159,15 +4165,21 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 
 	re = tk.MustQuery("show table t_regions regions")
 	rows = re.Rows()
-	c.Assert(len(rows), Equals, 7)
+	// The index `idx` of table t_regions should have 9 regions now.
+	// 4 regions to store record data.
+	// 4 region to store index idx data.
+	// 1 region to store index idx2 data.
+	c.Assert(len(rows), Equals, 9)
 	// Check the region start key.
-	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
 	c.Assert(rows[4][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[7][2], Equals, fmt.Sprintf("t_%d_i_2_", tbl.Meta().ID))
+	c.Assert(rows[8][2], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 
 	// Test unsigned primary key and wait scatter finish.
 	tk.MustExec("drop table if exists t_regions")
