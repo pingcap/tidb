@@ -204,8 +204,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		}
 	}
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
-		vLen := len(v)
-		if vLen > 0 {
+		if len(v) > 0 {
 			if tablecodec.IsUntouchedIndexKValue(k, v) {
 				return nil
 			}

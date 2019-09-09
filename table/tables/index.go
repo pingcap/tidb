@@ -209,9 +209,9 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	if opt.Untouched {
 		// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
 		// no need to re-write the index kv.
-		txn, err := sctx.Txn(true)
-		if err != nil {
-			return 0, err
+		txn, err1 := sctx.Txn(true)
+		if err1 != nil {
+			return 0, err1
 		}
 		_, err = txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
@@ -225,7 +225,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		// non-unique index doesn't need store value, write a '0' to reduce space
 		value := []byte{'0'}
 		if opt.Untouched {
-			value = []byte{kv.UnCommitIndexKVFlag}
+			value[0] = kv.UnCommitIndexKVFlag
 		}
 		err = rm.Set(key, value)
 		if ss != nil {
