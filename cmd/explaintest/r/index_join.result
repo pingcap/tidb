@@ -51,5 +51,5 @@ Projection_8	10000.00	root	test.t1.a, test.t1.b
   │ ├─IndexScan_9	10.00	cop	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo
   │ └─TableScan_10	10.00	cop	table:t1, keep order:false, stats:pseudo
   └─StreamAgg_22	8000.00	root	group by:test.t2.a, funcs:firstrow(test.t2.a)
-    └─IndexReader_32	10000.00	root	index:IndexScan_31
-      └─IndexScan_31	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+    └─IndexReader_35	10000.00	root	index:IndexScan_34
+      └─IndexScan_34	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
