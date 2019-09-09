@@ -146,7 +146,7 @@ type StmtHints struct {
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
 
-	// Hint Infomation
+	// Hint Information
 	AllowInSubqToJoinAndAgg bool
 	EnableIndexMerge        bool
 	MemQuotaQuery           int64
