@@ -302,6 +302,9 @@ var vecExprBenchCases = map[string][]vecExprBenchCase{
 	ast.If: {
 		{types.ETJson, []types.EvalType{types.ETInt, types.ETJson, types.ETJson}, nil},
 	},
+	ast.Greatest: {
+		{types.ETDecimal, []types.EvalType{types.ETDecimal, types.ETDecimal, types.ETDecimal}, nil},
+	},
 }
 
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vecExprBenchCase) {
@@ -551,7 +554,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
-						c.Assert(val, Equals, d64s[i])
+						c.Assert(*val, Equals, d64s[i])
 					}
 					i++
 				}
