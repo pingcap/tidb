@@ -15,17 +15,6 @@ package core_test
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"flag"
-	"fmt"
-	"io/ioutil"
-	"os"
-	"path/filepath"
-	"reflect"
-	"regexp"
-	"runtime"
-	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -39,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -47,28 +37,7 @@ type testPlanSuite struct {
 	*parser.Parser
 	is infoschema.InfoSchema
 
-	testData testData
-}
-
-// Flag for generate test result.
-var record bool
-
-func init() {
-	flag.BoolVar(&record, "record", false, "to generate test result")
-	flag.Parse()
-}
-
-type testCases struct {
-	Name       string
-	Cases      *json.RawMessage // For delayed parse.
-	decodedOut interface{}      // For generate output.
-}
-
-type testData struct {
-	input          []testCases
-	output         []testCases
-	filePathPrefix string
-	funcMap        map[string]int
+	testData testutil.TestData
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
@@ -77,118 +46,12 @@ func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.Parser.EnableWindowFunc(true)
 
 	var err error
-	s.testData, err = LoadTestSuiteData("testdata", "plan_suite")
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_suite")
 	c.Assert(err, IsNil)
 }
 
 func (s *testPlanSuite) TearDownSuite(c *C) {
-	if record {
-		c.Assert(s.testData.GenerateOutput(), IsNil)
-	}
-}
-
-// LoadTestSuiteData loads test suite data from file.
-func LoadTestSuiteData(dir, suiteName string) (res testData, err error) {
-	res.filePathPrefix = filepath.Join(dir, suiteName)
-	res.input, err = loadTestSuiteCases(fmt.Sprintf("%s_in.json", res.filePathPrefix))
-	if err != nil {
-		return res, err
-	}
-	if record {
-		res.output = make([]testCases, len(res.input), len(res.input))
-		for i := range res.input {
-			res.output[i].Name = res.input[i].Name
-		}
-	} else {
-		res.output, err = loadTestSuiteCases(fmt.Sprintf("%s_out.json", res.filePathPrefix))
-		if err != nil {
-			return res, err
-		}
-		if len(res.input) != len(res.output) {
-			return res, errors.New(fmt.Sprintf("Number of test input cases %d does not match test output cases %d", len(res.input), len(res.output)))
-		}
-	}
-	res.funcMap = make(map[string]int, len(res.input))
-	for i, test := range res.input {
-		res.funcMap[test.Name] = i
-		if test.Name != res.output[i].Name {
-			return res, errors.New(fmt.Sprintf("Input name of the %d-case %s does not match output %s", i, test.Name, res.output[i].Name))
-		}
-	}
-	return res, nil
-}
-
-func loadTestSuiteCases(filePath string) (res []testCases, err error) {
-	jsonFile, err := os.Open(filePath)
-	if err != nil {
-		return res, err
-	}
-	defer jsonFile.Close()
-	byteValue, err := ioutil.ReadAll(jsonFile)
-	if err != nil {
-		return res, err
-	}
-	// Remove comments, since they are not allowed in json.
-	re := regexp.MustCompile("(?s)//.*?\n")
-	err = json.Unmarshal(re.ReplaceAll(byteValue, nil), &res)
-	return res, err
-}
-
-// GetTestCases gets the test cases for a test function.
-func (t *testData) GetTestCases(c *C, in interface{}, out interface{}) {
-	// Extract caller's name.
-	pc, _, _, ok := runtime.Caller(1)
-	c.Assert(ok, IsTrue)
-	details := runtime.FuncForPC(pc)
-	funcNameIdx := strings.LastIndex(details.Name(), ".")
-	funcName := details.Name()[funcNameIdx+1:]
-
-	casesIdx, ok := t.funcMap[funcName]
-	c.Assert(ok, IsTrue, Commentf("Must get test %s", funcName))
-	err := json.Unmarshal(*t.input[casesIdx].Cases, in)
-	c.Assert(err, IsNil)
-	if !record {
-		err = json.Unmarshal(*t.output[casesIdx].Cases, out)
-		c.Assert(err, IsNil)
-	} else {
-		// Init for generate output file.
-		inputLen := reflect.ValueOf(in).Elem().Len()
-		v := reflect.ValueOf(out).Elem()
-		if v.Kind() == reflect.Slice {
-			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
-		}
-	}
-	t.output[casesIdx].decodedOut = out
-}
-
-// OnRecord execute the function to update result.
-func (t *testData) OnRecord(updateFunc func()) {
-	if record {
-		updateFunc()
-	}
-}
-
-// GenerateOutput generate the output file.
-func (t *testData) GenerateOutput() error {
-	for i, test := range t.output {
-		bytes, err := json.MarshalIndent(test.decodedOut, "", "  ")
-		if err != nil {
-			return err
-		}
-		rm := json.RawMessage(bytes)
-		t.output[i].Cases = &rm
-	}
-	res, err := json.MarshalIndent(t.output, "", "  ")
-	if err != nil {
-		return err
-	}
-	file, err := os.Create(fmt.Sprintf("%s_out.json", t.filePathPrefix))
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	_, err = file.Write(res)
-	return err
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
