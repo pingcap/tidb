@@ -855,7 +855,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test distinct.
 		{
 			sql:  "select distinct b from t",
-			best: "TableReader(Table(t)->HashAgg)->HashAgg",
+			best: "TableReader(Table(t))->HashAgg",
 		},
 		{
 			sql:  "select count(*) from (select * from t order by b) t group by b",
@@ -868,7 +868,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test agg + table.
 		{
 			sql:  "select sum(a), avg(b + c) from t group by d",
-			best: "TableReader(Table(t))->Projection->HashAgg",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg",
 		},
 		{
 			sql:  "select sum(distinct a), avg(b + c) from t group by d",
@@ -1639,7 +1639,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		// additional test
 		{
 			sql:  "select /*+ STREAM_AGG() */ distinct a from t",
-			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+			best: "TableReader(Table(t))->StreamAgg",
 		},
 		{
 			sql:  "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
