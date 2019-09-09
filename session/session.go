@@ -1159,9 +1159,11 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
-// CachedPlanExec short path ONLY for cached "point select plan" execution
+// CachedPlanExec short path currently ONLY for cached "point select plan" execution
 func (s *session) CachedPlanExec(ctx context.Context,
 	stmtID uint32, prepared *ast.Prepared, args []types.Datum) (sqlexec.RecordSet, error) {
+	// compile ExecStmt
+	startTime := time.Now()
 	is := executor.GetInfoSchema(s)
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
@@ -1179,6 +1181,12 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		Ctx:         s,
 		OutputNames: execPlan.OutputNames(),
 	}
+	s.GetSessionVars().DurationCompile = time.Since(startTime)
+	stmt.Text = prepared.Stmt.Text()
+	s.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
+	logQuery(stmt.OriginText(), s.sessionVars)
+
+	// run ExecStmt
 	rs, err := stmt.GetPointRecord(ctx, is, s)
 	s.txn.changeToInvalid()
 	return rs, err
@@ -1195,9 +1203,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 	if prepared.CachedPlan != nil {
-		cachedValue := plannercore.PSTMTPlanCacheValue{}
-		cachedValue.Plan = prepared.CachedPlan.(plannercore.Plan)
-		cachedValue.OutPutNames = cachedValue.Plan.OutputNames()
 		return s.CachedPlanExec(ctx, stmtID, prepared, args)
 	}
 	// try fetch from plan cache at start
