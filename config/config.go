@@ -324,7 +324,7 @@ var defaultConf = Config{
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	SplitRegionMaxNum:            1000,
 	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  true,
+		Enabled:  false,
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
