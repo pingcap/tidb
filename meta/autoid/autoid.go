@@ -420,6 +420,10 @@ func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) 
 		zap.Int64("database ID", alloc.dbID))
 	resN := make([]int64, 0, N1)
 	for i := alloc.base + 1; i <= alloc.base+N1; i++ {
+		// fix bug : maxInt64 will be allocated
+		if i == math.MaxInt64 {
+			return nil, ErrAutoincReadFailed
+		}
 		resN = append(resN, i)
 	}
 	alloc.base += N1
