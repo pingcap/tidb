@@ -354,7 +354,6 @@ func keyNeedToLock(k, v []byte) bool {
 		// only need to delete row key.
 		return k[10] == 'r'
 	}
-	//isNonUniqueIndex := len(v) == 1 && v[0] == '0'
 	isNonUniqueIndex := len(v) == 1
 	// Put row key and unique index need to lock.
 	return !isNonUniqueIndex
