@@ -856,7 +856,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		// if handleChangeUser failed, cc.ctx may be nil
 		if cc.ctx != nil {
-			cc.ctx.ResetProcessInfo(t, !cc.ctx.GetSessionVars().InTxn())
+			cc.ctx.SetProcessInfo("", t, mysql.ComSleep, 0)
 		}
 
 		cc.server.releaseToken(token)

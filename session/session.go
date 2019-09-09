@@ -117,7 +117,6 @@ type Session interface {
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
 	SetProcessInfo(string, time.Time, byte, uint64)
-	ResetProcessInfo(time.Time, bool)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -975,6 +974,14 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	// If command == mysql.ComSleep, it means the SQL execution is finished. The processinfo is reset to SLEEP.
+	// If the SQL finished and the session is not in transaction, the current start timestamp need to reset to 0.
+	var curTxnStartTS uint64
+	if command == mysql.ComSleep && !s.GetSessionVars().InTxn() {
+		curTxnStartTS = 0
+	} else {
+		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
 		DB:               s.sessionVars.CurrentDB,
@@ -983,7 +990,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Time:             t,
 		State:            s.Status(),
 		Info:             sql,
-		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+		CurTxnStartTS:    curTxnStartTS,
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
@@ -991,26 +998,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
-	}
-	s.processInfo.Store(&pi)
-}
-
-// ResetProcessInfo implements Session ResetProcessInfo method.
-func (s *session) ResetProcessInfo(t time.Time, resetStartTS bool) {
-	pi := util.ProcessInfo{
-		ID:            s.sessionVars.ConnectionID,
-		DB:            s.sessionVars.CurrentDB,
-		Command:       mysql.ComSleep,
-		Time:          t,
-		State:         s.Status(),
-		CurTxnStartTS: s.sessionVars.TxnCtx.StartTS,
-	}
-	if s.sessionVars.User != nil {
-		pi.User = s.sessionVars.User.Username
-		pi.Host = s.sessionVars.User.Hostname
-	}
-	if resetStartTS {
-		pi.CurTxnStartTS = 0
 	}
 	s.processInfo.Store(&pi)
 }

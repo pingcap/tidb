@@ -216,11 +216,6 @@ func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte, max
 	tc.session.SetProcessInfo(sql, t, command, maxExecutionTime)
 }
 
-// ResetProcessInfo implements QueryCtx ResetProcessInfo method.
-func (tc *TiDBContext) ResetProcessInfo(t time.Time, resetStartTS bool) {
-	tc.session.ResetProcessInfo(t, resetStartTS)
-}
-
 // RollbackTxn implements QueryCtx RollbackTxn method.
 func (tc *TiDBContext) RollbackTxn() {
 	tc.session.RollbackTxn(context.TODO())
