@@ -267,8 +267,14 @@ func (p Insert) Init(ctx sessionctx.Context) *Insert {
 	return &p
 }
 
-// Init initializes Show.
-func (p Show) Init(ctx sessionctx.Context) *Show {
+// Init initializes LogicalShow.
+func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeShow, &p)
+	return &p
+}
+
+// Init initializes PhysicalShow.
+func (p PhysicalShow) Init(ctx sessionctx.Context) *PhysicalShow {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeShow, &p)
 	// Just use pseudo stats to avoid panic.
 	p.stats = &property.StatsInfo{RowCount: 1}
