@@ -213,6 +213,10 @@ func (e *HashAggExec) Close() error {
 	}
 	for range e.finalOutputCh {
 	}
+	if e.runtimeStats != nil {
+		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
+		rootStats.SetConcurrencyNum(int64(len(e.partialWorkers) + len(e.finalWorkers)))
+	}
 	return e.baseExecutor.Close()
 }
 
