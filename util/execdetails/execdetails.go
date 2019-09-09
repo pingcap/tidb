@@ -335,5 +335,5 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 }
 
 func (e *RuntimeStats) String() string {
-	return fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows, e.concurrency)
+	return fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 }
