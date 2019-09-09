@@ -45,7 +45,10 @@ type IndexNestedLoopHashJoin struct {
 	IndexLookUpJoin
 	resultCh          chan *indexHashJoinResult
 	joinChkResourceCh []chan *chunk.Chunk
-	joiners           []joiner
+
+	// We build individual joiner for each inner worker when using chunk-based
+	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
+	joiners []joiner
 }
 
 type indexHashJoinOuterWorker struct {
