@@ -977,9 +977,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	// If command == mysql.ComSleep, it means the SQL execution is finished. The processinfo is reset to SLEEP.
 	// If the SQL finished and the session is not in transaction, the current start timestamp need to reset to 0.
 	var curTxnStartTS uint64
-	if command == mysql.ComSleep && !s.GetSessionVars().InTxn() {
-		curTxnStartTS = 0
-	} else {
+	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
 	}
 	pi := util.ProcessInfo{
