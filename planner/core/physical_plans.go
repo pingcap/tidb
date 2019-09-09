@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -201,44 +202,37 @@ type PhysicalApply struct {
 	rightChOffset int
 }
 
-// PhysicalHashJoin represents hash join for inner/ outer join.
-type PhysicalHashJoin struct {
+type basePhysicalJoin struct {
 	physicalSchemaProducer
 
 	JoinType JoinType
 
-	EqualConditions []*expression.ScalarFunction
-	LeftConditions  []expression.Expression
-	RightConditions []expression.Expression
-	OtherConditions []expression.Expression
+	LeftConditions  expression.CNFExprs
+	RightConditions expression.CNFExprs
+	OtherConditions expression.CNFExprs
 
+	InnerChildIdx int
+	OuterJoinKeys []*expression.Column
+	InnerJoinKeys []*expression.Column
 	LeftJoinKeys  []*expression.Column
 	RightJoinKeys []*expression.Column
-
-	// InnerChildIdx indicates which child is to build the hash table.
-	// For inner join, the smaller one will be chosen.
-	// For outer join or semi join, it's exactly the inner one.
-	InnerChildIdx int
-	Concurrency   uint
-
 	DefaultValues []types.Datum
+}
+
+// PhysicalHashJoin represents hash join implementation of LogicalJoin.
+type PhysicalHashJoin struct {
+	basePhysicalJoin
+
+	Concurrency     uint
+	EqualConditions []*expression.ScalarFunction
 }
 
 // PhysicalIndexJoin represents the plan of index look up join.
 type PhysicalIndexJoin struct {
-	physicalSchemaProducer
+	basePhysicalJoin
 
-	JoinType        JoinType
-	OuterJoinKeys   []*expression.Column
-	InnerJoinKeys   []*expression.Column
-	LeftConditions  expression.CNFExprs
-	RightConditions expression.CNFExprs
-	OtherConditions expression.CNFExprs
-	OuterIndex      int
-	outerSchema     *expression.Schema
-	innerTask       task
-
-	DefaultValues []types.Datum
+	outerSchema *expression.Schema
+	innerTask   task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges []*ranger.Range
@@ -270,21 +264,11 @@ type PhysicalIndexMergeJoin struct {
 	OuterCompareFuncs []expression.CompareFunc
 }
 
-// PhysicalMergeJoin represents merge join for inner/ outer join.
+// PhysicalMergeJoin represents merge join implementation of LogicalJoin.
 type PhysicalMergeJoin struct {
-	physicalSchemaProducer
+	basePhysicalJoin
 
-	JoinType JoinType
-
-	CompareFuncs    []expression.CompareFunc
-	LeftConditions  []expression.Expression
-	RightConditions []expression.Expression
-	OtherConditions []expression.Expression
-
-	DefaultValues []types.Datum
-
-	LeftKeys  []*expression.Column
-	RightKeys []*expression.Column
+	CompareFuncs []expression.CompareFunc
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
@@ -469,4 +453,15 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 	}
 
 	return statsInfos
+}
+
+// BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
+func BuildMergeJoinPlan(ctx sessionctx.Context, joinType JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
+	baseJoin := basePhysicalJoin{
+		JoinType:      joinType,
+		DefaultValues: []types.Datum{types.NewDatum(1), types.NewDatum(1)},
+		LeftJoinKeys:  leftKeys,
+		RightJoinKeys: rightKeys,
+	}
+	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil)
 }
