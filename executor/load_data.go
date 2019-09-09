@@ -252,8 +252,10 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		if err != nil {
 			return nil, false, err
 		}
-		rows = append(rows, e.colsToRow(ctx, cols))
+		// rowCount will be used in fillRow(), last insert ID will be assigned according to the rowCount = 1.
+		// So should add first here.
 		e.rowCount++
+		rows = append(rows, e.colsToRow(ctx, cols))
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
 			logutil.Logger(context.Background()).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),

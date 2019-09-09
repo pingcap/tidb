@@ -822,9 +822,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBExpensiveQueryTimeThreshold:
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
-		if err := s.setTxnMode(val); err != nil {
-			return err
-		}
+		s.TxnMode = strings.ToUpper(val)
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	}
@@ -987,8 +985,8 @@ const (
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
 	SlowLogIsInternalStr = "Is_internal"
-	// SlowLogIndexIDsStr is slow log field name.
-	SlowLogIndexIDsStr = "Index_ids"
+	// SlowLogIndexNamesStr is slow log field name.
+	SlowLogIndexNamesStr = "Index_names"
 	// SlowLogDigestStr is slow log field name.
 	SlowLogDigestStr = "Digest"
 	// SlowLogQuerySQLStr is slow log field name.
@@ -1028,7 +1026,7 @@ const (
 // # Query_time: 4.895492
 // # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
 // # DB: test
-// # Index_ids: [1,2]
+// # Index_names: [t1.idx1,t2.idx2]
 // # Is_internal: false
 // # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 // # Stats: t1:1,t2:2
@@ -1038,7 +1036,7 @@ const (
 // # Memory_max: 4096
 // # Succ: true
 // select * from t_slim;
-func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string,
+func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexNames string, digest string,
 	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, succ bool, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
@@ -1056,8 +1054,8 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 	if len(s.CurrentDB) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogDBStr + SlowLogSpaceMarkStr + s.CurrentDB + "\n")
 	}
-	if len(indexIDs) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogIndexIDsStr + SlowLogSpaceMarkStr + indexIDs + "\n")
+	if len(indexNames) > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogIndexNamesStr + SlowLogSpaceMarkStr + indexNames + "\n")
 	}
 	buf.WriteString(SlowLogRowPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
 	if len(digest) > 0 {

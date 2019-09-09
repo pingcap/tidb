@@ -11,13 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package pdapi
+package metrics
 
-// The following constants are the APIs of PD server.
-const (
-	HotRead    = "/pd/api/v1/hotspot/regions/read"
-	HotWrite   = "/pd/api/v1/hotspot/regions/write"
-	Regions    = "/pd/api/v1/regions"
-	RegionByID = "/pd/api/v1//region/id/"
-	Stores     = "/pd/api/v1/stores"
+import "github.com/prometheus/client_golang/prometheus"
+
+// Metrics to monitor gRPC service
+var (
+	GRPCConnTransientFailureCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "grpc",
+			Name:      "connection_transient_failure_count",
+			Help:      "Counter of gRPC connection transient failure",
+		}, []string{LblAddress, LblStore})
 )
