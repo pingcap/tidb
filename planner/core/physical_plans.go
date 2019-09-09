@@ -345,6 +345,21 @@ func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 	return
 }
 
+func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
+	factor = 0.0
+	for _, agg := range p.AggFuncs {
+		if fac, ok := aggFuncFactor[agg.Name]; ok {
+			factor += fac
+		} else {
+			factor += aggFuncFactor["default"]
+		}
+	}
+	if factor == 0 {
+		factor = 1.0
+	}
+	return
+}
+
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
