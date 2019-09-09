@@ -61,6 +61,7 @@ unrecognized-option-test = true
 
 	_, err = f.WriteString(`
 token-limit = 0
+split-region-max-num=10000
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
@@ -82,6 +83,7 @@ commit-timeout="41s"
 	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
+	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

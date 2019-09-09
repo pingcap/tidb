@@ -85,6 +85,7 @@ type Config struct {
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool   `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
 	Plugin                       Plugin `toml:"plugin" json:"plugin"`
+	SplitRegionMaxNum            uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
 }
 
 // Log is the log section of config.
@@ -301,6 +302,7 @@ var defaultConf = Config{
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,
+	SplitRegionMaxNum:            1000,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 10240000,
