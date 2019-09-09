@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"strings"
 	"testing"
 )
 
@@ -62,17 +61,6 @@ func (s *testTableSuite) TestPerfSchemaTables(c *C) {
 	tk.MustQuery("select * from session_status where variable_name = 'Ssl_verify_mode'").Check(testkit.Rows())
 	tk.MustQuery("select * from setup_actors").Check(testkit.Rows())
 	tk.MustQuery("select * from events_stages_history_long").Check(testkit.Rows())
-}
-
-func (s *testTableSuite) TestPerfSchemaTablesError(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("use performance_schema")
-	_, err := tk.Exec("insert into events_statements_summary_by_digest values('', '', '', 0, 0, 0, 0, 0, 0, now(), now(), '')")
-	c.Assert(strings.Contains(err.Error(), "operation not supported"), IsTrue)
-
-	_, err = tk.Exec("update events_statements_summary_by_digest set exec_count=exec_count+1")
-	c.Assert(strings.Contains(err.Error(), "operation not supported"), IsTrue)
 }
 
 // Test events_statements_summary_by_digest
