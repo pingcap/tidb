@@ -74,21 +74,6 @@ func (s *BufferStore) Get(ctx context.Context, k Key) ([]byte, error) {
 	return val, nil
 }
 
-// GetFromTxnMem implements the Retriever interface.
-func (s *BufferStore) GetFromTxnMem(ctx context.Context, k Key) ([]byte, error) {
-	val, err := s.MemBuffer.GetFromTxnMem(ctx, k)
-	if IsErrNotFound(err) {
-		val, err = s.r.GetFromTxnMem(ctx, k)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(val) == 0 {
-		return nil, ErrNotExist
-	}
-	return val, nil
-}
-
 // Iter implements the Retriever interface.
 func (s *BufferStore) Iter(k Key, upperBound Key) (Iterator, error) {
 	bufferIt, err := s.MemBuffer.Iter(k, upperBound)

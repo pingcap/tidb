@@ -92,11 +92,6 @@ func (m *memDbBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	return v, nil
 }
 
-// GetFromTxnMem implements the Retriever interface.
-func (m *memDbBuffer) GetFromTxnMem(ctx context.Context, k Key) ([]byte, error) {
-	return m.Get(ctx, k)
-}
-
 // Set associates key with value.
 func (m *memDbBuffer) Set(k Key, v []byte) error {
 	if len(v) == 0 {

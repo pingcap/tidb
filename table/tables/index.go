@@ -209,7 +209,11 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	if opt.Untouched {
 		// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
 		// no need to re-write the index kv.
-		_, err := rm.GetFromTxnMem(ctx, key)
+		txn, err := sctx.Txn(true)
+		if err != nil {
+			return 0, err
+		}
+		_, err = txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return 0, nil
 		}

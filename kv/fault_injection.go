@@ -97,16 +97,6 @@ func (t *InjectedTransaction) Get(ctx context.Context, k Key) ([]byte, error) {
 	return t.Transaction.Get(ctx, k)
 }
 
-// GetFromTxnMem implements the Retriever interface.
-func (t *InjectedTransaction) GetFromTxnMem(ctx context.Context, k Key) ([]byte, error) {
-	t.cfg.RLock()
-	defer t.cfg.RUnlock()
-	if t.cfg.getError != nil {
-		return nil, t.cfg.getError
-	}
-	return t.Transaction.GetFromTxnMem(ctx, k)
-}
-
 // BatchGet returns an error if cfg.getError is set.
 func (t *InjectedTransaction) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
 	t.cfg.RLock()
@@ -141,16 +131,6 @@ func (t *InjectedSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
 		return nil, t.cfg.getError
 	}
 	return t.Snapshot.Get(ctx, k)
-}
-
-// GetFromTxnMem implements the Retriever interface.
-func (t *InjectedSnapshot) GetFromTxnMem(ctx context.Context, k Key) ([]byte, error) {
-	t.cfg.RLock()
-	defer t.cfg.RUnlock()
-	if t.cfg.getError != nil {
-		return nil, t.cfg.getError
-	}
-	return t.Snapshot.GetFromTxnMem(ctx, k)
 }
 
 // BatchGet returns an error if cfg.getError is set.

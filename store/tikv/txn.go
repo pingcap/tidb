@@ -162,19 +162,6 @@ func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return ret, nil
 }
 
-// GetFromTxnMem implements the Retriever interface.
-func (txn *tikvTxn) GetFromTxnMem(ctx context.Context, k kv.Key) ([]byte, error) {
-	ret, err := txn.us.GetFromTxnMem(ctx, k)
-	if kv.IsErrNotFound(err) {
-		return nil, err
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return ret, nil
-}
-
 func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))

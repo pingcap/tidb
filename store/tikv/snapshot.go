@@ -232,11 +232,6 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
-// GetFromTxnMem implements the Retriever interface.
-func (s *tikvSnapshot) GetFromTxnMem(ctx context.Context, key kv.Key) ([]byte, error) {
-	return nil, kv.ErrNotExist
-}
-
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
 
