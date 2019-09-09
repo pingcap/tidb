@@ -682,7 +682,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		chk.AppendString(7, slow.User)
 		chk.AppendString(8, slow.DB)
 		chk.AppendString(9, slow.TableIDs)
-		chk.AppendString(10, slow.IndexIDs)
+		chk.AppendString(10, slow.IndexNames)
 		if slow.Internal {
 			chk.AppendInt64(11, 0)
 		} else {
