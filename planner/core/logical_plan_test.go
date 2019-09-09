@@ -939,7 +939,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",
-			plan: "Show->Sel([eq(cast(Column#4), 0)])",
+			plan: "Show->Sel([eq(cast(Column#4), 0)])->Projection",
 		},
 		{
 			sql:  "do sleep(5)",
@@ -1298,7 +1298,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestProjectionEliminater(c *C) {
+func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql  string

@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -133,6 +134,9 @@ type LogicalJoin struct {
 	// redundantSchema contains columns which are eliminated in join.
 	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
 	redundantSchema *expression.Schema
+
+	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
+	equalCondOutCnt float64
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
@@ -313,10 +317,6 @@ type LogicalTableDual struct {
 	logicalSchemaProducer
 
 	RowCount int
-	// placeHolder indicates if this dual plan is a place holder in query optimization
-	// for data sources like `Show`, if true, the dual plan would be substituted by
-	// `Show` in the final plan.
-	placeHolder bool
 }
 
 // LogicalUnionScan is only used in non read-only txn.
@@ -392,6 +392,16 @@ type accessPath struct {
 	// partialIndexPaths store all index access paths.
 	// If there are extra filters, store them in tableFilters.
 	partialIndexPaths []*accessPath
+}
+
+// getTablePath finds the TablePath from a group of accessPaths.
+func getTablePath(paths []*accessPath) *accessPath {
+	for _, path := range paths {
+		if path.isTablePath {
+			return path
+		}
+	}
+	return nil
 }
 
 // deriveTablePathStats will fulfill the information that the accessPath need.
@@ -767,4 +777,25 @@ func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expr
 		}
 	}
 	return resultCorCols[:length]
+}
+
+type baseShowContent struct {
+	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName      string
+	Table       *ast.TableName  // Used for showing columns.
+	Column      *ast.ColumnName // Used for `desc table column`.
+	IndexName   model.CIStr
+	Flag        int                  // Some flag parsed from sql, such as FULL.
+	User        *auth.UserIdentity   // Used for show grants.
+	Roles       []*auth.RoleIdentity // Used for show grants.
+	Full        bool
+	IfNotExists bool // Used for `show create database if not exists`.
+
+	GlobalScope bool // Used by show variables.
+}
+
+// LogicalShow represents a show plan.
+type LogicalShow struct {
+	logicalSchemaProducer
+	baseShowContent
 }

@@ -65,6 +65,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			sql:  "select * from t t1 use index(c_d_e)",
 			best: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
 		},
+		{
+			sql:  "select f from t use index() where f = 1",
+			best: "TableReader(Table(t)->Sel([eq(test.t.f, 1)]))",
+		},
 		// Test ts + Sort vs. DoubleRead + filter.
 		{
 			sql:  "select a from t where a between 1 and 2 order by c",
@@ -1219,7 +1223,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestAggEliminater(c *C) {
+func (s *testPlanSuite) TestAggEliminator(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -1772,6 +1776,12 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 			best:    "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
 			hasWarn: false,
 		},
+		// use TablePath when the hint only contains table.
+		{
+			sql:     "select /*+ INDEX(t) */ f from t where f > 10",
+			best:    "TableReader(Table(t)->Sel([gt(test.t.f, 10)]))",
+			hasWarn: false,
+		},
 		// there will be a warning instead of error when index not exist
 		{
 			sql:     "select /*+ INDEX(t, no_such_index) */ * from t",
@@ -1862,5 +1872,75 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		c.Assert(core.ToString(p), Equals, tt.plan, comment)
+	}
+}
+
+func (s *testPlanSuite) TestDAGPlanBuilderSplitAvg(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	tests := []struct {
+		sql  string
+		plan string
+	}{
+		{
+			sql:  "select avg(a),avg(b),avg(c) from t",
+			plan: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+		},
+		{
+			sql:  "select /*+ HASH_AGG() */ avg(a),avg(b),avg(c) from t",
+			plan: "TableReader(Table(t)->HashAgg)->HashAgg",
+		},
+	}
+
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		core.Preprocess(se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+
+		c.Assert(core.ToString(p), Equals, tt.plan, comment)
+		root, ok := p.(core.PhysicalPlan)
+		if !ok {
+			continue
+		}
+		testDAGPlanBuilderSplitAvg(c, root)
+	}
+}
+
+func testDAGPlanBuilderSplitAvg(c *C, root core.PhysicalPlan) {
+	if p, ok := root.(*core.PhysicalTableReader); ok {
+		if p.TablePlans != nil {
+			baseAgg := p.TablePlans[len(p.TablePlans)-1]
+			if agg, ok := baseAgg.(*core.PhysicalHashAgg); ok {
+				for i, aggfunc := range agg.AggFuncs {
+					c.Assert(agg.Schema().Columns[i].RetType, Equals, aggfunc.RetTp)
+				}
+			}
+			if agg, ok := baseAgg.(*core.PhysicalStreamAgg); ok {
+				for i, aggfunc := range agg.AggFuncs {
+					c.Assert(agg.Schema().Columns[i].RetType, Equals, aggfunc.RetTp)
+				}
+			}
+		}
+	}
+
+	childs := root.Children()
+	if childs == nil {
+		return
+	}
+	for _, son := range childs {
+		testDAGPlanBuilderSplitAvg(c, son)
 	}
 }
