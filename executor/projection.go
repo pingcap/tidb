@@ -256,6 +256,10 @@ func (e *ProjectionExec) Close() error {
 		}
 		e.outputCh = nil
 	}
+	if e.runtimeStats != nil {
+		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
+		rootStats.SetConcurrencyNum(e.numWorkers)
+	}
 	return e.baseExecutor.Close()
 }
 
