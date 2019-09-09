@@ -699,55 +699,6 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	return row, nil
 }
 
-// fillRowLazy is quite same to fillRow() except it will cache auto increment datum for lazy batch allocation of autoID.
-// This case is used in insert|replace into values (row),(row),(row)...
-func (e *InsertValues) fillRowLazy(ctx context.Context, row []types.Datum, hasValue []bool, rowIdx int) ([]types.Datum, error) {
-	gCols := make([]*table.Column, 0)
-
-	for i, c := range e.Table.Cols() {
-		var err error
-		var datumLazyTmp datumLazy
-		// Evaluate the generated columns later after real columns set
-		if c.IsGenerated() {
-			gCols = append(gCols, c)
-		} else {
-			// Get the default value for all no value columns, the auto increment column is different from the others.
-			datumLazyTmp, err = e.fillColValueLazy(ctx, row[i], i, c, hasValue[i])
-			if err != nil {
-				return nil, err
-			}
-			row[i] = datumLazyTmp.datum
-			if !datumLazyTmp.isInAutoIncrement {
-				// Handle the bad null error.
-				if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
-					return nil, err
-				}
-			} else {
-				// Cache the autoIncrement datum for lazy batch alloc
-				datumLazyTmp.rowIdx = rowIdx
-				datumLazyTmp.colIdx = i
-				e.cache = append(e.cache, datumLazyTmp)
-			}
-		}
-	}
-	for i, gCol := range gCols {
-		colIdx := gCol.ColumnInfo.Offset
-		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
-		if e.filterErr(err) != nil {
-			return nil, err
-		}
-		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo())
-		if err != nil {
-			return nil, err
-		}
-		// Handle the bad null error.
-		if row[colIdx], err = gCol.HandleBadNull(row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
-			return nil, err
-		}
-	}
-	return row, nil
-}
-
 // adjustAutoIncrementDatumLazy is quite same to adjustAutoIncrementDatum()
 // except it will cache auto increment datum for lazy batch allocation of autoID.
 func (e *InsertValues) adjustAutoIncrementDatumLazy(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (datumLazy, error) {
