@@ -137,11 +137,11 @@ type mutationEx struct {
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
 	return &twoPhaseCommitter{
-		store:               txn.store,
-		txn:                 txn,
-		startTS:             txn.StartTS(),
-		connID:              connID,
-		regionTxnSize:       map[uint64]int{},
+		store:         txn.store,
+		txn:           txn,
+		startTS:       txn.StartTS(),
+		connID:        connID,
+		regionTxnSize: map[uint64]int{},
 	}, nil
 }
 
