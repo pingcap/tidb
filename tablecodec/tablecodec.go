@@ -643,6 +643,14 @@ func GenTableIndexPrefix(tableID int64) kv.Key {
 	return appendTableIndexPrefix(buf, tableID)
 }
 
+// IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
+// since the untouched index key/value is no need to commit.
+func IsUntouchedIndexKValue(k, v []byte) bool {
+	vLen := len(v)
+	return (len(k) > 11 && k[0] == 't' && k[9] == '_' && k[10] == 'i') &&
+		((vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag)
+}
+
 // GenTablePrefix composes table record and index prefix: "t[tableID]".
 func GenTablePrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(tablePrefix)+8)
