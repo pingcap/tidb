@@ -17,6 +17,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -26,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
@@ -35,6 +38,8 @@ import (
 const (
 	// ServerInformationPath store server information such as IP, port and so on.
 	ServerInformationPath = "/tidb/server/info"
+	// ServerMinStartTSPath store the server min start timestamp.
+	ServerMinStartTSPath = "/tidb/server/minstartts"
 	// keyOpDefaultRetryCnt is the default retry count for etcd store.
 	keyOpDefaultRetryCnt = 2
 	// keyOpDefaultTimeout is the default time out for etcd store.
@@ -49,6 +54,8 @@ type InfoSyncer struct {
 	etcdCli        *clientv3.Client
 	info           *ServerInfo
 	serverInfoPath string
+	minStartTS     uint64
+	minStartTSPath string
 	session        *concurrency.Session
 }
 
@@ -75,6 +82,8 @@ func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
+		minStartTS:     0,
+		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
 }
 
@@ -144,6 +153,48 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 }
 
+// storeMinStartTS stores self server min start timestamp to etcd.
+func (is *InfoSyncer) storeMinStartTS(ctx context.Context) error {
+	if is.etcdCli == nil {
+		return nil
+	}
+	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.minStartTSPath,
+		strconv.FormatUint(is.minStartTS, 10),
+		clientv3.WithLease(is.session.Lease()))
+}
+
+// RemoveMinStartTS removes self server min start timestamp from etcd.
+func (is *InfoSyncer) RemoveMinStartTS() {
+	if is.etcdCli == nil {
+		return
+	}
+	err := util.DeleteKeyFromEtcd(is.minStartTSPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	if err != nil {
+		logutil.BgLogger().Error("remove min start timestamp failed", zap.Error(err))
+	}
+}
+
+// UpdateMinStartTS updates self server min start timestamp from etcd.
+func (is *InfoSyncer) UpdateMinStartTS(pool *sessionPool) {
+	ctx, err := pool.Get()
+	if err != nil {
+		logutil.BgLogger().Error("update min start timestamp failed", zap.Error(err))
+	}
+	defer pool.Put(ctx)
+	pl := ctx.(sessionctx.Context).GetSessionManager().ShowProcessList()
+	var minStartTS uint64 = math.MaxUint64
+	for _, info := range pl {
+		if info.CurTxnStartTS < minStartTS {
+			minStartTS = info.CurTxnStartTS
+		}
+	}
+	is.minStartTS = minStartTS
+	err = is.storeMinStartTS(context.Background())
+	if err != nil {
+		logutil.BgLogger().Error("update min start timestamp failed", zap.Error(err))
+	}
+}
+
 // Done returns a channel that closes when the info syncer is no longer being refreshed.
 func (is InfoSyncer) Done() <-chan struct{} {
 	if is.etcdCli == nil {
@@ -170,7 +221,14 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	is.session = session
 
 	err = is.storeServerInfo(ctx)
-	return err
+	if err != nil {
+		return err
+	}
+	err = is.storeMinStartTS(ctx)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // getInfo gets server information from etcd according to the key and opts.
