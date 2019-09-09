@@ -112,11 +112,11 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 		if isIndex {
 			var err error
 			// As we do not know the origin length, just use a custom value here.
-			lowVal, err = codec.DecodeRange(low.GetBytes(), 4)
+			lowVal, _, err = codec.DecodeRange(low.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			highVal, err = codec.DecodeRange(high.GetBytes(), 4)
+			highVal, _, err = codec.DecodeRange(high.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -819,7 +819,7 @@ func convertDatumsType(vals []types.Datum, ft *types.FieldType, loc *time.Locati
 }
 
 func decodeColumnBounds(data []byte, ft *types.FieldType) ([]types.Datum, error) {
-	vals, err := codec.DecodeRange(data, 1)
+	vals, _, err := codec.DecodeRange(data, 1)
 	if err != nil {
 		return nil, err
 	}
