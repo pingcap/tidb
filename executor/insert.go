@@ -67,7 +67,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 {
-		err := e.batchUpdateDupRows(ctx, rows)
+		err := e.batchUpdateDupRowsNew(ctx, rows)
 		if err != nil {
 			return err
 		}
@@ -79,6 +79,112 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	} else {
 		for _, row := range rows {
 			if _, err := e.addRecord(ctx, row); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func prefetchUniqueIndices(ctx context.Context) error {
+	return nil
+}
+
+func prefetchConflictedOldRows() error {
+	return nil
+}
+
+func (e *InsertExec) batchUpdateDupRowsNew(ctx context.Context, newRows [][]types.Datum) error {
+	// Get keys need to be checked.
+	toBeCheckedRows, err := e.getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
+	if err != nil {
+		return err
+	}
+
+	// The following prefetch operations use BatchGet to fill cache.
+	// It's an optimization and could be removed without affecting correctness.
+	err = prefetchUniqueIndices(ctx)
+	if err != nil {
+		return err
+	}
+	err = prefetchConflictedOldRows()
+	if err != nil {
+		return err
+	}
+
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	for i, r := range toBeCheckedRows {
+		if r.handleKey != nil {
+			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
+			if err != nil {
+				return err
+			}
+
+			oldRow, err := e.getOldRowNew(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
+			if err == nil {
+				fmt.Println("hanele === ", handle, len(oldRow))
+				_, _, _, err = e.doDupRowUpdate(ctx, handle, oldRow, r.row, e.OnDuplicate)
+				if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				continue
+			}
+
+			if !kv.IsErrNotFound(err) {
+				return err
+			}
+		}
+
+		for _, uk := range r.uniqueKeys {
+			val, err := txn.Get(ctx, uk.newKV.key)
+			if err != nil {
+				if kv.IsErrNotFound(err) {
+					continue
+				}
+				return err
+			}
+
+			handle, err := tables.DecodeHandle(val)
+			if err != nil {
+				return err
+			}
+
+			oldRow, err := e.getOldRowNew(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
+			fmt.Println("len oldRow = ", len(oldRow))
+			if err != nil {
+				if kv.IsErrNotFound(err) {
+					// Data index inconsistent?
+					logutil.BgLogger().Error("get old row failed when insert on dup",
+						zap.Int64("handle", handle),
+						zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
+				}
+				return err
+			}
+			_, _, _, err = e.doDupRowUpdate(ctx, handle, oldRow, r.row, e.OnDuplicate)
+			if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			newRows[i] = nil
+			break
+		}
+		// If row was checked with no duplicate keys,
+		// we should do insert the row,
+		// and key-values should be filled back to dupOldRowValues for the further row check,
+		// due to there may be duplicate keys inside the insert statement.
+		if newRows[i] != nil {
+			_, err := e.addRecord(ctx, newRows[i])
+			if err != nil {
 				return err
 			}
 		}
