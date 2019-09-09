@@ -281,9 +281,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	execStmt.BinaryArgs = args
 	is := GetInfoSchema(sctx)
-	var execPlan plannercore.Plan
-	var err error
-	execPlan, err = planner.Optimize(ctx, sctx, execStmt, is)
+	execPlan, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, err
 	}

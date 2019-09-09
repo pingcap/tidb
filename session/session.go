@@ -1205,24 +1205,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if prepared.CachedPlan != nil {
 		return s.CachedPlanExec(ctx, stmtID, prepared, args)
 	}
-	// try fetch from plan cache at start
-	var cachedValue *plannercore.PSTMTPlanCacheValue
-	if prepared.UseCache {
-		cacheKey := plannercore.NewPSTMTPlanCacheKey(s.sessionVars, stmtID, prepared.SchemaVersion)
-		val, exists := s.PreparedPlanCache().Get(cacheKey)
-		if exists {
-			cachedValue = val.(*plannercore.PSTMTPlanCacheValue)
-		}
-	}
-	if cachedValue != nil {
-		isPointExec, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(s, cachedValue.Plan)
-		if err != nil {
-			return nil, err
-		}
-		if isPointExec {
-			return s.CachedPlanExec(ctx, stmtID, prepared, args)
-		}
-	}
 	s.PrepareTxnCtx(ctx)
 	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
