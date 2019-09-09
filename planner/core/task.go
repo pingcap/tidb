@@ -164,8 +164,8 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 
 func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 	innerTask := p.innerTask
-	outerTask := finishCopTask(p.ctx, tasks[p.OuterIndex].copy())
-	if p.OuterIndex == 0 {
+	outerTask := finishCopTask(p.ctx, tasks[1-p.InnerChildIdx].copy())
+	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.plan(), innerTask.plan())
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
@@ -241,8 +241,8 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	innerTask := p.innerTask
-	outerTask := finishCopTask(p.ctx, tasks[p.OuterIndex].copy())
-	if p.OuterIndex == 0 {
+	outerTask := finishCopTask(p.ctx, tasks[1-p.InnerChildIdx].copy())
+	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.plan(), innerTask.plan())
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
@@ -368,12 +368,12 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 // GetCost computes cost of merge join operator itself.
 func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 	outerCnt := lCnt
-	innerKeys := p.RightKeys
+	innerKeys := p.RightJoinKeys
 	innerSchema := p.children[1].Schema()
 	innerStats := p.children[1].statsInfo()
 	if p.JoinType == RightOuterJoin {
 		outerCnt = rCnt
-		innerKeys = p.LeftKeys
+		innerKeys = p.LeftJoinKeys
 		innerSchema = p.children[0].Schema()
 		innerStats = p.children[0].statsInfo()
 	}
@@ -381,8 +381,8 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 		cartesian:     false,
 		leftProfile:   p.children[0].statsInfo(),
 		rightProfile:  p.children[1].statsInfo(),
-		leftJoinKeys:  p.LeftKeys,
-		rightJoinKeys: p.RightKeys,
+		leftJoinKeys:  p.LeftJoinKeys,
+		rightJoinKeys: p.RightJoinKeys,
 		leftSchema:    p.children[0].Schema(),
 		rightSchema:   p.children[1].Schema(),
 	}
@@ -434,15 +434,19 @@ func splitCopAvg2CountAndSum(p PhysicalPlan) {
 	if baseAgg == nil {
 		return
 	}
+
+	schemaCursor := len(baseAgg.Schema().Columns) - len(baseAgg.GroupByItems)
 	for i := len(baseAgg.AggFuncs) - 1; i >= 0; i-- {
 		f := baseAgg.AggFuncs[i]
+		schemaCursor--
 		if f.Name == ast.AggFuncAvg {
+			schemaCursor--
 			sumAgg := *f
 			sumAgg.Name = ast.AggFuncSum
-			sumAgg.RetTp = baseAgg.Schema().Columns[i+1].RetType
+			sumAgg.RetTp = baseAgg.Schema().Columns[schemaCursor+1].RetType
 			cntAgg := *f
 			cntAgg.Name = ast.AggFuncCount
-			cntAgg.RetTp = baseAgg.Schema().Columns[i].RetType
+			cntAgg.RetTp = baseAgg.Schema().Columns[schemaCursor].RetType
 			cntAgg.RetTp.Flag = f.RetTp.Flag
 			baseAgg.AggFuncs = append(baseAgg.AggFuncs[:i], append([]*aggregation.AggFuncDesc{&cntAgg, &sumAgg}, baseAgg.AggFuncs[i+1:]...)...)
 		}
@@ -873,15 +877,12 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
 func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool) float64 {
-	numAggFunc := len(p.AggFuncs)
-	if numAggFunc == 0 {
-		numAggFunc = 1
-	}
+	aggFuncFactor := p.getAggFuncCostFactor()
 	var cpuCost float64
 	if isRoot {
-		cpuCost = inputRows * cpuFactor * float64(numAggFunc)
+		cpuCost = inputRows * cpuFactor * aggFuncFactor
 	} else {
-		cpuCost = inputRows * copCPUFactor * float64(numAggFunc)
+		cpuCost = inputRows * copCPUFactor * aggFuncFactor
 	}
 	rowsPerGroup := inputRows / p.statsInfo().RowCount
 	memoryCost := rowsPerGroup * distinctFactor * memoryFactor * float64(p.numDistinctFunc())
@@ -954,13 +955,10 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	cardinality := p.statsInfo().RowCount
 	numDistinctFunc := p.numDistinctFunc()
-	numAggFunc := len(p.AggFuncs)
-	if numAggFunc == 0 {
-		numAggFunc = 1
-	}
+	aggFuncFactor := p.getAggFuncCostFactor()
 	var cpuCost float64
 	if isRoot {
-		cpuCost = inputRows * cpuFactor * float64(numAggFunc)
+		cpuCost = inputRows * cpuFactor * aggFuncFactor
 		divisor, con := p.cpuCostDivisor(numDistinctFunc > 0)
 		if divisor > 0 {
 			cpuCost /= divisor
@@ -968,9 +966,9 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 			cpuCost += (con + 1) * concurrencyFactor
 		}
 	} else {
-		cpuCost = inputRows * copCPUFactor * float64(numAggFunc)
+		cpuCost = inputRows * copCPUFactor * aggFuncFactor
 	}
-	memoryCost := cardinality * memoryFactor * float64(numAggFunc)
+	memoryCost := cardinality * memoryFactor * float64(len(p.AggFuncs))
 	// When aggregation has distinct flag, we would allocate a map for each group to
 	// check duplication.
 	memoryCost += inputRows * distinctFactor * memoryFactor * float64(numDistinctFunc)
