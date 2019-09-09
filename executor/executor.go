@@ -703,7 +703,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendString(7, slow.User)
 		req.AppendString(8, slow.DB)
 		req.AppendString(9, slow.TableIDs)
-		req.AppendString(10, slow.IndexIDs)
+		req.AppendString(10, slow.IndexNames)
 		if slow.Internal {
 			req.AppendInt64(11, 1)
 		} else {
