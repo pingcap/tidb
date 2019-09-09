@@ -1297,7 +1297,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestProjectionEliminater(c *C) {
+func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql  string
