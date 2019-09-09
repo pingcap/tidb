@@ -1709,6 +1709,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBExpensiveQueryTimeThreshold,
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
+	variable.TiDBTxnMode,
 }
 
 var (
@@ -1795,11 +1796,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	if !s.sessionVars.IsAutocommit() {
 		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
 		if pessTxnConf.Enable {
-			txnMode := s.sessionVars.TxnMode
-			if txnMode == "" && pessTxnConf.Default {
-				txnMode = ast.Pessimistic
-			}
-			if txnMode == ast.Pessimistic {
+			if s.sessionVars.TxnMode == ast.Pessimistic {
 				s.sessionVars.TxnCtx.IsPessimistic = true
 			}
 		}
