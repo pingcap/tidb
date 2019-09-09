@@ -554,7 +554,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
-						c.Assert(val, Equals, d64s[i])
+						c.Assert(*val, Equals, d64s[i])
 					}
 					i++
 				}
