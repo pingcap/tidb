@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1047,10 +1046,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)
-		buf := make([]byte, 4096)
-		stackSize := runtime.Stack(buf, false)
-		buf = buf[:stackSize]
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", sql), zap.String("stack", string(buf)))
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", sql), zap.Stack("stack"))
 	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
