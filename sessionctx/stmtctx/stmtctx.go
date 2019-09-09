@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -47,6 +48,7 @@ type SQLWarn struct {
 // It should be reset before executing a statement.
 type StatementContext struct {
 	// Set the following variables before execution
+	StmtHints
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
@@ -142,6 +144,21 @@ type StatementContext struct {
 		digest     string
 	}
 	Tables []TableEntry
+}
+
+// StmtHints are SessionVars related sql hints.
+type StmtHints struct {
+	// Hint flags
+	HasAllowInSubqToJoinAndAggHint bool
+	HasEnableIndexMergeHint        bool
+	HasMemQuotaHint                bool
+	HasReplicaReadHint             bool
+
+	// Hint Infomation
+	AllowInSubqToJoinAndAgg bool
+	EnableIndexMerge        bool
+	MemQuotaQuery           int64
+	ReplicaRead             kv.ReplicaReadType
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it

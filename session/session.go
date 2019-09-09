@@ -1045,128 +1045,6 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return
 }
 
-type sessionVarsRevertInfo struct {
-	varName string
-	datum   types.Datum
-}
-
-func getHintDatumFromBool(flag bool) types.Datum {
-	if flag {
-		return types.NewStringDatum("on")
-	}
-	return types.NewStringDatum("off")
-}
-
-func (s *session) setSessionVarsByHints(stmtNode ast.StmtNode) (revertInfos []sessionVarsRevertInfo, warns []error) {
-	var hints []*ast.TableOptimizerHint
-	switch x := stmtNode.(type) {
-	case *ast.SelectStmt:
-		hints = x.TableHints
-	case *ast.UpdateStmt:
-		hints = x.TableHints
-	case *ast.DeleteStmt:
-		hints = x.TableHints
-	// TODO: support hint for InsertStmt
-	default:
-		return
-	}
-	var memoryQuotaHintList, noIndexMergeHintList, useToJAHintList, readReplicaHintList []*ast.TableOptimizerHint
-	for _, hint := range hints {
-		switch hint.HintName.L {
-		case "memory_quota":
-			memoryQuotaHintList = append(memoryQuotaHintList, hint)
-		case "no_index_merge":
-			noIndexMergeHintList = append(noIndexMergeHintList, hint)
-		case "use_toja":
-			useToJAHintList = append(useToJAHintList, hint)
-		case "read_consistent_replica":
-			readReplicaHintList = append(readReplicaHintList, hint)
-		}
-	}
-	// Handle MEMORY_QUOTA
-	if len(memoryQuotaHintList) > 1 {
-		warn := errors.New("There are multiple MEMORY_QUOTA hints, only the last one will take effect")
-		warns = append(warns, warn)
-	}
-	if len(memoryQuotaHintList) != 0 {
-		hint := memoryQuotaHintList[len(memoryQuotaHintList)-1]
-		// Executor use MemoryQuota < 0 to indicate no memory limit, here use it to handle hint syntax error.
-		if hint.MemoryQuota < 0 {
-			warn := errors.New("There are some syntax error in MEMORY_QUOTA hint, correct usage: MEMORY_QUOTA(10 M) or MEMORY_QUOTA(10 G)")
-			warns = append(warns, warn)
-		} else {
-			revertInfos = append(revertInfos, sessionVarsRevertInfo{
-				varName: variable.TIDBMemQuotaQuery,
-				datum:   types.NewIntDatum(s.sessionVars.MemQuotaQuery),
-			})
-			err := variable.SetSessionSystemVar(s.sessionVars, variable.TIDBMemQuotaQuery, types.NewIntDatum(int64(hint.MemoryQuota)))
-			if err != nil {
-				// SQL hints should not trigger error.
-				warns = append(warns, err)
-			}
-		}
-	}
-	// Handle USE_TOJA
-	if len(useToJAHintList) > 1 {
-		warn := errors.New("There are multiple USE_TOJA hints, only the last one will take effect")
-		warns = append(warns, warn)
-	}
-	if len(useToJAHintList) != 0 {
-		revertInfos = append(revertInfos, sessionVarsRevertInfo{
-			varName: variable.TiDBOptInSubqToJoinAndAgg,
-			datum:   getHintDatumFromBool(s.sessionVars.AllowInSubqToJoinAndAgg),
-		})
-		hint := useToJAHintList[len(useToJAHintList)-1]
-		err := variable.SetSessionSystemVar(s.sessionVars, variable.TiDBOptInSubqToJoinAndAgg, getHintDatumFromBool(hint.HintFlag))
-		if err != nil {
-			// SQL hints should not trigger error.
-			warns = append(warns, err)
-		}
-	}
-	// Handle NO_INDEX_MERGE
-	if len(noIndexMergeHintList) > 1 {
-		warn := errors.New("There are multiple NO_INDEX_MERGE hints, only the last one will take effect")
-		warns = append(warns, warn)
-	}
-	if len(noIndexMergeHintList) != 0 {
-		revertInfos = append(revertInfos, sessionVarsRevertInfo{
-			varName: variable.TiDBEnableIndexMerge,
-			datum:   getHintDatumFromBool(s.sessionVars.EnableIndexMerge),
-		})
-		err := variable.SetSessionSystemVar(s.sessionVars, variable.TiDBEnableIndexMerge, getHintDatumFromBool(false))
-		if err != nil {
-			// SQL hints should not trigger error.
-			warns = append(warns, err)
-		}
-	}
-	// Handle READ_CONSISTENT_REPLICA
-	if len(readReplicaHintList) > 1 {
-		warn := errors.New("There are multiple READ_CONSISTENT_REPLICA hints, only the last one will take effect")
-		warns = append(warns, warn)
-	}
-	if len(readReplicaHintList) != 0 {
-		var datum types.Datum
-		switch s.sessionVars.ReplicaRead {
-		case kv.ReplicaReadLeader:
-			datum := types.NewStringDatum("leader")
-		case kv.ReplicaReadFollower:
-			datum := types.NewStringDatum("follower")
-		default:
-			// Read from learner not implement yet
-		}
-		revertInfos = append(revertInfos, sessionVarsRevertInfo{
-			varName: variable.TiDBReplicaRead,
-			datum:   datum,
-		})
-		err := variable.SetSessionSystemVar(s.sessionVars, variable.TiDBReplicaRead, types.NewStringDatum("follower"))
-		if err != nil {
-			// SQL hints should not trigger error.
-			warns = append(warns, err)
-		}
-	}
-	return
-}
-
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	s.PrepareTxnCtx(ctx)
 	connID := s.sessionVars.ConnectionID
@@ -1202,16 +1080,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	multiQuery := len(stmtNodes) > 1
 	for idx, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
-		revertInfos, hintWarns := s.setSessionVarsByHints(stmtNode)
 
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 		startTS = time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
 		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 			return nil, err
-		}
-		for _, warn := range hintWarns {
-			s.sessionVars.StmtCtx.AppendWarning(warn)
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
@@ -1244,14 +1118,6 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets, multiQuery); err != nil {
 			return nil, err
-		}
-
-		for _, revertInfo := range revertInfos {
-			err := variable.SetSessionSystemVar(s.sessionVars, revertInfo.varName, revertInfo.datum)
-			if err != nil {
-				// SQL hints should not trigger error.
-				s.sessionVars.StmtCtx.AppendWarning(err)
-			}
 		}
 	}
 
