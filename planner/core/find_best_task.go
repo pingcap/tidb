@@ -16,6 +16,7 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -43,6 +44,24 @@ const (
 	distinctFactor  = 0.8
 )
 
+var aggFuncFactor = map[string]float64{
+	ast.AggFuncCount:       1.0,
+	ast.AggFuncSum:         1.0,
+	ast.AggFuncAvg:         2.0,
+	ast.AggFuncFirstRow:    0.1,
+	ast.AggFuncMax:         1.0,
+	ast.AggFuncMin:         1.0,
+	ast.AggFuncGroupConcat: 1.0,
+	ast.AggFuncBitOr:       0.9,
+	ast.AggFuncBitXor:      0.9,
+	ast.AggFuncBitAnd:      0.9,
+	ast.AggFuncVarPop:      3.0,
+	ast.AggFuncVarSamp:     3.0,
+	ast.AggFuncStddevPop:   3.0,
+	ast.AggFuncStddevSamp:  3.0,
+	"default":              1.5,
+}
+
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
 var wholeTaskTypes = [...]property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.RootTaskType}
@@ -68,11 +87,19 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, 
 		return invalidTask, nil
 	}
 	dual := PhysicalTableDual{
-		RowCount:    p.RowCount,
-		placeHolder: p.placeHolder,
+		RowCount: p.RowCount,
 	}.Init(p.ctx, p.stats)
 	dual.SetSchema(p.schema)
 	return &rootTask{p: dual}, nil
+}
+
+func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, error) {
+	if !prop.IsEmpty() {
+		return invalidTask, nil
+	}
+	pShow := PhysicalShow{baseShowContent: p.baseShowContent}.Init(p.ctx)
+	pShow.SetSchema(p.schema)
+	return &rootTask{p: pShow}, nil
 }
 
 // findBestTask implements LogicalPlan interface.
@@ -184,7 +211,7 @@ func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task tas
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
 func (ds *DataSource) tryToGetDualTask() (task, error) {
 	for _, cond := range ds.pushedDownConds {
-		if con, ok := cond.(*expression.Constant); ok && con.DeferredExpr == nil {
+		if con, ok := cond.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 			result, _, err := expression.EvalBool(ds.ctx, []expression.Expression{cond}, chunk.Row{})
 			if err != nil {
 				return nil, err
@@ -277,9 +304,9 @@ func (ds *DataSource) getIndexCandidate(path *accessPath, prop *property.Physica
 	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
 	// it needs not to keep order for index scan.
 	if !prop.IsEmpty() && all {
-		for i, col := range path.index.Columns {
-			if col.Name.L == prop.Items[0].Col.ColName.L {
-				candidate.isMatchProp = matchIndicesProp(path.index.Columns[i:], prop.Items)
+		for i, col := range path.idxCols {
+			if col.Equal(nil, prop.Items[0].Col) {
+				candidate.isMatchProp = matchIndicesProp(path.idxCols[i:], path.idxColLens[i:], prop.Items)
 				break
 			} else if i >= path.eqCondCount {
 				break
@@ -287,7 +314,7 @@ func (ds *DataSource) getIndexCandidate(path *accessPath, prop *property.Physica
 		}
 	}
 	candidate.columnSet = expression.ExtractColumnSet(path.accessConds)
-	candidate.isSingleScan = isCoveringIndex(ds.schema.Columns, path.index.Columns, ds.tableInfo.PKIsHandle)
+	candidate.isSingleScan = isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle)
 	return candidate
 }
 
@@ -416,7 +443,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 	return
 }
 
-func isCoveringIndex(columns []*expression.Column, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
+func isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, pkIsHandle bool) bool {
 	for _, col := range columns {
 		if pkIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 			continue
@@ -425,11 +452,11 @@ func isCoveringIndex(columns []*expression.Column, indexColumns []*model.IndexCo
 			continue
 		}
 		isIndexColumn := false
-		for _, indexCol := range indexColumns {
-			isFullLen := indexCol.Length == types.UnspecifiedLength || indexCol.Length == col.RetType.Flen
+		for i, indexCol := range indexColumns {
+			isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
 			// We use col.OrigColName instead of col.ColName.
 			// Related issue: https://github.com/pingcap/tidb/issues/9636.
-			if col.OrigColName.L == indexCol.Name.L && isFullLen {
+			if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
 				isIndexColumn = true
 				break
 			}
@@ -505,7 +532,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
 	}
-	is.initSchema(ds.id, idx, cop.tablePlan != nil)
+	is.initSchema(ds.id, idx, path.fullIdxCols, cop.tablePlan != nil)
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
@@ -557,28 +584,29 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 	return ds.TblColHists.GetAvgRowSize(scanCols, true)
 }
 
-// TODO: refactor this part, we should not call Clone in fact.
-func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
-	indexCols := make([]*expression.Column, 0, len(idx.Columns))
-	for _, col := range idx.Columns {
-		colFound := is.dataSourceSchema.FindColumnByName(col.Name.L)
-		if colFound == nil {
-			colFound = &expression.Column{
-				ColName:  col.Name,
-				RetType:  &is.Table.Columns[col.Offset].FieldType,
-				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
-			}
+func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
+	indexCols := make([]*expression.Column, len(is.IdxCols), len(idx.Columns)+1)
+	copy(indexCols, is.IdxCols)
+	for i := len(is.IdxCols); i < len(idx.Columns); i++ {
+		if idxExprCols[i] != nil {
+			indexCols = append(indexCols, idxExprCols[i])
 		} else {
-			colFound = colFound.Clone().(*expression.Column)
+			// TODO: try to reuse the col generated when building the DataSource.
+			indexCols = append(indexCols, &expression.Column{
+				ColName:  idx.Columns[i].Name,
+				RetType:  &is.Table.Columns[idx.Columns[i].Offset].FieldType,
+				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+			})
 		}
-		indexCols = append(indexCols, colFound)
 	}
-	setHandle := false
-	for _, col := range is.Columns {
-		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-			indexCols = append(indexCols, is.dataSourceSchema.FindColumnByName(col.Name.L))
-			setHandle = true
-			break
+	setHandle := len(indexCols) > len(idx.Columns)
+	if !setHandle {
+		for i, col := range is.Columns {
+			if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+				indexCols = append(indexCols, is.dataSourceSchema.Columns[i])
+				setHandle = true
+				break
+			}
 		}
 	}
 	// If it's double read case, the first index must return handle. So we should add extra handle column
@@ -613,23 +641,23 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 }
 
-func matchIndicesProp(idxCols []*model.IndexColumn, propItems []property.Item) bool {
+func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []property.Item) bool {
 	if len(idxCols) < len(propItems) {
 		return false
 	}
 	for i, item := range propItems {
-		if idxCols[i].Length != types.UnspecifiedLength || item.Col.ColName.L != idxCols[i].Name.L {
+		if colLens[i] != types.UnspecifiedLength || !item.Col.Equal(nil, idxCols[i]) {
 			return false
 		}
 	}
 	return true
 }
 
-func splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn,
+func splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column, idxColLens []int,
 	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
-		if isCoveringIndex(expression.ExtractColumns(cond), indexColumns, table.PKIsHandle) {
+		if isCoveringIndex(expression.ExtractColumns(cond), indexColumns, idxColLens, table.PKIsHandle) {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			tableConditions = append(tableConditions, cond)

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
@@ -379,7 +380,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
 		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
-		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace:
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -567,6 +568,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "leader", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBTxnMode:
+		switch strings.ToUpper(value) {
+		case ast.Pessimistic, ast.Optimistic, "":
+		default:
+			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
+		}
 	}
 	return value, nil
 }

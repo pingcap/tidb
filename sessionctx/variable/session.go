@@ -336,6 +336,9 @@ type SessionVars struct {
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
+	// EnableVectorizedExpression  enables the vectorized expression evaluation.
+	EnableVectorizedExpression bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -394,6 +397,18 @@ type SessionVars struct {
 	// use noop funcs or not
 	EnableNoopFuncs bool
 
+	// StartTime is the start time of the last query.
+	StartTime time.Time
+
+	// DurationParse is the duration of parsing SQL string to AST of the last query.
+	DurationParse time.Duration
+
+	// DurationCompile is the duration of compiling AST to execution plan of the last query.
+	DurationCompile time.Duration
+
+	// PrevStmt is used to store the previous executed statement in the current session.
+	PrevStmt string
+
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
@@ -450,6 +465,7 @@ func NewSessionVars() *SessionVars {
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		EnableRadixJoin:             false,
+		EnableVectorizedExpression:  DefEnableVectorizedExpression,
 		L2CacheSize:                 cpuid.CPU.Cache.L2,
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
@@ -852,6 +868,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
+	case TiDBEnableVectorizedExpression:
+		s.EnableVectorizedExpression = TiDBOptOn(val)
 	case TiDBOptJoinReorderThreshold:
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
 	case TiDBCheckMb4ValueInUTF8:
@@ -867,9 +885,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBExpensiveQueryTimeThreshold:
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
-		if err := s.setTxnMode(val); err != nil {
-			return err
-		}
+		s.TxnMode = strings.ToUpper(val)
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:
@@ -1042,8 +1058,8 @@ const (
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
 	SlowLogIsInternalStr = "Is_internal"
-	// SlowLogIndexIDsStr is slow log field name.
-	SlowLogIndexIDsStr = "Index_ids"
+	// SlowLogIndexNamesStr is slow log field name.
+	SlowLogIndexNamesStr = "Index_names"
 	// SlowLogDigestStr is slow log field name.
 	SlowLogDigestStr = "Digest"
 	// SlowLogQuerySQLStr is slow log field name.
@@ -1072,6 +1088,10 @@ const (
 	SlowLogMemMax = "Mem_max"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
 	SlowLogSucc = "Succ"
+	// SlowLogPrevStmt is used to show the previous executed statement.
+	SlowLogPrevStmt = "Prev_stmt"
+	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
+	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -1083,12 +1103,13 @@ type SlowQueryLogItems struct {
 	TimeTotal   time.Duration
 	TimeParse   time.Duration
 	TimeCompile time.Duration
-	IndexIDs    string
+	IndexNames  string
 	StatsInfos  map[string]uint64
 	CopTasks    *stmtctx.CopTasksDetails
 	ExecDetail  execdetails.ExecDetails
 	MemMax      int64
 	Succ        bool
+	PrevStmt    string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1100,7 +1121,7 @@ type SlowQueryLogItems struct {
 // # Query_time: 4.895492
 // # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
 // # DB: test
-// # Index_ids: [1,2]
+// # Index_names: [t1.idx1,t2.idx2]
 // # Is_internal: false
 // # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 // # Stats: t1:1,t2:2
@@ -1109,6 +1130,7 @@ type SlowQueryLogItems struct {
 // # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
 // # Memory_max: 4096
 // # Succ: true
+// # Prev_stmt: begin;
 // select * from t_slim;
 func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	var buf bytes.Buffer
@@ -1129,8 +1151,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(s.CurrentDB) > 0 {
 		writeSlowLogItem(&buf, SlowLogDBStr, s.CurrentDB)
 	}
-	if len(logItems.IndexIDs) > 0 {
-		writeSlowLogItem(&buf, SlowLogIndexIDsStr, logItems.IndexIDs)
+	if len(logItems.IndexNames) > 0 {
+		writeSlowLogItem(&buf, SlowLogIndexNamesStr, logItems.IndexNames)
 	}
 
 	writeSlowLogItem(&buf, SlowLogIsInternalStr, strconv.FormatBool(s.InRestrictedSQL))
@@ -1175,6 +1197,10 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
+
+	if logItems.PrevStmt != "" {
+		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
+	}
 
 	buf.WriteString(logItems.SQL)
 	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {

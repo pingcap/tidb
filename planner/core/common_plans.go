@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -235,16 +234,15 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
-	p, err := e.getPhysicalPlan(ctx, sctx, is, prepared)
+	err := e.getPhysicalPlan(ctx, sctx, is, prepared)
 	if err != nil {
 		return err
 	}
 	e.Stmt = prepared.Stmt
-	e.Plan = p
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) (Plan, error) {
+func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) error {
 	var cacheKey kvcache.Key
 	sessionVars := sctx.GetSessionVars()
 	sessionVars.StmtCtx.UseCache = prepared.UseCache
@@ -259,20 +257,24 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			return plan, nil
+			e.names = cacheValue.(*PSTMTPlanCacheValue).OutPutNames
+			e.Plan = plan
+			return nil
 		}
 	}
 	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	e.names = p.OutputNames()
+	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
+		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, p.OutputNames()))
 	}
-	return p, err
+	return err
 }
 
 func (e *Execute) rebuildRange(p Plan) error {
@@ -346,7 +348,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
-	idxCols, colLengths := expression.IndexInfo2Cols(is.schema.Columns, is.Index)
+	idxCols, colLengths := expression.IndexInfo2PrefixCols(is.schema.Columns, is.Index)
 	if len(idxCols) == 0 {
 		return ranger.FullRange(), nil
 	}
@@ -362,24 +364,6 @@ type Deallocate struct {
 	baseSchemaProducer
 
 	Name string
-}
-
-// Show represents a show plan.
-type Show struct {
-	physicalSchemaProducer
-
-	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName      string
-	Table       *ast.TableName  // Used for showing columns.
-	Column      *ast.ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr
-	Flag        int                  // Some flag parsed from sql, such as FULL.
-	User        *auth.UserIdentity   // Used for show grants.
-	Roles       []*auth.RoleIdentity // Used for show grants.
-	Full        bool
-	IfNotExists bool // Used for `show create database if not exists`
-
-	GlobalScope bool // Used by show variables
 }
 
 // Set represents a plan for set stmt.
@@ -448,6 +432,8 @@ type Insert struct {
 	GenCols InsertGeneratedColumns
 
 	SelectPlan PhysicalPlan
+
+	AllAssignmentsAreConstant bool
 }
 
 // Update represents Update plan.
@@ -455,6 +441,8 @@ type Update struct {
 	baseSchemaProducer
 
 	OrderedList []*expression.Assignment
+
+	AllAssignmentsAreConstant bool
 
 	SelectPlan PhysicalPlan
 

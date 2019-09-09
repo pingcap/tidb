@@ -40,9 +40,39 @@ func (col *CorrelatedColumn) Clone() Expression {
 	return col
 }
 
-// VecEval evaluates this expression in a vectorized manner.
-func (col *CorrelatedColumn) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) (err error) {
-	return genVecFromConstExpr(ctx, col, input, result)
+// VecEvalInt evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETInt, input, result)
+}
+
+// VecEvalReal evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETReal, input, result)
+}
+
+// VecEvalString evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETString, input, result)
+}
+
+// VecEvalDecimal evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETDecimal, input, result)
+}
+
+// VecEvalTime evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETTimestamp, input, result)
+}
+
+// VecEvalDuration evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETDuration, input, result)
+}
+
+// VecEvalJSON evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETJson, input, result)
 }
 
 // Eval implements Expression interface.
@@ -130,7 +160,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 
 // ConstItem implements Expression interface.
 func (col *CorrelatedColumn) ConstItem() bool {
-	return true
+	return false
 }
 
 // Decorrelate implements Expression interface.
@@ -186,13 +216,9 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	return false
 }
 
-// VecEval evaluates this expression in a vectorized manner.
-func (col *Column) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	ft := col.RetType
-	// do evaluation in a row-based manner when it's hybrid type.
-	// TODO: optimize vectorized evaluation on hybrid types.
-	switch {
-	case ft.EvalType() == types.ETInt && ft.Hybrid():
+// VecEvalInt evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if col.RetType.Hybrid() {
 		it := chunk.NewIterator4Chunk(input)
 		result.Reset()
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -206,7 +232,37 @@ func (col *Column) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *c
 				result.AppendInt64(v)
 			}
 		}
-	case ft.EvalType() == types.ETString && ft.Hybrid():
+		return nil
+	}
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalReal evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	src := input.Column(col.Index)
+	if col.GetType().Tp == mysql.TypeFloat {
+		result.ResizeFloat64(n, false)
+		f32s := src.Float32s()
+		f64s := result.Float64s()
+		for i := range f32s {
+			// TODO(zhangyuanjia): speed up the way to manipulate null-bitmaps.
+			if src.IsNull(i) {
+				result.SetNull(i, true)
+			} else {
+				f64s[i] = float64(f32s[i])
+			}
+		}
+		return nil
+	}
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalString evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if col.RetType.Hybrid() {
 		it := chunk.NewIterator4Chunk(input)
 		result.ReserveString(input.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -220,9 +276,33 @@ func (col *Column) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *c
 				result.AppendString(v)
 			}
 		}
-	default:
-		input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+		return nil
 	}
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalDecimal evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalTime evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalDuration evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
+// VecEvalJSON evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
 	return nil
 }
 
@@ -383,6 +463,11 @@ func (col *Column) resolveIndices(schema *Schema) error {
 	return nil
 }
 
+// Vectorized returns if this expression supports vectorized evaluation.
+func (col *Column) Vectorized() bool {
+	return true
+}
+
 // Column2Exprs will transfer column slice to expression slice.
 func Column2Exprs(cols []*Column) []Expression {
 	result := make([]Expression, 0, len(cols))
@@ -412,11 +497,12 @@ func indexCol2Col(cols []*Column, col *model.IndexColumn) *Column {
 	return nil
 }
 
-// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
+// IndexInfo2PrefixCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
 // together with a []int containing their lengths.
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
 // the return value will be only the 1st corresponding *Column and its length.
-func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+// TODO: Use a struct to represent {*Column, int}. And merge IndexInfo2PrefixCols and IndexInfo2Cols.
+func IndexInfo2PrefixCols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 	retCols := make([]*Column, 0, len(index.Columns))
 	lengths := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
@@ -432,6 +518,30 @@ func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 		}
 	}
 	return retCols, lengths
+}
+
+// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
+// together with a []int containing their lengths.
+// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
+// the return value will be [col1, nil, col2].
+func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+	retCols := make([]*Column, 0, len(index.Columns))
+	lens := make([]int, 0, len(index.Columns))
+	for _, c := range index.Columns {
+		col := indexCol2Col(cols, c)
+		if col == nil {
+			retCols = append(retCols, col)
+			lens = append(lens, types.UnspecifiedLength)
+			continue
+		}
+		retCols = append(retCols, col)
+		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.Flen {
+			lens = append(lens, types.UnspecifiedLength)
+		} else {
+			lens = append(lens, c.Length)
+		}
+	}
+	return retCols, lens
 }
 
 // FindPrefixOfIndex will find columns in index by checking the unique id.

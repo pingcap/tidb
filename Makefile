@@ -11,10 +11,11 @@ CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
-GO        := GO111MODULE=on go
-GOBUILD   := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG) -tags codes
-GOTEST    := CGO_ENABLED=1 $(GO) test -p 4
-OVERALLS  := CGO_ENABLED=1 GO111MODULE=on overalls
+GO              := GO111MODULE=on go
+GOBUILD         := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG) -tags codes
+GOBUILDCOVERAGE := GOPATH=$(GOPATH) CGO_ENABLED=1 cd tidb-server; $(GO) test -coverpkg="../..." -c .
+GOTEST          := CGO_ENABLED=1 $(GO) test -p 4
+OVERALLS        := CGO_ENABLED=1 GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -34,6 +35,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git re
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.GoVersion=$(shell go version)"
 
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
+COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
 
 CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
@@ -185,6 +187,13 @@ ifeq ($(TARGET), "")
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server tidb-server/main.go
 else
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
+endif
+
+coverage_server:
+ifeq ($(TARGET), "")
+	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(COVERAGE_SERVER_LDFLAGS) $(CHECK_FLAG)' -o ../bin/tidb-coverage-server
+else
+	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(COVERAGE_SERVER_LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)'
 endif
 
 benchkv:

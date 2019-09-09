@@ -16,6 +16,7 @@ package types
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"math"
 	"regexp"
 	"strconv"
@@ -1169,6 +1170,9 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
 	}
 
+	if terror.ErrorEqual(err, io.EOF) {
+		err = ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
+	}
 	if err != nil {
 		return ZeroDuration, errors.Trace(err)
 	}

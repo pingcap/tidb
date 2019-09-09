@@ -78,22 +78,28 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	return chk
 }
 
+// renewWithCapacity creates a new Chunk based on an existing Chunk with capacity. The newly
+// created Chunk has the same data schema with the old Chunk.
+func renewWithCapacity(chk *Chunk, cap, maxChunkSize int) *Chunk {
+	newChk := new(Chunk)
+	if chk.columns == nil {
+		return newChk
+	}
+	newChk.columns = renewColumns(chk.columns, cap)
+	newChk.numVirtualRows = 0
+	newChk.capacity = cap
+	newChk.requiredRows = maxChunkSize
+	return newChk
+}
+
 // Renew creates a new Chunk based on an existing Chunk. The newly created Chunk
 // has the same data schema with the old Chunk. The capacity of the new Chunk
 // might be doubled based on the capacity of the old Chunk and the maxChunkSize.
 //  chk: old chunk(often used in previous call).
 //  maxChunkSize: the limit for the max number of rows.
 func Renew(chk *Chunk, maxChunkSize int) *Chunk {
-	newChk := new(Chunk)
-	if chk.columns == nil {
-		return newChk
-	}
 	newCap := reCalcCapacity(chk, maxChunkSize)
-	newChk.columns = renewColumns(chk.columns, newCap)
-	newChk.numVirtualRows = 0
-	newChk.capacity = newCap
-	newChk.requiredRows = maxChunkSize
-	return newChk
+	return renewWithCapacity(chk, newCap, maxChunkSize)
 }
 
 // renewColumns creates the columns of a Chunk. The capacity of the newly
@@ -601,6 +607,16 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 // Column returns the specific column.
 func (c *Chunk) Column(colIdx int) *Column {
 	return c.columns[colIdx]
+}
+
+// SetCol sets the colIdx Column to col and returns the old Column.
+func (c *Chunk) SetCol(colIdx int, col *Column) *Column {
+	if col == c.columns[colIdx] {
+		return nil
+	}
+	old := c.columns[colIdx]
+	c.columns[colIdx] = col
+	return old
 }
 
 // Sel returns Sel of this Chunk.

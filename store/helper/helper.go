@@ -22,6 +22,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -580,6 +581,13 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	return &regionsInfo, err
 }
 
+// GetRegionInfoByID gets the region information of the region ID by using PD's api.
+func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
+	var regionInfo RegionInfo
+	err := h.requestPD("GET", pdapi.RegionByID+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	return &regionInfo, err
+}
+
 // request PD API, decode the response body into res
 func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) error {
 	etcd, ok := h.Store.(tikv.EtcdBackend)
@@ -653,8 +661,8 @@ type StoreDetailStat struct {
 	LeaderScore     int64     `json:"leader_score"`
 	LeaderSize      int64     `json:"leader_size"`
 	RegionCount     int64     `json:"region_count"`
-	RegionWeight    int64     `json:"region_weight"`
-	RegionScore     int64     `json:"region_score"`
+	RegionWeight    float64   `json:"region_weight"`
+	RegionScore     float64   `json:"region_score"`
 	RegionSize      int64     `json:"region_size"`
 	StartTs         time.Time `json:"start_ts"`
 	LastHeartbeatTs time.Time `json:"last_heartbeat_ts"`

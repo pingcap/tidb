@@ -46,7 +46,7 @@ var slowQueryCols = []columnInfo{
 	{execdetails.TotalKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{execdetails.ProcessKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogDBStr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{variable.SlowLogIndexIDsStr, mysql.TypeVarchar, 100, 0, nil, nil},
+	{variable.SlowLogIndexNamesStr, mysql.TypeVarchar, 100, 0, nil, nil},
 	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
 	{variable.SlowLogDigestStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogStatsInfoStr, mysql.TypeVarchar, 512, 0, nil, nil},
@@ -60,6 +60,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
 	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogPrevStmt, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 }
 
@@ -112,15 +113,19 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 			// Parse slow log field.
 			if strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 				line = line[len(variable.SlowLogRowPrefixStr):]
-				fieldValues := strings.Split(line, " ")
-				for i := 0; i < len(fieldValues)-1; i += 2 {
-					field := fieldValues[i]
-					if strings.HasSuffix(field, ":") {
-						field = field[:len(field)-1]
-					}
-					err = st.setFieldValue(tz, field, fieldValues[i+1])
-					if err != nil {
-						return rows, err
+				if strings.HasPrefix(line, variable.SlowLogPrevStmtPrefix) {
+					st.prevStmt = line[len(variable.SlowLogPrevStmtPrefix):]
+				} else {
+					fieldValues := strings.Split(line, " ")
+					for i := 0; i < len(fieldValues)-1; i += 2 {
+						field := fieldValues[i]
+						if strings.HasSuffix(field, ":") {
+							field = field[:len(field)-1]
+						}
+						err = st.setFieldValue(tz, field, fieldValues[i+1])
+						if err != nil {
+							return rows, err
+						}
 					}
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
@@ -195,6 +200,7 @@ type slowQueryTuple struct {
 	maxWaitTime       float64
 	maxWaitAddress    string
 	memMax            int64
+	prevStmt          string
 	sql               string
 	isInternal        bool
 	succ              bool
@@ -239,7 +245,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.processKeys, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogDBStr:
 		st.db = value
-	case variable.SlowLogIndexIDsStr:
+	case variable.SlowLogIndexNamesStr:
 		st.indexIDs = value
 	case variable.SlowLogIsInternalStr:
 		st.isInternal = value == "true"
@@ -313,6 +319,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	} else {
 		record = append(record, types.NewIntDatum(0))
 	}
+	record = append(record, types.NewStringDatum(st.prevStmt))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
 }
