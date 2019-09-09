@@ -1809,7 +1809,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	if v.KeepOuterOrder {
 		return e
 	}
-	return &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
+	idxHash := &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
+	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
+	idxHash.joiners = make([]joiner, concurrency)
+	for i := 0; i < concurrency; i++ {
+		idxHash.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes)
+	}
+	return idxHash
 }
 
 func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndexMergeJoin) Executor {
