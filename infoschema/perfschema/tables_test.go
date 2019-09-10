@@ -14,6 +14,8 @@
 package perfschema_test
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -21,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"testing"
 )
 
 func TestT(t *testing.T) {
