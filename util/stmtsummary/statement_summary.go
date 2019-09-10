@@ -46,6 +46,7 @@ func (key *stmtSummaryCacheKey) Hash() []byte {
 
 // A LRU cache that stores statement summary.
 type stmtSummaryByDigest struct {
+	// It's rare to read concurrently, so RWMutex is not needed.
 	sync.RWMutex
 	summaryMap *kvcache.SimpleLRUCache
 }
@@ -55,6 +56,8 @@ var StmtSummary = NewStmtSummaryByDigest()
 
 // Summary of each type of statements.
 type stmtSummary struct {
+	// It's rare to read concurrently, so RWMutex is not needed.
+	sync.Mutex
 	schemaName      string
 	digest          string
 	normalizedSQL   string
@@ -124,6 +127,8 @@ func convertStmtExecInfoToSummary(sei *StmtExecInfo) *stmtSummary {
 
 // Add a new StmtExecInfo to stmtSummary
 func addStmtExecInfoToSummary(sei *StmtExecInfo, ss *stmtSummary) {
+	ss.Lock()
+
 	ss.sumLatency += sei.TotalLatency
 	ss.execCount++
 	if sei.TotalLatency > ss.maxLatency {
@@ -141,6 +146,8 @@ func addStmtExecInfoToSummary(sei *StmtExecInfo, ss *stmtSummary) {
 	if ss.lastSeen.Before(sei.StartTime) {
 		ss.lastSeen = sei.StartTime
 	}
+
+	ss.Unlock()
 }
 
 // Add a statement to statement summary.
@@ -150,15 +157,21 @@ func (ss *stmtSummaryByDigest) AddStatement(sei *StmtExecInfo) {
 		digest:     sei.Digest,
 	}
 
+	var summary *stmtSummary
 	ss.Lock()
-	summary, ok := ss.summaryMap.Get(key)
+	value, ok := ss.summaryMap.Get(key)
 	if ok {
-		addStmtExecInfoToSummary(sei, summary.(*stmtSummary))
+		summary = value.(*stmtSummary)
 	} else {
-		summary = convertStmtExecInfoToSummary(sei)
-		ss.summaryMap.Put(key, summary)
+		newSummary := convertStmtExecInfoToSummary(sei)
+		ss.summaryMap.Put(key, newSummary)
 	}
 	ss.Unlock()
+
+	// Lock a single entry, not the whole cache.
+	if summary != nil {
+		addStmtExecInfoToSummary(sei, summary)
+	}
 }
 
 // Remove all statement summaries.
@@ -170,12 +183,14 @@ func (ss *stmtSummaryByDigest) Clear() {
 
 // Convert statement summary to Datum
 func (ss *stmtSummaryByDigest) ToDatum() [][]types.Datum {
-	ss.RLock()
-	rows := make([][]types.Datum, 0, ss.summaryMap.Size())
-	// Summary of each statement may be modified at the same time,
-	// so surround the whole block with read lock.
-	for _, value := range ss.summaryMap.Values() {
+	ss.Lock()
+	values := ss.summaryMap.Values()
+	ss.Unlock()
+
+	rows := make([][]types.Datum, 0, len(values))
+	for _, value := range values {
 		summary := value.(*stmtSummary)
+		summary.Lock()
 		record := types.MakeDatums(
 			summary.schemaName,
 			summary.digest,
@@ -190,9 +205,9 @@ func (ss *stmtSummaryByDigest) ToDatum() [][]types.Datum {
 			types.Time{Time: types.FromGoTime(summary.lastSeen), Type: mysql.TypeTimestamp},
 			summary.sampleSQL,
 		)
+		summary.Unlock()
 		rows = append(rows, record)
 	}
-	ss.RUnlock()
 
 	return rows
 }
