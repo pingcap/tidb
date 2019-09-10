@@ -103,14 +103,17 @@ func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolve
 	return s.lockResolver, nil
 }
 
-// TxnStatus represents a txn's final status. It should be Commit or Rollback.
-type TxnStatus uint64
+// TxnStatus represents a txn's final status. It should be Lock or Commit or Rollback.
+type TxnStatus struct {
+	ttl      uint64
+	commitTS uint64
+}
 
 // IsCommitted returns true if the txn's final status is Commit.
-func (s TxnStatus) IsCommitted() bool { return s > 0 }
+func (s TxnStatus) IsCommitted() bool { return s.ttl == 0 && s.commitTS > 0 }
 
 // CommitTS returns the txn's commitTS. It is valid iff `IsCommitted` is true.
-func (s TxnStatus) CommitTS() uint64 { return uint64(s) }
+func (s TxnStatus) CommitTS() uint64 { return uint64(s.commitTS) }
 
 // By default, locks after 3000ms is considered unusual (the client created the
 // lock might be dead). Other client may cleanup this kind of lock.
@@ -206,7 +209,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		txnInfos[l.TxnID] = uint64(status)
+		txnInfos[l.TxnID] = uint64(status.commitTS)
 	}
 	logutil.BgLogger().Info("BatchResolveLocks: lookup txn status",
 		zap.Duration("cost time", time.Since(startTime)),
@@ -370,7 +373,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			return status, err
 		}
 		if cmdResp.CommitVersion != 0 {
-			status = TxnStatus(cmdResp.GetCommitVersion())
+			status = TxnStatus{0, cmdResp.GetCommitVersion()}
 			tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()
 		} else {
 			tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()

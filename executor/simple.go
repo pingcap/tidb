@@ -518,9 +518,6 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		txnMode := s.Mode
 		if txnMode == "" {
 			txnMode = e.ctx.GetSessionVars().TxnMode
-			if txnMode == "" && pTxnConf.Default {
-				txnMode = ast.Pessimistic
-			}
 		}
 		if txnMode == ast.Pessimistic {
 			e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
