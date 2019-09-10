@@ -145,6 +145,9 @@ const (
 
 	// TiDBReplicaRead is used for reading data from replicas, followers for example.
 	TiDBReplicaRead = "tidb_replica_read"
+
+	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
+	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -358,6 +361,7 @@ const (
 	DefTiDBWaitSplitRegionFinish       = true
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
+	DefTiDBAllowRemoveAutoInc          = false
 )
 
 // Process global variables.
