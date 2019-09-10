@@ -130,3 +130,14 @@ func (s *testStatisticsSuite) TestTruncateHistogram(c *C) {
 	newHist = hist.TruncateHistogram(0)
 	c.Assert(newHist.Len(), Equals, 0)
 }
+
+func (s *testStatisticsSuite) TestValueToString4InvalidKey(c *C) {
+	bytes, err := codec.EncodeKey(nil, nil, types.NewDatum(1), types.NewDatum(0.5))
+	c.Assert(err, IsNil)
+	// Append invalid flag.
+	bytes = append(bytes, 20)
+	datum := types.NewDatum(bytes)
+	res, err := ValueToString(&datum, 3)
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, "(1, 0.5, \x14)")
+}
