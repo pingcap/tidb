@@ -242,7 +242,7 @@ func (g *defaultGener) gen() interface{} {
 		}
 		return *j
 	case types.ETString:
-		return fmt.Sprintf("%v", rand.Int())
+		return randString()
 	}
 	return nil
 }
