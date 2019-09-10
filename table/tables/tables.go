@@ -696,11 +696,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 
 // Row implements table.Table Row interface.
 func (t *tableCommon) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
-	r, err := t.RowWithCols(ctx, h, t.Cols())
-	if err != nil {
-		return nil, err
-	}
-	return r, nil
+	return t.RowWithCols(ctx, h, t.Cols())
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
