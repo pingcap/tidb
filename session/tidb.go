@@ -163,10 +163,10 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
-			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit error.")
+			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
 			se.RollbackTxn(ctx)
 		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
-			logutil.BgLogger().Info("rollbackTxn for deadlock error", zap.Uint64("txn", se.txn.StartTS()))
+			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
 		}
 		return meetsErr
@@ -244,7 +244,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				}
 			}
 		} else {
-			logutil.BgLogger().Error("get txn error", zap.Error(err1))
+			logutil.BgLogger().Error("get txn failed", zap.Error(err1))
 		}
 	}
 	err = finishStmt(ctx, sctx, se, sessVars, err)

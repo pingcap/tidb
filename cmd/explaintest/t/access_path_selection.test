@@ -15,3 +15,5 @@ explain select a, b from access_path_selection where a < 3 and b < 3;
 # _tidb_rowid should also be considered as PK.
 explain select a, b from access_path_selection where a > 10 order by _tidb_rowid;
 explain select max(_tidb_rowid) from access_path_selection;
+# Use indexPath in this query.
+explain select count(1) from access_path_selection;
