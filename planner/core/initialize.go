@@ -86,6 +86,8 @@ const (
 	TypeIndexReader = "IndexReader"
 	// TypeWindow is the type of Window.
 	TypeWindow = "Window"
+	// TypeTableGather is the type of TableGather.
+	TypeTableGather = "TableGather"
 )
 
 const (
@@ -289,6 +291,18 @@ func (ds DataSource) Init(ctx sessionctx.Context) *DataSource {
 	return &ds
 }
 
+// Init initializes TableGather.
+func (tg TableGather) Init(ctx sessionctx.Context) *TableGather {
+	tg.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeTableGather, &tg)
+	return &tg
+}
+
+// Init initializes TableScan.
+func (ts TableScan) Init(ctx sessionctx.Context) *TableScan {
+	ts.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeTableScan, &ts)
+	return &ts
+}
+
 // Init initializes LogicalApply.
 func (la LogicalApply) Init(ctx sessionctx.Context) *LogicalApply {
 	la.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeApply, &la)
@@ -451,8 +465,14 @@ func (p Insert) Init(ctx sessionctx.Context) *Insert {
 	return &p
 }
 
-// Init initializes Show.
-func (p Show) Init(ctx sessionctx.Context) *Show {
+// Init initializes LogicalShow.
+func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeShow, &p)
+	return &p
+}
+
+// Init initializes PhysicalShow.
+func (p PhysicalShow) Init(ctx sessionctx.Context) *PhysicalShow {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeShow, &p)
 	// Just use pseudo stats to avoid panic.
 	p.stats = &property.StatsInfo{RowCount: 1}
@@ -562,8 +582,10 @@ func (p PhysicalIndexLookUpReader) Init(ctx sessionctx.Context) *PhysicalIndexLo
 // Init initializes PhysicalTableReader.
 func (p PhysicalTableReader) Init(ctx sessionctx.Context) *PhysicalTableReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeTableReader, &p)
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.schema = p.tablePlan.Schema()
+	if p.tablePlan != nil {
+		p.TablePlans = flattenPushDownPlan(p.tablePlan)
+		p.schema = p.tablePlan.Schema()
+	}
 	return &p
 }
 
