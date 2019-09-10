@@ -628,6 +628,7 @@ func (s testMarshal) TestMarshalmvccLock(c *C) {
 	c.Assert(l.ttl, Equals, l1.ttl)
 	c.Assert(string(l.primary), Equals, string(l1.primary))
 	c.Assert(string(l.value), Equals, string(l1.value))
+	c.Assert(l.minCommitTS, Equals, l1.minCommitTS)
 }
 
 func (s testMarshal) TestMarshalmvccValue(c *C) {
