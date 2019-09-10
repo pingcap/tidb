@@ -133,6 +133,14 @@ func (*testSuite) TestT(c *C) {
 	id, err = alloc.Alloc(3)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(6544))
+
+	// Test the MaxInt64 is alloc upper bound but not rebase.
+	err = alloc.Rebase(3, int64(9223372036854775806), true)
+	c.Assert(err, IsNil)
+	_, err = alloc.Alloc(3)
+	c.Assert(alloc, NotNil)
+	err = alloc.Rebase(3, int64(9223372036854775807), true)
+	c.Assert(err, IsNil)
 }
 
 func (*testSuite) TestUnsignedAutoid(c *C) {
@@ -229,6 +237,17 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	id, err = alloc.Alloc(3)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(6544))
+
+	// Test the MaxUint64 is alloc upper bound but not rebase.
+	var n uint64 = 18446744073709551614
+	var i interface{} = n
+	un := i.(int64)
+	err = alloc.Rebase(3, un, true)
+	c.Assert(err, IsNil)
+	_, err = alloc.Alloc(3)
+	c.Assert(alloc, NotNil)
+	err = alloc.Rebase(3, un, true)
+	c.Assert(err, IsNil)
 }
 
 // TestConcurrentAlloc is used for the test that
