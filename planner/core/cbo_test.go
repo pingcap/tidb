@@ -687,7 +687,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
-			"Projection_11 10.00 root 9_aux_0",
+			"Projection_11 10.00 root Column#15",
 			"└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(Column#3, Column#13)",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
@@ -912,7 +912,7 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 
 	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
 	tk.MustQuery("explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
-		"Projection_7 0.00 root test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+		"Projection_7 0.00 root Column#1, Column#2, Column#4, Column#5",
 		"└─HashRightJoin_9 0.00 root inner join, inner:IndexReader_15, equal:[eq(Column#5, Column#2)]",
 		"  ├─IndexReader_15 0.00 root index:Selection_14",
 		"  │ └─Selection_14 0.00 cop isnull(Column#5), not(isnull(Column#5))",

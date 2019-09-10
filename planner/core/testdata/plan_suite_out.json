@@ -15,7 +15,7 @@
         "HasWarn": false
       },
       {
-        "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))-\u003eIndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
+        "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))-\u003eIndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(Column#1,Column#14)",
         "HasWarn": false
       },
       {
@@ -23,7 +23,7 @@
         "HasWarn": false
       },
       {
-        "Best": "TableReader(Table(t)-\u003eSel([gt(test.t.f, 10)]))",
+        "Best": "TableReader(Table(t)-\u003eSel([gt(Column#9, 10)]))",
         "HasWarn": false
       },
       {

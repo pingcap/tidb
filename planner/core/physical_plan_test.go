@@ -1273,7 +1273,7 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 		// If max/min contains scalar function, we can still do transformation.
 		{
 			sql:  "select max(a+1) from t;",
-			best: "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([not(isnull(plus(Column#1, 1)))])->TopN([plus(Column#1, 1) true],0,1))->Projection->TopN([Column#15 true],0,1)->Projection->Projection->StreamAgg",
+			best: "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([not(isnull(plus(Column#1, 1)))])->TopN([plus(Column#1, 1) true],0,1))->Projection->TopN([Column#41 true],0,1)->Projection->Projection->StreamAgg",
 		},
 		// Do nothing to max+min.
 		{
@@ -1387,7 +1387,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		// Test Index Join + UnionScan + IndexScan.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
-			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(Column#1,Column#15)->Projection",
+			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(Column#15,Column#1)->Projection",
 			is:   s.is,
 		},
 		// Index Join + Union Scan + Union All is not supported now.
@@ -1629,7 +1629,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		},
 		{
 			sql:  "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-			best: "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(Column#1,Column#14)->HashAgg",
+			best: "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(Column#1,Column#27)->HashAgg",
 		},
 		// with Aggregation hints
 		{
@@ -1638,7 +1638,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		},
 		{
 			sql:  "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-			best: "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}((Column#1,Column#27)->Sort->StreamAgg",
+			best: "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(Column#1,Column#27)->Sort->StreamAgg",
 		},
 		// test conflict warning
 		{
