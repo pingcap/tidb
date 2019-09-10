@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -105,26 +106,28 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 }
 
 func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
-	tableStats := &property.StatsInfo{
-		RowCount:     float64(ds.statisticTable.Count),
-		Cardinality:  make([]float64, len(ds.Columns)),
-		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
-		StatsVersion: ds.statisticTable.Version,
+	if ds.tableStats == nil {
+		tableStats := &property.StatsInfo{
+			RowCount:     float64(ds.statisticTable.Count),
+			Cardinality:  make([]float64, len(ds.Columns)),
+			HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
+			StatsVersion: ds.statisticTable.Version,
+		}
+		if ds.statisticTable.Pseudo {
+			tableStats.StatsVersion = statistics.PseudoVersion
+		}
+		for i, col := range ds.Columns {
+			tableStats.Cardinality[i] = ds.getColumnNDV(col.ID)
+		}
+		ds.tableStats = tableStats
+		ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
 	}
-	if ds.statisticTable.Pseudo {
-		tableStats.StatsVersion = statistics.PseudoVersion
-	}
-	for i, col := range ds.Columns {
-		tableStats.Cardinality[i] = ds.getColumnNDV(col.ID)
-	}
-	ds.tableStats = tableStats
-	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
-	selectivity, nodes, err := tableStats.HistColl.Selectivity(ds.ctx, conds)
+	selectivity, nodes, err := ds.tableStats.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
-	ds.stats = tableStats.Scale(selectivity)
+	ds.stats = ds.tableStats.Scale(selectivity)
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
 		ds.stats.HistColl = ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
 	}
@@ -176,6 +179,23 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		}
 	}
 	return ds.stats, nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo) (_ *property.StatsInfo, err error) {
+	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	for i, expr := range ts.AccessConds {
+		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
+		// `PushDownNot` function call in multiple `DeriveStats` then.
+		ts.AccessConds[i] = expression.PushDownNot(nil, expr, false)
+	}
+	ts.Source.deriveStatsByFilter(ts.AccessConds)
+	sc := ts.SCtx().GetSessionVars().StmtCtx
+	ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.Handle.RetType)
+	if err != nil {
+		return nil, err
+	}
+	return ts.Source.stats, nil
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
