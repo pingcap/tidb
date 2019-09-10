@@ -34,14 +34,12 @@ const (
 )
 
 var bufWriterPool = sync.Pool{
-	New: func() interface{} {
-		return bufio.NewWriterSize(nil, writeBufSize)
-	},
+	New: func() interface{} { return bufio.NewWriterSize(nil, writeBufSize) },
 }
 
-var bufReaderPool = sync.Pool{New: func() interface{} {
-	return bufio.NewReaderSize(nil, readBufSize)
-}}
+var bufReaderPool = sync.Pool{
+	New: func() interface{} { return bufio.NewReaderSize(nil, readBufSize) },
+}
 
 var tmpDir = path.Join(os.TempDir(), "tidb-server-hashJoin")
 
