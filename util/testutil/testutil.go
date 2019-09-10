@@ -14,6 +14,7 @@
 package testutil
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -225,15 +226,23 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 	if !record {
 		return nil
 	}
+
+	buf := new(bytes.Buffer)
+	enc := json.NewEncoder(buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
 	for i, test := range t.output {
-		bytes, err := json.MarshalIndent(test.decodedOut, "", "  ")
+		err := enc.Encode(test.decodedOut)
 		if err != nil {
 			return err
 		}
-		rm := json.RawMessage(bytes)
+		res := make([]byte, len(buf.Bytes()), len(buf.Bytes()))
+		copy(res, buf.Bytes())
+		buf.Reset()
+		rm := json.RawMessage(res)
 		t.output[i].Cases = &rm
 	}
-	res, err := json.MarshalIndent(t.output, "", "  ")
+	err := enc.Encode(t.output)
 	if err != nil {
 		return err
 	}
@@ -242,6 +251,6 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 		return err
 	}
 	defer file.Close()
-	_, err = file.Write(res)
+	_, err = file.Write(buf.Bytes())
 	return err
 }
