@@ -73,7 +73,6 @@ func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
-	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendInt64(1)
