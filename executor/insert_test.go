@@ -15,11 +15,11 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/types"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
