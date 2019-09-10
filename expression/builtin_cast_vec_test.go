@@ -28,11 +28,11 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinCastEvalOneVec(c *C) {
-	s.testVectorizedEvalOneVec(c, vecBuiltinCastCases)
+	testVectorizedEvalOneVec(c, vecBuiltinCastCases)
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinCastFunc(c *C) {
-	s.testVectorizedBuiltinFunc(c, vecBuiltinCastCases)
+	testVectorizedBuiltinFunc(c, vecBuiltinCastCases)
 }
 
 func BenchmarkVectorizedBuiltinCastEvalOneVec(b *testing.B) {

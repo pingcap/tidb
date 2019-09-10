@@ -28,11 +28,11 @@ var vecBuiltinControlCases = map[string][]vecExprBenchCase{
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinControlEvalOneVec(c *C) {
-	s.testVectorizedEvalOneVec(c, vecBuiltinControlCases)
+	testVectorizedEvalOneVec(c, vecBuiltinControlCases)
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinControlFunc(c *C) {
-	s.testVectorizedBuiltinFunc(c, vecBuiltinControlCases)
+	testVectorizedBuiltinFunc(c, vecBuiltinControlCases)
 }
 
 func BenchmarkVectorizedBuiltinControlEvalOneVec(b *testing.B) {
