@@ -14,6 +14,8 @@
 package core_test
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
@@ -24,20 +26,29 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testPlanSuite{})
 
 type testPlanSuite struct {
 	*parser.Parser
-
 	is infoschema.InfoSchema
+
+	testData testutil.TestData
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockTable()})
 	s.Parser = parser.New()
+
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testPlanSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
