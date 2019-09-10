@@ -571,12 +571,14 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 			case types.ETDuration:
 				err := baseFunc.vecEvalDuration(input, output)
 				c.Assert(err, IsNil)
+				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+				d64s := output.GoDurations()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalDuration(row)
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
-						c.Assert(val, Equals, output.GetDuration(i, types.UnspecifiedLength))
+						c.Assert(val, Equals, d64s[i])
 					}
 					i++
 				}
