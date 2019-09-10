@@ -634,6 +634,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 			},
 		},
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
+		IsPointUpdate:             true,
 	}.Init(ctx)
 	return updatePlan
 }
@@ -655,7 +656,6 @@ func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*
 		if err != nil {
 			return nil, true
 		}
-		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst

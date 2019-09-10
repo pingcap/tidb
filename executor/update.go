@@ -50,6 +50,7 @@ type UpdateExec struct {
 	tblColPosInfos            plannercore.TblColPosInfoSlice
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
+	isPointUpdate             bool
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) ([]types.Datum, error) {
@@ -192,6 +193,9 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 			e.rows = append(e.rows, datumRow)
 			e.newRowsData = append(e.newRowsData, newRow)
 			globalRowIdx++
+		}
+		if e.isPointUpdate {
+			break
 		}
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}

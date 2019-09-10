@@ -447,6 +447,7 @@ type Update struct {
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice
+	IsPointUpdate  bool
 }
 
 // Delete represents a delete plan.

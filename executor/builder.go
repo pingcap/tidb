@@ -1408,6 +1408,11 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
+		isPointUpdate:             v.IsPointUpdate,
+	}
+	if updateExec.isPointUpdate {
+		updateExec.base().initCap = 1
+		updateExec.base().maxChunkSize = 1
 	}
 	return updateExec
 }
