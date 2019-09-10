@@ -121,6 +121,9 @@ const (
 
 	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
 	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
+
+	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
+	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -270,6 +273,7 @@ const (
 	DefTiDBScatterRegion             = false
 	DefTiDBWaitSplitRegionFinish     = true
 	DefWaitSplitRegionTimeout        = 300 // 300s
+	DefTiDBAllowRemoveAutoInc        = false
 )
 
 // Process global variables.
