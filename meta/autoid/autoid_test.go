@@ -15,6 +15,7 @@ package autoid_test
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -239,13 +240,12 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(id, Equals, int64(6544))
 
 	// Test the MaxUint64 is alloc upper bound but not rebase.
-	var n uint64 = 18446744073709551614
-	var i interface{} = n
-	un := i.(int64)
+	var n uint64 = math.MaxInt64 - 1
+	un := int64(n)
 	err = alloc.Rebase(3, un, true)
 	c.Assert(err, IsNil)
 	_, err = alloc.Alloc(3)
-	c.Assert(alloc, NotNil)
+	un = int64(n + 1)
 	err = alloc.Rebase(3, un, true)
 	c.Assert(err, IsNil)
 }
