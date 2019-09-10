@@ -1016,7 +1016,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
-			logutil.Logger(ctx).Warn("run statement error",
+			logutil.Logger(ctx).Warn("run statement failed",
 				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
 				zap.Error(err),
 				zap.String("session", s.String()))
@@ -1074,9 +1074,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
-		logutil.Logger(ctx).Warn("parse sql error",
+		logutil.Logger(ctx).Warn("parse SQL failed",
 			zap.Error(err),
-			zap.String("sql", sql))
+			zap.String("SQL", sql))
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(startTS)
@@ -1102,9 +1102,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			logutil.Logger(ctx).Warn("compile sql error",
+			logutil.Logger(ctx).Warn("compile SQL failed",
 				zap.Error(err),
-				zap.String("sql", sql))
+				zap.String("SQL", sql))
 			return nil, err
 		}
 		durCompile := time.Since(startTS)
@@ -1719,6 +1719,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBExpensiveQueryTimeThreshold,
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
+	variable.TiDBTxnMode,
 }
 
 var (
@@ -1805,11 +1806,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	if !s.sessionVars.IsAutocommit() {
 		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
 		if pessTxnConf.Enable {
-			txnMode := s.sessionVars.TxnMode
-			if txnMode == "" && pessTxnConf.Default {
-				txnMode = ast.Pessimistic
-			}
-			if txnMode == ast.Pessimistic {
+			if s.sessionVars.TxnMode == ast.Pessimistic {
 				s.sessionVars.TxnCtx.IsPessimistic = true
 			}
 		}
