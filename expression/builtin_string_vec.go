@@ -62,7 +62,7 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
-func (b *builtinStringIsNullSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
