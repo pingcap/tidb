@@ -861,7 +861,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
 			s.ReplicaRead = kv.ReplicaReadLeader
 		}
-	case TiDBAllowDropAutoInc:
+	case TiDBAllowRemoveAutoInc:
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 	}
 	s.systems[name] = val

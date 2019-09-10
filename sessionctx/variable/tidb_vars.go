@@ -146,8 +146,8 @@ const (
 	// TiDBReplicaRead is used for reading data from replicas, followers for example.
 	TiDBReplicaRead = "tidb_replica_read"
 
-	// TiDBAllowDropAutoInc indicates whether a user can drop the auto_increment column attribute or not.
-	TiDBAllowDropAutoInc = "tidb_allow_remove_auto_inc"
+	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
+	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
 )
 
 // TiDB system variable names that both in session and global scope.
