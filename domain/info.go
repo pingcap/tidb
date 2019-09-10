@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/sessionctx"
+	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
@@ -57,6 +57,7 @@ type InfoSyncer struct {
 	minStartTS     uint64
 	minStartTSPath string
 	session        *concurrency.Session
+	manager        util2.SessionManager
 }
 
 // ServerInfo is server static information.
@@ -90,6 +91,10 @@ func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
 // Init creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) Init(ctx context.Context) error {
 	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+}
+
+func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
+	is.manager = manager
 }
 
 // GetServerInfo gets self server static information.
@@ -176,13 +181,12 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 }
 
 // UpdateMinStartTS updates self server min start timestamp from etcd.
-func (is *InfoSyncer) UpdateMinStartTS(pool *sessionPool) {
-	ctx, err := pool.Get()
-	if err != nil {
-		logutil.BgLogger().Error("update min start timestamp failed", zap.Error(err))
+func (is *InfoSyncer) UpdateMinStartTS() {
+	if is.manager == nil {
+		// Server may not start in time.
+		return
 	}
-	defer pool.Put(ctx)
-	pl := ctx.(sessionctx.Context).GetSessionManager().ShowProcessList()
+	pl := is.manager.ShowProcessList()
 	var minStartTS uint64 = math.MaxUint64
 	for _, info := range pl {
 		if info.CurTxnStartTS < minStartTS {
@@ -190,7 +194,7 @@ func (is *InfoSyncer) UpdateMinStartTS(pool *sessionPool) {
 		}
 	}
 	is.minStartTS = minStartTS
-	err = is.storeMinStartTS(context.Background())
+	err := is.storeMinStartTS(context.Background())
 	if err != nil {
 		logutil.BgLogger().Error("update min start timestamp failed", zap.Error(err))
 	}
