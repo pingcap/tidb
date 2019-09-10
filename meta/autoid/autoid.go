@@ -113,6 +113,10 @@ func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 }
 
 func (alloc *allocator) rebase4Unsigned(tableID int64, requiredBase uint64, allocIDs bool) error {
+	// Keep requiredBase valid.
+	if requiredBase == math.MaxUint64 {
+		return ErrAutoincReadFailed
+	}
 	// Satisfied by alloc.base, nothing to do.
 	if requiredBase <= uint64(alloc.base) {
 		return nil
@@ -159,6 +163,10 @@ func (alloc *allocator) rebase4Unsigned(tableID int64, requiredBase uint64, allo
 }
 
 func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool) error {
+	// Keep requiredBase valid.
+	if requiredBase == math.MaxInt64 {
+		return ErrAutoincReadFailed
+	}
 	// Satisfied by alloc.base, nothing to do.
 	if requiredBase <= alloc.base {
 		return nil
