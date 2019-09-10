@@ -1292,7 +1292,7 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 		// Do nothing if the condition cannot be pushed down to range.
 		{
 			sql:  "select max(a), min(a) from t where a * 3 + 10 < 100",
-			best: "TableReader(Table(t)->Sel([lt(plus(mul(test.t.a, 3), 10), 100)])->StreamAgg)->StreamAgg",
+			best: "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([lt(plus(mul(test.t.a, 3), 10), 100)])->StreamAgg)->StreamAgg",
 		},
 		// Do nothing to max with groupby.
 		{
