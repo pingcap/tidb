@@ -50,7 +50,6 @@ Projection_8	10000.00	root	Column#1, Column#2
   ├─IndexLookUp_11	10.00	root	
   │ ├─IndexScan_9	10.00	cop	table:t1, index:a, range: decided by [eq(Column#1, Column#4)], keep order:false, stats:pseudo
   │ └─TableScan_10	10.00	cop	table:t1, keep order:false, stats:pseudo
-  └─StreamAgg_29	8000.00	root	group by:Column#15, funcs:firstrow(Column#15)
-    └─IndexReader_30	8000.00	root	index:StreamAgg_21
-      └─StreamAgg_21	8000.00	cop	group by:Column#4, 
-        └─IndexScan_28	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+  └─StreamAgg_22	8000.00	root	group by:Column#4, funcs:firstrow(Column#4)
+    └─IndexReader_35	10000.00	root	index:IndexScan_34
+      └─IndexScan_34	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo

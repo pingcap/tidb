@@ -332,7 +332,7 @@ var defaultConf = Config{
 	DelayCleanTableLock:          0,
 	SplitRegionMaxNum:            1000,
 	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  true,
+		Enabled:  false,
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,

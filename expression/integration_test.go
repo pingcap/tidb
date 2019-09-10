@@ -4921,3 +4921,23 @@ func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_HOUR)`).Check(testkit.Rows("2007-03-31 00:08:28"))
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR_MONTH)`).Check(testkit.Rows("2009-05-28 22:08:28"))
 }
+
+func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// current db is empty
+	_, err := tk.Exec("SELECT xxx(1)")
+	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+
+	_, err = tk.Exec("SELECT yyy()")
+	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+
+	// current db is not empty
+	tk.MustExec("use test")
+	_, err = tk.Exec("SELECT xxx(1)")
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.xxx does not exist")
+
+	_, err = tk.Exec("SELECT yyy()")
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.yyy does not exist")
+
+}

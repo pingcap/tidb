@@ -930,16 +930,16 @@ id	count	task	operator info
 Sort_13	3863988.24	root	Column#28:desc, Column#25:asc, Column#26:asc, Column#27:asc
 └─Projection_15	3863988.24	root	Column#10, Column#11, Column#12, Column#24
   └─HashAgg_18	3863988.24	root	group by:Column#10, Column#11, Column#12, funcs:count(distinct Column#2), firstrow(Column#10), firstrow(Column#11), firstrow(Column#12)
-    └─HashLeftJoin_28	3863988.24	root	anti semi join, inner:TableReader_60, equal:[eq(Column#2, Column#16)]
+    └─HashLeftJoin_28	3863988.24	root	anti semi join, inner:TableReader_62, equal:[eq(Column#2, Column#16)]
       ├─IndexMergeJoin_36	4829985.30	root	inner join, inner:IndexReader_34, outer key:Column#7, inner key:Column#1
       │ ├─TableReader_55	1200618.43	root	data:Selection_54
       │ │ └─Selection_54	1200618.43	cop	in(Column#12, 48, 19, 12, 4, 41, 7, 21, 39), ne(Column#10, "Brand#34"), not(like(Column#11, "LARGE BRUSHED%", 92))
       │ │   └─TableScan_53	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
       │ └─IndexReader_34	1.00	root	index:IndexScan_33
       │   └─IndexScan_33	1.00	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(Column#1, Column#7)], keep order:true
-      └─TableReader_60	400000.00	root	data:Selection_59
-        └─Selection_59	400000.00	cop	like(Column#22, "%Customer%Complaints%", 92)
-          └─TableScan_58	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
+      └─TableReader_62	400000.00	root	data:Selection_61
+        └─Selection_61	400000.00	cop	like(Column#22, "%Customer%Complaints%", 92)
+          └─TableScan_60	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
 /*
 Q17 Small-Quantity-Order Revenue Query
 This query determines how much average yearly revenue would be lost if orders were no longer filled for small
