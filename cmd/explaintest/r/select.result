@@ -255,9 +255,9 @@ create table t (a int, b int, c int, key idx(a, b, c));
 explain select count(a) from t;
 id	count	task	operator info
 StreamAgg_16	1.00	root	funcs:count(col_0)
-└─TableReader_17	1.00	root	data:StreamAgg_8
+└─IndexReader_17	1.00	root	index:StreamAgg_8
   └─StreamAgg_8	1.00	cop	funcs:count(test.t.a)
-    └─TableScan_15	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─IndexScan_15	10000.00	cop	table:t, index:a, b, c, range:[NULL,+inf], keep order:false, stats:pseudo
 select count(a) from t;
 count(a)
 0
