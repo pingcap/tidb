@@ -223,8 +223,8 @@ explain select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5
 id	count	task	operator info
 Limit_11	5.00	root	offset:0, count:5
 └─IndexJoin_15	5.00	root	inner join, inner:IndexReader_14, outer key:test.t1.a, inner key:test.t2.a
-  ├─TableReader_17	4.00	root	data:TableScan_16
-  │ └─TableScan_16	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+  ├─IndexReader_17	4.00	root	index:IndexScan_16
+  │ └─IndexScan_16	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
   └─IndexReader_14	10.00	root	index:IndexScan_13
     └─IndexScan_13	10.00	cop	table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
 explain select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
@@ -232,8 +232,8 @@ id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
 └─Selection_13	5.00	root	isnull(test.t2.a)
   └─IndexJoin_17	5.00	root	left outer join, inner:IndexReader_16, outer key:test.t1.a, inner key:test.t2.a
-    ├─TableReader_19	4.00	root	data:TableScan_18
-    │ └─TableScan_18	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+    ├─IndexReader_19	4.00	root	index:IndexScan_18
+    │ └─IndexScan_18	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
     └─IndexReader_16	10.00	root	index:IndexScan_15
       └─IndexScan_15	10.00	cop	table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
 explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
@@ -256,17 +256,17 @@ Limit_12	5.00	root	offset:0, count:5
 explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	count	task	operator info
 Limit_11	5.00	root	offset:0, count:5
-└─HashLeftJoin_19	5.00	root	inner join, inner:TableReader_24, equal:[eq(test.t1.a, test.t2.a)]
-  ├─TableReader_22	4.00	root	data:TableScan_21
-  │ └─TableScan_21	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─TableReader_24	10000.00	root	data:TableScan_23
-    └─TableScan_23	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+└─HashLeftJoin_19	5.00	root	inner join, inner:IndexReader_24, equal:[eq(test.t1.a, test.t2.a)]
+  ├─IndexReader_22	4.00	root	index:IndexScan_21
+  │ └─IndexScan_21	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
+  └─IndexReader_24	10000.00	root	index:IndexScan_23
+    └─IndexScan_23	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
 explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
 └─Selection_13	5.00	root	isnull(test.t2.a)
-  └─HashLeftJoin_18	5.00	root	left outer join, inner:TableReader_22, equal:[eq(test.t1.a, test.t2.a)]
-    ├─TableReader_20	4.00	root	data:TableScan_19
-    │ └─TableScan_19	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-    └─TableReader_22	10000.00	root	data:TableScan_21
-      └─TableScan_21	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─HashLeftJoin_18	5.00	root	left outer join, inner:IndexReader_22, equal:[eq(test.t1.a, test.t2.a)]
+    ├─IndexReader_20	4.00	root	index:IndexScan_19
+    │ └─IndexScan_19	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
+    └─IndexReader_22	10000.00	root	index:IndexScan_21
+      └─IndexScan_21	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:false, stats:pseudo

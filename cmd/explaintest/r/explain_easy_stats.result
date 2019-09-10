@@ -108,15 +108,15 @@ MemTableScan_4	10000.00	root
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	count	task	operator info
 Projection_12	1999.00	root	eq(test.t1.c2, test.t2.c2)
-└─Apply_14	1999.00	root	CARTESIAN left outer join, inner:Limit_23
-  ├─IndexReader_18	1999.00	root	index:IndexScan_17
-  │ └─IndexScan_17	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
-  └─Limit_23	1.00	root	offset:0, count:1
-    └─Projection_43	1.00	root	test.t2.c1, test.t2.c2
-      └─IndexLookUp_42	1.00	root	
-        ├─Limit_41	1.00	cop	offset:0, count:1
-        │ └─IndexScan_39	1.25	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
-        └─TableScan_40	1.00	cop	table:t2, keep order:false, stats:pseudo
+└─Apply_14	1999.00	root	CARTESIAN left outer join, inner:Limit_21
+  ├─IndexReader_16	1999.00	root	index:IndexScan_15
+  │ └─IndexScan_15	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
+  └─Limit_21	1.00	root	offset:0, count:1
+    └─Projection_41	1.00	root	test.t2.c1, test.t2.c2
+      └─IndexLookUp_40	1.00	root	
+        ├─Limit_39	1.00	cop	offset:0, count:1
+        │ └─IndexScan_37	1.25	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
+        └─TableScan_38	1.00	cop	table:t2, keep order:false, stats:pseudo
 explain select * from t1 order by c1 desc limit 1;
 id	count	task	operator info
 Limit_10	1.00	root	offset:0, count:1
@@ -127,12 +127,12 @@ set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
 id	count	task	operator info
 Projection_6	1999.00	root	5_aux_0
-└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_14
-  ├─IndexReader_11	1999.00	root	index:IndexScan_10
-  │ └─IndexScan_10	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
-  └─TableReader_14	0.00	root	data:Selection_13
-    └─Selection_13	0.00	cop	eq(1, test.t2.c2)
-      └─TableScan_12	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
+└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_12
+  ├─IndexReader_9	1999.00	root	index:IndexScan_8
+  │ └─IndexScan_8	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
+  └─TableReader_12	0.00	root	data:Selection_11
+    └─Selection_11	0.00	cop	eq(1, test.t2.c2)
+      └─TableScan_10	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
@@ -142,23 +142,23 @@ node [style=filled, color=lightgrey]
 color=black
 label = "root"
 "Projection_6" -> "HashLeftJoin_7"
-"HashLeftJoin_7" -> "IndexReader_11"
-"HashLeftJoin_7" -> "TableReader_14"
+"HashLeftJoin_7" -> "IndexReader_9"
+"HashLeftJoin_7" -> "TableReader_12"
 }
-subgraph cluster10{
+subgraph cluster8{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"IndexScan_10"
+"IndexScan_8"
 }
-subgraph cluster13{
+subgraph cluster11{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_13" -> "TableScan_12"
+"Selection_11" -> "TableScan_10"
 }
-"IndexReader_11" -> "IndexScan_10"
-"TableReader_14" -> "Selection_13"
+"IndexReader_9" -> "IndexScan_8"
+"TableReader_12" -> "Selection_11"
 }
 
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
