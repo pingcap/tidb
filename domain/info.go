@@ -92,6 +92,7 @@ func (is *InfoSyncer) Init(ctx context.Context) error {
 	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
+// SetSessionManager set the session manager for InfoSyncer.
 func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
 	is.manager = manager
 }
