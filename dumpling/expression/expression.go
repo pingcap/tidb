@@ -148,6 +148,13 @@ func (e CNFExprs) Clone() CNFExprs {
 	return cnf
 }
 
+// Shallow makes a shallow copy of itself.
+func (e CNFExprs) Shallow() CNFExprs {
+	cnf := make(CNFExprs, 0, len(e))
+	cnf = append(cnf, e...)
+	return cnf
+}
+
 func isColumnInOperand(c *Column) bool {
 	return c.InOperand
 }
