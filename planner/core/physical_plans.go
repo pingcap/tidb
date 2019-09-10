@@ -61,6 +61,21 @@ type PhysicalTableReader struct {
 	tablePlan  PhysicalPlan
 }
 
+// GetPhysicalReader returns PhysicalTableReader for logical TableGather.
+func (tg *TableGather) GetPhysicalReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+	reader := PhysicalTableReader{}.Init(tg.ctx)
+	reader.stats = stats
+	reader.SetSchema(schema)
+	reader.childrenReqProps = props
+	return reader
+}
+
+// SetChildren overrides PhysicalPlan SetChildren interface.
+func (p *PhysicalTableReader) SetChildren(children ...PhysicalPlan) {
+	p.tablePlan = children[0]
+	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+}
+
 // PhysicalIndexReader is the index reader in tidb.
 type PhysicalIndexReader struct {
 	physicalSchemaProducer
