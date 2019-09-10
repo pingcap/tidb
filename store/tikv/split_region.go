@@ -48,7 +48,7 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 
 	var batches []batch
 	for regionID, groupKeys := range groups {
-		batches = appendKeyBatches(batches, regionID, groupKeys, rawBatchPairCount)
+		batches = appendKeyBatches(batches, regionID, groupKeys, rawBatchPutSize)
 	}
 
 	if len(batches) == 0 {
@@ -68,14 +68,13 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 	}
 	ch := make(chan singleBatchResp, len(batches))
 	for _, batch1 := range batches {
-		batch := batch1
-		go func() {
+		go func(b batch) {
 			backoffer, cancel := bo.Fork()
 			defer cancel()
 
 			util.WithRecovery(func() {
 				select {
-				case ch <- s.batchSendSingleRegion(backoffer, batch, scatter):
+				case ch <- s.batchSendSingleRegion(backoffer, b, scatter):
 				case <-bo.ctx.Done():
 					ch <- singleBatchResp{err: bo.ctx.Err()}
 				}
@@ -84,15 +83,14 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 					ch <- singleBatchResp{err: errors.Errorf("%v", r)}
 				}
 			})
-		}()
+		}(batch1)
 	}
 
 	srResp := &kvrpcpb.SplitRegionResponse{Regions: make([]*metapb.Region, 0, len(keys)*2)}
 	for i := 0; i < len(batches); i++ {
 		batchResp := <-ch
 		if batchResp.err != nil {
-			logutil.BgLogger().Debug("tikv store batch send failed",
-				zap.Error(batchResp.err))
+			logutil.BgLogger().Info("batch split regions failed", zap.Error(batchResp.err))
 			if err == nil {
 				err = batchResp.err
 			}
@@ -234,11 +232,12 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 // backOff is the back off time of the wait scatter region.(Milliseconds)
 // if backOff <= 0, the default wait scatter back off time will be used.
 func (s *tikvStore) WaitScatterRegionFinish(regionID uint64, backOff int) error {
-	logutil.BgLogger().Info("wait scatter region",
-		zap.Uint64("regionID", regionID))
 	if backOff <= 0 {
 		backOff = waitScatterRegionFinishBackoff
 	}
+	logutil.BgLogger().Info("wait scatter region",
+		zap.Uint64("regionID", regionID), zap.Int("backoff(ms)", backOff))
+
 	bo := NewBackoffer(context.Background(), backOff)
 	logFreq := 0
 	for {
