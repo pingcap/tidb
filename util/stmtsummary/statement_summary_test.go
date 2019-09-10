@@ -15,14 +15,14 @@ package stmtsummary
 
 import (
 	"fmt"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 )
 
