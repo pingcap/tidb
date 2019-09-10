@@ -2687,8 +2687,8 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
-	if !mysql.HasAutoIncrementFlag(col.Flag) && mysql.HasAutoIncrementFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("set auto_increment")
+	if mysql.HasAutoIncrementFlag(col.Flag) != mysql.HasAutoIncrementFlag(newCol.Flag) {
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("change auto_increment attribute")
 	}
 
 	// We support modifying the type definitions of 'null' to 'not null' now.

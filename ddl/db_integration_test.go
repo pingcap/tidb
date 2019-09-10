@@ -1534,7 +1534,7 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 
-	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
+	// Both dropping and adding auto_increment is not allowed.
 	s.tk.MustExec("drop table if exists mc")
 	s.tk.MustExec("create table mc(a int key auto_increment, b int)")
 	s.tk.MustExec("alter table mc modify column a bigint auto_increment") // Keeps auto_increment
@@ -1542,11 +1542,10 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	createSQL = result.Rows()[0][1]
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
-	s.tk.MustExec("alter table mc modify column a bigint") // Drops auto_increment
-	result = s.tk.MustQuery("show create table mc")
-	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	c.Assert(createSQL, Equals, expected)
+	_, err = s.tk.Exec("alter table mc modify column a bigint") // Drops auto_increment
+	c.Assert(err, NotNil)
+	s.tk.MustExec("drop table mc")
+	s.tk.MustExec("create table mc(a bigint)")
 	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
 	c.Assert(err, NotNil)
 
