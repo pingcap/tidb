@@ -215,12 +215,12 @@ type candidatePath struct {
 // DoubleScan -> 0, TableScan -> 1, IndexScan -> 2.
 func getScanTypeScore(p *candidatePath) int {
 	if !p.isSingleScan {
-		return 0;
+		return 0
 	}
 	if p.path.isTablePath {
-		return 1;
+		return 1
 	}
-	return 2;
+	return 2
 }
 
 // compareColumnSet will compares the two set. The last return value is used to indicate
@@ -266,7 +266,7 @@ func compareInt(l, r int) int {
 // compareCandidates is the core of skyline pruning. It compares the two candidate paths on three dimensions:
 // (1): the set of columns that occurred in the access condition,
 // (2): whether or not it matches the physical property
-// (3): whether the candidate is a IndexScan or TableScan or DoubleScan. (IndexScan > TableScan > DoubleScan) 
+// (3): whether the candidate is a IndexScan or TableScan or DoubleScan. (IndexScan > TableScan > DoubleScan)
 // If `x` is not worse than `y` at all factors,
 // and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
