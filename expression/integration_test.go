@@ -422,6 +422,17 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a float)")
+	tk.MustExec("insert into t values(1000000)")
+	rs, err = tk.Exec("select exp(a) from t")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(err, NotNil)
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	c.Assert(err.Error(), Equals, "[types:1690]DOUBLE value is out of range in 'exp(test.t.a)'")
+	c.Assert(rs.Close(), IsNil)
 
 	// for conv
 	result = tk.MustQuery("SELECT CONV('a', 16, 2);")
@@ -2036,6 +2047,17 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select tidb_parse_tso(-1)`)
 	result.Check(testkit.Rows("<nil>"))
+
+	// fix issue 10308
+	result = tk.MustQuery("select time(\"- -\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '- -'"))
+	result = tk.MustQuery("select time(\"---1\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '---1'"))
+	result = tk.MustQuery("select time(\"-- --1\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '-- --1'"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
@@ -2076,6 +2098,12 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for unaryPlus
 	result = tk.MustQuery(`select +1, +0, +(-9), +(-0.001), +0.999, +null, +"aaa"`)
 	result.Check(testkit.Rows("1 0 -9 -0.001 0.999 <nil> aaa"))
+	// for unaryMinus
+	tk.MustExec("drop table if exists f")
+	tk.MustExec("create table f(a decimal(65,0))")
+	tk.MustExec("insert into f value (-17000000000000000000)")
+	result = tk.MustQuery("select a from f")
+	result.Check(testkit.Rows("-17000000000000000000"))
 }
 
 func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
@@ -4841,6 +4869,12 @@ func (s *testIntegrationSuite) TestIssue11594(c *C) {
 	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), v)) FROM t1;").Check(testkit.Rows("3"))
 }
 
+func (s *testIntegrationSuite) TestDefEnableVectorizedEvaluation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use mysql")
+	tk.MustQuery(`select @@tidb_enable_vectorized_expression`).Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4886,4 +4920,24 @@ func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MINUTE)`).Check(testkit.Rows("2007-03-29 00:10:28"))
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_HOUR)`).Check(testkit.Rows("2007-03-31 00:08:28"))
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR_MONTH)`).Check(testkit.Rows("2009-05-28 22:08:28"))
+}
+
+func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// current db is empty
+	_, err := tk.Exec("SELECT xxx(1)")
+	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+
+	_, err = tk.Exec("SELECT yyy()")
+	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+
+	// current db is not empty
+	tk.MustExec("use test")
+	_, err = tk.Exec("SELECT xxx(1)")
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.xxx does not exist")
+
+	_, err = tk.Exec("SELECT yyy()")
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.yyy does not exist")
+
 }

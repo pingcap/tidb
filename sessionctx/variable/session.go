@@ -99,22 +99,22 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
-	ForUpdate     bool
 	forUpdateTS   uint64
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
-	CouldRetry    bool
 	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
-	IsPessimistic bool
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
+	ForUpdate      bool
+	CouldRetry     bool
+	IsPessimistic  bool
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -339,6 +339,9 @@ type SessionVars struct {
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
+	// EnableVectorizedExpression  enables the vectorized expression evaluation.
+	EnableVectorizedExpression bool
+
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	EnableIndexMerge bool
 
@@ -399,6 +402,21 @@ type SessionVars struct {
 
 	// use noop funcs or not
 	EnableNoopFuncs bool
+
+	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
+	ReplicaRead kv.ReplicaReadType
+
+	// StartTime is the start time of the last query.
+	StartTime time.Time
+
+	// DurationParse is the duration of parsing SQL string to AST of the last query.
+	DurationParse time.Duration
+
+	// DurationCompile is the duration of compiling AST to execution plan of the last query.
+	DurationCompile time.Duration
+
+	// PrevStmt is used to store the previous executed statement in the current session.
+	PrevStmt string
 }
 
 // ConnectionInfo present connection used by audit.
@@ -445,6 +463,7 @@ func NewSessionVars() *SessionVars {
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		EnableRadixJoin:             false,
+		EnableVectorizedExpression:  DefEnableVectorizedExpression,
 		L2CacheSize:                 cpuid.CPU.Cache.L2,
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
@@ -453,6 +472,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		EnableIndexMerge:            false,
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
+		ReplicaRead:                 kv.ReplicaReadLeader,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -807,6 +827,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
+	case TiDBEnableVectorizedExpression:
+		s.EnableVectorizedExpression = TiDBOptOn(val)
 	case TiDBOptJoinReorderThreshold:
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
 	case TiDBCheckMb4ValueInUTF8:
@@ -822,15 +844,19 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBExpensiveQueryTimeThreshold:
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
-		if err := s.setTxnMode(val); err != nil {
-			return err
-		}
+		s.TxnMode = strings.ToUpper(val)
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:
 		s.EnableIndexMerge = TiDBOptOn(val)
 	case TiDBEnableNoopFuncs:
 		s.EnableNoopFuncs = TiDBOptOn(val)
+	case TiDBReplicaRead:
+		if strings.EqualFold(val, "follower") {
+			s.ReplicaRead = kv.ReplicaReadFollower
+		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
+			s.ReplicaRead = kv.ReplicaReadLeader
+		}
 	}
 	s.systems[name] = val
 	return nil
@@ -991,8 +1017,8 @@ const (
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
 	SlowLogIsInternalStr = "Is_internal"
-	// SlowLogIndexIDsStr is slow log field name.
-	SlowLogIndexIDsStr = "Index_ids"
+	// SlowLogIndexNamesStr is slow log field name.
+	SlowLogIndexNamesStr = "Index_names"
 	// SlowLogDigestStr is slow log field name.
 	SlowLogDigestStr = "Digest"
 	// SlowLogQuerySQLStr is slow log field name.
@@ -1021,7 +1047,29 @@ const (
 	SlowLogMemMax = "Mem_max"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
 	SlowLogSucc = "Succ"
+	// SlowLogPrevStmt is used to show the previous executed statement.
+	SlowLogPrevStmt = "Prev_stmt"
+	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
+	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
 )
+
+// SlowQueryLogItems is a collection of items that should be included in the
+// slow query log.
+type SlowQueryLogItems struct {
+	TxnTS       uint64
+	SQL         string
+	Digest      string
+	TimeTotal   time.Duration
+	TimeParse   time.Duration
+	TimeCompile time.Duration
+	IndexNames  string
+	StatsInfos  map[string]uint64
+	CopTasks    *stmtctx.CopTasksDetails
+	ExecDetail  execdetails.ExecDetails
+	MemMax      int64
+	Succ        bool
+	PrevStmt    string
+}
 
 // SlowLogFormat uses for formatting slow log.
 // The slow log output is like below:
@@ -1032,7 +1080,7 @@ const (
 // # Query_time: 4.895492
 // # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
 // # DB: test
-// # Index_ids: [1,2]
+// # Index_names: [t1.idx1,t2.idx2]
 // # Is_internal: false
 // # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 // # Stats: t1:1,t2:2
@@ -1041,37 +1089,40 @@ const (
 // # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
 // # Memory_max: 4096
 // # Succ: true
+// # Prev_stmt: begin;
 // select * from t_slim;
-func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string,
-	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, succ bool, sql string) string {
+func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	var buf bytes.Buffer
-	execDetailStr := execDetail.String()
-	buf.WriteString(SlowLogRowPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
+
+	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
 	if s.User != nil {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogUserStr + SlowLogSpaceMarkStr + s.User.String() + "\n")
+		writeSlowLogItem(&buf, SlowLogUserStr, s.User.String())
 	}
 	if s.ConnectionID != 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogConnIDStr + SlowLogSpaceMarkStr + strconv.FormatUint(s.ConnectionID, 10) + "\n")
+		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
 	}
-	buf.WriteString(SlowLogRowPrefixStr + SlowLogQueryTimeStr + SlowLogSpaceMarkStr + strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64) + "\n")
-	if len(execDetailStr) > 0 {
+	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
+
+	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
 	}
+
 	if len(s.CurrentDB) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogDBStr + SlowLogSpaceMarkStr + s.CurrentDB + "\n")
+		writeSlowLogItem(&buf, SlowLogDBStr, s.CurrentDB)
 	}
-	if len(indexIDs) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogIndexIDsStr + SlowLogSpaceMarkStr + indexIDs + "\n")
+	if len(logItems.IndexNames) > 0 {
+		writeSlowLogItem(&buf, SlowLogIndexNamesStr, logItems.IndexNames)
 	}
-	buf.WriteString(SlowLogRowPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
-	if len(digest) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
+
+	writeSlowLogItem(&buf, SlowLogIsInternalStr, strconv.FormatBool(s.InRestrictedSQL))
+	if len(logItems.Digest) > 0 {
+		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
-	if len(statsInfos) > 0 {
+	if len(logItems.StatsInfos) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
 		vStr := ""
-		for k, v := range statsInfos {
+		for k, v := range logItems.StatsInfos {
 			if v == 0 {
 				vStr = "pseudo"
 			} else {
@@ -1087,29 +1138,37 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 		}
 		buf.WriteString("\n")
 	}
-	if copTasks != nil {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
+	if logItems.CopTasks != nil {
+		writeSlowLogItem(&buf, SlowLogNumCopTasksStr, strconv.FormatInt(int64(logItems.CopTasks.NumCopTasks), 10))
 		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
-			SlowLogCopProcAvg, SlowLogSpaceMarkStr, copTasks.AvgProcessTime.Seconds(),
-			SlowLogCopProcP90, SlowLogSpaceMarkStr, copTasks.P90ProcessTime.Seconds(),
-			SlowLogCopProcMax, SlowLogSpaceMarkStr, copTasks.MaxProcessTime.Seconds(),
-			SlowLogCopProcAddr, SlowLogSpaceMarkStr, copTasks.MaxProcessAddress) + "\n")
+			SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
+			SlowLogCopProcP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90ProcessTime.Seconds(),
+			SlowLogCopProcMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessTime.Seconds(),
+			SlowLogCopProcAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessAddress) + "\n")
 		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
-			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, copTasks.AvgWaitTime.Seconds(),
-			SlowLogCopWaitP90, SlowLogSpaceMarkStr, copTasks.P90WaitTime.Seconds(),
-			SlowLogCopWaitMax, SlowLogSpaceMarkStr, copTasks.MaxWaitTime.Seconds(),
-			SlowLogCopWaitAddr, SlowLogSpaceMarkStr, copTasks.MaxWaitAddress) + "\n")
+			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
+			SlowLogCopWaitP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90WaitTime.Seconds(),
+			SlowLogCopWaitMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitTime.Seconds(),
+			SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
 	}
-	if memMax > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
+	if logItems.MemMax > 0 {
+		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
 	}
-	buf.WriteString(SlowLogRowPrefixStr + SlowLogSucc + SlowLogSpaceMarkStr + strconv.FormatBool(succ) + "\n")
-	if len(sql) == 0 {
-		sql = ";"
+
+	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
+
+	if logItems.PrevStmt != "" {
+		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
-	buf.WriteString(sql)
-	if sql[len(sql)-1] != ';' {
+
+	buf.WriteString(logItems.SQL)
+	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {
 		buf.WriteString(";")
 	}
 	return buf.String()
+}
+
+// writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
+func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
+	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
 }

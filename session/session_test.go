@@ -684,7 +684,7 @@ func (s *testSessionSuite) TestDatabase(c *C) {
 
 func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	r, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(tk.Se, "select 1;")
+	r, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select 1;")
 	c.Assert(err, IsNil)
 	c.Assert(len(r), Equals, 1)
 }
@@ -928,35 +928,35 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
 	_, err = tk.Exec("update autoid set auto_inc_id = 8000")
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("1", "5000"))
 	tk.MustExec("update autoid set auto_inc_id = 9000 where auto_inc_id=1")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("9000", "5000"))
 	tk.MustExec("insert into autoid values()")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000", "9001"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("9000", "5000", "9001"))
 
 	// Corner cases for signed bigint auto_increment Columns.
 	tk.MustExec("drop table if exists autoid")
 	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
 	tk.MustExec("insert into autoid values(9223372036854775806);")
-	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
+	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid use index()").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
 	_, err = tk.Exec("insert into autoid values();")
 	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
-	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
+	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid use index()").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
 	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid use index(auto_inc_id)").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
 
 	tk.MustExec("drop table if exists autoid")
 	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
 	tk.MustExec("insert into autoid values()")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("1"))
 	tk.MustExec("insert into autoid values(5000)")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("1", "5000"))
 	_, err = tk.Exec("update autoid set auto_inc_id = 8000")
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("1", "5000"))
 	tk.MustExec("update autoid set auto_inc_id = 9000 where auto_inc_id=1")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("9000", "5000"))
 	tk.MustExec("insert into autoid values()")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000", "9001"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("9000", "5000", "9001"))
 }
 
 func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
@@ -2795,4 +2795,16 @@ func (s *testSessionSuite) TestLoadClientInteractive(c *C) {
 	tk.Se.SetConnectionID(id)
 	tk.Se.GetSessionVars().ClientCapability = tk.Se.GetSessionVars().ClientCapability | mysql.ClientInteractive
 	tk.MustQuery("select @@wait_timeout").Check(testkit.Rows("28800"))
+}
+
+func (s *testSessionSuite) TestReplicaRead(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadLeader)
+	tk.MustExec("set @@tidb_replica_read = 'follower';")
+	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadFollower)
+	tk.MustExec("set @@tidb_replica_read = 'leader';")
+	c.Assert(tk.Se.GetSessionVars().ReplicaRead, Equals, kv.ReplicaReadLeader)
 }

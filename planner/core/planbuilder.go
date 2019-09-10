@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
 
@@ -58,6 +59,7 @@ type tableHintInfo struct {
 	indexNestedLoopJoinTables []hintTableInfo
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
+	indexHintList             []indexHintInfo
 	preferAggType             uint
 }
 
@@ -66,15 +68,20 @@ type hintTableInfo struct {
 	matched bool
 }
 
-func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
-	if len(tableNames) == 0 {
+type indexHintInfo struct {
+	tblName   model.CIStr
+	indexHint *ast.IndexHint
+}
+
+func tableNames2HintTableInfo(hintTables []ast.HintTable) []hintTableInfo {
+	if len(hintTables) == 0 {
 		return nil
 	}
-	hintTables := make([]hintTableInfo, 0, len(tableNames))
-	for _, tableName := range tableNames {
-		hintTables = append(hintTables, hintTableInfo{name: tableName})
+	hintTableInfos := make([]hintTableInfo, len(hintTables))
+	for i, hintTable := range hintTables {
+		hintTableInfos[i] = hintTableInfo{name: hintTable.TableName}
 	}
-	return hintTables
+	return hintTableInfos
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
@@ -173,7 +180,6 @@ type PlanBuilder struct {
 	ctx          sessionctx.Context
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
-	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -188,11 +194,66 @@ type PlanBuilder struct {
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
 
+	windowSpecs  map[string]*ast.WindowSpec
+	inUpdateStmt bool
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
 
-	windowSpecs map[string]*ast.WindowSpec
+	// handleHelper records the handle column position for tables. Delete/Update/SelectLock/UnionScan may need this information.
+	// It collects the information by the following procedure:
+	//   Since we build the plan tree from bottom to top, we maintain a stack to record the current handle information.
+	//   If it's a dataSource/tableDual node, we create a new map.
+	//   If it's a aggregation, we pop the map and push a nil map since no handle information left.
+	//   If it's a union, we pop all children's and push a nil map.
+	//   If it's a join, we pop its children's out then merge them and push the new map to stack.
+	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
+	handleHelper *handleColHelper
+
+	hintProcessor *BlockHintProcessor
+}
+
+type handleColHelper struct {
+	id2HandleMapStack []map[int64][]*expression.Column
+	stackTail         int
+}
+
+func (hch *handleColHelper) appendColToLastMap(tblID int64, col *expression.Column) {
+	tailMap := hch.id2HandleMapStack[hch.stackTail-1]
+	tailMap[tblID] = append(tailMap[tblID], col)
+}
+
+func (hch *handleColHelper) popMap() map[int64][]*expression.Column {
+	ret := hch.id2HandleMapStack[hch.stackTail-1]
+	hch.stackTail--
+	hch.id2HandleMapStack = hch.id2HandleMapStack[:hch.stackTail]
+	return ret
+}
+
+func (hch *handleColHelper) pushMap(m map[int64][]*expression.Column) {
+	hch.id2HandleMapStack = append(hch.id2HandleMapStack, m)
+	hch.stackTail++
+}
+
+func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]*expression.Column) {
+	newMap := make(map[int64][]*expression.Column)
+	for k, v := range m1 {
+		newMap[k] = make([]*expression.Column, len(v))
+		copy(newMap[k], v)
+	}
+	for k, v := range m2 {
+		if _, ok := newMap[k]; ok {
+			newMap[k] = append(newMap[k], v...)
+		} else {
+			newMap[k] = make([]*expression.Column, len(v))
+			copy(newMap[k], v)
+		}
+	}
+	hch.pushMap(newMap)
+}
+
+func (hch *handleColHelper) tailMap() map[int64][]*expression.Column {
+	return hch.id2HandleMapStack[hch.stackTail-1]
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -226,11 +287,13 @@ func (b *PlanBuilder) GetOptFlag() uint64 {
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PlanBuilder {
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *BlockHintProcessor) *PlanBuilder {
 	return &PlanBuilder{
-		ctx:       sctx,
-		is:        is,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
+		ctx:           sctx,
+		is:            is,
+		colMapper:     make(map[*ast.ColumnNameExpr]int),
+		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
+		hintProcessor: processor,
 	}
 }
 
@@ -466,7 +529,7 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo) ([]*accessPath, error) {
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, tblName model.CIStr) ([]*accessPath, error) {
 	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
 	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
 	for _, index := range tblInfo.Indices {
@@ -478,16 +541,44 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 	hasScanHint, hasUseOrForce := false, false
 	available := make([]*accessPath, 0, len(publicPaths))
 	ignored := make([]*accessPath, 0, len(publicPaths))
-	for _, hint := range indexHints {
+
+	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
+	indexHintsLen := len(indexHints)
+	if hints := b.TableHints(); hints != nil {
+		for _, hint := range hints.indexHintList {
+			if hint.tblName == tblName {
+				indexHints = append(indexHints, hint.indexHint)
+			}
+		}
+	}
+
+	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
 		}
 
 		hasScanHint = true
+
+		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
+		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
+		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
+		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
+			if path := getTablePath(publicPaths); path != nil {
+				hasUseOrForce = true
+				path.forced = true
+				available = append(available, path)
+			}
+		}
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
-				return nil, ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
+				err := ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
+				// if hint is from comment-style sql hints, we should throw a warning instead of error.
+				if i < indexHintsLen {
+					return nil, err
+				}
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				continue
 			}
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
@@ -530,7 +621,10 @@ func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableI
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
-	selectLock := LogicalLock{Lock: lock}.Init(b.ctx)
+	selectLock := LogicalLock{
+		Lock:         lock,
+		tblID2Handle: b.handleHelper.tailMap(),
+	}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock
 }
@@ -661,14 +755,14 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 }
 
 // getGenExprs gets generated expressions map.
-func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (
+func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, exprCols *expression.Schema) (
 	map[model.TableColumnID]expression.Expression, error) {
 	tblInfo := tbl.Meta()
 	genExprsMap := make(map[model.TableColumnID]expression.Expression)
 	exprs := make([]expression.Expression, 0, len(tbl.Cols()))
 	genExprIdxs := make([]model.TableColumnID, len(tbl.Cols()))
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
-	mockTablePlan.SetSchema(expression.TableInfo2SchemaWithDBName(b.ctx, dbName, tblInfo))
+	mockTablePlan.SetSchema(exprCols)
 	for i, colExpr := range mockTablePlan.Schema().Columns {
 		col := tbl.Cols()[i]
 		var expr expression.Expression
@@ -705,58 +799,66 @@ func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl t
 	return genExprsMap, nil
 }
 
-func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, id int) (Plan, error) {
-	genExprsMap, err := b.getGenExprs(ctx, dbName, tbl, idx)
-	if err != nil {
-		return nil, errors.Trace(err)
+func findColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInfo {
+	for _, info := range colInfos {
+		if info.ID == id {
+			return info
+		}
 	}
+	return nil
+}
 
+func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, id int) (Plan, error) {
 	// Get generated columns.
 	var genCols []*expression.Column
 	pkOffset := -1
 	tblInfo := tbl.Meta()
-	colsMap := make(map[int64]struct{})
+	colsMap := set.NewInt64Set()
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
 	idxReaderCols := make([]*model.ColumnInfo, 0, len(idx.Columns))
 	tblReaderCols := make([]*model.ColumnInfo, 0, len(tbl.Cols()))
+	fullExprCols := expression.TableInfo2SchemaWithDBName(b.ctx, dbName, tblInfo)
+	genExprsMap, err := b.getGenExprs(ctx, dbName, tbl, idx, fullExprCols)
+	if err != nil {
+		return nil, err
+	}
 	for _, idxCol := range idx.Columns {
-		for _, col := range tblInfo.Columns {
+		for i, col := range tblInfo.Columns {
 			if idxCol.Name.L == col.Name.L {
 				idxReaderCols = append(idxReaderCols, col)
 				tblReaderCols = append(tblReaderCols, col)
-				schema.Append(&expression.Column{
-					ColName:  col.Name,
-					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  &col.FieldType})
-				colsMap[col.ID] = struct{}{}
+				schema.Append(fullExprCols.Columns[i])
+				colsMap.Insert(col.ID)
 				if mysql.HasPriKeyFlag(col.Flag) {
 					pkOffset = len(tblReaderCols) - 1
 				}
-			}
-			genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}
-			if expr, ok := genExprsMap[genColumnID]; ok {
-				cols := expression.ExtractColumns(expr)
-				genCols = append(genCols, cols...)
+				genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}
+				if expr, ok := genExprsMap[genColumnID]; ok {
+					cols := expression.ExtractColumns(expr)
+					genCols = append(genCols, cols...)
+				}
 			}
 		}
 	}
 	// Add generated columns to tblSchema and tblReaderCols.
 	tblSchema := schema.Clone()
 	for _, col := range genCols {
-		if _, ok := colsMap[col.ID]; !ok {
-			c := table.FindCol(tbl.Cols(), col.ColName.O)
-			if c != nil {
-				col.Index = len(tblReaderCols)
-				tblReaderCols = append(tblReaderCols, c.ColumnInfo)
-				tblSchema.Append(&expression.Column{
-					ColName:  c.Name,
-					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  &c.FieldType})
-				colsMap[c.ID] = struct{}{}
-				if mysql.HasPriKeyFlag(c.Flag) {
+		if !colsMap.Exist(col.ID) {
+			info := findColumnInfoByID(tblInfo.Columns, col.ID)
+			if info != nil {
+				tblReaderCols = append(tblReaderCols, info)
+				tblSchema.Append(col)
+				colsMap.Insert(col.ID)
+				if mysql.HasPriKeyFlag(col.RetType.Flag) {
 					pkOffset = len(tblReaderCols) - 1
 				}
 			}
+		}
+	}
+	for k, expr := range genExprsMap {
+		genExprsMap[k], err = expr.ResolveIndices(tblSchema)
+		if err != nil {
+			return nil, err
 		}
 	}
 	if !tbl.Meta().PKIsHandle || pkOffset == -1 {
@@ -773,12 +875,16 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		pkOffset = len(tblReaderCols) - 1
 	}
 
+	idxCols, idxColLens := expression.IndexInfo2PrefixCols(schema.Columns, idx)
+	fullIdxCols, _ := expression.IndexInfo2Cols(schema.Columns, idx)
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
 		TableAsName:      &tblInfo.Name,
 		DBName:           dbName,
 		Columns:          idxReaderCols,
 		Index:            idx,
+		IdxCols:          idxCols,
+		IdxColLens:       idxColLens,
 		dataSourceSchema: schema,
 		Ranges:           ranger.FullRange(),
 		GenExprs:         genExprsMap,
@@ -786,7 +892,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
 	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
-	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table}.Init(b.ctx)
+	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx)
 	ts.SetSchema(tblSchema)
 	cop := &copTask{
 		indexPlan:   is,
@@ -794,7 +900,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		tblColHists: is.stats.HistColl,
 	}
 	ts.HandleIdx = pkOffset
-	is.initSchema(id, idx, true)
+	is.initSchema(id, idx, fullIdxCols, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
 	return rootT.p, nil
 }
@@ -1151,14 +1257,18 @@ func buildShowDDLJobsFields() *expression.Schema {
 }
 
 func buildTableRegionsSchema() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11)...)
 	schema.Append(buildColumn("", "REGION_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "START_KEY", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "END_Key", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_KEY", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "LEADER_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "LEADER_STORE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "PEERS", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "SCATTERING", mysql.TypeTiny, 1))
+	schema.Append(buildColumn("", "WRITTEN_BYTES", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "READ_BYTES", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "APPROXIMATE_SIZE(MB)", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "APPROXIMATE_KEYS", mysql.TypeLonglong, 4))
 	return schema
 }
 
@@ -1251,18 +1361,20 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, error) {
-	p := Show{
-		Tp:          show.Tp,
-		DBName:      show.DBName,
-		Table:       show.Table,
-		Column:      show.Column,
-		IndexName:   show.IndexName,
-		Flag:        show.Flag,
-		Full:        show.Full,
-		User:        show.User,
-		Roles:       show.Roles,
-		IfNotExists: show.IfNotExists,
-		GlobalScope: show.GlobalScope,
+	p := LogicalShow{
+		baseShowContent: baseShowContent{
+			Tp:          show.Tp,
+			DBName:      show.DBName,
+			Table:       show.Table,
+			Column:      show.Column,
+			IndexName:   show.IndexName,
+			Flag:        show.Flag,
+			Full:        show.Full,
+			User:        show.User,
+			Roles:       show.Roles,
+			IfNotExists: show.IfNotExists,
+			GlobalScope: show.GlobalScope,
+		},
 	}.Init(b.ctx)
 	isView := false
 	switch show.Tp {
@@ -1288,11 +1400,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
-	mockTablePlan := LogicalTableDual{placeHolder: true}.Init(b.ctx)
-	mockTablePlan.SetSchema(p.schema)
 	var err error
 	var np LogicalPlan
-	np = mockTablePlan
+	np = p
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
@@ -1308,11 +1418,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			return nil, err
 		}
 	}
-	if np != mockTablePlan {
-		fieldsLen := len(mockTablePlan.schema.Columns)
+	if np != p {
+		b.optFlag |= flagEliminateProjection
+		fieldsLen := len(p.schema.Columns)
 		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx)
 		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
-		for _, col := range mockTablePlan.schema.Columns {
+		for _, col := range p.schema.Columns {
 			proj.Exprs = append(proj.Exprs, col)
 			newCol := col.Clone().(*expression.Column)
 			newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
@@ -1320,47 +1431,16 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		}
 		proj.SetSchema(schema)
 		proj.SetChildren(np)
-		physical, err := DoOptimize(ctx, b.optFlag|flagEliminateProjection, proj)
-		if err != nil {
-			return nil, err
-		}
-		return substitutePlaceHolderDual(physical, p), nil
+		return proj, nil
 	}
 	return p, nil
-}
-
-func substitutePlaceHolderDual(src PhysicalPlan, dst PhysicalPlan) PhysicalPlan {
-	if dual, ok := src.(*PhysicalTableDual); ok && dual.placeHolder {
-		return dst
-	}
-	for i, child := range src.Children() {
-		newChild := substitutePlaceHolderDual(child, dst)
-		src.SetChild(i, newChild)
-	}
-	return src
 }
 
 func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
-	case *ast.CreateUserStmt:
-		if raw.IsCreateRole {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateRolePriv, "", "", "", err)
-		} else {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
-		}
-	case *ast.DropUserStmt:
-		if raw.IsDropRole {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropRolePriv, "", "", "", err)
-		} else {
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
-		}
-	case *ast.AlterUserStmt, *ast.SetDefaultRoleStmt:
+	case *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
@@ -1659,11 +1739,17 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 		}
 	}
 
+	insertPlan.AllAssignmentsAreConstant = true
 	for i, assign := range insert.Setlist {
 		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
 		}
+		if insertPlan.AllAssignmentsAreConstant {
+			_, isConstant := expr.(*expression.Constant)
+			insertPlan.AllAssignmentsAreConstant = isConstant
+		}
+
 		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
 			Col:  exprCols[i],
 			Expr: expr,
@@ -1686,14 +1772,9 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 		if len(insert.Lists[0]) != len(affectedValuesCols) {
 			return ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 		}
-		// No generated column is allowed.
-		for _, col := range affectedValuesCols {
-			if col.IsGenerated() {
-				return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
-			}
-		}
 	}
 
+	insertPlan.AllAssignmentsAreConstant = true
 	totalTableCols := insertPlan.Table.Cols()
 	for i, valuesItem := range insert.Lists {
 		// The length of all the value_list should be the same.
@@ -1708,8 +1789,17 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 		for j, valueItem := range valuesItem {
 			var expr expression.Expression
 			var err error
+			var generatedColumnWithDefaultExpr bool
+			col := affectedValuesCols[j]
 			switch x := valueItem.(type) {
 			case *ast.DefaultExpr:
+				if col.IsGenerated() {
+					if x.Name != nil {
+						return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+					}
+					generatedColumnWithDefaultExpr = true
+					break
+				}
 				if x.Name != nil {
 					expr, err = b.findDefaultValue(totalTableCols, x.Name)
 				} else {
@@ -1725,6 +1815,19 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 			}
 			if err != nil {
 				return err
+			}
+			if insertPlan.AllAssignmentsAreConstant {
+				_, isConstant := expr.(*expression.Constant)
+				insertPlan.AllAssignmentsAreConstant = isConstant
+			}
+			// insert value into a generated column is not allowed
+			if col.IsGenerated() {
+				// but there is only one exception:
+				// it is allowed to insert the `default` value into a generated column
+				if generatedColumnWithDefaultExpr {
+					continue
+				}
+				return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 			}
 			exprList = append(exprList, expr)
 		}

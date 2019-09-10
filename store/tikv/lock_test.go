@@ -158,7 +158,7 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(s.store, ver)
+	snapshot := newTiKVSnapshot(s.store, ver, 0)
 	m, err := snapshot.BatchGet(context.Background(), keys)
 	c.Assert(err, IsNil)
 	c.Assert(len(m), Equals, int('z'-'a'+1))
@@ -200,6 +200,31 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	status, err = s.store.lockResolver.GetTxnStatus(startTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
+}
+
+func (s *testLockSuite) TestTxnHeartBeat(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set(kv.Key("key"), []byte("value"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+
+	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
+	newTTL, err := sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
+	c.Assert(err, IsNil)
+	c.Assert(newTTL, Equals, uint64(666))
+
+	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 555)
+	c.Assert(err, IsNil)
+	c.Assert(newTTL, Equals, uint64(666))
+
+	// The getTxnStatus API is confusing, it really means rollback!
+	status, err := newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"))
+	c.Assert(err, IsNil)
+	c.Assert(status, Equals, TxnStatus(0))
+
+	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
+	c.Assert(err, NotNil)
+	c.Assert(newTTL, Equals, uint64(0))
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {

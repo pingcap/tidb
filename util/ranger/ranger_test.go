@@ -424,7 +424,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a in ('a') and b in ('1', 2.0, NULL)`,
-			accessConds: "[in(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
+			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
 			filterConds: "[]",
 			resultStr:   `[["a" 1,"a" 1] ["a" 2,"a" 2]]`,
 		},
@@ -466,7 +466,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     "a in (NULL)",
-			accessConds: "[in(test.t.a, <nil>)]",
+			accessConds: "[eq(test.t.a, <nil>)]",
 			filterConds: "[]",
 			resultStr:   "[]",
 		},
@@ -487,14 +487,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     "not (a not in (NULL) and a > '2')",
-			accessConds: "[or(in(test.t.a, <nil>), le(test.t.a, 2))]",
+			accessConds: "[or(eq(test.t.a, <nil>), le(test.t.a, 2))]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,\"2\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "not (a not in (NULL) or a > '2')",
-			accessConds: "[and(in(test.t.a, <nil>), le(test.t.a, 2))]",
+			accessConds: "[and(eq(test.t.a, <nil>), le(test.t.a, 2))]",
 			filterConds: "[]",
 			resultStr:   "[]",
 		},
@@ -549,17 +549,17 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		},
 		{
 			indexPos:    2,
-			exprStr:     `d in ("你好啊")`,
-			accessConds: "[in(test.t.d, 你好啊)]",
-			filterConds: "[in(test.t.d, 你好啊)]",
-			resultStr:   "[[\"你好\",\"你好\"]]",
+			exprStr:     `d in ("你好啊", "再见")`,
+			accessConds: "[in(test.t.d, 你好啊, 再见)]",
+			filterConds: "[in(test.t.d, 你好啊, 再见)]",
+			resultStr:   "[[\"你好\",\"你好\"] [\"再见\",\"再见\"]]",
 		},
 		{
 			indexPos:    2,
 			exprStr:     `d not in ("你好啊")`,
-			accessConds: "[not(in(test.t.d, 你好啊))]",
-			filterConds: "[not(in(test.t.d, 你好啊))]",
-			resultStr:   "[(NULL,+inf]]",
+			accessConds: "[]",
+			filterConds: "[ne(test.t.d, 你好啊)]",
+			resultStr:   "[[NULL,+inf]]",
 		},
 		{
 			indexPos:    2,
@@ -596,7 +596,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(sctx, cond, false))
 		}
-		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		cols, lengths := expression.IndexInfo2PrefixCols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
 		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
@@ -652,9 +652,9 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a not in (111)`,
-			accessConds: "[not(in(test.t.a, 111))]",
+			accessConds: "[ne(test.t.a, 111)]",
 			filterConds: "[]",
-			resultStr:   `[(NULL,111) (111,+inf]]`,
+			resultStr:   `[[-inf,111) (111,+inf]]`,
 		},
 		{
 			indexPos:    0,
@@ -717,7 +717,7 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(sctx, cond, false))
 		}
-		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		cols, lengths := expression.IndexInfo2PrefixCols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
 		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
@@ -1018,6 +1018,15 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			resultStr:   "[[\"a\",\"a\"]]",
 			length:      1,
 		},
+		// This test case cannot be simplified to [1, 3] otherwise the index join will executes wrongly.
+		{
+			colPos:      0,
+			exprStr:     "a in (1, 2, 3)",
+			accessConds: "[in(test.t.a, 1, 2, 3)]",
+			filterConds: "",
+			resultStr:   "[[1,1] [2,2] [3,3]]",
+			length:      types.UnspecifiedLength,
+		},
 	}
 
 	ctx := context.Background()
@@ -1093,15 +1102,15 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
 		"Projection_11 2.00 root 9_aux_0",
-		"└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:HashAgg_18, other cond:eq(test.t.e, 7_col_0)",
+		"└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.e, 7_col_0)",
 		"  ├─TableReader_15 2.00 root data:TableScan_14",
 		"  │ └─TableScan_14 2.00 cop table:t, range:[-inf,+inf], keep order:false",
-		"  └─HashAgg_18 1.00 root funcs:count(1)",
-		"    └─HashLeftJoin_24 2.00 root inner join, inner:TableReader_29, equal:[eq(test.s.a, test.t1.a)]",
-		"      ├─IndexReader_27 2.00 root index:IndexScan_26",
-		"      │ └─IndexScan_26 2.00 cop table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
-		"      └─TableReader_29 2.00 root data:TableScan_28",
-		"        └─TableScan_28 2.00 cop table:t1, range:[-inf,+inf], keep order:false",
+		"  └─StreamAgg_20 1.00 root funcs:count(1)",
+		"    └─IndexMergeJoin_42 2.00 root inner join, inner:TableReader_40, outer key:test.s.a, inner key:test.t1.a",
+		"      ├─IndexReader_31 2.00 root index:IndexScan_30",
+		"      │ └─IndexScan_30 2.00 cop table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
+		"      └─TableReader_40 1.00 root data:TableScan_39",
+		"        └─TableScan_39 1.00 cop table:t1, range: decided by [test.s.a], keep order:true",
 	))
 	testKit.MustQuery("select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
 		"1",

@@ -166,7 +166,9 @@ func (e *InsertExec) Open(ctx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)
 	}
-	e.initEvalBuffer()
+	if !e.allAssignmentsAreConstant {
+		e.initEvalBuffer()
+	}
 	return nil
 }
 

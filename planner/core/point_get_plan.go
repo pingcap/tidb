@@ -43,14 +43,15 @@ type PointGetPlan struct {
 	IndexInfo        *model.IndexInfo
 	Handle           int64
 	HandleParam      *driver.ParamMarkerExpr
-	UnsignedHandle   bool
 	IndexValues      []types.Datum
 	IndexValueParams []*driver.ParamMarkerExpr
 	expr             expression.Expression
 	ctx              sessionctx.Context
+	UnsignedHandle   bool
 	IsTableDual      bool
 	Lock             bool
 	IsForUpdate      bool
+	outputNames      []*types.FieldName
 }
 
 type nameValuePair struct {
@@ -95,6 +96,9 @@ func (p *PointGetPlan) ExplainInfo() string {
 			fmt.Fprintf(buffer, ", handle:%d", p.Handle)
 		}
 	}
+	if p.Lock {
+		fmt.Fprintf(buffer, ", lock")
+	}
 	return buffer.String()
 }
 
@@ -133,10 +137,20 @@ func (p *PointGetPlan) ResolveIndices() error {
 	return nil
 }
 
+// OutputNames returns the outputting names of each column.
+func (p *PointGetPlan) OutputNames() []*types.FieldName {
+	return p.outputNames
+}
+
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
+		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
+		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
+		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
+			return fp
+		}
 		fp := tryPointGetPlan(ctx, x)
 		if fp != nil {
 			if checkFastPlanPrivilege(ctx, fp, mysql.SelectPriv) != nil {
@@ -144,12 +158,20 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 			}
 			if fp.IsTableDual {
 				tableDual := PhysicalTableDual{}
+				tableDual.names = fp.outputNames
 				tableDual.SetSchema(fp.Schema())
 				return tableDual.Init(ctx, &property.StatsInfo{})
 			}
 			if x.LockTp == ast.SelectLockForUpdate {
-				fp.Lock = true
-				fp.IsForUpdate = true
+				// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
+				// is disabled (either by beginning transaction with START TRANSACTION or by setting
+				// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
+				// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
+				sessVars := ctx.GetSessionVars()
+				if !sessVars.IsAutocommit() || sessVars.InTxn() {
+					fp.Lock = true
+					fp.IsForUpdate = true
+				}
 			}
 			return fp
 		}
@@ -159,6 +181,98 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 		return tryDeletePointPlan(ctx, x)
 	}
 	return nil
+}
+
+func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) Plan {
+	if selStmt.OrderBy != nil || selStmt.GroupBy != nil || selStmt.Limit != nil ||
+		selStmt.Having != nil || len(selStmt.WindowSpecs) > 0 ||
+		selStmt.LockTp != ast.SelectLockNone {
+		return nil
+	}
+	in, ok := selStmt.Where.(*ast.PatternInExpr)
+	if !ok || in.Not || len(in.List) < 1 {
+		return nil
+	}
+
+	children := make([]PhysicalPlan, 0, len(in.List))
+	chReqProps := make([]*property.PhysicalProperty, 0, len(in.List))
+	reusedStmt := &ast.SelectStmt{
+		SelectStmtOpts: selStmt.SelectStmtOpts,
+		Distinct:       selStmt.Distinct,
+		From:           selStmt.From,
+		Fields:         selStmt.Fields,
+	}
+
+	switch leftExpr := in.Expr.(type) {
+	case *ast.ColumnNameExpr:
+		reusedStmt := &ast.SelectStmt{
+			SelectStmtOpts: selStmt.SelectStmtOpts,
+			Distinct:       selStmt.Distinct,
+			From:           selStmt.From,
+			Fields:         selStmt.Fields,
+		}
+		for _, row := range in.List {
+			where := &ast.BinaryOperationExpr{
+				Op: opcode.EQ,
+				L:  in.Expr,
+				R:  row,
+			}
+			reusedStmt.Where = where
+			fp := TryFastPlan(ctx, reusedStmt)
+			if fp == nil {
+				return nil
+			}
+			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: 1})
+			children = append(children, fp.(*PointGetPlan))
+		}
+
+	case *ast.RowExpr:
+		if len(leftExpr.Values) < 1 {
+			return nil
+		}
+
+		eleCount := len(leftExpr.Values)
+		for _, row := range in.List {
+			rightExpr, ok := row.(*ast.RowExpr)
+			if !ok || len(rightExpr.Values) != eleCount {
+				return nil
+			}
+			where := &ast.BinaryOperationExpr{
+				Op: opcode.EQ,
+				L:  leftExpr.Values[0],
+				R:  rightExpr.Values[0],
+			}
+			for i := 1; i < eleCount; i++ {
+				right := &ast.BinaryOperationExpr{
+					Op: opcode.EQ,
+					L:  leftExpr.Values[i],
+					R:  rightExpr.Values[i],
+				}
+				where = &ast.BinaryOperationExpr{
+					Op: opcode.LogicAnd,
+					L:  where,
+					R:  right,
+				}
+			}
+			reusedStmt.Where = where
+			fp := TryFastPlan(ctx, reusedStmt)
+			if fp == nil {
+				return nil
+			}
+			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: 1})
+			children = append(children, fp.(*PointGetPlan))
+		}
+
+	default:
+		return nil
+	}
+
+	ua := PhysicalUnionAll{
+		IsPointGetUnion: true,
+	}.Init(ctx, children[0].statsInfo().Scale(float64(len(children))), chReqProps...)
+	ua.SetSchema(children[0].Schema())
+	ua.SetChildren(children...)
+	return ua
 }
 
 // tryPointGetPlan determine if the SelectStmt can use a PointGetPlan.
@@ -185,6 +299,10 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if tbl == nil {
 		return nil
 	}
+	dbName := tblName.Schema
+	if dbName.L == "" {
+		dbName = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
 	// Do not handle partitioned table.
 	// Table partition implementation translates LogicalPlan from `DataSource` to
 	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
@@ -209,11 +327,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	}
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
-		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
+		schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
 		if schema == nil {
 			return nil
 		}
-		p := newPointGetPlan(ctx, schema, tbl)
+		p := newPointGetPlan(ctx, schema, tbl, names)
 		intDatum, err := handlePair.value.ConvertTo(ctx.GetSessionVars().StmtCtx, fieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
@@ -249,11 +367,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if idxValues == nil {
 			continue
 		}
-		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
+		schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
 		if schema == nil {
 			return nil
 		}
-		p := newPointGetPlan(ctx, schema, tbl)
+		p := newPointGetPlan(ctx, schema, tbl, names)
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
@@ -262,11 +380,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	return nil
 }
 
-func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *PointGetPlan {
+func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		basePlan: newBasePlan(ctx, "Point_Get"),
-		schema:   schema,
-		TblInfo:  tbl,
+		basePlan:    newBasePlan(ctx, "Point_Get"),
+		schema:      schema,
+		TblInfo:     tbl,
+		outputNames: names,
 	}
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
 	return p
@@ -286,58 +405,72 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointGetPlan, chec
 	return nil
 }
 
-func buildSchemaFromFields(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo, tblName model.CIStr, fields []*ast.SelectField) *expression.Schema {
-	if dbName.L == "" {
-		dbName = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	}
+func buildSchemaFromFields(
+	dbName model.CIStr,
+	tbl *model.TableInfo,
+	tblName model.CIStr,
+	fields []*ast.SelectField,
+) (
+	*expression.Schema,
+	[]*types.FieldName,
+) {
 	columns := make([]*expression.Column, 0, len(tbl.Columns)+1)
+	names := make([]*types.FieldName, 0, len(tbl.Columns)+1)
 	if len(fields) > 0 {
 		for _, field := range fields {
 			if field.WildCard != nil {
 				if field.WildCard.Table.L != "" && field.WildCard.Table.L != tblName.L {
-					return nil
+					return nil, nil
 				}
 				for _, col := range tbl.Columns {
-					columns = append(columns, colInfoToColumn(dbName, tbl.Name, tblName, col.Name, col, len(columns)))
+					names = append(names, &types.FieldName{
+						DBName:      dbName,
+						OrigTblName: tbl.Name,
+						TblName:     tblName,
+						ColName:     col.Name,
+					})
+					columns = append(columns, colInfoToColumn(col, len(columns)))
 				}
 				continue
 			}
 			colNameExpr, ok := field.Expr.(*ast.ColumnNameExpr)
 			if !ok {
-				return nil
+				return nil, nil
 			}
 			if colNameExpr.Name.Table.L != "" && colNameExpr.Name.Table.L != tblName.L {
-				return nil
+				return nil, nil
 			}
 			col := findCol(tbl, colNameExpr.Name)
 			if col == nil {
-				return nil
+				return nil, nil
 			}
 			asName := col.Name
 			if field.AsName.L != "" {
 				asName = field.AsName
 			}
-			columns = append(columns, colInfoToColumn(dbName, tbl.Name, tblName, asName, col, len(columns)))
+			names = append(names, &types.FieldName{
+				DBName:      dbName,
+				OrigTblName: tbl.Name,
+				TblName:     tblName,
+				ColName:     asName,
+			})
+			columns = append(columns, colInfoToColumn(col, len(columns)))
 		}
-		return expression.NewSchema(columns...)
+		return expression.NewSchema(columns...), names
 	}
 	// fields len is 0 for update and delete.
-	var handleCol *expression.Column
 	for _, col := range tbl.Columns {
-		column := colInfoToColumn(dbName, tbl.Name, tblName, col.Name, col, len(columns))
-		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			handleCol = column
-		}
+		names = append(names, &types.FieldName{
+			DBName:      dbName,
+			OrigTblName: tbl.Name,
+			TblName:     tblName,
+			ColName:     col.Name,
+		})
+		column := colInfoToColumn(col, len(columns))
 		columns = append(columns, column)
 	}
-	if handleCol == nil {
-		handleCol = colInfoToColumn(dbName, tbl.Name, tblName, model.ExtraHandleName, model.NewExtraHandleColInfo(), len(columns))
-		columns = append(columns, handleCol)
-	}
 	schema := expression.NewSchema(columns...)
-	schema.TblID2Handle = make(map[int64][]*expression.Column)
-	schema.TblID2Handle[tbl.ID] = []*expression.Column{handleCol}
-	return schema
+	return schema, names
 }
 
 // getSingleTableNameAndAlias return the ast node of queried table name and the alias string.
@@ -477,19 +610,18 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 		return nil
 	}
 	if fastSelect.IsTableDual {
-		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
+		return PhysicalTableDual{
+			names: fastSelect.outputNames,
+		}.Init(ctx, &property.StatsInfo{})
 	}
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true
 	}
-	orderedList := buildOrderedList(ctx, fastSelect, updateStmt.List)
+	orderedList, allAssignmentsAreConstant := buildOrderedList(ctx, fastSelect, updateStmt.List)
 	if orderedList == nil {
 		return nil
 	}
-	var handleCol *expression.Column
-	for _, handles := range fastSelect.schema.TblID2Handle {
-		handleCol = handles[0]
-	}
+	handleCol := fastSelect.findHandleCol()
 	updatePlan := Update{
 		SelectPlan:  fastSelect,
 		OrderedList: orderedList,
@@ -501,36 +633,41 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 				HandleOrdinal: handleCol.Index,
 			},
 		},
+		AllAssignmentsAreConstant: allAssignmentsAreConstant,
 	}.Init(ctx)
-	updatePlan.SetSchema(fastSelect.schema)
 	return updatePlan
 }
 
-func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*ast.Assignment) []*expression.Assignment {
-	orderedList := make([]*expression.Assignment, 0, len(list))
+func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*ast.Assignment,
+) (orderedList []*expression.Assignment, allAssignmentsAreConstant bool) {
+	orderedList = make([]*expression.Assignment, 0, len(list))
+	allAssignmentsAreConstant = true
 	for _, assign := range list {
-		col, err := fastSelect.schema.FindColumn(assign.Column)
-		if err != nil {
-			return nil
+		idx, err := expression.FindColName(fastSelect.outputNames, assign.Column)
+		if idx == -1 || err != nil {
+			return nil, true
 		}
-		if col == nil {
-			return nil
-		}
+		col := fastSelect.schema.Columns[idx]
 		newAssign := &expression.Assignment{
 			Col: col,
 		}
-		expr, err := expression.RewriteSimpleExprWithSchema(ctx, assign.Expr, fastSelect.schema)
+		expr, err := expression.RewriteSimpleExprWithNames(ctx, assign.Expr, fastSelect.schema, fastSelect.outputNames)
 		if err != nil {
-			return nil
+			return nil, true
 		}
 		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
+		if allAssignmentsAreConstant {
+			_, isConst := expr.(*expression.Constant)
+			allAssignmentsAreConstant = isConst
+		}
+
 		newAssign.Expr, err = expr.ResolveIndices(fastSelect.schema)
 		if err != nil {
-			return nil
+			return nil, true
 		}
 		orderedList = append(orderedList, newAssign)
 	}
-	return orderedList
+	return orderedList, allAssignmentsAreConstant
 }
 
 func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
@@ -552,15 +689,14 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 		return nil
 	}
 	if fastSelect.IsTableDual {
-		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
+		return PhysicalTableDual{
+			names: fastSelect.outputNames,
+		}.Init(ctx, &property.StatsInfo{})
 	}
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true
 	}
-	var handleCol *expression.Column
-	for _, handles := range fastSelect.schema.TblID2Handle {
-		handleCol = handles[0]
-	}
+	handleCol := fastSelect.findHandleCol()
 	delPlan := Delete{
 		SelectPlan: fastSelect,
 		TblColPosInfos: TblColPosInfoSlice{
@@ -572,7 +708,6 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 			},
 		},
 	}.Init(ctx)
-	delPlan.SetSchema(fastSelect.schema)
 	return delPlan
 }
 
@@ -585,15 +720,29 @@ func findCol(tbl *model.TableInfo, colName *ast.ColumnName) *model.ColumnInfo {
 	return nil
 }
 
-func colInfoToColumn(db model.CIStr, origTblName model.CIStr, tblName model.CIStr, asName model.CIStr, col *model.ColumnInfo, idx int) *expression.Column {
+func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	return &expression.Column{
-		ColName:     asName,
-		OrigTblName: origTblName,
-		DBName:      db,
-		TblName:     tblName,
-		RetType:     &col.FieldType,
-		ID:          col.ID,
-		UniqueID:    int64(col.Offset),
-		Index:       idx,
+		RetType:  &col.FieldType,
+		ID:       col.ID,
+		UniqueID: int64(col.Offset),
+		Index:    idx,
 	}
+}
+
+func (p *PointGetPlan) findHandleCol() *expression.Column {
+	// fields len is 0 for update and delete.
+	var handleCol *expression.Column
+	tbl := p.TblInfo
+	if tbl.PKIsHandle {
+		for i, col := range p.TblInfo.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) && tbl.PKIsHandle {
+				handleCol = p.schema.Columns[i]
+			}
+		}
+	}
+	if handleCol == nil {
+		handleCol = colInfoToColumn(model.NewExtraHandleColInfo(), p.schema.Len())
+		p.schema.Append(handleCol)
+	}
+	return handleCol
 }

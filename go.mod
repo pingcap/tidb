@@ -17,7 +17,7 @@ require (
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
 	github.com/gogo/protobuf v1.2.0
 	github.com/golang/protobuf v1.2.0
-	github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c
+	github.com/google/btree v1.0.0
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/context v1.1.1 // indirect
 	github.com/gorilla/mux v1.6.2
@@ -39,12 +39,12 @@ require (
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20190703131923-d9830856b531
+	github.com/pingcap/kvproto v0.0.0-20190904075355-9a1bd6a31da2
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
-	github.com/pingcap/parser v0.0.0-20190805112544-2b054e14336b
+	github.com/pingcap/parser v0.0.0-20190903084634-0daf3f706c76
 	github.com/pingcap/pd v0.0.0-20190712044914-75a1f9f3062b
 	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
-	github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330
+	github.com/pingcap/tipb v0.0.0-20190806070524-16909e03435e
 	github.com/prometheus/client_golang v0.9.0
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect

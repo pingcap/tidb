@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -49,6 +51,24 @@ type SimpleExec struct {
 	Statement ast.StmtNode
 	done      bool
 	is        infoschema.InfoSchema
+}
+
+func (e *SimpleExec) getSysSession() (sessionctx.Context, error) {
+	dom := domain.GetDomain(e.ctx)
+	sysSessionPool := dom.SysSessionPool()
+	ctx, err := sysSessionPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	restrictedCtx := ctx.(sessionctx.Context)
+	restrictedCtx.GetSessionVars().InRestrictedSQL = true
+	return restrictedCtx, nil
+}
+
+func (e *SimpleExec) releaseSysSession(ctx sessionctx.Context) {
+	dom := domain.GetDomain(e.ctx)
+	sysSessionPool := dom.SysSessionPool()
+	sysSessionPool.Put(ctx.(pools.Resource))
 }
 
 // Next implements the Executor Next interface.
@@ -230,7 +250,89 @@ func (e *SimpleExec) setDefaultRoleAll(s *ast.SetDefaultRoleStmt) error {
 	return nil
 }
 
+func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (err error) {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	user, sql := s.UserList[0], ""
+	if user.Hostname == "" {
+		user.Hostname = "%"
+	}
+	switch s.SetRoleOpt {
+	case ast.SetRoleNone:
+		sql = fmt.Sprintf("DELETE IGNORE FROM mysql.default_roles WHERE USER='%s' AND HOST='%s';", user.Username, user.Hostname)
+	case ast.SetRoleAll:
+		sql = fmt.Sprintf("INSERT IGNORE INTO mysql.default_roles(HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER) "+
+			"SELECT TO_HOST,TO_USER,FROM_HOST,FROM_USER FROM mysql.role_edges WHERE TO_HOST='%s' AND TO_USER='%s';", user.Hostname, user.Username)
+	case ast.SetRoleRegular:
+		sql = "INSERT IGNORE INTO mysql.default_roles values"
+		for i, role := range s.RoleList {
+			ok := checker.FindEdge(e.ctx, role, user)
+			if !ok {
+				return ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
+			}
+			sql += fmt.Sprintf("('%s', '%s', '%s', '%s')", user.Hostname, user.Username, role.Hostname, role.Username)
+			if i != len(s.RoleList)-1 {
+				sql += ","
+			}
+		}
+	}
+
+	restrictedCtx, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(restrictedCtx)
+
+	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+
+	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
+		return err
+	}
+
+	deleteSQL := fmt.Sprintf("DELETE IGNORE FROM mysql.default_roles WHERE USER='%s' AND HOST='%s';", user.Username, user.Hostname)
+	if _, err := sqlExecutor.Execute(context.Background(), deleteSQL); err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		if _, rollbackErr := sqlExecutor.Execute(context.Background(), "rollback"); rollbackErr != nil {
+			return rollbackErr
+		}
+		return err
+	}
+
+	if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		if _, rollbackErr := sqlExecutor.Execute(context.Background(), "rollback"); rollbackErr != nil {
+			return rollbackErr
+		}
+		return err
+	}
+	if _, err := sqlExecutor.Execute(context.Background(), "commit"); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) (err error) {
+	sessionVars := e.ctx.GetSessionVars()
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+
+	if len(s.UserList) == 1 && sessionVars.User != nil {
+		u, h := s.UserList[0].Username, s.UserList[0].Hostname
+		if u == sessionVars.User.Username && h == sessionVars.User.AuthHostname {
+			err = e.setDefaultRoleForCurrentUser(s)
+			domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+			return
+		}
+	}
+
+	activeRoles := sessionVars.ActiveRoles
+	if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.DefaultRoleTable, "", mysql.UpdatePriv) {
+		if !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+			return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+		}
+	}
+
 	switch s.SetRoleOpt {
 	case ast.SetRoleAll:
 		err = e.setDefaultRoleAll(s)
@@ -416,9 +518,6 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		txnMode := s.Mode
 		if txnMode == "" {
 			txnMode = e.ctx.GetSessionVars().TxnMode
-			if txnMode == "" && pTxnConf.Default {
-				txnMode = ast.Pessimistic
-			}
 		}
 		if txnMode == ast.Pessimistic {
 			e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
@@ -507,6 +606,23 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 }
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
+	// Check `CREATE USER` privilege.
+	if !config.GetGlobalConfig().Security.SkipGrantTable {
+		checker := privilege.GetPrivilegeManager(e.ctx)
+		if checker == nil {
+			return errors.New("miss privilege checker")
+		}
+		activeRoles := e.ctx.GetSessionVars().ActiveRoles
+		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.InsertPriv) {
+			if s.IsCreateRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateRolePriv) {
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
+			}
+			if !s.IsCreateRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE User")
+			}
+		}
+	}
+
 	users := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
 		exists, err1 := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
@@ -537,7 +653,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if s.IsCreateRole {
 		sql = fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password, Account_locked) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
 	}
-	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return err
 	}
@@ -581,7 +697,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		}
 		sql := fmt.Sprintf(`UPDATE %s.%s SET Password = '%s' WHERE Host = '%s' and User = '%s';`,
 			mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)
-		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 		if err != nil {
 			failedUsers = append(failedUsers, spec.User.String())
 		}
@@ -657,8 +773,32 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 }
 
 func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
+	// Check privileges.
+	// Check `CREATE USER` privilege.
+	if !config.GetGlobalConfig().Security.SkipGrantTable {
+		checker := privilege.GetPrivilegeManager(e.ctx)
+		if checker == nil {
+			return errors.New("miss privilege checker")
+		}
+		activeRoles := e.ctx.GetSessionVars().ActiveRoles
+		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
+			if s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) {
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE")
+			}
+			if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			}
+		}
+	}
+
 	failedUsers := make([]string, 0, len(s.UserList))
 	notExistUsers := make([]string, 0, len(s.UserList))
+	sysSession, err := e.getSysSession()
+	defer e.releaseSysSession(sysSession)
+	if err != nil {
+		return err
+	}
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 
 	for _, user := range s.UserList {
 		exists, err := userExists(e.ctx, user.Username, user.Hostname)
@@ -671,13 +811,13 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		}
 
 		// begin a transaction to delete a user.
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
+		if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
 			return err
 		}
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
 			continue
@@ -685,9 +825,9 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 		// delete privileges from mysql.db
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
 			continue
@@ -695,9 +835,9 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 		// delete privileges from mysql.tables_priv
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.TablePrivTable, user.Hostname, user.Username)
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
 			continue
@@ -705,18 +845,18 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 		// delete relationship from mysql.role_edges
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE TO_HOST = '%s' and TO_USER = '%s';`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
 			continue
 		}
 
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE FROM_HOST = '%s' and FROM_USER = '%s';`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
 			continue
@@ -724,25 +864,25 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 		// delete relationship from mysql.default_roles
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE DEFAULT_ROLE_HOST = '%s' and DEFAULT_ROLE_USER = '%s';`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
 			continue
 		}
 
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE HOST = '%s' and USER = '%s';`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
 			continue
 		}
 
 		//TODO: need delete columns_priv once we implement columns_priv functionality.
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
+		if _, err := sqlExecutor.Execute(context.Background(), "commit"); err != nil {
 			failedUsers = append(failedUsers, user.String())
 		}
 	}
@@ -766,7 +906,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 func userExists(ctx sessionctx.Context, name string, host string) (bool, error) {
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`, mysql.SystemDB, mysql.UserTable, name, host)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return false, err
 	}
@@ -800,7 +940,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 
 	// update mysql.user
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password='%s' WHERE User='%s' AND Host='%s';`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), u, h)
-	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return err
 }

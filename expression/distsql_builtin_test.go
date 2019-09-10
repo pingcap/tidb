@@ -920,8 +920,8 @@ func newIntFieldType() *types.FieldType {
 
 func newDurFieldType() *types.FieldType {
 	return &types.FieldType{
-		Tp:   mysql.TypeDuration,
-		Flag: types.DefaultFsp,
+		Tp:      mysql.TypeDuration,
+		Decimal: int(types.DefaultFsp),
 	}
 }
 
@@ -949,6 +949,46 @@ func newDecimalFieldType() *types.FieldType {
 func newJSONFieldType() *types.FieldType {
 	return &types.FieldType{
 		Tp:      mysql.TypeJSON,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newFloatFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeFloat,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newBinaryLiteralFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeBit,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newBlobFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeBlob,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newEnumFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeEnum,
 		Flen:    types.UnspecifiedLength,
 		Decimal: 0,
 		Charset: charset.CharsetBin,

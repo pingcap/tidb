@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/kv"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -46,6 +47,7 @@ const (
 	CmdDeleteRange
 	CmdPessimisticLock
 	CmdPessimisticRollback
+	CmdTxnHeartBeat
 
 	CmdRawGet CmdType = 256 + iota
 	CmdRawBatchGet
@@ -128,6 +130,8 @@ func (t CmdType) String() string {
 		return "SplitRegion"
 	case CmdDebugGetRegionProperties:
 		return "DebugGetRegionProperties"
+	case CmdTxnHeartBeat:
+		return "TxnHeartBeat"
 	}
 	return "Unknown"
 }
@@ -137,6 +141,7 @@ type Request struct {
 	Type CmdType
 	req  interface{}
 	kvrpcpb.Context
+	ReplicaReadSeed uint32
 }
 
 // NewRequest returns new kv rpc request.
@@ -152,6 +157,14 @@ func NewRequest(typ CmdType, pointer interface{}, ctxs ...kvrpcpb.Context) *Requ
 		Type: typ,
 		req:  pointer,
 	}
+}
+
+// NewReplicaReadRequest returns new kv rpc request with replica read.
+func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed uint32, ctxs ...kvrpcpb.Context) *Request {
+	req := NewRequest(typ, pointer, ctxs...)
+	req.ReplicaRead = replicaReadType.IsFollowerRead()
+	req.ReplicaReadSeed = replicaReadSeed
+	return req
 }
 
 // Get returns GetRequest in request.
@@ -294,6 +307,11 @@ func (req *Request) Empty() *tikvpb.BatchCommandsEmptyRequest {
 	return req.req.(*tikvpb.BatchCommandsEmptyRequest)
 }
 
+// TxnHeartBeat returns TxnHeartBeatRequest in request.
+func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
+	return req.req.(*kvrpcpb.TxnHeartBeatRequest)
+}
+
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
 func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Request {
 	switch req.Type {
@@ -343,6 +361,8 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticRollback{PessimisticRollback: req.PessimisticRollback()}}
 	case CmdEmpty:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Empty{Empty: req.Empty()}}
+	case CmdTxnHeartBeat:
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_TxnHeartBeat{TxnHeartBeat: req.TxnHeartBeat()}}
 	}
 	return nil
 }
@@ -410,6 +430,8 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 		return &Response{Resp: res.PessimisticRollback}
 	case *tikvpb.BatchCommandsResponse_Response_Empty:
 		return &Response{Resp: res.Empty}
+	case *tikvpb.BatchCommandsResponse_Response_TxnHeartBeat:
+		return &Response{Resp: res.TxnHeartBeat}
 	}
 	return nil
 }
@@ -488,6 +510,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.SplitRegion().Context = ctx
 	case CmdEmpty:
 		req.SplitRegion().Context = ctx
+	case CmdTxnHeartBeat:
+		req.TxnHeartBeat().Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -611,6 +635,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 			RegionError: e,
 		}
 	case CmdEmpty:
+	case CmdTxnHeartBeat:
+		p = &kvrpcpb.TxnHeartBeatResponse{
+			RegionError: e,
+		}
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -704,6 +732,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.SplitRegion(ctx, req.SplitRegion())
 	case CmdEmpty:
 		resp.Resp, err = &tikvpb.BatchCommandsEmptyResponse{}, nil
+	case CmdTxnHeartBeat:
+		resp.Resp, err = client.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}

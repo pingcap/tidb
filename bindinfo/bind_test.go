@@ -165,7 +165,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(161))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
 
 	sql, hash := parser.NormalizeDigest("select * from t where i > ?")
 
@@ -221,7 +221,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	// From newly created global bind handle.
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(161))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
 
 	bindHandle = bindinfo.NewBindHandle(tk.Se)
 	err = bindHandle.Update(true)
@@ -268,7 +268,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(161))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
 
 	handle := tk.Se.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindData := handle.GetBindRecord("select * from t where i > ?", "test")
@@ -465,4 +465,24 @@ func (s *testSuite) TestErrorBind(c *C) {
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
+}
+
+func (s *testSuite) TestPreparedStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec(`prepare stmt1 from 'select * from t'`)
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+
+	tk.MustExec("create binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx")
+
+	tk.MustExec("drop binding for select * from t")
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
 }

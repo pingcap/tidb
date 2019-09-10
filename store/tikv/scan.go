@@ -29,16 +29,17 @@ import (
 type Scanner struct {
 	snapshot     *tikvSnapshot
 	batchSize    int
-	valid        bool
 	cache        []*pb.KvPair
 	idx          int
-	nextStartKey []byte
-	endKey       []byte
-	eof          bool
+	nextStartKey kv.Key
+	endKey       kv.Key
 
 	// Use for reverse scan.
+	nextEndKey kv.Key
 	reverse    bool
-	nextEndKey []byte
+
+	valid bool
+	eof   bool
 }
 
 func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int, reverse bool) (*Scanner, error) {
@@ -154,8 +155,8 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 
 func (s *Scanner) getData(bo *Backoffer) error {
 	logutil.BgLogger().Debug("txn getData",
-		zap.Binary("nextStartKey", s.nextStartKey),
-		zap.Binary("nextEndKey", s.nextEndKey),
+		zap.Stringer("nextStartKey", s.nextStartKey),
+		zap.Stringer("nextEndKey", s.nextEndKey),
 		zap.Bool("reverse", s.reverse),
 		zap.Uint64("txnStartTS", s.startTS()))
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
@@ -197,7 +198,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			sreq.EndKey = reqStartKey
 			sreq.Reverse = true
 		}
-		req := tikvrpc.NewRequest(tikvrpc.CmdScan, sreq, pb.Context{
+		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.replicaRead, s.snapshot.replicaReadSeed, pb.Context{
 			Priority:     s.snapshot.priority,
 			NotFillCache: s.snapshot.notFillCache,
 		})

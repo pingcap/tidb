@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -60,6 +61,21 @@ type PhysicalTableReader struct {
 	tablePlan  PhysicalPlan
 }
 
+// GetPhysicalReader returns PhysicalTableReader for logical TableGather.
+func (tg *TableGather) GetPhysicalReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+	reader := PhysicalTableReader{}.Init(tg.ctx)
+	reader.stats = stats
+	reader.SetSchema(schema)
+	reader.childrenReqProps = props
+	return reader
+}
+
+// SetChildren overrides PhysicalPlan SetChildren interface.
+func (p *PhysicalTableReader) SetChildren(children ...PhysicalPlan) {
+	p.tablePlan = children[0]
+	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+}
+
 // PhysicalIndexReader is the index reader in tidb.
 type PhysicalIndexReader struct {
 	physicalSchemaProducer
@@ -82,6 +98,8 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	ExtraHandleCol *expression.Column
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -98,11 +116,6 @@ type PhysicalIndexScan struct {
 	Ranges     []*ranger.Range
 	Columns    []*model.ColumnInfo
 	DBName     model.CIStr
-	Desc       bool
-	KeepOrder  bool
-	// DoubleRead means if the index executor will read kv two times.
-	// If the query requires the columns that don't belong to index, DoubleRead will be true.
-	DoubleRead bool
 
 	TableAsName *model.CIStr
 
@@ -117,10 +130,16 @@ type PhysicalIndexScan struct {
 	rangeInfo string
 
 	// The index scan may be on a partition.
-	isPartition     bool
 	physicalTableID int64
 
 	GenExprs map[model.TableColumnID]expression.Expression
+
+	isPartition bool
+	Desc        bool
+	KeepOrder   bool
+	// DoubleRead means if the index executor will read kv two times.
+	// If the query requires the columns that don't belong to index, DoubleRead will be true.
+	DoubleRead bool
 }
 
 // PhysicalMemTable reads memory table.
@@ -144,27 +163,27 @@ type PhysicalTableScan struct {
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
-	Desc    bool
 	Ranges  []*ranger.Range
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr
 
-	// KeepOrder is true, if sort data by scanning pkcol,
-	KeepOrder bool
-
 	// Hist is the histogram when the query was issued.
 	// It is used for query feedback.
 	Hist *statistics.Histogram
 
-	// The table scan may be a partition, rather than a real table.
-	isPartition     bool
 	physicalTableID int64
 
 	rangeDecidedBy []*expression.Column
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx int
+
+	// The table scan may be a partition, rather than a real table.
+	isPartition bool
+	// KeepOrder is true, if sort data by scanning pkcol,
+	KeepOrder bool
+	Desc      bool
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
@@ -198,49 +217,45 @@ type PhysicalApply struct {
 	rightChOffset int
 }
 
-// PhysicalHashJoin represents hash join for inner/ outer join.
-type PhysicalHashJoin struct {
+type basePhysicalJoin struct {
 	physicalSchemaProducer
 
 	JoinType JoinType
 
-	EqualConditions []*expression.ScalarFunction
-	LeftConditions  []expression.Expression
-	RightConditions []expression.Expression
-	OtherConditions []expression.Expression
+	LeftConditions  expression.CNFExprs
+	RightConditions expression.CNFExprs
+	OtherConditions expression.CNFExprs
 
+	InnerChildIdx int
+	OuterJoinKeys []*expression.Column
+	InnerJoinKeys []*expression.Column
 	LeftJoinKeys  []*expression.Column
 	RightJoinKeys []*expression.Column
-
-	// InnerChildIdx indicates which child is to build the hash table.
-	// For inner join, the smaller one will be chosen.
-	// For outer join or semi join, it's exactly the inner one.
-	InnerChildIdx int
-	Concurrency   uint
-
 	DefaultValues []types.Datum
+}
+
+// PhysicalHashJoin represents hash join implementation of LogicalJoin.
+type PhysicalHashJoin struct {
+	basePhysicalJoin
+
+	Concurrency     uint
+	EqualConditions []*expression.ScalarFunction
 }
 
 // PhysicalIndexJoin represents the plan of index look up join.
 type PhysicalIndexJoin struct {
-	physicalSchemaProducer
+	basePhysicalJoin
 
-	JoinType        JoinType
-	OuterJoinKeys   []*expression.Column
-	InnerJoinKeys   []*expression.Column
-	LeftConditions  expression.CNFExprs
-	RightConditions expression.CNFExprs
-	OtherConditions expression.CNFExprs
-	OuterIndex      int
-	outerSchema     *expression.Schema
-	innerTask       task
-
-	DefaultValues []types.Datum
+	outerSchema *expression.Schema
+	innerTask   task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
+	// KeepOuterOrder indicates whether to keep the order of the join results be
+	// the same as the outer table.
+	KeepOuterOrder bool
 	// IdxColLens stores the length of each index column.
 	IdxColLens []int
 	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
@@ -251,21 +266,24 @@ type PhysicalIndexJoin struct {
 	CompareFilters *ColWithCmpFuncManager
 }
 
-// PhysicalMergeJoin represents merge join for inner/ outer join.
+// PhysicalIndexMergeJoin represents the plan of index look up merge join.
+type PhysicalIndexMergeJoin struct {
+	PhysicalIndexJoin
+
+	// NeedOuterSort means whether outer rows should be sorted to build range.
+	NeedOuterSort bool
+	// CompareFuncs store the compare functions for outer join keys and inner join key.
+	CompareFuncs []expression.CompareFunc
+	// OuterCompareFuncs store the compare functions for outer join keys and outer join
+	// keys, it's for outer rows sort's convenience.
+	OuterCompareFuncs []expression.CompareFunc
+}
+
+// PhysicalMergeJoin represents merge join implementation of LogicalJoin.
 type PhysicalMergeJoin struct {
-	physicalSchemaProducer
+	basePhysicalJoin
 
-	JoinType JoinType
-
-	CompareFuncs    []expression.CompareFunc
-	LeftConditions  []expression.Expression
-	RightConditions []expression.Expression
-	OtherConditions []expression.Expression
-
-	DefaultValues []types.Datum
-
-	LeftKeys  []*expression.Column
-	RightKeys []*expression.Column
+	CompareFuncs []expression.CompareFunc
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
@@ -273,6 +291,8 @@ type PhysicalLock struct {
 	basePhysicalPlan
 
 	Lock ast.SelectLockType
+
+	TblID2Handle map[int64][]*expression.Column
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -286,6 +306,17 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
+	// IsPointGetUnion indicates all the children are PointGet and
+	// all of them reference the same table and use the same `unique key`
+	IsPointGetUnion bool
+}
+
+// OutputNames returns the outputting names of each column.
+func (p *PhysicalUnionAll) OutputNames() []*types.FieldName {
+	if p.IsPointGetUnion {
+		return p.children[0].OutputNames()
+	}
+	return p.physicalSchemaProducer.OutputNames()
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -329,6 +360,21 @@ func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 	return
 }
 
+func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
+	factor = 0.0
+	for _, agg := range p.AggFuncs {
+		if fac, ok := aggFuncFactor[agg.Name]; ok {
+			factor += fac
+		} else {
+			factor += aggFuncFactor["default"]
+		}
+	}
+	if factor == 0 {
+		factor = 1.0
+	}
+	return
+}
+
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
@@ -357,6 +403,8 @@ type PhysicalUnionScan struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
+
+	HandleCol *expression.Column
 }
 
 // IsPartition returns true and partition ID if it works on a partition.
@@ -389,10 +437,15 @@ type PhysicalTableDual struct {
 	physicalSchemaProducer
 
 	RowCount int
-	// placeHolder indicates if this dual plan is a place holder in query optimization
-	// for data sources like `Show`, if true, the dual plan would be substituted by
-	// `Show` in the final plan.
-	placeHolder bool
+
+	// names is used for OutputNames() method. Dual may be inited when building point get plan.
+	// So it needs to hold names for itself.
+	names []*types.FieldName
+}
+
+// OutputNames returns the outputting names of each column.
+func (p *PhysicalTableDual) OutputNames() []*types.FieldName {
+	return p.names
 }
 
 // PhysicalWindow is the physical operator of window function.
@@ -426,4 +479,22 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 	}
 
 	return statsInfos
+}
+
+// PhysicalShow represents a show plan.
+type PhysicalShow struct {
+	physicalSchemaProducer
+
+	baseShowContent
+}
+
+// BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
+func BuildMergeJoinPlan(ctx sessionctx.Context, joinType JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
+	baseJoin := basePhysicalJoin{
+		JoinType:      joinType,
+		DefaultValues: []types.Datum{types.NewDatum(1), types.NewDatum(1)},
+		LeftJoinKeys:  leftKeys,
+		RightJoinKeys: rightKeys,
+	}
+	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil)
 }

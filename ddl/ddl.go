@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -139,6 +138,7 @@ var (
 	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(codeUnsupportedPartitionByRangeColumns,
 		"unsupported partition by range columns")
 	errUnsupportedCreatePartition = terror.ClassDDL.New(codeUnsupportedCreatePartition, "unsupported partition type, treat as normal table")
+	errUnsupportedIndexType       = terror.ClassDDL.New(codeUnsupportedIndexType, "unsupported index type")
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
@@ -241,7 +241,7 @@ type DDL interface {
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
-	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
+	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption, ifNotExists bool) error
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr, ifExists bool) error
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
@@ -345,21 +345,22 @@ func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
 }
 
 // NewDDL creates a new DDL.
-func NewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
-	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) DDL {
-	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease, ctxPool)
+func NewDDL(ctx context.Context, options ...Option) DDL {
+	return newDDL(ctx, options...)
 }
 
-func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
-	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) *ddl {
-	if hook == nil {
-		hook = &BaseCallback{}
+func newDDL(ctx context.Context, options ...Option) *ddl {
+	opt := &Options{
+		Hook: &BaseCallback{},
+	}
+	for _, o := range options {
+		o(opt)
 	}
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := context.WithCancel(ctx)
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
-	if etcdCli == nil {
+	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(id, cancelFunc)
@@ -371,21 +372,21 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	ddlCtx := &ddlCtx{
 		uuid:         id,
-		store:        store,
-		lease:        lease,
+		store:        opt.Store,
+		lease:        opt.Lease,
 		ddlJobDoneCh: make(chan struct{}, 1),
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
-		infoHandle:   infoHandle,
+		infoHandle:   opt.InfoHandle,
 	}
-	ddlCtx.mu.hook = hook
+	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
 		ddlCtx: ddlCtx,
 	}
 
-	d.start(ctx, ctxPool)
+	d.start(ctx, opt.ResourcePool)
 	variable.RegisterStatistics(d)
 
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
@@ -679,6 +680,7 @@ const (
 	codeUnsupportedModifyCharset           = 210
 	codeUnsupportedPartitionByRangeColumns = 211
 	codeUnsupportedCreatePartition         = 212
+	codeUnsupportedIndexType               = 213
 
 	codeFileNotFound                           = 1017
 	codeErrorOnRename                          = 1025

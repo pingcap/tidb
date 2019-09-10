@@ -139,7 +139,6 @@ type clientConn struct {
 	server       *Server           // a reference of server instance.
 	capability   uint32            // client capability affects the way server handles client request.
 	connectionID uint32            // atomically allocated by a global variable, unique in process scope.
-	collation    uint8             // collation used by client, may be different from the collation used by database.
 	user         string            // user of the client.
 	dbname       string            // default database name.
 	salt         []byte            // random bytes used for authentication.
@@ -147,10 +146,11 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
-	status       int32             // dispatching/reading/shutdown/waitshutdown
 	peerHost     string            // peer host
 	peerPort     string            // peer port
+	status       int32             // dispatching/reading/shutdown/waitshutdown
 	lastCode     uint16            // last error code
+	collation    uint8             // collation used by client, may be different from the collation used by database.
 }
 
 func (cc *clientConn) String() string {
@@ -280,7 +280,7 @@ func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 	}
 	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		logutil.Logger(ctx).Warn("get sysval wait_timeout error, use default value", zap.Error(err))
+		logutil.Logger(ctx).Warn("get sysval wait_timeout failed, use default value", zap.Error(err))
 		// if get waitTimeout error, use default value
 		return variable.DefWaitTimeout
 	}
@@ -632,6 +632,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					logutil.Logger(ctx).Info("read packet timeout, close this connection",
 						zap.Duration("idle", idleTime),
 						zap.Uint64("waitTimeout", waitTimeout),
+						zap.Error(err),
 					)
 				} else {
 					errStack := errors.ErrorStack(err)
@@ -665,8 +666,9 @@ func (cc *clientConn) Run(ctx context.Context) {
 				}
 				return
 			}
-			logutil.Logger(ctx).Warn("dispatch error",
+			logutil.Logger(ctx).Warn("command dispatched failed",
 				zap.String("connInfo", cc.String()),
+				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("sql", queryStrForLog(string(data[1:]))),
 				zap.String("err", errStrForLog(err)),
 			)
@@ -1470,7 +1472,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	cc.dbname = string(hack.String(dbName))
 	err := cc.ctx.Close()
 	if err != nil {
-		logutil.Logger(ctx).Debug("close old context error", zap.Error(err))
+		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 	}
 	err = cc.openSessionAndDoAuth(pass)
 	if err != nil {

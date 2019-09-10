@@ -200,8 +200,19 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a where t2.a = null",
 			best: "Dual->Projection",
 		},
+		{
+			sql:  "select a, b from (select a, b, min(a) over(partition by b) as min_a from t)as tt where a < 10 and b > 10 and b = min_a",
+			best: "DataScan(t)->Projection->Projection->Window(min(test.t.a))->Sel([lt(test.tt.a, 10) eq(test.tt.b, 4_window_3)])->Projection->Projection",
+		},
+		{
+			sql:  "select a, b from (select a, b, c, d, sum(a) over(partition by b, c) as sum_a from t)as tt where b + c > 10 and b in (1, 2) and sum_a > b",
+			best: "DataScan(t)->Projection->Projection->Window(sum(cast(test.t.a)))->Sel([gt(4_window_5, cast(test.tt.b))])->Projection->Projection",
+		},
 	}
-
+	s.Parser.EnableWindowFunc(true)
+	defer func() {
+		s.Parser.EnableWindowFunc(false)
+	}()
 	ctx := context.Background()
 	for ith, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
@@ -834,6 +845,23 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 			sql:  "select t1.b from t t1 where t1.b = (select avg(t2.a) from t t2 where t1.g=t2.g and (t1.b = 4 or t2.b = 2))",
 			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t1.g, test.t2.g) or(eq(test.t1.b, 4), eq(test.t2.b, 2))])->Aggr(avg(test.t2.a))}->Projection->Sel([eq(cast(test.t1.b), avg(t2.a))])->Projection",
 		},
+		{
+			sql:  "select t1.b from t t1 where t1.b = (select max(t2.a) from t t2 where t1.b=t2.b order by t1.a)",
+			best: "Join{DataScan(t1)->DataScan(t2)->Aggr(max(test.t2.a),firstrow(test.t2.b))}(test.t1.b,test.t2.b)->Projection->Sel([eq(test.t1.b, max(t2.a))])->Projection",
+		},
+		{
+			sql:  "select t1.b from t t1 where t1.b in (select t2.b from t t2 where t2.a = t1.a order by t2.a)",
+			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)(test.t1.b,test.t2.b)->Projection",
+		},
+		{
+			sql:  "select t1.b from t t1 where exists(select t2.b from t t2 where t2.a = t1.a order by t2.a)",
+			best: "Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)->Projection",
+		},
+		{
+			// `Sort` will not be eliminated, if it is not the top level operator.
+			sql:  "select t1.b from t t1 where t1.b = (select t2.b from t t2 where t2.a = t1.a order by t2.a limit 1)",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t2.a, test.t1.a)])->Projection->Sort->Limit}->Projection->Sel([eq(test.t1.b, test.t2.b)])->Projection",
+		},
 	}
 
 	ctx := context.Background()
@@ -910,7 +938,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",
-			plan: "Show->Sel([eq(cast(key), 0)])",
+			plan: "Show->Sel([eq(cast(key), 0)])->Projection",
 		},
 		{
 			sql:  "do sleep(5)",
@@ -1269,6 +1297,32 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestProjectionEliminator(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select 1+num from (select 1+a as num from t) t1;",
+			best: "DataScan(t)->Projection",
+		},
+	}
+
+	ctx := context.Background()
+	for ith, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s %d", tt.sql, ith))
+	}
+}
+
 func (s *testPlanSuite) TestAllocID(c *C) {
 	ctx := MockContext()
 	pA := DataSource{}.Init(ctx)
@@ -1571,7 +1625,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 	}{
 		{
 			sql:  "select a, count(b) from t group by a",
-			best: "DataScan(t)->Projection->Projection",
+			best: "DataScan(t)->Projection",
 		},
 		{
 			sql:  "select sum(b) from t group by c, d, e",
@@ -1579,19 +1633,19 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		},
 		{
 			sql:  "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
-			best: "DataScan(t)->Projection->Projection",
+			best: "DataScan(t)->Projection",
 		},
 		{
 			sql:  "select count(1) from (select count(1), a as b from t group by a) tt group by b",
-			best: "DataScan(t)->Projection->Projection",
+			best: "DataScan(t)->Projection",
 		},
 		{
 			sql:  "select a, count(b) from t group by a",
-			best: "DataScan(t)->Projection->Projection",
+			best: "DataScan(t)->Projection",
 		},
 		{
 			sql:  "select a, count(distinct a, b) from t group by a",
-			best: "DataScan(t)->Projection->Projection",
+			best: "DataScan(t)->Projection",
 		},
 	}
 
@@ -1713,18 +1767,6 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
-			sql: `create user 'test'@'%' identified by '123456'`,
-			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
-			},
-		},
-		{
-			sql: `drop user 'test'@'%'`,
-			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
-			},
-		},
-		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "", "", nil},
@@ -1809,7 +1851,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is)
+		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
 		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
 		_, err = builder.Build(context.TODO(), stmt)
 		c.Assert(err, IsNil, comment)
@@ -1909,12 +1951,12 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		},
 		{
 			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by a",
-			best: "UnionAll{UnionAll{Dual->Projection->Projection->Dual->Projection->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection->Projection}->Projection->Sort",
+			best: "UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection}->Projection->Sort",
 			err:  false,
 		},
 		{
 			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by (select a)",
-			best: "Apply{UnionAll{UnionAll{Dual->Projection->Projection->Dual->Projection->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
+			best: "Apply{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
 			err:  false,
 		},
 	}
@@ -1924,7 +1966,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is)
+		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
 		plan, err := builder.Build(ctx, stmt)
 		if tt.err {
 			c.Assert(err, NotNil)
@@ -2053,7 +2095,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is)
+		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -2176,7 +2218,7 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is)
+		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -2204,7 +2246,7 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is)
+		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -2229,7 +2271,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
-			result: "TableReader(Table(t))->Projection->Sort->Window(avg(cast(2_proj_window_3)) over(partition by 2_proj_window_2))->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(2_proj_window_3)) over(partition by 2_proj_window_2))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
@@ -2249,7 +2291,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(avg(a)) over() from t",
-			result: "TableReader(Table(t)->HashAgg)->HashAgg->Window(sum(sel_agg_2) over())->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over())",
@@ -2261,11 +2303,11 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select b from t order by(sum(avg(a)) over())",
-			result: "TableReader(Table(t)->HashAgg)->HashAgg->Window(sum(sel_agg_2) over())->Sort->Projection",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Sort->Projection",
 		},
 		{
 			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
-			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(test.tt.a, test.t.a)]))->Window(sum(cast(test.tt.a)) over())->MaxOneRow->Sel([w])}->Projection",
+			result: "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.tt.a, test.t.a)]))->Window(sum(cast(test.tt.a)) over())->MaxOneRow->Sel([w])}->Projection",
 		},
 		{
 			sql:    "select avg(a) over() as w from t having w > 1",
@@ -2301,7 +2343,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(a) over w from t window w as (rows between 1 preceding AND 1 following)",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(rows between 1 preceding and 1 following))->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Window(sum(cast(test.t.a)) over(rows between 1 preceding and 1 following))->Projection",
 		},
 		{
 			sql:    "select sum(a) over(w order by b) from t window w as (order by a)",
@@ -2369,7 +2411,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select row_number() over(rows between 1 preceding and 1 following) from t",
-			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Window(row_number() over())->Projection",
 		},
 		{
 			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max from t group by c",
@@ -2393,7 +2435,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select ntile(null) over() from t",
-			result: "TableReader(Table(t))->Window(ntile(<nil>) over())->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Window(ntile(<nil>) over())->Projection",
 		},
 		{
 			sql:    "select avg(a) over w from t window w as(partition by b)",
@@ -2480,14 +2522,8 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 	}
 
 	s.Parser.EnableWindowFunc(true)
-	sessionVars := s.ctx.GetSessionVars()
-	finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
 	defer func() {
 		s.Parser.EnableWindowFunc(false)
-		sessionVars.HashAggFinalConcurrency = finalCon
-		sessionVars.HashAggPartialConcurrency = partialCon
 	}()
 	ctx := context.TODO()
 	for i, tt := range tests {
@@ -2495,7 +2531,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is)
+		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
@@ -2570,6 +2606,10 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			sql:    "select * from t where f > 1 and g > 1",
 			result: "PRIMARY_KEY,f,g,f_g",
 		},
+		{
+			sql:    "select count(1) from t",
+			result: "PRIMARY_KEY,c_d_e,f,g,f_g,c_d_e_str,e_d_c_str_prefix",
+		},
 	}
 	ctx := context.TODO()
 	for i, tt := range tests {
@@ -2577,18 +2617,18 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is)
+		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
 			continue
 		}
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		lp := p.(LogicalPlan)
 		_, err = lp.recursiveDeriveStats()
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		var ds *DataSource
 		var byItems []*ByItems
 		for ds == nil {
@@ -2598,12 +2638,23 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			case *LogicalSort:
 				byItems = v.ByItems
 				lp = lp.Children()[0]
+			case *LogicalProjection:
+				newItems := make([]*ByItems, 0, len(byItems))
+				for _, col := range byItems {
+					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
+					switch expr := v.Exprs[idx].(type) {
+					case *expression.Column:
+						newItems = append(newItems, &ByItems{Expr: expr, Desc: col.Desc})
+					}
+				}
+				byItems = newItems
+				lp = lp.Children()[0]
 			default:
 				lp = lp.Children()[0]
 			}
 		}
 		paths := ds.skylinePruning(byItemsToProperty(byItems))
-		c.Assert(pathsName(paths), Equals, tt.result)
+		c.Assert(pathsName(paths), Equals, tt.result, comment)
 	}
 }
 
@@ -2646,5 +2697,31 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 			c.Assert(p, IsNil)
 			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 0)
 		}
+	}
+}
+
+func (s *testPlanSuite) TestUpdateEQCond(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select t1.a from t t1, t t2 where t1.a = t2.a+1",
+			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t1.a,plus(test.t2.a, 1))->Projection",
+		},
+	}
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is)
+		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+		p, err := builder.Build(ctx, stmt)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }

@@ -49,22 +49,25 @@ var (
 
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
-	store        *tikvStore
-	version      kv.Version
-	priority     pb.CommandPri
-	notFillCache bool
-	syncLog      bool
-	keyOnly      bool
-	vars         *kv.Variables
+	store           *tikvStore
+	version         kv.Version
+	priority        pb.CommandPri
+	notFillCache    bool
+	syncLog         bool
+	keyOnly         bool
+	vars            *kv.Variables
+	replicaRead     kv.ReplicaReadType
+	replicaReadSeed uint32
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
-func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
+func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
 	return &tikvSnapshot{
-		store:    store,
-		version:  ver,
-		priority: pb.CommandPri_Normal,
-		vars:     kv.DefaultVars,
+		store:           store,
+		version:         ver,
+		priority:        pb.CommandPri_Normal,
+		vars:            kv.DefaultVars,
+		replicaReadSeed: replicaReadSeed,
 	}
 }
 
@@ -111,7 +114,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 }
 
 func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
-	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys)
+	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -154,10 +157,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 	pending := batch.keys
 	for {
-		req := tikvrpc.NewRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
+		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version.Ver,
-		}, pb.Context{
+		}, s.replicaRead, s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
 		})
@@ -232,11 +235,11 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
 
-	req := tikvrpc.NewRequest(tikvrpc.CmdGet,
+	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
 		&pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
-		}, pb.Context{
+		}, s.replicaRead, s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
 		})
@@ -298,6 +301,23 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	return scanner, errors.Trace(err)
 }
 
+// SetOption sets an option with a value, when val is nil, uses the default
+// value of this option. Only ReplicaRead is supported for snapshot
+func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
+	switch opt {
+	case kv.ReplicaRead:
+		s.replicaRead = val.(kv.ReplicaReadType)
+	}
+}
+
+// ClearFollowerRead disables follower read on current transaction
+func (s *tikvSnapshot) DelOption(opt kv.Option) {
+	switch opt {
+	case kv.ReplicaRead:
+		s.replicaRead = kv.ReplicaReadLeader
+	}
+}
+
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return NewLock(locked), nil
@@ -321,7 +341,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
-		logutil.BgLogger().Warn("error", zap.Error(err))
+		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return errors.Errorf("unexpected KeyError: %s", keyErr.String())

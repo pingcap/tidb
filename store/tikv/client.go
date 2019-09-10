@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 )
@@ -199,8 +200,7 @@ func (a *connArray) Close() {
 // that there are too many concurrent requests which overload the service of TiKV.
 type rpcClient struct {
 	sync.RWMutex
-	isClosed bool
-	done     chan struct{}
+	done chan struct{}
 
 	conns    map[string]*connArray
 	security config.Security
@@ -208,6 +208,10 @@ type rpcClient struct {
 	// eventCh is used by batch client.
 	// TODO: create a batchClient resemble rpcClient that implements tikv.Client
 	eventCh chan *eventMSG
+
+	// Periodically check whether there is any connection that is idle and then close and remove these idle connections.
+	// Implement background cleanup.
+	isClosed bool
 }
 
 func newRPCClient(security config.Security) *rpcClient {
@@ -296,14 +300,19 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	}
 
+	clientConn := connArray.Get()
+	if state := clientConn.GetState(); state == connectivity.TransientFailure {
+		metrics.GRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
+	}
+
 	if req.IsDebugReq() {
-		client := debugpb.NewDebugClient(connArray.Get())
+		client := debugpb.NewDebugClient(clientConn)
 		ctx1, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		return tikvrpc.CallDebugRPC(ctx1, client, req)
 	}
 
-	client := tikvpb.NewTikvClient(connArray.Get())
+	client := tikvpb.NewTikvClient(clientConn)
 
 	if req.Type != tikvrpc.CmdCopStream {
 		ctx1, cancel := context.WithTimeout(ctx, timeout)

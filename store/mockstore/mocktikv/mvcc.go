@@ -68,6 +68,7 @@ func (l *mvccLock) MarshalBinary() ([]byte, error) {
 	mh.WriteNumber(&buf, l.op)
 	mh.WriteNumber(&buf, l.ttl)
 	mh.WriteNumber(&buf, l.forUpdateTS)
+	mh.WriteNumber(&buf, l.txnSize)
 	return buf.Bytes(), errors.Trace(mh.err)
 }
 
@@ -81,6 +82,7 @@ func (l *mvccLock) UnmarshalBinary(data []byte) error {
 	mh.ReadNumber(buf, &l.op)
 	mh.ReadNumber(buf, &l.ttl)
 	mh.ReadNumber(buf, &l.forUpdateTS)
+	mh.ReadNumber(buf, &l.txnSize)
 	return errors.Trace(mh.err)
 }
 
@@ -197,6 +199,7 @@ func (l *mvccLock) lockErr(key []byte) error {
 		Primary: l.primary,
 		StartTS: l.startTS,
 		TTL:     l.ttl,
+		TxnSize: l.txnSize,
 	}
 }
 
@@ -255,6 +258,7 @@ type MVCCStore interface {
 	Rollback(keys [][]byte, startTS uint64) error
 	Cleanup(key []byte, startTS uint64) error
 	ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error)
+	TxnHeartBeat(primaryKey []byte, startTS uint64, adviseTTL uint64) (uint64, error)
 	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
 	BatchResolveLock(startKey, endKey []byte, txnInfos map[uint64]uint64) error
 	GC(startKey, endKey []byte, safePoint uint64) error
@@ -277,7 +281,7 @@ type RawKV interface {
 
 // MVCCDebugger is for debugging.
 type MVCCDebugger interface {
-	MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte)
+	MvccGetByStartTS(starTS uint64) (*kvrpcpb.MvccInfo, []byte)
 	MvccGetByKey(key []byte) *kvrpcpb.MvccInfo
 }
 
