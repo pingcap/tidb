@@ -2361,18 +2361,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	ds.SetSchema(schema)
 
-	// Init idxCols, idxColLens, fullIdxCols, fullIdxColLens for accessPaths.
+	// Init fullIdxCols, fullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
 		if !path.isTablePath {
-			path.idxCols, path.idxColLens = expression.IndexInfo2PrefixCols(ds.schema.Columns, path.index)
 			path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
-			if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
-				handleCol := ds.getPKIsHandleCol()
-				if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-					path.idxCols = append(path.idxCols, handleCol)
-					path.idxColLens = append(path.idxColLens, types.UnspecifiedLength)
-				}
-			}
 		}
 	}
 
