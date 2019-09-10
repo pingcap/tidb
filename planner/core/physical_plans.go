@@ -345,6 +345,21 @@ func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 	return
 }
 
+func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
+	factor = 0.0
+	for _, agg := range p.AggFuncs {
+		if fac, ok := aggFuncFactor[agg.Name]; ok {
+			factor += fac
+		} else {
+			factor += aggFuncFactor["default"]
+		}
+	}
+	if factor == 0 {
+		factor = 1.0
+	}
+	return
+}
+
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
@@ -407,10 +422,6 @@ type PhysicalTableDual struct {
 	physicalSchemaProducer
 
 	RowCount int
-	// placeHolder indicates if this dual plan is a place holder in query optimization
-	// for data sources like `Show`, if true, the dual plan would be substituted by
-	// `Show` in the final plan.
-	placeHolder bool
 
 	// names is used for OutputNames() method. Dual may be inited when building point get plan.
 	// So it needs to hold names for itself.
@@ -453,6 +464,13 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 	}
 
 	return statsInfos
+}
+
+// PhysicalShow represents a show plan.
+type PhysicalShow struct {
+	physicalSchemaProducer
+
+	baseShowContent
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.

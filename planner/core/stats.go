@@ -41,6 +41,20 @@ func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo) (*prope
 	return p.stats, nil
 }
 
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+	// A fake count, just to avoid panic now.
+	profile := &property.StatsInfo{
+		RowCount:    1,
+		Cardinality: make([]float64, p.Schema().Len()),
+	}
+	for i := range profile.Cardinality {
+		profile.Cardinality[i] = 1
+	}
+	p.stats = profile
+	return p.stats, nil
+}
+
 func (p *baseLogicalPlan) recursiveDeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
@@ -107,7 +121,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
 	selectivity, nodes, err := tableStats.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
-		logutil.BgLogger().Debug("an error happened, use the default selectivity", zap.Error(err))
+		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
 	ds.stats = tableStats.Scale(selectivity)
