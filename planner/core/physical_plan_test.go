@@ -65,6 +65,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			sql:  "select * from t t1 use index(c_d_e)",
 			best: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
 		},
+		{
+			sql:  "select f from t use index() where f = 1",
+			best: "TableReader(Table(t)->Sel([eq(test.t.f, 1)]))",
+		},
 		// Test ts + Sort vs. DoubleRead + filter.
 		{
 			sql:  "select a from t where a between 1 and 2 order by c",
