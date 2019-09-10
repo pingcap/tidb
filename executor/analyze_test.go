@@ -158,8 +158,8 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
-	executor.MaxSampleSize = 20
-	executor.RandSeed = 123
+	atomic.SetInt64(&executor.MaxSampleSize, 20)
+	atomic.SetInt64(&executor.RandSeed, 123)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -229,8 +229,8 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
-	executor.MaxSampleSize = 6
-	executor.RandSeed = 123
+	atomic.StoreInt64(&executor.MaxSampleSize, 6)
+	atomic.StoreInt64(&executor.RandSeed, 123)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
