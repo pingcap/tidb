@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/opentracing/opentracing-go"
@@ -86,12 +87,81 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	return nil
 }
 
-func prefetchUniqueIndices(ctx context.Context) error {
-	return nil
+func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("prefetchUniqueIndices", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	nKeys := 0
+	for _, r := range rows {
+		if r.handleKey != nil {
+			nKeys++
+		}
+		nKeys += len(r.uniqueKeys)
+	}
+	batchKeys := make([]kv.Key, 0, nKeys)
+	for _, r := range rows {
+		if r.handleKey != nil {
+			batchKeys = append(batchKeys, r.handleKey.newKV.key)
+		}
+		for _, k := range r.uniqueKeys {
+			batchKeys = append(batchKeys, k.newKV.key)
+		}
+	}
+	return txn.BatchGet(ctx, batchKeys)
 }
 
-func prefetchConflictedOldRows() error {
-	return nil
+func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string][]byte) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("prefetchConflictedOldRows", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	batchKeys := make([]kv.Key, 0, len(rows))
+	for _, r := range rows {
+		for _, uk := range r.uniqueKeys {
+			if val, found := values[string(uk.newKV.key)]; found {
+				handle, err := tables.DecodeHandle(val)
+				if err != nil {
+					return err
+				}
+				batchKeys = append(batchKeys, r.t.RecordKey(handle))
+			}
+		}
+	}
+	_, err := txn.BatchGet(ctx, batchKeys)
+	return err
+}
+
+func prefetchDataCache(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("prefetchDataCache", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	values, err := prefetchUniqueIndices(ctx, txn, rows)
+	if err != nil {
+		return err
+	}
+	return prefetchConflictedOldRows(ctx, txn, rows, values)
+}
+
+// updateDupRowNew updates a duplicate row to a new row.
+func (e *InsertExec) updateDupRowNew(ctx context.Context, txn kv.Transaction, row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
+	oldRow, err := e.getOldRowNew(ctx, e.ctx, txn, row.t, handle, e.GenExprs)
+	if err != nil {
+		return err
+	}
+
+	_, _, _, err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, e.OnDuplicate)
+	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return nil
+	}
+	return err
 }
 
 func (e *InsertExec) batchUpdateDupRowsNew(ctx context.Context, newRows [][]types.Datum) error {
@@ -101,21 +171,17 @@ func (e *InsertExec) batchUpdateDupRowsNew(ctx context.Context, newRows [][]type
 		return err
 	}
 
-	// The following prefetch operations use BatchGet to fill cache.
-	// It's an optimization and could be removed without affecting correctness.
-	err = prefetchUniqueIndices(ctx)
-	if err != nil {
-		return err
-	}
-	err = prefetchConflictedOldRows()
-	if err != nil {
-		return err
-	}
-
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
+
+	// Use BatchGet to fill cache.
+	// It's an optimization and could be removed without affecting correctness.
+	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
+		return err
+	}
+
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
@@ -123,20 +189,10 @@ func (e *InsertExec) batchUpdateDupRowsNew(ctx context.Context, newRows [][]type
 				return err
 			}
 
-			oldRow, err := e.getOldRowNew(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
+			err = e.updateDupRowNew(ctx, txn, r, handle, e.OnDuplicate)
 			if err == nil {
-				fmt.Println("hanele === ", handle, len(oldRow))
-				_, _, _, err = e.doDupRowUpdate(ctx, handle, oldRow, r.row, e.OnDuplicate)
-				if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
-					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-					return nil
-				}
-				if err != nil {
-					return err
-				}
 				continue
 			}
-
 			if !kv.IsErrNotFound(err) {
 				return err
 			}
@@ -150,34 +206,28 @@ func (e *InsertExec) batchUpdateDupRowsNew(ctx context.Context, newRows [][]type
 				}
 				return err
 			}
-
 			handle, err := tables.DecodeHandle(val)
 			if err != nil {
 				return err
 			}
 
-			oldRow, err := e.getOldRowNew(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
-			fmt.Println("len oldRow = ", len(oldRow))
+			err = e.updateDupRowNew(ctx, txn, r, handle, e.OnDuplicate)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
-					// Data index inconsistent?
+					// Data index inconsistent? A unique key provide the handle information, but the
+					// handle points to nothing.
 					logutil.BgLogger().Error("get old row failed when insert on dup",
+						zap.String("uniqueKey", hex.EncodeToString(uk.newKV.key)),
 						zap.Int64("handle", handle),
 						zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
 				}
 				return err
 			}
-			_, _, _, err = e.doDupRowUpdate(ctx, handle, oldRow, r.row, e.OnDuplicate)
-			if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				return nil
-			}
-			if err != nil {
-				return err
-			}
+
 			newRows[i] = nil
 			break
 		}
+
 		// If row was checked with no duplicate keys,
 		// we should do insert the row,
 		// and key-values should be filled back to dupOldRowValues for the further row check,
