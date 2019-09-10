@@ -24,11 +24,11 @@ import (
 
 func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.put(buf)
+	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
 		return err
 	}
