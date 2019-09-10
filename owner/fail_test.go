@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -64,10 +63,7 @@ func (s *testSuite) TestFailNewSession(c *C) {
 	stop.Add(1)
 	go func() {
 		if err = srv.Serve(ln); err != nil {
-			logutil.BgLogger().Error(
-				"can't serve gRPC requests ",
-				zap.Error(err),
-			)
+			c.Errorf("can't serve gRPC requests %v", err)
 		}
 		stop.Done()
 	}()
