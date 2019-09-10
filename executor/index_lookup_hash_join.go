@@ -196,6 +196,10 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
+	if e.runtimeStats != nil {
+		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
+		rootStats.SetConcurrencyNum(int64(len(e.joiners)))
+	}
 	return e.baseExecutor.Close()
 }
 
