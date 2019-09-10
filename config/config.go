@@ -403,7 +403,7 @@ var defaultConf = Config{
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
 
-		MaxTxnTimeUse: 590,
+		MaxTxnTimeUse: 28800,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,

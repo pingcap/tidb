@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -297,19 +298,19 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 		logutil.Logger(ctx).Warn("[gc worker] gc status is disabled.")
 		return false, 0, nil
 	}
-	now, err := w.getOracleTime()
+	globalMinStartTime, err := w.getGlobalMinStartTime()
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-	ok, err := w.checkGCInterval(now)
+	ok, err := w.checkGCInterval(globalMinStartTime)
 	if err != nil || !ok {
 		return false, 0, errors.Trace(err)
 	}
-	newSafePoint, err := w.calculateNewSafePoint(now)
+	newSafePoint, err := w.calculateNewSafePoint(globalMinStartTime)
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
-	err = w.saveTime(gcLastRunTimeKey, now)
+	err = w.saveTime(gcLastRunTimeKey, globalMinStartTime)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -318,6 +319,39 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 		return false, 0, errors.Trace(err)
 	}
 	return true, oracle.ComposeTS(oracle.GetPhysical(*newSafePoint), 0), nil
+}
+
+func (w *GCWorker) getGlobalMinStartTime() (time.Time, error) {
+	kvs, err := w.store.GetSafePointKV().GetWithPrefix("/tidb/server/minstartts")
+	if err != nil {
+		return time.Time{}, err
+	}
+	var globalMinStartTS uint64 = math.MaxUint64
+	for _, v := range kvs {
+		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 8)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if minStartTS != 0 && minStartTS < globalMinStartTS {
+			globalMinStartTS = minStartTS
+		}
+	}
+	physical := oracle.ExtractPhysical(globalMinStartTS)
+	sec, nsec := physical/1e3, (physical%1e3)*1e6
+	globalMinTime := time.Unix(sec, nsec)
+	now, err := w.getOracleTime()
+	if err != nil {
+		return time.Time{}, err
+	}
+	diff := now.Sub(globalMinTime)
+	maxTxnTimeUse := time.Duration(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse) * time.Second
+	if diff > maxTxnTimeUse {
+		return now.Add(-maxTxnTimeUse), nil
+	}
+	if diff < 0 {
+		return now, nil
+	}
+	return globalMinTime, nil
 }
 
 func (w *GCWorker) getOracleTime() (time.Time, error) {
@@ -419,23 +453,16 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 
 // validateGCLiftTime checks whether life time is small than min gc life time.
 func (w *GCWorker) validateGCLiftTime(lifeTime time.Duration) (time.Duration, error) {
-	minLifeTime := gcMinLifeTime
-	// max-txn-time-use value is less than gc_life_time - 10s.
-	maxTxnTime := time.Duration(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse+10) * time.Second
-	if minLifeTime < maxTxnTime {
-		minLifeTime = maxTxnTime
-	}
-
-	if lifeTime >= minLifeTime {
+	if lifeTime >= gcMinLifeTime {
 		return lifeTime, nil
 	}
 
 	logutil.BgLogger().Info("[gc worker] invalid gc life time",
 		zap.Duration("get gc life time", lifeTime),
-		zap.Duration("min gc life time", minLifeTime))
+		zap.Duration("min gc life time", gcMinLifeTime))
 
-	err := w.saveDuration(gcLifeTimeKey, minLifeTime)
-	return minLifeTime, err
+	err := w.saveDuration(gcLifeTimeKey, gcMinLifeTime)
+	return gcMinLifeTime, err
 }
 
 func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
