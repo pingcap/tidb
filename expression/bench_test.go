@@ -289,25 +289,6 @@ type vecExprBenchCase struct {
 	geners []dataGenerator
 }
 
-//
-//var vecExprBenchCases = map[string][]vecExprBenchCase{
-//	ast.Cast: {
-//		{types.ETInt, []types.EvalType{types.ETInt}, nil},
-//	},
-//	ast.Repeat: {
-//		{types.ETString, []types.EvalType{types.ETString, types.ETInt}, []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
-//	},
-//	ast.Log10: {
-//		{types.ETReal, []types.EvalType{types.ETReal}, nil},
-//	},
-//	ast.If: {
-//		{types.ETJson, []types.EvalType{types.ETInt, types.ETJson, types.ETJson}, nil},
-//	},
-//	ast.Greatest: {
-//		{types.ETDecimal, []types.EvalType{types.ETDecimal, types.ETDecimal, types.ETDecimal}, nil},
-//	},
-//}
-
 type vecExprBenchCases map[string][]vecExprBenchCase
 
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vecExprBenchCase) {
@@ -388,7 +369,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 	return expr, input, output
 }
 
-func (s *testEvaluatorSuite) TestVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
+func (s *testEvaluatorSuite) testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
@@ -510,7 +491,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	return baseFunc, input, result
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
+func (s *testEvaluatorSuite) testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
