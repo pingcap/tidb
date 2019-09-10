@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 )
@@ -299,14 +300,19 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	}
 
+	clientConn := connArray.Get()
+	if state := clientConn.GetState(); state == connectivity.TransientFailure {
+		metrics.GRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
+	}
+
 	if req.IsDebugReq() {
-		client := debugpb.NewDebugClient(connArray.Get())
+		client := debugpb.NewDebugClient(clientConn)
 		ctx1, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		return tikvrpc.CallDebugRPC(ctx1, client, req)
 	}
 
-	client := tikvpb.NewTikvClient(connArray.Get())
+	client := tikvpb.NewTikvClient(clientConn)
 
 	if req.Type != tikvrpc.CmdCopStream {
 		ctx1, cancel := context.WithTimeout(ctx, timeout)
