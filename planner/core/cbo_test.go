@@ -915,13 +915,13 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
 	tk.MustQuery("explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
 		"Projection_7 0.00 root test.t1.a, test.t1.b, test.t2.a, test.t2.b",
-		"└─HashRightJoin_9 0.00 root inner join, inner:TableReader_12, equal:[eq(test.t2.b, test.t1.b)]",
-		"  ├─TableReader_12 0.00 root data:Selection_11",
+		"└─HashRightJoin_9 0.00 root inner join, inner:IndexReader_12, equal:[eq(test.t2.b, test.t1.b)]",
+		"  ├─IndexReader_12 0.00 root index:Selection_11",
 		"  │ └─Selection_11 0.00 cop isnull(test.t2.b), not(isnull(test.t2.b))",
-		"  │   └─TableScan_10 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"  └─TableReader_15 9990.00 root data:Selection_14",
+		"  │   └─IndexScan_10 10000.00 cop table:t2, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
+		"  └─IndexReader_15 9990.00 root index:Selection_14",
 		"    └─Selection_14 9990.00 cop not(isnull(test.t1.b))",
-		"      └─TableScan_13 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"      └─IndexScan_13 10000.00 cop table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
 	))
 }
 
