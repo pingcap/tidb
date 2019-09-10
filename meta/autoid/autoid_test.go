@@ -245,6 +245,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	err = alloc.Rebase(3, un, true)
 	c.Assert(err, IsNil)
 	_, err = alloc.Alloc(3)
+	c.Assert(err, NotNil)
 	un = int64(n + 1)
 	err = alloc.Rebase(3, un, true)
 	c.Assert(err, IsNil)
