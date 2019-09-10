@@ -208,6 +208,35 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 	return true, false, nil
 }
 
+func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, results []bool) ([]bool, error) {
+	n := input.NumRows()
+	results = results[:0]
+	for i := 0; i < n; i++ {
+		results = append(results, true)
+	}
+	for _, expr := range exprList {
+		eType := expr.GetType().EvalType()
+		buf, err := newBuffer(eType, n) // TODO: recycle this buffer
+		if err != nil {
+			return nil, err
+		}
+		switch eType {
+		case types.ETInt:
+			buf.ResizeInt64(n, false)
+			if err := expr.VecEvalInt(ctx, input, buf); err != nil {
+				return nil, err
+			}
+		case types.ETReal:
+		case types.ETDuration:
+		case types.ETDatetime, types.ETTimestamp:
+		case types.ETString:
+		case types.ETJson:
+		case types.ETDecimal:
+		}
+	}
+	return nil, nil
+}
+
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
 func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expression, funcName string) Expression {
 	length := len(conditions)
