@@ -1,0 +1,35 @@
+[
+  {
+    "Name": "TestIndexHint",
+    "Cases": [
+      {
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false
+      },
+      {
+        "Best": "TableReader(Table(t))",
+        "HasWarn": false
+      },
+      {
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false
+      },
+      {
+        "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))-\u003eIndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
+        "HasWarn": false
+      },
+      {
+        "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
+        "HasWarn": false
+      },
+      {
+        "Best": "TableReader(Table(t)-\u003eSel([gt(test.t.f, 10)]))",
+        "HasWarn": false
+      },
+      {
+        "Best": "TableReader(Table(t))",
+        "HasWarn": true
+      }
+    ]
+  }
+]
