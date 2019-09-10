@@ -248,6 +248,9 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 		alloc.base, alloc.end = newBase, newEnd
 	}
 
+	if uint64(alloc.base)+uint64(1) == math.MaxUint64 {
+		return 0, ErrAutoincReadFailed
+	}
 	alloc.base = int64(uint64(alloc.base) + 1)
 	logutil.Logger(context.Background()).Debug("alloc unsigned ID",
 		zap.Uint64("ID", uint64(alloc.base)),
@@ -284,6 +287,9 @@ func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 		alloc.base, alloc.end = newBase, newEnd
 	}
 
+	if alloc.base+1 == math.MaxInt64 {
+		return 0, ErrAutoincReadFailed
+	}
 	alloc.base++
 	logutil.Logger(context.Background()).Debug("alloc signed ID",
 		zap.Uint64("ID", uint64(alloc.base)),
