@@ -145,7 +145,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
 	r.Check(testkit.Rows("0"))
 
-	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test")
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX()")
 	r.Check(testkit.Rows("5"))
 
 	r = tk.MustQuery("admin recover index admin_test c2")
@@ -380,7 +380,7 @@ func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("admin check index admin_test c2")
 	c.Assert(err, NotNil)
-	r := tk.MustQuery("SELECT COUNT(*) FROM admin_test")
+	r := tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX()")
 	r.Check(testkit.Rows("3"))
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c1)")
 	r.Check(testkit.Rows("2003"))

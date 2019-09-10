@@ -153,4 +153,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVRangeTaskStats)
 	prometheus.MustRegister(TiKVRangeTaskPushDuration)
 	prometheus.MustRegister(TiKVTokenWaitDuration)
+	prometheus.MustRegister(GRPCConnTransientFailureCounter)
 }

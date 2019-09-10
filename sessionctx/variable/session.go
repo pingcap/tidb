@@ -417,6 +417,9 @@ type SessionVars struct {
 
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt string
+
+	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
+	AllowRemoveAutoInc bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -473,6 +476,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMerge:            false,
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 		ReplicaRead:                 kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -844,9 +848,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBExpensiveQueryTimeThreshold:
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
-		if err := s.setTxnMode(val); err != nil {
-			return err
-		}
+		s.TxnMode = strings.ToUpper(val)
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:
@@ -859,6 +861,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
 			s.ReplicaRead = kv.ReplicaReadLeader
 		}
+	case TiDBAllowRemoveAutoInc:
+		s.AllowRemoveAutoInc = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

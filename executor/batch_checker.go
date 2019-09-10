@@ -292,6 +292,94 @@ func (b *batchChecker) deleteDupKeys(ctx context.Context, sctx sessionctx.Contex
 	return nil
 }
 
+// getOldRowNew gets the table record row from storage for batch check.
+// t could be a normal table or a partition, but it must not be a PartitionedTable.
+func (b *batchChecker) getOldRowNew(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle int64,
+	genExprs []expression.Expression) ([]types.Datum, error) {
+	oldValue, err := txn.Get(ctx, t.RecordKey(handle))
+	if err != nil {
+		return nil, err
+	}
+
+	cols := t.WritableCols()
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx, t.Meta(), handle, cols, oldValue)
+	if err != nil {
+		return nil, err
+	}
+	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
+	gIdx := 0
+	for _, col := range cols {
+		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
+			_, found := oldRowMap[col.ID]
+			if !found {
+				oldRow[col.Offset], err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		if col.IsGenerated() {
+			// only the virtual column needs fill back.
+			if !col.GeneratedStored {
+				val, err := genExprs[gIdx].Eval(chunk.MutRowFromDatums(oldRow).ToRow())
+				if err != nil {
+					return nil, err
+				}
+				oldRow[col.Offset], err = table.CastValue(sctx, val, col.ToInfo())
+				if err != nil {
+					return nil, err
+				}
+			}
+			gIdx++
+		}
+	}
+	return oldRow, nil
+}
+
+// getOldRow gets the table record row from storage for batch check.
+// t could be a normal table or a partition, but it must not be a PartitionedTable.
+func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle int64,
+	genExprs []expression.Expression) ([]types.Datum, error) {
+	oldValue, err := txn.Get(ctx, t.RecordKey(handle))
+	if err != nil {
+		return nil, err
+	}
+
+	cols := t.WritableCols()
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx, t.Meta(), handle, cols, oldValue)
+	if err != nil {
+		return nil, err
+	}
+	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
+	gIdx := 0
+	for _, col := range cols {
+		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
+			_, found := oldRowMap[col.ID]
+			if !found {
+				oldRow[col.Offset], err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		if col.IsGenerated() {
+			// only the virtual column needs fill back.
+			if !col.GeneratedStored {
+				val, err := genExprs[gIdx].Eval(chunk.MutRowFromDatums(oldRow).ToRow())
+				if err != nil {
+					return nil, err
+				}
+				oldRow[col.Offset], err = table.CastValue(sctx, val, col.ToInfo())
+				if err != nil {
+					return nil, err
+				}
+			}
+			gIdx++
+		}
+	}
+	return oldRow, nil
+}
+
 // getOldRow gets the table record row from storage for batch check.
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
 func (b *batchChecker) getOldRow(ctx sessionctx.Context, t table.Table, handle int64,
