@@ -174,6 +174,18 @@ func (c *Column) AppendNull() {
 	c.length++
 }
 
+// AppendRaw appends the raw bytes into this Column.
+func (c *Column) AppendRaw(data []byte) {
+	c.appendNullBitmap(true)
+	if c.isFixed() {
+		c.data = append(c.data, data...)
+	} else {
+		c.data = append(c.data, data...)
+		c.offsets = append(c.offsets, int64(len(c.data)))
+	}
+	c.length++
+}
+
 func (c *Column) finishAppendFixed() {
 	c.data = append(c.data, c.elemBuf...)
 	c.appendNullBitmap(true)

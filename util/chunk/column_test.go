@@ -16,6 +16,7 @@ package chunk
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
@@ -757,12 +758,12 @@ func (s *testChunkSuite) TestGetRaw(c *check.C) {
 		col.AppendFloat32(float32(i))
 	}
 	it := NewIterator4Chunk(chk)
-	var i int64
+	var i int
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		f := float32(i)
 		b := (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
 		c.Assert(row.GetRaw(0), check.DeepEquals, b)
-		c.Assert(col.GetRaw(int(i)), check.DeepEquals, b)
+		c.Assert(col.GetRaw(i), check.DeepEquals, b)
 		i++
 	}
 
@@ -776,6 +777,40 @@ func (s *testChunkSuite) TestGetRaw(c *check.C) {
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		c.Assert(row.GetRaw(0), check.DeepEquals, []byte(fmt.Sprint(i)))
 		c.Assert(col.GetRaw(int(i)), check.DeepEquals, []byte(fmt.Sprint(i)))
+		i++
+	}
+}
+
+func (s *testChunkSuite) TestAppendRaw(c *check.C) {
+	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeFloat)}, 1024)
+	col := chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		f := float32(i)
+		raw := (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
+		col.AppendRaw(raw)
+	}
+	it := NewIterator4Chunk(chk)
+	var i int
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		f := float32(i)
+		c.Assert(row.GetFloat32(0), check.Equals, f)
+		c.Assert(col.GetFloat32(i), check.Equals, f)
+		i++
+	}
+
+	chk = NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeVarString)}, 1024)
+	col = chk.Column(0)
+	for i := 0; i < 1024; i++ {
+		str := strings.Repeat(fmt.Sprint(i), i)
+		raw := []byte(str)
+		col.AppendRaw(raw)
+	}
+	it = NewIterator4Chunk(chk)
+	i = 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		str := strings.Repeat(fmt.Sprint(i), i)
+		c.Assert(row.GetString(0), check.Equals, str)
+		c.Assert(col.GetString(i), check.Equals, str)
 		i++
 	}
 }
