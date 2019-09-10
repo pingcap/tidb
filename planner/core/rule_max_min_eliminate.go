@@ -67,7 +67,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 					return true
 				}
 			} else {
-				if col.ColName.L == path.index.Columns[0].Name.L && path.index.Columns[0].Length == types.UnspecifiedLength {
+				if col == path.fullIdxCols[0] && path.fullIdxColLens[0] == types.UnspecifiedLength {
 					return true
 				}
 			}
