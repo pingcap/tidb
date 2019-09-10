@@ -52,6 +52,27 @@ func HasGetSetVarFunc(expr Expression) bool {
 	return false
 }
 
+// HasAssignSetVarFunc checks whether an expression contains SetVar function and assign a value
+func HasAssignSetVarFunc(expr Expression) bool {
+	scalaFunc, ok := expr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if scalaFunc.FuncName.L == ast.SetVar {
+		for _, arg := range scalaFunc.GetArgs() {
+			if _, ok := arg.(*ScalarFunction); ok {
+				return true
+			}
+		}
+	}
+	for _, arg := range scalaFunc.GetArgs() {
+		if HasAssignSetVarFunc(arg) {
+			return true
+		}
+	}
+	return false
+}
+
 // VectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
 func VectorizedExecute(ctx sessionctx.Context, exprs []Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk) error {
 	for colID, expr := range exprs {
@@ -346,4 +367,43 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 		}
 	}
 	return selected, nil
+}
+
+// VectorizedFilterConsiderNull applies a list of filters to a Chunk and
+// returns two bool slices, `selected` indicates whether a row passed the
+// filters, `isNull` indicates whether the result of the filter is null.
+// Filters is executed vectorized.
+func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNil []bool) ([]bool, []bool, error) {
+	selected, isNil = selected[:0], isNil[:0]
+	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
+		selected, isNil = append(selected, true), append(isNil, false)
+	}
+	for _, filter := range filters {
+		isIntType := true
+		if filter.GetType().EvalType() != types.ETInt {
+			isIntType = false
+		}
+		for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
+			if !selected[row.Idx()] {
+				continue
+			}
+			if isIntType {
+				filterResult, isNull, err := filter.EvalInt(ctx, row)
+				if err != nil {
+					return nil, nil, err
+				}
+				selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
+				isNil[row.Idx()] = isNil[row.Idx()] || isNull
+			} else {
+				// TODO: should rewrite the filter to `cast(expr as SIGNED) != 0` and always use `EvalInt`.
+				bVal, isNull, err := EvalBool(ctx, []Expression{filter}, row)
+				if err != nil {
+					return nil, nil, err
+				}
+				selected[row.Idx()] = selected[row.Idx()] && bVal
+				isNil[row.Idx()] = isNil[row.Idx()] || isNull
+			}
+		}
+	}
+	return selected, isNil, nil
 }
