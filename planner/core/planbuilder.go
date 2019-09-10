@@ -478,6 +478,17 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 		}
 
 		hasScanHint = true
+
+		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
+		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
+		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
+		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
+			if path := getTablePath(publicPaths); path != nil {
+				hasUseOrForce = true
+				path.forced = true
+				available = append(available, path)
+			}
+		}
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
