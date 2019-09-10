@@ -240,7 +240,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(id, Equals, int64(6544))
 
 	// Test the MaxUint64 is alloc upper bound but not rebase.
-	var n uint64 = math.MaxInt64 - 1
+	var n uint64 = math.MaxUint64 - 1
 	un := int64(n)
 	err = alloc.Rebase(3, un, true)
 	c.Assert(err, IsNil)
