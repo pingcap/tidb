@@ -1,0 +1,18 @@
+[
+  {
+    "name": "TestIndexHint",
+    "cases": [
+      // simple case
+      "select /*+ INDEX(t, c_d_e) */ * from t",
+      "select /*+ INDEX(t, c_d_e) */ * from t t1",
+      "select /*+ INDEX(t1, c_d_e) */ * from t t1",
+      "select /*+ INDEX(t1, c_d_e), INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+      // test multiple indexes
+      "select /*+ INDEX(t, c_d_e, f, g) */ * from t order by f",
+      // use TablePath when the hint only contains table.
+      "select /*+ INDEX(t) */ f from t where f > 10",
+      // there will be a warning instead of error when index not exist
+      "select /*+ INDEX(t, no_such_index) */ * from t"
+    ]
+  }
+]
