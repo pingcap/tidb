@@ -15,6 +15,7 @@ package perfschema
 
 import (
 	"fmt"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
