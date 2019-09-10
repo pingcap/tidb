@@ -60,7 +60,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 {
-		err := e.batchUpdateDupRowsNew(ctx, rows)
+		err := e.batchUpdateDupRows(ctx, rows)
 		if err != nil {
 			return err
 		}
@@ -79,7 +79,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	return nil
 }
 
-func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
+func prefetchUniqueIndices(txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
 	nKeys := 0
 	for _, r := range rows {
 		if r.handleKey != nil {
@@ -122,16 +122,16 @@ func prefetchDataCache(ctx context.Context, txn kv.Transaction, rows []toBeCheck
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	values, err := prefetchUniqueIndices(ctx, txn, rows)
+	values, err := prefetchUniqueIndices(txn, rows)
 	if err != nil {
 		return err
 	}
 	return prefetchConflictedOldRows(ctx, txn, rows, values)
 }
 
-// updateDupRowNew updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRowNew(ctx context.Context, txn kv.Transaction, row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
-	oldRow, err := e.getOldRowNew(e.ctx, txn, row.t, handle, e.GenExprs)
+// updateDupRow updates a duplicate row to a new row.
+func (e *InsertExec) updateDupRow(ctx context.Context, txn kv.Transaction, row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
+	oldRow, err := getOldRow(ctx, e.ctx, txn, row.t, handle, e.GenExprs)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,8 @@ func (e *InsertExec) updateDupRowNew(ctx context.Context, txn kv.Transaction, ro
 	return err
 }
 
-func (e *InsertExec) batchUpdateDupRowsNew(ctx context.Context, newRows [][]types.Datum) error {
+// batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
+func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.Datum) error {
 	// Get keys need to be checked.
 	toBeCheckedRows, err := e.getKeysNeedCheck(e.ctx, e.Table, newRows)
 	if err != nil {
@@ -169,7 +170,7 @@ func (e *InsertExec) batchUpdateDupRowsNew(ctx context.Context, newRows [][]type
 				return err
 			}
 
-			err = e.updateDupRowNew(ctx, txn, r, handle, e.OnDuplicate)
+			err = e.updateDupRow(ctx, txn, r, handle, e.OnDuplicate)
 			if err == nil {
 				continue
 			}
@@ -191,7 +192,7 @@ func (e *InsertExec) batchUpdateDupRowsNew(ctx context.Context, newRows [][]type
 				return err
 			}
 
-			err = e.updateDupRowNew(ctx, txn, r, handle, e.OnDuplicate)
+			err = e.updateDupRow(ctx, txn, r, handle, e.OnDuplicate)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
@@ -217,62 +218,6 @@ func (e *InsertExec) batchUpdateDupRowsNew(ctx context.Context, newRows [][]type
 			if err != nil {
 				return err
 			}
-		}
-	}
-	return nil
-}
-
-// batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
-func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
-	err := e.batchGetInsertKeys(e.ctx, e.Table, newRows)
-	if err != nil {
-		return err
-	}
-
-	// Batch get the to-be-updated rows in storage.
-	err = e.initDupOldRowValue(e.ctx, e.Table, newRows)
-	if err != nil {
-		return err
-	}
-
-	for i, r := range e.toBeCheckedRows {
-		if r.handleKey != nil {
-			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
-				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
-				if err != nil {
-					return err
-				}
-				err = e.updateDupRow(r, handle, e.OnDuplicate)
-				if err != nil {
-					return err
-				}
-				continue
-			}
-		}
-		for _, uk := range r.uniqueKeys {
-			if val, found := e.dupKVs[string(uk.newKV.key)]; found {
-				handle, err := tables.DecodeHandle(val)
-				if err != nil {
-					return err
-				}
-				err = e.updateDupRow(r, handle, e.OnDuplicate)
-				if err != nil {
-					return err
-				}
-				newRows[i] = nil
-				break
-			}
-		}
-		// If row was checked with no duplicate keys,
-		// we should do insert the row,
-		// and key-values should be filled back to dupOldRowValues for the further row check,
-		// due to there may be duplicate keys inside the insert statement.
-		if newRows[i] != nil {
-			newHandle, err := e.addRecord(newRows[i])
-			if err != nil {
-				return err
-			}
-			e.fillBackKeys(e.Table, r, newHandle)
 		}
 	}
 	return nil
@@ -311,25 +256,6 @@ func (e *InsertExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// updateDupRow updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
-	oldRow, err := e.getOldRow(e.ctx, row.t, handle, e.GenExprs)
-	if err != nil {
-		logutil.Logger(context.Background()).Error("get old row failed when insert on dup", zap.Int64("handle", handle), zap.String("toBeInsertedRow", types.DatumsToStrNoErr(row.row)))
-		return err
-	}
-	// Do update row.
-	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(handle, oldRow, row.row, onDuplicate)
-	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return e.updateDupKeyValues(handle, newHandle, handleChanged, oldRow, updatedRow)
-}
-
 // doDupRowUpdate updates the duplicate row.
 func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow []types.Datum,
 	cols []*expression.Assignment) ([]types.Datum, bool, int64, error) {
@@ -360,29 +286,6 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow [
 		return nil, false, 0, err
 	}
 	return newData, handleChanged, newHandle, nil
-}
-
-// updateDupKeyValues updates the dupKeyValues for further duplicate key check.
-func (e *InsertExec) updateDupKeyValues(oldHandle int64, newHandle int64,
-	handleChanged bool, oldRow []types.Datum, updatedRow []types.Datum) error {
-	// There is only one row per update.
-	fillBackKeysInRows, err := e.getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{updatedRow})
-	if err != nil {
-		return err
-	}
-	// Delete old keys and fill back new key-values of the updated row.
-	err = e.deleteDupKeys(e.ctx, e.Table, [][]types.Datum{oldRow})
-	if err != nil {
-		return err
-	}
-
-	if handleChanged {
-		delete(e.dupOldRowValues, string(e.Table.RecordKey(oldHandle)))
-		e.fillBackKeys(e.Table, fillBackKeysInRows[0], newHandle)
-	} else {
-		e.fillBackKeys(e.Table, fillBackKeysInRows[0], oldHandle)
-	}
-	return nil
 }
 
 // setMessage sets info message(ERR_INSERT_INFO) generated by INSERT statement
