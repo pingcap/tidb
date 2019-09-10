@@ -282,7 +282,7 @@ batch-wait-size = 8
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
-enabled = true
+enabled = false
 capacity = 2048000
 
 [binlog]
@@ -304,10 +304,7 @@ strategy = "range"
 
 [pessimistic-txn]
 # enable pessimistic transaction.
-enable = false
-
-# start pessimistic transaction by default.
-default = false
+enable = true
 
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256

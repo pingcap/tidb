@@ -41,6 +41,20 @@ func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo) (*prope
 	return p.stats, nil
 }
 
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+	// A fake count, just to avoid panic now.
+	profile := &property.StatsInfo{
+		RowCount:    1,
+		Cardinality: make([]float64, p.Schema().Len()),
+	}
+	for i := range profile.Cardinality {
+		profile.Cardinality[i] = 1
+	}
+	p.stats = profile
+	return p.stats, nil
+}
+
 func (p *baseLogicalPlan) recursiveDeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
@@ -107,7 +121,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
 	selectivity, nodes, err := tableStats.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
-		logutil.BgLogger().Debug("an error happened, use the default selectivity", zap.Error(err))
+		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
 	ds.stats = tableStats.Scale(selectivity)
@@ -376,6 +390,16 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo) (*pr
 // every matched bucket.
 func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	leftProfile, rightProfile := childStats[0], childStats[1]
+	helper := &fullJoinRowCountHelper{
+		cartesian:     0 == len(p.EqualConditions),
+		leftProfile:   leftProfile,
+		rightProfile:  rightProfile,
+		leftJoinKeys:  p.LeftJoinKeys,
+		rightJoinKeys: p.RightJoinKeys,
+		leftSchema:    p.children[0].Schema(),
+		rightSchema:   p.children[1].Schema(),
+	}
+	p.equalCondOutCnt = helper.estimate()
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.stats = &property.StatsInfo{
 			RowCount:    leftProfile.RowCount * selectionFactor,
@@ -395,16 +419,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		p.stats.Cardinality[len(p.stats.Cardinality)-1] = 2.0
 		return p.stats, nil
 	}
-	helper := &fullJoinRowCountHelper{
-		cartesian:     0 == len(p.EqualConditions),
-		leftProfile:   leftProfile,
-		rightProfile:  rightProfile,
-		leftJoinKeys:  p.LeftJoinKeys,
-		rightJoinKeys: p.RightJoinKeys,
-		leftSchema:    p.children[0].Schema(),
-		rightSchema:   p.children[1].Schema(),
-	}
-	count := helper.estimate()
+	count := p.equalCondOutCnt
 	if p.JoinType == LeftOuterJoin {
 		count = math.Max(count, leftProfile.RowCount)
 	} else if p.JoinType == RightOuterJoin {

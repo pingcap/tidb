@@ -59,6 +59,8 @@ const (
 	TypeMergeJoin = "MergeJoin"
 	// TypeIndexJoin is the type of index look up join.
 	TypeIndexJoin = "IndexJoin"
+	// TypeIndexMergeJoin is the type of index look up merge join.
+	TypeIndexMergeJoin = "IndexMergeJoin"
 	// TypeApply is the type of Apply.
 	TypeApply = "Apply"
 	// TypeMaxOneRow is the type of MaxOneRow.
@@ -265,8 +267,14 @@ func (p Insert) Init(ctx sessionctx.Context) *Insert {
 	return &p
 }
 
-// Init initializes Show.
-func (p Show) Init(ctx sessionctx.Context) *Show {
+// Init initializes LogicalShow.
+func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeShow, &p)
+	return &p
+}
+
+// Init initializes PhysicalShow.
+func (p PhysicalShow) Init(ctx sessionctx.Context) *PhysicalShow {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeShow, &p)
 	// Just use pseudo stats to avoid panic.
 	p.stats = &property.StatsInfo{RowCount: 1}
@@ -401,6 +409,15 @@ func (p PhysicalIndexJoin) Init(ctx sessionctx.Context, stats *property.StatsInf
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeIndexJoin, &p)
 	p.childrenReqProps = props
 	p.stats = stats
+	return &p
+}
+
+// Init initializes PhysicalIndexMergeJoin.
+func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMergeJoin {
+	ctx.GetSessionVars().PlanID++
+	p.tp = TypeIndexMergeJoin
+	p.id = ctx.GetSessionVars().PlanID
+	p.ctx = ctx
 	return &p
 }
 

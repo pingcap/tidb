@@ -23,7 +23,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -94,27 +93,18 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	regionIDs := make([]uint64, 0, len(splitIdxKeys))
-	for _, idxKey := range splitIdxKeys {
-		if isCtxDone(ctxWithTimeout) {
-			break
-		}
-
-		regionID, err := s.SplitRegion(idxKey, true)
-		if err != nil {
-			logutil.BgLogger().Warn("split table index region failed",
-				zap.String("table", e.tableInfo.Name.L),
-				zap.String("index", e.indexInfo.Name.L),
-				zap.Error(err))
-			continue
-		}
-		if regionID == 0 {
-			continue
-		}
-		regionIDs = append(regionIDs, regionID)
-
+	regionIDs, err := s.SplitRegions(context.Background(), splitIdxKeys, true)
+	if err != nil {
+		logutil.BgLogger().Warn("split table index region failed",
+			zap.String("table", e.tableInfo.Name.L),
+			zap.String("index", e.indexInfo.Name.L),
+			zap.Error(err))
 	}
 	e.splitRegions = len(regionIDs)
+	if e.splitRegions == 0 {
+		return nil
+	}
+
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
@@ -294,30 +284,17 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	regionIDs := make([]uint64, 0, len(splitKeys))
-	for _, key := range splitKeys {
-		failpoint.Inject("mockSplitRegionTimeout", func(val failpoint.Value) {
-			if val.(bool) {
-				time.Sleep(time.Second*1 + time.Millisecond*10)
-			}
-		})
-		if isCtxDone(ctxWithTimeout) {
-			break
-		}
-		regionID, err := s.SplitRegion(key, true)
-		if err != nil {
-			logutil.BgLogger().Warn("split table region failed",
-				zap.String("table", e.tableInfo.Name.L),
-				zap.Error(err))
-			continue
-		}
-		if regionID == 0 {
-			continue
-		}
-		regionIDs = append(regionIDs, regionID)
-
+	regionIDs, err := s.SplitRegions(ctxWithTimeout, splitKeys, true)
+	if err != nil {
+		logutil.BgLogger().Warn("split table region failed",
+			zap.String("table", e.tableInfo.Name.L),
+			zap.Error(err))
 	}
 	e.splitRegions = len(regionIDs)
+	if e.splitRegions == 0 {
+		return nil
+	}
+
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}

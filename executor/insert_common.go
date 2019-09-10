@@ -242,7 +242,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if types.ErrTruncated.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			logutil.BgLogger().Warn("truncate error", zap.Error(err1))
+			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
 		}
 		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
@@ -570,8 +570,9 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		if e.filterErr(err) != nil {
 			return types.Datum{}, err
 		}
-		// It's compatible with mysql. So it sets last insert id to the first row.
-		if e.rowCount == 1 {
+		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
+		// Cause autoID may be specified by user, judge only the first row is not suitable.
+		if e.lastInsertID == 0 {
 			e.lastInsertID = uint64(recordID)
 		}
 	}
