@@ -343,7 +343,7 @@ func (s *testSuite1) TestAggregation(c *C) {
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
-	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION std_samp does not exist")
+	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
 	_, err = tk.Exec("select variance(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")

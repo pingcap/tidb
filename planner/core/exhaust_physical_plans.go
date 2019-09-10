@@ -590,7 +590,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
-		cst:               scanFactor * rowSize * ts.stats.RowCount,
+		cst:               ScanFactor * rowSize * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
@@ -670,7 +670,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	is.initSchema(ds.id, path.index, path.fullIdxCols, cop.tablePlan != nil)
 	rowSize := is.indexScanRowSize(path.index, ds)
-	cop.cst = rowCount * rowSize * scanFactor
+	cop.cst = rowCount * rowSize * ScanFactor
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo)
 	tmpPath := &accessPath{
 		indexFilters:     indexConds,

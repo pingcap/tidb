@@ -278,7 +278,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
-	logutil.BgLogger().Debug("tikv reports region error",
+	logutil.BgLogger().Debug("tikv reports region failed",
 		zap.Stringer("regionErr", regionErr),
 		zap.Stringer("ctx", ctx))
 	s.regionCache.InvalidateCachedRegion(ctx.Region)
