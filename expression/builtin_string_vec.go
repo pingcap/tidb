@@ -62,6 +62,32 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
+func (b *builtinStringIsNullSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendInt64(1)
+		} else {
+			result.AppendInt64(0)
+		}
+	}
+	return nil
+}
+
 func (b *builtinRepeatSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinStringIsNullSig) vectorized() bool {
 	return true
 }
