@@ -1209,8 +1209,7 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 	case KindInt64:
 		// if input kind is int64 (signed), when trans to bit, we need to treat it as unsigned
 		d.k = KindUint64
-		uintDatum, err1 := d.convertToUint(sc, target)
-		uintValue, err = uintDatum.GetUint64(), err1
+		fallthrough
 	default:
 		uintDatum, err1 := d.convertToUint(sc, target)
 		uintValue, err = uintDatum.GetUint64(), err1
