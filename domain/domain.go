@@ -425,7 +425,9 @@ func (do *Domain) infoSyncerKeeper() {
 	for {
 		select {
 		case <-ticker.C:
+			logutil.BgLogger().Info("updating minStartTS")
 			do.info.UpdateMinStartTS(do.SysSessionPool())
+			logutil.BgLogger().Info("updating minStartTS finished")
 		case <-do.info.Done():
 			logutil.BgLogger().Info("server info syncer need to restart")
 			if err := do.info.Restart(context.Background()); err != nil {

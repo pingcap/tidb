@@ -158,6 +158,7 @@ func (is *InfoSyncer) storeMinStartTS(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
+	logutil.Logger(ctx).Info("store minStartTS", zap.Uint64("minStartTS", is.minStartTS))
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.minStartTSPath,
 		strconv.FormatUint(is.minStartTS, 10),
 		clientv3.WithLease(is.session.Lease()))
