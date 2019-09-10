@@ -417,6 +417,9 @@ type SessionVars struct {
 
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt string
+
+	// AllowDropAutoInc indicates whether a user can drop the auto_increment column attribute or not.
+	AllowDropAutoInc bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -473,6 +476,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMerge:            false,
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 		ReplicaRead:                 kv.ReplicaReadLeader,
+		AllowDropAutoInc:            DefTiDBAllowDropAutoInc,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -857,6 +861,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
 			s.ReplicaRead = kv.ReplicaReadLeader
 		}
+	case TiDBAllowDropAutoInc:
+		s.AllowDropAutoInc = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
