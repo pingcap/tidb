@@ -664,7 +664,7 @@ func (j *innerJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, c
 		chkForJoin = chk
 	}
 	outer, numToAppend, cursor := outers.Current(), chk.RequiredRows()-chk.NumRows(), 0
-	for ; outer != outers.End() && cursor < numToAppend; outer, numToAppend = outers.Next(), cursor+1 {
+	for ; outer != outers.End() && cursor < numToAppend; outer, cursor = outers.Next(), cursor+1 {
 		if j.outerIsRight {
 			j.makeJoinRowToChunk(chkForJoin, inner, outer)
 		} else {
