@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
@@ -31,4 +33,12 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinMathEvalOneVec(c *C) {
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFunc(c *C) {
 	s.TestVectorizedBuiltinFunc(c, vecBuiltinMathCases)
+}
+
+func BenchmarkVectorizedBuiltinMathEvalOneVec(b *testing.B) {
+	benchmarkVectorizedEvalOneVec(b, vecBuiltinMathCases)
+}
+
+func BenchmarkVectorizedBuiltinMathFunc(b *testing.B) {
+	benchmarkVectorizedBuiltinFunc(b, vecBuiltinMathCases)
 }

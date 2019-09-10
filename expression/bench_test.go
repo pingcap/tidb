@@ -433,9 +433,9 @@ func (s *testEvaluatorSuite) TestVectorizedEvalOneVec(c *C, vecExprCases vecExpr
 	}
 }
 
-func BenchmarkVectorizedEvalOneVec(b *testing.B) {
+func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
-	for funcName, testCases := range vecExprBenchCases {
+	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, input, output := genVecExprBenchCase(ctx, funcName, testCase)
 			exprName := expr.String()
@@ -632,9 +632,9 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C, vecExprCases vecExp
 	}
 }
 
-func BenchmarkVectorizedBuiltinFunc(b *testing.B) {
+func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
-	for funcName, testCases := range vecExprBenchCases {
+	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
