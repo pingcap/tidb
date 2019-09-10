@@ -1192,6 +1192,25 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	return rs, err
 }
 
+// IsCachedExecOk check if we can execute using plan cached in prepared structure
+// Be careful for the short path, current precondition is ths cached plan satisfying
+// IsPointGetWithPKOrUniqueKeyByAutoCommit
+func (s *session) IsCachedExecOk(ctx context.Context, prepared *ast.Prepared) (bool, error) {
+	if prepared.CachedPlan != nil {
+		plan := prepared.CachedPlan.(plannercore.PhysicalPlan)
+		ok, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(s, plan)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+		logutil.Logger(ctx).Error("currently only point get plan should be cached in prepared, "+
+			"structure", zap.String("plan", plan.ExplainInfo()))
+	}
+	return false, nil
+}
+
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
 	var err error
@@ -1202,7 +1221,11 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		logutil.Logger(ctx).Error("prepared not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
-	if prepared.CachedPlan != nil {
+	ok, err = s.IsCachedExecOk(ctx, prepared)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		return s.CachedPlanExec(ctx, stmtID, prepared, args)
 	}
 	s.PrepareTxnCtx(ctx)
