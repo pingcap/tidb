@@ -56,8 +56,8 @@ type InfoSyncer struct {
 	serverInfoPath string
 	minStartTS     uint64
 	minStartTSPath string
-	session        *concurrency.Session
 	manager        util2.SessionManager
+	session        *concurrency.Session
 }
 
 // ServerInfo is server static information.
@@ -83,7 +83,6 @@ func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
-		minStartTS:     0,
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
 }
@@ -163,7 +162,6 @@ func (is *InfoSyncer) storeMinStartTS(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	logutil.Logger(ctx).Info("store minStartTS", zap.Uint64("minStartTS", is.minStartTS))
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.minStartTSPath,
 		strconv.FormatUint(is.minStartTS, 10),
 		clientv3.WithLease(is.session.Lease()))
@@ -176,7 +174,7 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 	}
 	err := util.DeleteKeyFromEtcd(is.minStartTSPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		logutil.BgLogger().Error("remove min start timestamp failed", zap.Error(err))
+		logutil.BgLogger().Error("remove minStartTS failed", zap.Error(err))
 	}
 }
 
@@ -196,7 +194,7 @@ func (is *InfoSyncer) UpdateMinStartTS() {
 	is.minStartTS = minStartTS
 	err := is.storeMinStartTS(context.Background())
 	if err != nil {
-		logutil.BgLogger().Error("update min start timestamp failed", zap.Error(err))
+		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
 	}
 }
 
