@@ -25,7 +25,6 @@ var _ = Suite(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
 	store kv.Storage
-	tk    *testkit.TestKit
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {
@@ -41,8 +40,6 @@ func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
 	s.store, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	s.tk = testkit.NewTestKitWithInit(c, s.store)
-	s.tk.MustExec("set session tidb_enable_cascades_planner = 1")
 }
 
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
@@ -50,11 +47,35 @@ func (s *testIntegrationSuite) TearDownSuite(c *C) {
 }
 
 func (s *testIntegrationSuite) TestSimpleProjDual(c *C) {
-	s.tk.MustQuery("explain select 1").Check(testkit.Rows(
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set session tidb_enable_cascades_planner = 1")
+	tk.MustQuery("explain select 1").Check(testkit.Rows(
 		"Projection_3 1.00 root 1",
 		"└─TableDual_4 1.00 root rows:1",
 	))
-	s.tk.MustQuery("select 1").Check(testkit.Rows(
+	tk.MustQuery("select 1").Check(testkit.Rows(
 		"1",
 	))
+}
+
+func (s *testIntegrationSuite) TestPKIsHandleRangeScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values(1,2),(3,4)")
+	tk.MustExec("set session tidb_enable_cascades_planner = 1")
+	tk.MustQuery("explain select b from t where a > 1").Check(testkit.Rows(
+		"Projection_8 3333.33 root test.t.b",
+		"└─TableReader_9 3333.33 root data:TableScan_10",
+		"  └─TableScan_10 3333.33 cop table:t, range:(1,+inf], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("select b from t where a > 1").Check(testkit.Rows(
+		"4",
+	))
+	tk.MustQuery("explain select b from t where a > 1 and a < 3").Check(testkit.Rows(
+		"Projection_8 2.00 root test.t.b",
+		"└─TableReader_9 2.00 root data:TableScan_10",
+		"  └─TableScan_10 2.00 cop table:t, range:(1,3), keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("select b from t where a > 1 and a < 3").Check(testkit.Rows())
 }
