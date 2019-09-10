@@ -1534,7 +1534,7 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 
-	// Both dropping and adding auto_increment is not allowed.
+	// Both dropping and adding auto_increment are not allowed.
 	s.tk.MustExec("drop table if exists mc")
 	s.tk.MustExec("create table mc(a int key auto_increment, b int)")
 	s.tk.MustExec("alter table mc modify column a bigint auto_increment") // Keeps auto_increment
