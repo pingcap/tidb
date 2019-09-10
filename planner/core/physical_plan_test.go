@@ -28,20 +28,30 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testPlanSuite{})
 
 type testPlanSuite struct {
 	*parser.Parser
-
 	is infoschema.InfoSchema
+
+	testData testutil.TestData
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	s.Parser = parser.New()
 	s.Parser.EnableWindowFunc(true)
+
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testPlanSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
