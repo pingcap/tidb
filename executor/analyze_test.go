@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -158,8 +159,8 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
-	atomic.SetInt64(&executor.MaxSampleSize, 20)
-	atomic.SetInt64(&executor.RandSeed, 123)
+	atomic.StoreInt64(&executor.MaxSampleSize, 20)
+	atomic.StoreInt64(&executor.RandSeed, 123)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
