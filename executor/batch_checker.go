@@ -292,7 +292,7 @@ func (b *batchChecker) deleteDupKeys(ctx context.Context, sctx sessionctx.Contex
 	return nil
 }
 
-// getOldRow gets the table record row from storage for batch check.
+// getOldRowNew gets the table record row from storage for batch check.
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
 func (b *batchChecker) getOldRowNew(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle int64,
 	genExprs []expression.Expression) ([]types.Datum, error) {
