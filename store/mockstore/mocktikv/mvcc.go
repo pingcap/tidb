@@ -70,6 +70,7 @@ func (l *mvccLock) MarshalBinary() ([]byte, error) {
 	mh.WriteNumber(&buf, l.ttl)
 	mh.WriteNumber(&buf, l.forUpdateTS)
 	mh.WriteNumber(&buf, l.txnSize)
+	mh.WriteNumber(&buf, l.minCommitTS)
 	return buf.Bytes(), errors.Trace(mh.err)
 }
 
@@ -84,6 +85,7 @@ func (l *mvccLock) UnmarshalBinary(data []byte) error {
 	mh.ReadNumber(buf, &l.ttl)
 	mh.ReadNumber(buf, &l.forUpdateTS)
 	mh.ReadNumber(buf, &l.txnSize)
+	mh.ReadNumber(buf, &l.minCommitTS)
 	return errors.Trace(mh.err)
 }
 

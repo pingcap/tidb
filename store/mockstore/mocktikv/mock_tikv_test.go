@@ -609,11 +609,12 @@ func (s *testMockTiKVSuite) TestRC(c *C) {
 
 func (s testMarshal) TestMarshalmvccLock(c *C) {
 	l := mvccLock{
-		startTS: 47,
-		primary: []byte{'a', 'b', 'c'},
-		value:   []byte{'d', 'e'},
-		op:      kvrpcpb.Op_Put,
-		ttl:     444,
+		startTS:     47,
+		primary:     []byte{'a', 'b', 'c'},
+		value:       []byte{'d', 'e'},
+		op:          kvrpcpb.Op_Put,
+		ttl:         444,
+		minCommitTS: 666,
 	}
 	bin, err := l.MarshalBinary()
 	c.Assert(err, IsNil)
