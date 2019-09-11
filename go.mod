@@ -78,4 +78,3 @@ require (
 
 replace github.com/pingcap/tipb => github.com/jingyugao/tipb v0.0.0-20190911070230-03bcdbb81a3f
 
-go 1.13
