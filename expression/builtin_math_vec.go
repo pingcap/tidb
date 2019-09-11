@@ -14,9 +14,9 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/types"
 	"math"
 
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
