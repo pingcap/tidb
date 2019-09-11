@@ -515,7 +515,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 // testVectorizedBuiltinFunc is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
-	// If you just want to run a special vectorized expression evaluation.
+	// If you just want to run a specified vectorized built-in function.
 	// You should input "export vec_test_func_sig=XXXsig" first, which "XXXsig" means
 	// the expression function signature you want to test.
 	// If you want to test all of them, just ignore it or "export vec_test_func_sig="
