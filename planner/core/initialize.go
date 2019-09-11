@@ -14,9 +14,10 @@
 package core
 
 import (
+	"strconv"
+
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
-	"strconv"
 )
 
 const (

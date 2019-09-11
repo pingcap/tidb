@@ -105,12 +105,12 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 }
 
 func genPlanNormalizeString(p core.Plan) {
-	pn := core.PlanNormalizeEncoder{}
-	str := pn.NormalizePlanTreeString(p.(core.PhysicalPlan))
+	pn := core.PlanEncoder{}
+	str := pn.Encode(p.(core.PhysicalPlan))
 	fmt.Printf("\n\n\nencode plan\n-----------------------\n%v\n----------------------------\n", str)
 
-	pnd := core.PlanNormalizeDecoder{}
-	decodePlan, err := pnd.DecodeNormalizePlanTreeString(str)
+	pnd := core.PlanDecoder{}
+	decodePlan, err := pnd.Decode(str)
 	fmt.Printf("decode plan \n-----------------------\n%v\n-----------err: %v -----------------\n", decodePlan, err)
 }
 

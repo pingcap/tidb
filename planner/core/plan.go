@@ -138,9 +138,6 @@ type PhysicalPlan interface {
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
-	// PhysicalID() int
-
-
 	// getChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
 
