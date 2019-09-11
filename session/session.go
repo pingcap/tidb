@@ -1197,7 +1197,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
 func (s *session) IsCachedExecOk(ctx context.Context, prepared *ast.Prepared) (bool, error) {
 	if prepared.CachedPlan != nil {
-		plan := prepared.CachedPlan.(plannercore.PhysicalPlan)
+		plan := prepared.CachedPlan.(plannercore.Plan)
 		ok, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(s, plan)
 		if err != nil {
 			return false, err
@@ -1205,8 +1205,6 @@ func (s *session) IsCachedExecOk(ctx context.Context, prepared *ast.Prepared) (b
 		if ok {
 			return true, nil
 		}
-		logutil.Logger(ctx).Error("currently only point get plan should be cached in prepared, "+
-			"structure", zap.String("plan", plan.ExplainInfo()))
 	}
 	return false, nil
 }
