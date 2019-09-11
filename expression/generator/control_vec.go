@@ -11,9 +11,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build ignore
+
 package main
 
-import "text/template"
+import (
+	"bytes"
+	"flag"
+	"go/format"
+	"io/ioutil"
+	"log"
+	"path/filepath"
+	"text/template"
+)
 
 const header = `// Copyright 2019 PingCAP, Inc.
 //
@@ -158,3 +168,97 @@ func BenchmarkVectorizedBuiltinControlFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinControlCases)
 }
 `))
+
+type typeContext struct {
+	// Describe the name of "github.com/pingcap/tidb/types".ET{{ .ETName }}
+	ETName string
+	// Describe the name of "github.com/pingcap/tidb/expression".VecExpr.VecEval{{ .TypeName }}
+	// If undefined, it's same as ETName.
+	TypeName string
+	// Describe the name of "github.com/pingcap/tidb/util/chunk".*Column.Append{{ .TypeNameInColumn }},
+	// Resize{{ .TypeNameInColumn }}, Reserve{{ .TypeNameInColumn }}, Get{{ .TypeNameInColumn }} and
+	// {{ .TypeNameInColumn }}s.
+	// If undefined, it's same as TypeName.
+	TypeNameInColumn string
+	// Same as "github.com/pingcap/tidb/util/chunk".getFixedLen()
+	Fixed bool
+}
+
+var typesMap = []typeContext{
+	{ETName: "Int", TypeNameInColumn: "Int64", Fixed: true},
+	{ETName: "Real", TypeNameInColumn: "Float64", Fixed: true},
+	{ETName: "Decimal", Fixed: true},
+	{ETName: "String", Fixed: false},
+	{ETName: "Datetime", TypeName: "Time", Fixed: true},
+	{ETName: "Duration", TypeNameInColumn: "GoDuration", Fixed: true},
+	{ETName: "Json", TypeName: "JSON", Fixed: false},
+}
+
+func generateDotGo(fileName string, imports string, types []typeContext, tmpls ...*template.Template) error {
+	w := new(bytes.Buffer)
+	w.WriteString(header)
+	w.WriteString(newLine)
+	w.WriteString(imports)
+	for _, tmpl := range tmpls {
+		for _, ctx := range types {
+			if ctx.TypeName == "" {
+				ctx.TypeName = ctx.ETName
+			}
+			if ctx.TypeNameInColumn == "" {
+				ctx.TypeNameInColumn = ctx.TypeName
+			}
+			err := tmpl.Execute(w, ctx)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	data, err := format.Source(w.Bytes())
+	if err != nil {
+		log.Println("[Warn]", fileName+": gofmt failed", err)
+		data = w.Bytes() // write original data for debugging
+	}
+	return ioutil.WriteFile(fileName, data, 0644)
+}
+
+func generateTestDotGo(fileName string, types []typeContext) error {
+	w := new(bytes.Buffer)
+	w.WriteString(header)
+	err := builtinControlVecTest.Execute(w, types)
+	if err != nil {
+		return err
+	}
+	data, err := format.Source(w.Bytes())
+	if err != nil {
+		log.Println("[Warn]", fileName+": gofmt failed", err)
+		data = w.Bytes() // write original data for debugging
+	}
+	return ioutil.WriteFile(fileName, data, 0644)
+}
+
+// generateOneFile generate one xxx.go file and the associated xxx_test.go file.
+func generateOneFile(fileNamePrefix string, imports string, types []typeContext,
+	tmpls ...*template.Template) (err error) {
+
+	err = generateDotGo(fileNamePrefix+".go", imports, types,
+		tmpls...,
+	)
+	if err != nil {
+		return
+	}
+	err = generateTestDotGo(fileNamePrefix+"_test.go", types)
+	return
+}
+
+func main() {
+	flag.Parse()
+	var err error
+	outputDir := "."
+	err = generateOneFile(filepath.Join(outputDir, "builtin_control_vec_generated"), builtinControlImports, typesMap,
+		// Add to the list if the file has more template to execute.
+		builtinIfVec,
+	)
+	if err != nil {
+		log.Fatalln("generateOneFile", err)
+	}
+}
