@@ -374,4 +374,15 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	tk2.MustExec("commit")
 	_, err := tk.Exec("commit")
 	c.Check(err, NotNil)
+
+	// Update snapshotTS after a conflict, invalidate snapshot cache.
+	tk.MustExec("truncate table conflict")
+	tk.MustExec("insert into conflict values (1, 2)")
+	tk.MustExec("begin pessimistic")
+
+	tk2.MustExec("update conflict set c = c - 1")
+
+	tk.MustExec("update conflict set c = c * 4")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from conflict").Check(testkit.Rows("1 4"))
 }
