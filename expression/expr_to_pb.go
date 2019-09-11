@@ -59,7 +59,7 @@ func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv
 		// Merge multiple converted pb expression into a CNF.
 		pbCNF = &tipb.Expr{
 			Tp:        tipb.ExprType_ScalarFunc,
-			Sig:       tipb.ScalarFuncSig_LogicalAnd,
+			Sig:       tipb.ScalarFuncSig_IntLogicalAnd,
 			Children:  []*tipb.Expr{pbCNF, pbExpr},
 			FieldType: ToPBFieldType(retTypeOfAnd),
 		}

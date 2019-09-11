@@ -453,12 +453,12 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewDecimalDatum(newMyDecimal(c, "1.23")),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_LogicalAnd,
+			scalarFunctionExpr(tipb.ScalarFuncSig_IntLogicalAnd,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(1))),
 			types.NewIntDatum(1),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_LogicalOr,
+			scalarFunctionExpr(tipb.ScalarFuncSig_IntLogicalOr,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(0))),
 			types.NewIntDatum(1),
 		},

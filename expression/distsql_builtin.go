@@ -305,10 +305,14 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_FloorReal:
 		f = &builtinFloorRealSig{base}
 
-	case tipb.ScalarFuncSig_LogicalAnd:
-		f = &builtinLogicAndSig{base}
-	case tipb.ScalarFuncSig_LogicalOr:
-		f = &builtinLogicOrSig{base}
+	case tipb.ScalarFuncSig_IntLogicalAnd:
+		f = &builtinIntLogicAndSig{base}
+	case tipb.ScalarFuncSig_RealLogicalAnd:
+		f = &builtinRealLogicAndSig{base}
+	case tipb.ScalarFuncSig_IntLogicalOr:
+		f = &builtinIntLogicOrSig{base}
+	case tipb.ScalarFuncSig_RealLogicalOr:
+		f = &builtinRealLogicOrSig{base}
 	case tipb.ScalarFuncSig_LogicalXor:
 		f = &builtinLogicXorSig{base}
 	case tipb.ScalarFuncSig_BitAndSig:

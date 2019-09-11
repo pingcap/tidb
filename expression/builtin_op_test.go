@@ -91,6 +91,10 @@ func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
 		{[]interface{}{0, nil}, 0, false, false},
 		{[]interface{}{nil, 0}, 0, false, false},
 		{[]interface{}{nil, 1}, 0, true, false},
+		{[]interface{}{0.1, 0.1}, 1, false, false},
+		{[]interface{}{0.1, 0}, 0, false, false},
+		{[]interface{}{0, 0.1}, 0, false, false},
+		{[]interface{}{nil, 0.1}, 0, true, false},
 
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
@@ -305,6 +309,10 @@ func (s *testEvaluatorSuite) TestLogicOr(c *C) {
 		{[]interface{}{1, nil}, 1, false, false},
 		{[]interface{}{nil, 1}, 1, false, false},
 		{[]interface{}{nil, 0}, 0, true, false},
+		{[]interface{}{0.1, 0.1}, 1, false, false},
+		{[]interface{}{0.1, 0}, 1, false, false},
+		{[]interface{}{0, 0.1}, 1, false, false},
+		{[]interface{}{nil, 0.1}, 1, false, false},
 
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
