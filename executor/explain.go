@@ -14,14 +14,8 @@
 package executor
 
 import (
-	"bytes"
-	"compress/gzip"
-	"compress/zlib"
 	"context"
-	"encoding/base64"
 	"fmt"
-	"github.com/golang/snappy"
-	"io"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/planner/core"
@@ -99,7 +93,6 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 	if e.analyzeExec != nil {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	}
-	//genExplainRows(e.explain.Rows)
 	genPlanNormalizeString(e.explain.StmtPlan)
 	return e.explain.Rows, nil
 }
@@ -112,56 +105,4 @@ func genPlanNormalizeString(p core.Plan) {
 	pnd := core.PlanDecoder{}
 	decodePlan, err := pnd.Decode(str)
 	fmt.Printf("decode plan \n-----------------------\n%v\n-----------err: %v -----------------\n", decodePlan, err)
-}
-
-func genExplainRows(rows [][]string) {
-	var buf bytes.Buffer
-	for _, row := range rows {
-		for _, value := range row {
-			buf.WriteString(value)
-			buf.WriteString("\t")
-		}
-		buf.WriteString("\n")
-	}
-	fmt.Printf("gen explain: %v\n%v\n", buf.Len(), buf.String())
-	compressZlib(buf)
-
-	//compressGzip(buf)
-	//compressSnappy(buf)
-}
-
-func compressZlib(buf bytes.Buffer) {
-	var in bytes.Buffer
-	w, _ := zlib.NewWriterLevel(&in, zlib.BestCompression)
-	w.Write(buf.Bytes())
-	w.Close()
-	encodedStr := base64.StdEncoding.EncodeToString(in.Bytes())
-	fmt.Printf("compress len: %v\n%v\nencode len: %v\n%v\n", in.Len(), in.String(), len(encodedStr), encodedStr)
-
-	decodeBytes, err := base64.StdEncoding.DecodeString(encodedStr)
-	if err != nil {
-		fmt.Printf("decode err: %v\n\n")
-	}
-	reader := bytes.NewReader(decodeBytes)
-	out, err := zlib.NewReader(reader)
-	if err != nil {
-		fmt.Printf("decode err: %v\n\n")
-	}
-	var outbuf bytes.Buffer
-	io.Copy(&outbuf, out)
-	fmt.Printf("decode plan: \n%v\n\n", outbuf.String())
-}
-
-func compressGzip(buf bytes.Buffer) {
-	var in bytes.Buffer
-	w, _ := gzip.NewWriterLevel(&in, gzip.BestCompression)
-	w.Write(buf.Bytes())
-	w.Close()
-	fmt.Printf("compress len: %v\n", in.Len())
-}
-
-func compressSnappy(buf bytes.Buffer) {
-	re := make([]byte, 0, buf.Len())
-	re = snappy.Encode(re, buf.Bytes())
-	fmt.Printf("compress len: %v\n", len(re))
 }

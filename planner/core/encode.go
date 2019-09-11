@@ -22,6 +22,13 @@ const (
 	copTaskType  = "1"
 )
 
+const (
+	lineBreaker    = '\n'
+	lineBreakerStr = "\n"
+	separator      = '\t'
+	separatorStr   = "\t"
+)
+
 func (pn *PlanEncoder) Encode(p PhysicalPlan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.encode(p, rootTaskType, 0)
@@ -71,7 +78,7 @@ func (pn *PlanDecoder) Decode(planString string) (string, error) {
 		return "", err
 	}
 
-	nodes := strings.Split(str, "\n")
+	nodes := strings.Split(str, lineBreakerStr)
 	pn.depths = make([]int, 0, len(nodes))
 	planInfos := make([]*planInfo, 0, len(nodes))
 	for _, node := range nodes {
@@ -98,9 +105,9 @@ func (pn *PlanDecoder) Decode(planString string) (string, error) {
 		pn.buf.WriteString(string(pn.indents[i]))
 		for i := 0; i < len(p.fields); i++ {
 			pn.buf.WriteString(p.fields[i])
-			pn.buf.WriteByte('\t')
+			pn.buf.WriteByte(separator)
 		}
-		pn.buf.WriteByte('\n')
+		pn.buf.WriteByte(lineBreaker)
 	}
 
 	return pn.buf.String(), nil
@@ -125,19 +132,19 @@ func (pn *PlanDecoder) initPlanTreeIndents() {
 
 func encodePlanNode(p PhysicalPlan, taskType string, depth int, buf *bytes.Buffer) {
 	buf.WriteString(strconv.Itoa(depth))
-	buf.WriteString("\t")
+	buf.WriteByte(separator)
 	buf.WriteString(p.EncodeID())
-	buf.WriteString("\t")
+	buf.WriteByte(separator)
 	buf.WriteString(taskType)
-	buf.WriteString("\t")
+	buf.WriteByte(separator)
 	buf.WriteString(strconv.FormatFloat(p.statsInfo().RowCount, 'f', -1, 64))
-	buf.WriteString("\t")
+	buf.WriteByte(separator)
 	buf.WriteString(p.ExplainInfo())
-	buf.WriteString("\n")
+	buf.WriteByte(lineBreaker)
 }
 
 func decodePlanInfo(str string) (*planInfo, error) {
-	values := strings.Split(str, "\t")
+	values := strings.Split(str, separatorStr)
 	if len(values) < 2 {
 		return nil, nil
 	}
