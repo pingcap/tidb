@@ -89,7 +89,7 @@ func (vt *perfSchemaTable) Meta() *model.TableInfo {
 func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	switch vt.meta.Name.O {
 	case tableNameEventsStatementsSummaryByDigest:
-		fullRows = stmtsummary.StmtSummary.ToDatum()
+		fullRows = stmtsummary.StmtSummaryByDigestMap.ToDatum()
 	}
 	if len(cols) == len(vt.cols) {
 		return

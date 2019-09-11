@@ -29,11 +29,11 @@ import (
 var _ = Suite(&testStmtSummarySuite{})
 
 type testStmtSummarySuite struct {
-	stmtSummaryByDigest *stmtSummaryByDigest
+	ssMap *stmtSummaryByDigestMap
 }
 
 func (s *testStmtSummarySuite) SetUpSuite(c *C) {
-	s.stmtSummaryByDigest = NewStmtSummaryByDigest()
+	s.ssMap = newStmtSummaryByDigestMap()
 }
 
 func TestT(t *testing.T) {
@@ -43,7 +43,7 @@ func TestT(t *testing.T) {
 
 // Test stmtSummaryByDigest.AddStatement
 func (s *testStmtSummarySuite) TestAddStatement(c *C) {
-	s.stmtSummaryByDigest.Clear()
+	s.ssMap.Clear()
 
 	// First statement
 	stmtExecInfo1 := &StmtExecInfo{
@@ -56,11 +56,11 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		SentRows:      100,
 		StartTime:     time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
-	key := &stmtSummaryCacheKey{
+	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
 	}
-	expectedSummary := stmtSummary{
+	expectedSummary := stmtSummaryByDigest{
 		schemaName:      stmtExecInfo1.SchemaName,
 		digest:          stmtExecInfo1.Digest,
 		normalizedSQL:   stmtExecInfo1.NormalizedSQL,
@@ -75,10 +75,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		lastSeen:        stmtExecInfo1.StartTime,
 	}
 
-	s.stmtSummaryByDigest.AddStatement(stmtExecInfo1)
-	summary, ok := s.stmtSummaryByDigest.summaryMap.Get(key)
+	s.ssMap.AddStatement(stmtExecInfo1)
+	summary, ok := s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
-	c.Assert(*summary.(*stmtSummary), Equals, expectedSummary)
+	c.Assert(*summary.(*stmtSummaryByDigest), Equals, expectedSummary)
 
 	// Second statement
 	stmtExecInfo2 := &StmtExecInfo{
@@ -98,10 +98,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummary.sumSentRows += stmtExecInfo2.SentRows
 	expectedSummary.lastSeen = stmtExecInfo2.StartTime
 
-	s.stmtSummaryByDigest.AddStatement(stmtExecInfo2)
-	summary, ok = s.stmtSummaryByDigest.summaryMap.Get(key)
+	s.ssMap.AddStatement(stmtExecInfo2)
+	summary, ok = s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
-	c.Assert(*summary.(*stmtSummary), Equals, expectedSummary)
+	c.Assert(*summary.(*stmtSummaryByDigest), Equals, expectedSummary)
 
 	// Third statement
 	stmtExecInfo3 := &StmtExecInfo{
@@ -121,10 +121,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummary.sumSentRows += stmtExecInfo3.SentRows
 	expectedSummary.firstSeen = stmtExecInfo3.StartTime
 
-	s.stmtSummaryByDigest.AddStatement(stmtExecInfo3)
-	summary, ok = s.stmtSummaryByDigest.summaryMap.Get(key)
+	s.ssMap.AddStatement(stmtExecInfo3)
+	summary, ok = s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
-	c.Assert(*summary.(*stmtSummary), Equals, expectedSummary)
+	c.Assert(*summary.(*stmtSummaryByDigest), Equals, expectedSummary)
 
 	// Fourth statement that in a different schema
 	stmtExecInfo4 := &StmtExecInfo{
@@ -137,14 +137,14 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		SentRows:      10,
 		StartTime:     time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
 	}
-	key = &stmtSummaryCacheKey{
+	key = &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo4.SchemaName,
 		digest:     stmtExecInfo4.Digest,
 	}
 
-	s.stmtSummaryByDigest.AddStatement(stmtExecInfo4)
-	c.Assert(s.stmtSummaryByDigest.summaryMap.Size(), Equals, 2)
-	_, ok = s.stmtSummaryByDigest.summaryMap.Get(key)
+	s.ssMap.AddStatement(stmtExecInfo4)
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 2)
+	_, ok = s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
 
 	// Fifth statement that has a different digest
@@ -158,14 +158,14 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		SentRows:      10,
 		StartTime:     time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
 	}
-	key = &stmtSummaryCacheKey{
+	key = &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo5.SchemaName,
 		digest:     stmtExecInfo5.Digest,
 	}
 
-	s.stmtSummaryByDigest.AddStatement(stmtExecInfo5)
-	c.Assert(s.stmtSummaryByDigest.summaryMap.Size(), Equals, 3)
-	_, ok = s.stmtSummaryByDigest.summaryMap.Get(key)
+	s.ssMap.AddStatement(stmtExecInfo5)
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 3)
+	_, ok = s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
 }
 
@@ -180,7 +180,7 @@ func match(c *C, row []types.Datum, expected ...interface{}) {
 
 // Test stmtSummaryByDigest.ToDatum
 func (s *testStmtSummarySuite) TestToDatum(c *C) {
-	s.stmtSummaryByDigest.Clear()
+	s.ssMap.Clear()
 
 	stmtExecInfo1 := &StmtExecInfo{
 		SchemaName:    "schema_name",
@@ -192,8 +192,8 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		SentRows:      100,
 		StartTime:     time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
-	s.stmtSummaryByDigest.AddStatement(stmtExecInfo1)
-	datums := s.stmtSummaryByDigest.ToDatum()
+	s.ssMap.AddStatement(stmtExecInfo1)
+	datums := s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, 1)
 	t := types.Time{Time: types.FromGoTime(stmtExecInfo1.StartTime), Type: mysql.TypeTimestamp}
 	match(c, datums[0], stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
@@ -203,7 +203,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 
 // Test AddStatement and ToDatum parallel
 func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
-	s.stmtSummaryByDigest.Clear()
+	s.ssMap.Clear()
 
 	threads := 8
 	loops := 32
@@ -226,11 +226,11 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 		// Add 32 times with different digest
 		for i := 0; i < loops; i++ {
 			stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
-			s.stmtSummaryByDigest.AddStatement(stmtExecInfo1)
+			s.ssMap.AddStatement(stmtExecInfo1)
 		}
 
 		// There would be 32 summaries
-		datums := s.stmtSummaryByDigest.ToDatum()
+		datums := s.ssMap.ToDatum()
 		c.Assert(len(datums), Equals, loops)
 	}
 
@@ -239,13 +239,13 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 	}
 	wg.Wait()
 
-	datums := s.stmtSummaryByDigest.ToDatum()
+	datums := s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, loops)
 }
 
 // Test max number of statement count.
 func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
-	s.stmtSummaryByDigest.Clear()
+	s.ssMap.Clear()
 
 	stmtExecInfo1 := &StmtExecInfo{
 		SchemaName:    "schema_name",
@@ -264,16 +264,16 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 	loops := int(maxStmtCount) * 10
 	for i := 0; i < loops; i++ {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
-		s.stmtSummaryByDigest.AddStatement(stmtExecInfo1)
+		s.ssMap.AddStatement(stmtExecInfo1)
 	}
 
 	// Summary count should be MaxStmtCount
-	sm := s.stmtSummaryByDigest.summaryMap
+	sm := s.ssMap.summaryMap
 	c.Assert(sm.Size(), Equals, int(maxStmtCount))
 
 	// LRU cache should work
 	for i := loops - int(maxStmtCount); i < loops; i++ {
-		key := &stmtSummaryCacheKey{
+		key := &stmtSummaryByDigestKey{
 			schemaName: stmtExecInfo1.SchemaName,
 			digest:     fmt.Sprintf("digest%d", i),
 		}
@@ -284,7 +284,7 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 
 // Test max length of normalized and sample SQL.
 func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
-	s.stmtSummaryByDigest.Clear()
+	s.ssMap.Clear()
 
 	// Create a long SQL
 	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
@@ -302,15 +302,15 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 		StartTime:     time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 
-	s.stmtSummaryByDigest.AddStatement(stmtExecInfo1)
-	key := &stmtSummaryCacheKey{
+	s.ssMap.AddStatement(stmtExecInfo1)
+	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
 	}
-	value, ok := s.stmtSummaryByDigest.summaryMap.Get(key)
+	value, ok := s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
 	// Length of normalizedSQL and sampleSQL should be maxSQLLength
-	summary := value.(*stmtSummary)
+	summary := value.(*stmtSummaryByDigest)
 	c.Assert(len(summary.normalizedSQL), Equals, int(maxSQLLength))
 	c.Assert(len(summary.sampleSQL), Equals, int(maxSQLLength))
 }

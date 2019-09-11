@@ -25,7 +25,11 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 )
 
-type stmtSummaryCacheKey struct {
+// There're many types of statement summary tables in MySQL, but we have
+// only implemented events_statement_summary_by_digest for now.
+
+// stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap
+type stmtSummaryByDigestKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
 	schemaName string
 	digest     string
@@ -35,7 +39,7 @@ type stmtSummaryCacheKey struct {
 }
 
 // Hash implements SimpleLRUCache.Key
-func (key *stmtSummaryCacheKey) Hash() []byte {
+func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
 		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest))
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
@@ -44,18 +48,18 @@ func (key *stmtSummaryCacheKey) Hash() []byte {
 	return key.hash
 }
 
-// A LRU cache that stores statement summary.
-type stmtSummaryByDigest struct {
+// stmtSummaryByDigestMap is a LRU cache that stores statement summaries.
+type stmtSummaryByDigestMap struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	sync.Mutex
 	summaryMap *kvcache.SimpleLRUCache
 }
 
-// StmtSummary is the global object for statement summary.
-var StmtSummary = NewStmtSummaryByDigest()
+// StmtSummaryByDigestMap is a global map containing all statement summaries.
+var StmtSummaryByDigestMap = newStmtSummaryByDigestMap()
 
-// Summary of each type of statements.
-type stmtSummary struct {
+// stmtSummaryByDigest is the summary for each type of statements.
+type stmtSummaryByDigest struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	sync.Mutex
 	schemaName      string
@@ -75,7 +79,7 @@ type stmtSummary struct {
 	lastSeen time.Time
 }
 
-// StmtExecInfo records execution status of each statement.
+// StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
 	SchemaName    string
 	OriginalSQL   string
@@ -88,16 +92,16 @@ type StmtExecInfo struct {
 	StartTime time.Time
 }
 
-// NewStmtSummaryByDigest creates a stmtSummaryByDigest.
-func NewStmtSummaryByDigest() *stmtSummaryByDigest {
+// newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
+func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
-	return &stmtSummaryByDigest{
+	return &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 	}
 }
 
-// Convert StmtExecInfo to stmtSummary
-func convertStmtExecInfoToSummary(sei *StmtExecInfo) *stmtSummary {
+// newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo
+func newStmtSummaryByDigest(sei *StmtExecInfo) *stmtSummaryByDigest {
 	// Trim SQL to size MaxSQLLength
 	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
 	normalizedSQL := sei.NormalizedSQL
@@ -109,7 +113,7 @@ func convertStmtExecInfoToSummary(sei *StmtExecInfo) *stmtSummary {
 		sampleSQL = sampleSQL[:maxSQLLength]
 	}
 
-	return &stmtSummary{
+	return &stmtSummaryByDigest{
 		schemaName:      sei.SchemaName,
 		digest:          sei.Digest,
 		normalizedSQL:   normalizedSQL,
@@ -125,71 +129,67 @@ func convertStmtExecInfoToSummary(sei *StmtExecInfo) *stmtSummary {
 	}
 }
 
-// Add a new StmtExecInfo to stmtSummary
-func addStmtExecInfoToSummary(sei *StmtExecInfo, ss *stmtSummary) {
-	ss.Lock()
+// Add a StmtExecInfo to stmtSummary
+func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo) {
+	ssbd.Lock()
 
-	ss.sumLatency += sei.TotalLatency
-	ss.execCount++
-	if sei.TotalLatency > ss.maxLatency {
-		ss.maxLatency = sei.TotalLatency
+	ssbd.sumLatency += sei.TotalLatency
+	ssbd.execCount++
+	if sei.TotalLatency > ssbd.maxLatency {
+		ssbd.maxLatency = sei.TotalLatency
 	}
-	if sei.TotalLatency < ss.minLatency {
-		ss.minLatency = sei.TotalLatency
+	if sei.TotalLatency < ssbd.minLatency {
+		ssbd.minLatency = sei.TotalLatency
 	}
-	// TODO: uint64 overflow
-	ss.sumAffectedRows += sei.AffectedRows
-	ss.sumSentRows += sei.SentRows
-	if sei.StartTime.Before(ss.firstSeen) {
-		ss.firstSeen = sei.StartTime
+	ssbd.sumAffectedRows += sei.AffectedRows
+	ssbd.sumSentRows += sei.SentRows
+	if sei.StartTime.Before(ssbd.firstSeen) {
+		ssbd.firstSeen = sei.StartTime
 	}
-	if ss.lastSeen.Before(sei.StartTime) {
-		ss.lastSeen = sei.StartTime
+	if ssbd.lastSeen.Before(sei.StartTime) {
+		ssbd.lastSeen = sei.StartTime
 	}
 
-	ss.Unlock()
+	ssbd.Unlock()
 }
 
-// Add a statement to statement summary.
-func (ss *stmtSummaryByDigest) AddStatement(sei *StmtExecInfo) {
-	key := &stmtSummaryCacheKey{
+// AddStatement adds a statement to StmtSummaryByDigestMap.
+func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
+	key := &stmtSummaryByDigestKey{
 		schemaName: sei.SchemaName,
 		digest:     sei.Digest,
 	}
 
-	var summary *stmtSummary
-	ss.Lock()
-	value, ok := ss.summaryMap.Get(key)
-	if ok {
-		summary = value.(*stmtSummary)
-	} else {
-		newSummary := convertStmtExecInfoToSummary(sei)
-		ss.summaryMap.Put(key, newSummary)
+	ssMap.Lock()
+	value, ok := ssMap.summaryMap.Get(key)
+	if !ok {
+		newSummary := newStmtSummaryByDigest(sei)
+		ssMap.summaryMap.Put(key, newSummary)
 	}
-	ss.Unlock()
+	ssMap.Unlock()
 
 	// Lock a single entry, not the whole cache.
-	if summary != nil {
-		addStmtExecInfoToSummary(sei, summary)
+	if ok {
+		value.(*stmtSummaryByDigest).add(sei)
 	}
 }
 
-// Remove all statement summaries.
-func (ss *stmtSummaryByDigest) Clear() {
-	ss.Lock()
-	ss.summaryMap.DeleteAll()
-	ss.Unlock()
+// Clear removes all statement summaries.
+func (ssMap *stmtSummaryByDigestMap) Clear() {
+	ssMap.Lock()
+	ssMap.summaryMap.DeleteAll()
+	ssMap.Unlock()
 }
 
 // Convert statement summary to Datum
-func (ss *stmtSummaryByDigest) ToDatum() [][]types.Datum {
-	ss.Lock()
-	values := ss.summaryMap.Values()
-	ss.Unlock()
+func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
+	ssMap.Lock()
+	values := ssMap.summaryMap.Values()
+	ssMap.Unlock()
 
 	rows := make([][]types.Datum, 0, len(values))
 	for _, value := range values {
-		summary := value.(*stmtSummary)
+		summary := value.(*stmtSummaryByDigest)
 		summary.Lock()
 		record := types.MakeDatums(
 			summary.schemaName,

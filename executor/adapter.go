@@ -790,7 +790,7 @@ func (a *ExecStmt) SummaryStmt() {
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
-	stmtsummary.StmtSummary.AddStatement(&stmtsummary.StmtExecInfo{
+	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:    sessVars.CurrentDB,
 		OriginalSQL:   a.Text,
 		NormalizedSQL: normalizedSQL,
