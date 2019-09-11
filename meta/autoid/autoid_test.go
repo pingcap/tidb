@@ -135,7 +135,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(6544))
 
-	// Test the MaxInt64 is alloc upper bound but not rebase.
+	// Test the MaxInt64 is the upper bound of `alloc` function but not `rebase`.
 	err = alloc.Rebase(3, int64(9223372036854775806), true)
 	c.Assert(err, IsNil)
 	_, err = alloc.Alloc(3)
@@ -239,7 +239,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(6544))
 
-	// Test the MaxUint64 is alloc upper bound but not rebase.
+	// Test the MaxUint64 is the upper bound of `alloc` func but not `rebase`.
 	var n uint64 = math.MaxUint64 - 1
 	un := int64(n)
 	err = alloc.Rebase(3, un, true)
