@@ -1266,7 +1266,7 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
-func (la *LogicalAggregation) canPushDown() bool {
+func (la *LogicalAggregation) canPushToCop() bool {
 	// Child may be of other types in the future, such as limit, topn and projection.
 	_, ok := la.children[0].(*DataSource)
 	return ok
@@ -1381,7 +1381,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	if la.aggHints.preferAggToCop {
-		if !la.canPushDown() {
+		if !la.canPushToCop() {
 			errMsg := "Optimizer Hint AGG_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
