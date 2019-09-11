@@ -51,7 +51,7 @@ func (s *testChunkSuite) TestListInDisk(c *check.C) {
 		for rowIdx := 0; rowIdx < numRow; rowIdx++ {
 			row, err := l.GetRow(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 			c.Check(err, check.IsNil)
-			c.Check(row.ToRow().GetDatumRow(fields), check.DeepEquals, chks[chkIdx].GetRow(rowIdx).GetDatumRow(fields))
+			c.Check(row.GetDatumRow(fields), check.DeepEquals, chks[chkIdx].GetRow(rowIdx).GetDatumRow(fields))
 		}
 	}
 }
@@ -127,7 +127,6 @@ func BenchmarkListInDiskGetRow(b *testing.B) {
 		})
 	}
 	b.ResetTimer()
-	// fmt.Println(b.N)
 	for i := 0; i < b.N; i++ {
 		_, err = l.GetRow(ptrs[i])
 		if err != nil {

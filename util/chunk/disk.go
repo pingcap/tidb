@@ -15,6 +15,7 @@ package chunk
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -22,10 +23,12 @@ import (
 	"path"
 	"sync"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 const (
@@ -41,11 +44,14 @@ var bufReaderPool = sync.Pool{
 	New: func() interface{} { return bufio.NewReaderSize(nil, readBufSize) },
 }
 
-var tmpDir = path.Join(os.TempDir(), "tidb-server-"+os.Args[0])
+var tmpDir = path.Join(os.TempDir(), "tidb-server-"+path.Base(os.Args[0]))
 
 func init() {
 	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
-	_ = os.Mkdir(tmpDir, 0755)
+	err := os.Mkdir(tmpDir, 0755)
+	if err != nil {
+		log.Warn("Mkdir temporary file error", zap.String("tmpDir", tmpDir), zap.Error(err))
+	}
 }
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
@@ -83,7 +89,7 @@ func (l *ListInDisk) GetDiskTracker() *disk.Tracker {
 // is not empty and not used any more and has the same field types.
 func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	if chk.NumRows() == 0 {
-		panic("chunk appended to List should have at least 1 row")
+		return errors.New("chunk appended to List should have at least 1 row")
 	}
 	if l.disk == nil {
 		l.disk, err = ioutil.TempFile(tmpDir, l.diskTracker.Label().String())
