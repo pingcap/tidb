@@ -1935,36 +1935,12 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	var sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 	for _, hint := range hints {
 		switch hint.HintName.L {
-<<<<<<< HEAD
 		case TiDBMergeJoin:
 			sortMergeTables = tableNames2HintTableInfo(hint.Tables)
 		case TiDBIndexNestedLoopJoin:
 			INLJTables = tableNames2HintTableInfo(hint.Tables)
 		case TiDBHashJoin:
 			hashJoinTables = tableNames2HintTableInfo(hint.Tables)
-=======
-		case TiDBMergeJoin, HintSMJ:
-			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(hint.Tables)...)
-		case TiDBIndexNestedLoopJoin, HintINLJ:
-			INLJTables = append(INLJTables, tableNames2HintTableInfo(hint.Tables)...)
-		case TiDBHashJoin, HintHJ:
-			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(hint.Tables)...)
-		case HintHashAgg:
-			preferAggType |= preferHashAgg
-		case HintStreamAgg:
-			preferAggType |= preferStreamAgg
-		case HintIndex:
-			if len(hint.Tables) != 0 {
-				indexHintList = append(indexHintList, indexHintInfo{
-					tblName: hint.Tables[0].TableName,
-					indexHint: &ast.IndexHint{
-						IndexNames: hint.Indexes,
-						HintType:   ast.HintUse,
-						HintScope:  ast.HintForScan,
-					},
-				})
-			}
->>>>>>> d2e8bc6... planner: choose TableScan when use an empty index hint (#12037)
 		default:
 			// ignore hints that not implemented
 		}
