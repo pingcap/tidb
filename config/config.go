@@ -339,7 +339,7 @@ var defaultConf = Config{
 	TokenLimit:                   1000,
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
-	MemQuotaHashJoin:             1,
+	MemQuotaHashJoin:             32 << 30,
 	EnableStreaming:              false,
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,
