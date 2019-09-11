@@ -34,7 +34,7 @@ func (a *maxMinEliminator) optimize(ctx context.Context, p LogicalPlan) (Logical
 	return a.eliminateMaxMin(p), nil
 }
 
-// Compose the scalar aggregations by cartesianJoin.
+// composeAggsByInnerJoin composes the scalar aggregations by cartesianJoin.
 func (a *maxMinEliminator) composeAggsByInnerJoin(aggs []*LogicalAggregation) (plan LogicalPlan) {
 	plan = aggs[0]
 	sctx := plan.SCtx()
@@ -48,27 +48,39 @@ func (a *maxMinEliminator) composeAggsByInnerJoin(aggs []*LogicalAggregation) (p
 	return
 }
 
-// checkColCanUseIndex checks the following conditions:
-// 1. whether the col is the prefix of an index.
-// 2. whether all of the selection conditions can be pushed down to the index range.
-func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression.Column) bool {
+// checkColCanUseIndex checks whether there is an accessPath satisfy the conditions:
+// 1. all of the selection's condition can be pushed down as accessConds of the path.
+// 2. the path can keep order for `col` after pushing down the conditions.
+func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression.Column, conditions []expression.Expression) bool {
 	switch p := plan.(type) {
 	case *LogicalSelection:
-		// Check whether all of the conditions can be pushed down as accessConds.
-		if _, filterConds := ranger.DetachCondsForColumn(p.ctx, p.Conditions, col); len(filterConds) != 0 {
-			return false
-		}
-		return a.checkColCanUseIndex(p.children[0], col)
+		conditions = append(conditions, p.Conditions...)
+		return a.checkColCanUseIndex(p.children[0], col, conditions)
 	case *DataSource:
 		// Check whether there is an accessPath can use index for col.
 		for _, path := range p.possibleAccessPaths {
 			if path.isTablePath {
-				if col == p.handleCol {
+				// Since table path can contain accessConds of at most one column,
+				// we only need to check if all of the conditions can be pushed down as accessConds
+				// and `col` is the handle column.
+				if p.handleCol != nil && col.Equal(nil, p.handleCol) {
+					if _, filterConds := ranger.DetachCondsForColumn(p.ctx, conditions, col); len(filterConds) != 0 {
+						return false
+					}
 					return true
 				}
 			} else {
-				if col == path.fullIdxCols[0] && path.fullIdxColLens[0] == types.UnspecifiedLength {
-					return true
+				// For index paths, we have to check:
+				// 1. whether all of the conditions can be pushed down as accessConds.
+				// 2. whether the accessPath can satisfy the order property of `col` with these accessConds.
+				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, path.fullIdxCols, path.fullIdxColLens)
+				if err != nil || len(result.RemainedConds) != 0 {
+					continue
+				}
+				for i := 0; i <= result.EqCondCount; i++ {
+					if i < len(path.fullIdxCols) && col.Equal(nil, path.fullIdxCols[i]) {
+						return true
+					}
 				}
 			}
 		}
@@ -78,20 +90,15 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 	}
 }
 
-// cloneSubPlans clones the subPlan. We only consider `Selection` and `DataSource` here,
+// cloneSubPlans shallow clones the subPlan. We only consider `Selection` and `DataSource` here,
 // because we have restricted the subPlan in `checkColCanUseIndex`.
 func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 	switch p := plan.(type) {
 	case *LogicalSelection:
-		conditions := make([]expression.Expression, 0, len(p.Conditions))
-		for _, cond := range p.Conditions {
-			conditions = append(conditions, cond.Clone())
-		}
-		sel := LogicalSelection{Conditions: conditions}.Init(p.ctx)
+		sel := LogicalSelection{Conditions: p.Conditions}.Init(p.ctx)
 		sel.SetChildren(a.cloneSubPlans(p.children[0]))
 		return sel
 	case *DataSource:
-		// This is a shallow clone which may not be safe.
 		newDs := *p
 		newDs.self = &newDs
 		return &newDs
@@ -106,17 +113,17 @@ func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 // Then we check whether `a` and `b` have indices. If any of the used column has no index, we cannot eliminate
 // this aggregation.
 func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) (aggs []*LogicalAggregation, canEliminate bool) {
-	aggs = make([]*LogicalAggregation, 0, len(agg.AggFuncs))
 	for _, f := range agg.AggFuncs {
 		// We must make sure the args of max/min is a simple single column.
 		col, ok := f.Args[0].(*expression.Column)
 		if !ok {
 			return nil, false
 		}
-		if !a.checkColCanUseIndex(agg.children[0], col) {
+		if !a.checkColCanUseIndex(agg.children[0], col, make([]expression.Expression, 0)) {
 			return nil, false
 		}
 	}
+	aggs = make([]*LogicalAggregation, 0, len(agg.AggFuncs))
 	// we can split the aggregation only if all of the aggFuncs pass the check.
 	for i, f := range agg.AggFuncs {
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.ctx)
@@ -127,13 +134,13 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) 
 	return aggs, true
 }
 
-// Try to convert a single max/min to Limit+Sort operators.
+// eliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
 func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *LogicalAggregation {
 	f := agg.AggFuncs[0]
 	child := agg.Children()[0]
 	ctx := agg.SCtx()
 
-	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should NULL if the below is empty.
+	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
@@ -160,12 +167,12 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *Logic
 	li.SetChildren(child)
 
 	// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
-	// Since now it's almost one row returned, a agg operator is okay to do this.
+	// Since now there would be at most one row returned, the remained agg operator is not expensive anymore.
 	agg.SetChildren(li)
 	return agg
 }
 
-// Try to convert max/min to Limit+Sort operators.
+// eliminateMaxMin tries to convert max/min to Limit+Sort operators.
 func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) LogicalPlan {
 	if agg, ok := p.(*LogicalAggregation); ok {
 		if len(agg.GroupByItems) != 0 {
