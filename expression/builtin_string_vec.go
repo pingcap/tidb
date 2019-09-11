@@ -120,11 +120,13 @@ func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
-			result.AppendInt64(1)
+			i64s[i] = 1
 		} else {
-			result.AppendInt64(0)
+			i64s[i] = 0
 		}
 	}
 	return nil
