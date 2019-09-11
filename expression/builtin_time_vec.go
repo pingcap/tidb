@@ -30,11 +30,11 @@ func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
 	for i := 0; i < input.NumRows(); i++ {
-		if buf.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		if ds[i].IsZero() {
