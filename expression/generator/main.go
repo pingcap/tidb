@@ -18,11 +18,9 @@ import (
 	"flag"
 	"go/format"
 	"io/ioutil"
+	"log"
 	"path/filepath"
 	"text/template"
-
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 var outputDir = flag.String("outputdir", "expression/", "")
@@ -73,7 +71,7 @@ func generateDotGo(fileName string, imports string, types []typeContext, tmpls .
 	}
 	data, err := format.Source(w.Bytes())
 	if err != nil {
-		logutil.BgLogger().Warn(fileName+": gofmt failed", zap.Error(err))
+		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
 	return ioutil.WriteFile(fileName, data, 0644)
@@ -88,7 +86,7 @@ func generateTestDotGo(fileName string, types []typeContext) error {
 	}
 	data, err := format.Source(w.Bytes())
 	if err != nil {
-		logutil.BgLogger().Warn(fileName+": gofmt failed", zap.Error(err))
+		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
 	return ioutil.WriteFile(fileName, data, 0644)
@@ -116,6 +114,6 @@ func main() {
 		builtinIfVec,
 	)
 	if err != nil {
-		logutil.BgLogger().Fatal("generateOneFile", zap.Error(err))
+		log.Fatalln("generateOneFile", err)
 	}
 }
