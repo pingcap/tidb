@@ -18,10 +18,16 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
+	ast.Month: {
+		{types.ETInt, []types.EvalType{types.ETDatetime}, nil},
+	},
 	ast.Date: {
 		{types.ETDatetime, []types.EvalType{types.ETDatetime}, nil},
 	},
@@ -41,4 +47,22 @@ func BenchmarkVectorizedBuiltinTimeEvalOneVec(b *testing.B) {
 
 func BenchmarkVectorizedBuiltinTimeFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinTimeCases)
+}
+
+func (s *testEvaluatorSuite) TestVecMonth(c *C) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
+	input := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 3, 3)
+	input.Reset()
+	input.AppendTime(0, types.ZeroDate)
+	input.AppendNull(0)
+	input.AppendTime(0, types.ZeroDate)
+
+	f, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{types.ETInt, []types.EvalType{types.ETDatetime}, nil})
+	c.Assert(ctx.GetSessionVars().StrictSQLMode, IsTrue)
+	c.Assert(f.vecEvalInt(input, result), IsNil)
+	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 2)
+
+	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
+	c.Assert(f.vecEvalInt(input, result), NotNil)
 }
