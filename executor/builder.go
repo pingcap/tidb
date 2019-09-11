@@ -1865,7 +1865,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		}
 	}
 
-	return &IndexLookUpMergeJoin{
+	e := &IndexLookUpMergeJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 		outerMergeCtx: outerMergeCtx{
 			rowTypes:      outerTypes,
@@ -1887,11 +1887,16 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		},
 		workerWg:      new(sync.WaitGroup),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
-		joiner:        newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 		lastColHelper: v.CompareFilters,
 	}
+	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
+	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
+		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes)
+	}
+	e.joiners = joiners
+	return e
 }
 
 // containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
