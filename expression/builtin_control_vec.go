@@ -22,7 +22,6 @@ import (
 
 func (b *builtinIfIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
 	buf0, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
