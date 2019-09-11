@@ -55,6 +55,10 @@ const (
 	OperandLock
 	// OperandLimit for LogicalLimit.
 	OperandLimit
+	// OperandTableGather for TableGather.
+	OperandTableGather
+	// OperandTableScan for TableScan.
+	OperandTableScan
 	// OperandUnsupported is upper bound of defined Operand yet.
 	OperandUnsupported
 )
@@ -90,6 +94,10 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandLock
 	case *plannercore.LogicalLimit:
 		return OperandLimit
+	case *plannercore.TableGather:
+		return OperandTableGather
+	case *plannercore.TableScan:
+		return OperandTableScan
 	default:
 		return OperandUnsupported
 	}
