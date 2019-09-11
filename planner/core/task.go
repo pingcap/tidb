@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	. "github.com/pingcap/tidb/util/plan"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.

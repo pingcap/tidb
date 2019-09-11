@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	. "github.com/pingcap/tidb/util/plan"
 	"github.com/pingcap/tidb/util/ranger"
 )
 

@@ -4123,6 +4123,17 @@ func (s *testIntegrationSuite) testTiDBIsOwnerFunc(c *C) {
 	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
 }
 
+func (s *testIntegrationSuite) TestTiDBDecodePlanFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustQuery("select tidb_decode_plan('')").Check(testkit.Rows(""))
+	tk.MustQuery("select tidb_decode_plan('eNocycEKwjAMBuBz9hQ9KtaRKE7oa3gUKdH9k2JpZxvfX/T8MR0lnolJmGY1DRdkPCzVEqdBSOJE8jO8N4Zuo43qnWyHAwnH09+YmUzvGcG8a1qeCNd9KovfpbLcvHsBq6ttRguL5g7vuqn1sHZ85voNAAD//5ggJWg=')").Check(testkit.Rows("" +
+		"TableReader_7\troot\t10\tdata:Selection_6\n" +
+		"└─Selection_6\tcop\t10\teq(test.t.a, 1)\n" +
+		"  └─TableScan_5\tcop\t10000\ttable:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {

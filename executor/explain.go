@@ -20,6 +20,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/plan"
 )
 
 // ExplainExec represents an explain executor.
@@ -101,6 +102,6 @@ func genPlanNormalizeString(p core.Plan) {
 	str := core.EncodePlan(p.(core.PhysicalPlan))
 	fmt.Printf("\n\n\nencode plan\n-----------------------\n%v\n----------------------------\n", str)
 
-	decodePlan := core.DecodePlan(str)
+	decodePlan := plan.DecodePlan(str)
 	fmt.Printf("decode plan \n-----------------------\n%v\n-----------err: %v -----------------\n", decodePlan, nil)
 }

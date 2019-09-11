@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	. "github.com/pingcap/tidb/util/plan"
 )
 
 const (

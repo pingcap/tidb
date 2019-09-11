@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plan"
 	"go.uber.org/zap"
 )
 
@@ -323,7 +324,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	} else {
 		record = append(record, types.NewIntDatum(0))
 	}
-	record = append(record, types.NewStringDatum(st.plan))
+	record = append(record, types.NewStringDatum(plan.DecodePlan(st.plan)))
 	record = append(record, types.NewStringDatum(st.prevStmt))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record

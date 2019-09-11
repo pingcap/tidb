@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	. "github.com/pingcap/tidb/util/plan"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -38,8 +39,8 @@ type Plan interface {
 	ID() int
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
-	// EncodeID get the ID for encoding plan.
-	EncodeID() string
+	// TP get the plan type.
+	TP() string
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
@@ -286,6 +287,10 @@ func (p *basePlan) ExplainID() fmt.Stringer {
 func (p *basePlan) EncodeID() string {
 	planID := TypeStringToPhysicalID(p.tp)
 	return strconv.Itoa(planID) + "_" + strconv.Itoa(p.id)
+}
+
+func (p *basePlan) TP() string {
+	return p.tp
 }
 
 // Schema implements Plan Schema interface.
