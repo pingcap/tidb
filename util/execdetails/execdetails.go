@@ -277,12 +277,14 @@ func (rrs *ReaderRuntimeStats) String() string {
 		return s + "max:0ns, min:0ns, avg:0ns, p80:0ns, p95:0ns"
 	}
 	s += fmt.Sprintf("max:%v", rrs.copRespTime[size-1])
-	s += fmt.Sprintf(", min:%v", rrs.copRespTime[0])
-	sum := 0.0
-	for _, t := range rrs.copRespTime {
-		sum += float64(t)
+	if len(rrs.copRespTime) > 1 {
+		s += fmt.Sprintf(", min:%v", rrs.copRespTime[0])
+		sum := 0.0
+		for _, t := range rrs.copRespTime {
+			sum += float64(t)
+		}
+		s += fmt.Sprintf(", avg:%v", time.Duration(sum/float64(size)))
 	}
-	s += fmt.Sprintf(", avg:%v", time.Duration(sum/float64(size)))
 	s += fmt.Sprintf(", p80:%v", rrs.copRespTime[size*4/5])
 	s += fmt.Sprintf(", p95:%v", rrs.copRespTime[size*19/20])
 	return s
