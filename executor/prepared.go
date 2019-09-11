@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
 	"math"
 	"sort"
 	"time"
@@ -275,13 +276,35 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
+	prepared, _ := sctx.GetSessionVars().PreparedStmts[ID]
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
 		return nil, err
 	}
 	execStmt.BinaryArgs = args
 	is := GetInfoSchema(sctx)
-	execPlan, err := planner.Optimize(ctx, sctx, execStmt, is)
+	var execPlan plannercore.Plan
+	var err error
+	var useCached = false
+	if prepared.CachedPlan != nil {
+		execPlan, err = plannercore.OptimizeExecStmt(ctx, sctx, execStmt, is)
+		useCached = true
+		sctx.GetSessionVars().StmtCtx.PointExec = true
+	} else {
+		execPlan, err = planner.Optimize(ctx, sctx, execStmt, is)
+		if err != nil {
+			return nil, err
+		}
+		if val, ok := execPlan.(*plannercore.Execute); ok {
+			if updPlan, isUpdate := val.Plan.(*plannercore.Update); isUpdate {
+				if _, isPointSelect := updPlan.SelectPlan.(*plannercore.PointGetPlan); isPointSelect {
+					sctx.GetSessionVars().StmtCtx.PointExec = true
+					prepared.CachedPlan = nil
+					execPlan, err = planner.Optimize(ctx, sctx, execStmt, is)
+				}
+			}
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -292,10 +315,27 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		StmtNode:    execStmt,
 		Ctx:         sctx,
 		OutputNames: execPlan.OutputNames(),
+		PreparedId:  ID,
 	}
-	if prepared, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
-		stmt.Text = prepared.Stmt.Text()
-		sctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
+	stmt.Text = prepared.Stmt.Text()
+	sctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
+	if useCached {
+		cachedUpdPlan := prepared.CachedPlan.(*plannercore.Update)
+		cahedPointGetPlan := cachedUpdPlan.SelectPlan.(*plannercore.PointGetPlan)
+		val, ok := sctx.GetSessionVars().PreparedCachedPointUpdate[ID]
+		if !ok {
+			logutil.Logger(ctx).Error("===[Error]=== found nothing",
+				zap.Uint32("ID", ID))
+			panic("not found executor")
+		}
+		stmt.pointUpdateExec = val.(*UpdateExec)
+		fastSelExe := stmt.pointUpdateExec.children[0].(*PointGetExecutor)
+		fastSelExe.handle = cahedPointGetPlan.Handle
+		fastSelExe.idxVals = cahedPointGetPlan.IndexValues
+
+		// reset
+		stmt.pointUpdateExec.Reset(sctx)
+		fastSelExe.Reset(sctx)
 	}
 	return stmt, nil
 }

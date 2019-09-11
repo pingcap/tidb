@@ -206,6 +206,11 @@ type ExecStmt struct {
 
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
+
+	// test for short
+	PreparedId       uint32
+	IsPointExec      bool
+	pointUpdateExec  *UpdateExec
 }
 
 // GetPointRecord short path for point exec directly from plan, keep only necessary steps
@@ -321,9 +326,36 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}()
 	}
 
-	e, err := a.buildExecutor()
-	if err != nil {
-		return nil, err
+	var e Executor
+	if a.pointUpdateExec == nil {
+		e, err = a.buildExecutor()
+		if err != nil {
+			return nil, err
+		}
+		if updExe, ok := e.(*UpdateExec); ok {
+			if updExe.isPointUpdate {
+				sctx.GetSessionVars().PreparedCachedPointUpdate[a.PreparedId] = updExe
+				logutil.Logger(ctx).Info("===[DEBUG]=== cached point update executor here",
+					zap.Uint32("ID", a.PreparedId))
+			}
+		}
+	} else {
+		// here txn must be restart => valid state or retry failed
+		txn, err := sctx.Txn(true)
+		if err != nil {
+			return nil, err
+		}
+		if txn.Valid() {
+			fastSelExec := a.pointUpdateExec.children[0].(*PointGetExecutor)
+			fastSelExec.StartTS = txn.StartTS()
+		} else {
+			panic("invalid txn")
+		}
+		/*
+		logutil.Logger(ctx).Info("===[DEBUG]=== using cached executor, now startTs reset already",
+			zap.Uint32("ID", a.PreparedId))
+		*/
+		e = a.pointUpdateExec
 	}
 
 	if err = e.Open(ctx); err != nil {

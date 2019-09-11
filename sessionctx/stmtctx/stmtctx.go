@@ -135,6 +135,7 @@ type StatementContext struct {
 		digest     string
 	}
 	Tables []TableEntry
+	PointExec   bool
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it

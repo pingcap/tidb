@@ -28,7 +28,7 @@ func (s *testSuite1) TestTraceExec(c *C) {
 	c.Assert(len(rows), GreaterEqual, 1)
 
 	// +---------------------------+-----------------+------------+
-	// | operation                 | startTS         | duration   |
+	// | operation                 | StartTS         | duration   |
 	// +---------------------------+-----------------+------------+
 	// | session.getTxnFuture      | 22:08:38.247834 | 78.909µs   |
 	// |   ├─session.Execute       | 22:08:38.247829 | 1.478487ms |

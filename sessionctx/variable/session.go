@@ -203,6 +203,7 @@ type SessionVars struct {
 	systems map[string]string
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]*ast.Prepared
+	PreparedCachedPointUpdate        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
@@ -448,6 +449,7 @@ func NewSessionVars() *SessionVars {
 		Users:                       make(map[string]string),
 		systems:                     make(map[string]string),
 		PreparedStmts:               make(map[uint32]*ast.Prepared),
+		PreparedCachedPointUpdate:   make(map[uint32]interface{}),
 		PreparedStmtNameToID:        make(map[string]uint32),
 		PreparedParams:              make([]types.Datum, 0, 10),
 		TxnCtx:                      &TransactionContext{},

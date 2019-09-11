@@ -634,6 +634,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 			},
 		},
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
+		IsPointUpdate:             true,
 	}.Init(ctx)
 	return updatePlan
 }

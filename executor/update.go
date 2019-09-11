@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -50,6 +49,22 @@ type UpdateExec struct {
 	tblColPosInfos            plannercore.TblColPosInfoSlice
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
+
+	// for short path
+	isPointUpdate             bool
+	chkForFetching            *chunk.Chunk
+	colsInfo                  []*table.Column
+}
+
+func (e *UpdateExec) Reset(ctx sessionctx.Context) {
+	e.base().Reset(ctx)
+	e.rows = e.rows[:0]
+	e.newRowsData = e.newRowsData[:0]
+	e.fetched = false
+	e.cursor = 0
+	e.matched = 0
+	e.updatedRowKeys = make(map[int64]map[int64]bool)
+	//e.colsInfo = e.colsInfo[:0]
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) ([]types.Datum, error) {
@@ -157,15 +172,34 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	fields := retTypes(e.children[0])
-	colsInfo := make([]*table.Column, len(fields))
-	for _, content := range e.tblColPosInfos {
-		tbl := e.tblID2table[content.TblID]
-		for i, c := range tbl.WritableCols() {
-			colsInfo[content.Start+i] = c
+	firstUsing := true
+
+	// colsInfo
+	if e.colsInfo == nil {
+		e.colsInfo = make([]*table.Column, len(fields))
+	} else {
+		firstUsing = false
+	}
+	colsInfo := e.colsInfo
+	if firstUsing {
+		for _, content := range e.tblColPosInfos {
+			tbl := e.tblID2table[content.TblID]
+			for i, c := range tbl.WritableCols() {
+				colsInfo[content.Start+i] = c
+			}
 		}
 	}
 	globalRowIdx := 0
-	chk := newFirstChunk(e.children[0])
+
+	// chunk
+	var chk *chunk.Chunk
+	if e.chkForFetching == nil {
+		e.chkForFetching = newFirstChunk(e.children[0])
+	}
+	chk = e.chkForFetching
+	chk.Reset()
+
+	// evalBuffer
 	if !e.allAssignmentsAreConstant {
 		e.evalBuffer = chunk.MutRowFromTypes(fields)
 	}
@@ -192,6 +226,9 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 			e.rows = append(e.rows, datumRow)
 			e.newRowsData = append(e.newRowsData, newRow)
 			globalRowIdx++
+		}
+		if e.isPointUpdate {
+			break
 		}
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}

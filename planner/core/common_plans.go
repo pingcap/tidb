@@ -255,6 +255,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
+		//logutil.Logger(ctx).Info("[DEBUG] === invalid cached plan")
 	}
 	err := e.getPhysicalPlan(ctx, sctx, is, prepared)
 	if err != nil {
@@ -281,6 +282,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		}
 		e.names = plan.OutputNames()
 		e.Plan = plan
+		//logutil.Logger(ctx).Info("[DEBUG] === using cachedPlan")
 		return nil
 	}
 	var cacheKey kvcache.Key
@@ -314,6 +316,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if ok {
 		// just cache point plan now
 		prepared.CachedPlan = p
+	}
+	if updPlan, ok := p.(*Update); ok {
+		if _, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
+			prepared.CachedPlan = p
+			//logutil.Logger(ctx).Info("[DEBUG] === new cached plan")
+		}
 	}
 	e.names = p.OutputNames()
 	e.Plan = p
@@ -494,6 +502,7 @@ type Update struct {
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice
+	IsPointUpdate  bool
 }
 
 // Delete represents a delete plan.

@@ -87,6 +87,10 @@ type baseExecutor struct {
 	runtimeStats  *execdetails.RuntimeStats
 }
 
+func (e *baseExecutor) Reset(ctx sessionctx.Context) {
+	e.ctx = ctx
+}
+
 // base returns the baseExecutor of an executor, don't override this method!
 func (e *baseExecutor) base() *baseExecutor {
 	return e

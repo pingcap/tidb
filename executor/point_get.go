@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/sessionctx"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -42,7 +43,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		idxInfo:      p.IndexInfo,
 		idxVals:      p.IndexValues,
 		handle:       p.Handle,
-		startTS:      startTS,
+		StartTS:      startTS,
 		lock:         p.Lock,
 	}
 	b.isSelectForUpdate = p.IsForUpdate
@@ -59,10 +60,15 @@ type PointGetExecutor struct {
 	handle   int64
 	idxInfo  *model.IndexInfo
 	idxVals  []types.Datum
-	startTS  uint64
+	StartTS  uint64
 	snapshot kv.Snapshot
 	done     bool
 	lock     bool
+}
+
+func (e *PointGetExecutor) Reset(ctx sessionctx.Context) {
+	e.base().Reset(ctx)
+	e.done = false
 }
 
 // Open implements the Executor interface.
@@ -82,7 +88,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
-	snapshotTS := e.startTS
+	snapshotTS := e.StartTS
 	if e.lock {
 		snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	}
