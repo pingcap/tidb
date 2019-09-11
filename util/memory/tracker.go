@@ -35,7 +35,7 @@ import (
 //
 // NOTE: We only protect concurrent access to "bytesConsumed" and "children",
 // that is to say:
-// 1. Only "BytesConsumed()", "Consume()", "AttachTo()" and "Detach" are thread-safe.
+// 1. Only "BytesConsumed()", "Consume()" and "AttachTo()" are thread-safe.
 // 2. Other operations of a Tracker tree is not thread-safe.
 type Tracker struct {
 	mu struct {
@@ -53,7 +53,7 @@ type Tracker struct {
 
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
-//	2. "bytesLimit < 0" means no limit.
+//	2. "bytesLimit <= 0" means no limit.
 func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 	return &Tracker{
 		label:          label,
@@ -62,7 +62,13 @@ func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 	}
 }
 
-// SetActionOnExceed sets the action when memory usage is out of memory quota.
+// SetBytesLimit sets the bytes limit for this tracker.
+// "bytesLimit <= 0" means no limit.
+func (t *Tracker) SetBytesLimit(bytesLimit int64) {
+	t.bytesLimit = bytesLimit
+}
+
+// SetActionOnExceed sets the action when memory usage exceeds bytesLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionOnExceed = a
 }
@@ -70,6 +76,11 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 // SetLabel sets the label of a Tracker.
 func (t *Tracker) SetLabel(label fmt.Stringer) {
 	t.label = label
+}
+
+// Label gets the label of a Tracker.
+func (t *Tracker) Label() fmt.Stringer {
+	return t.label
 }
 
 // AttachTo attaches this memory tracker as a child to another Tracker. If it
@@ -131,12 +142,15 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 }
 
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
-// which means this is a memory release operation.
+// which means this is a memory release operation. When memory usage of a tracker
+// exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bytes int64) {
-	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.parent {
 		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
-			rootExceed = tracker
+			// TODO(fengliyuan): try to find a way to avoid logging at each tracker in chain.
+			if tracker.actionOnExceed != nil {
+				tracker.actionOnExceed.Action(tracker)
+			}
 		}
 
 		for {
@@ -147,9 +161,6 @@ func (t *Tracker) Consume(bytes int64) {
 			}
 			break
 		}
-	}
-	if rootExceed != nil {
-		rootExceed.actionOnExceed.Action(rootExceed)
 	}
 }
 
