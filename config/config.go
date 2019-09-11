@@ -112,6 +112,7 @@ type Log struct {
 	SlowThreshold      uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen     uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	SlowLogPlan        uint32 `toml:"slow-log-plan" json:"slow-log-plan"`
 }
 
 // Security is the security section of the config.
@@ -344,6 +345,7 @@ var defaultConf = Config{
 		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
 		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
+		SlowLogPlan:        0,
 	},
 	Status: Status{
 		ReportStatus:    true,

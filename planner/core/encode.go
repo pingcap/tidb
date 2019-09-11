@@ -4,18 +4,14 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 )
-
-type PlanEncoder struct {
-	buf          bytes.Buffer
-	encodedPlans map[int]bool
-}
 
 const (
 	rootTaskType = "0"
@@ -29,12 +25,30 @@ const (
 	separatorStr   = "\t"
 )
 
+var encoderPool = sync.Pool{
+	New: func() interface{} {
+		return &PlanEncoder{}
+	},
+}
+
+type PlanEncoder struct {
+	buf          bytes.Buffer
+	encodedPlans map[int]bool
+}
+
+func EncodePlan(p PhysicalPlan) string {
+	pn := encoderPool.Get().(*PlanEncoder)
+	defer encoderPool.Put(pn)
+	return pn.Encode(p)
+}
+
 func (pn *PlanEncoder) Encode(p PhysicalPlan) string {
 	pn.encodedPlans = make(map[int]bool)
+	pn.buf.Reset()
 	pn.encode(p, rootTaskType, 0)
 	str, err := compress(pn.buf.Bytes())
 	if err != nil {
-		fmt.Println(err)
+		terror.Log(err)
 	}
 	return str
 }
@@ -61,10 +75,27 @@ func (pn *PlanEncoder) encode(p PhysicalPlan, taskType string, depth int) {
 	}
 }
 
+var decoderPool = sync.Pool{
+	New: func() interface{} {
+		return &PlanDecoder{}
+	},
+}
+
+func DecodePlan(planString string) string {
+	pd := decoderPool.Get().(*PlanDecoder)
+	defer decoderPool.Put(pd)
+	str, err := pd.Decode(planString)
+	if err != nil {
+		terror.Log(err)
+	}
+	return str
+}
+
 type PlanDecoder struct {
-	buf     bytes.Buffer
-	depths  []int
-	indents [][]rune
+	buf       bytes.Buffer
+	depths    []int
+	indents   [][]rune
+	planInfos []*planInfo
 }
 
 type planInfo struct {
@@ -79,8 +110,14 @@ func (pn *PlanDecoder) Decode(planString string) (string, error) {
 	}
 
 	nodes := strings.Split(str, lineBreakerStr)
-	pn.depths = make([]int, 0, len(nodes))
-	planInfos := make([]*planInfo, 0, len(nodes))
+	if len(pn.depths) < len(nodes) {
+		pn.depths = make([]int, 0, len(nodes))
+		pn.planInfos = make([]*planInfo, 0, len(nodes))
+		pn.indents = make([][]rune, 0, len(nodes))
+	}
+	pn.depths = pn.depths[:0]
+	pn.planInfos = pn.planInfos[:0]
+	planInfos := pn.planInfos
 	for _, node := range nodes {
 		p, err := decodePlanInfo(node)
 		if err != nil {
@@ -114,10 +151,10 @@ func (pn *PlanDecoder) Decode(planString string) (string, error) {
 }
 
 func (pn *PlanDecoder) initPlanTreeIndents() {
-	indents := make([][]rune, len(pn.depths))
+	pn.indents = pn.indents[:0]
 	for i := 0; i < len(pn.depths); i++ {
 		indent := make([]rune, 2*pn.depths[i])
-		indents[i] = indent
+		pn.indents = append(pn.indents, indent)
 		if len(indent) == 0 {
 			continue
 		}
@@ -127,7 +164,6 @@ func (pn *PlanDecoder) initPlanTreeIndents() {
 		indent[len(indent)-2] = treeLastNode
 		indent[len(indent)-1] = treeNodeIdentifier
 	}
-	pn.indents = indents
 }
 
 func encodePlanNode(p PhysicalPlan, taskType string, depth int, buf *bytes.Buffer) {

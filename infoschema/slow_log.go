@@ -60,6 +60,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
 	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogPlan, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 	{variable.SlowLogPrevStmt, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 }
@@ -204,6 +205,7 @@ type slowQueryTuple struct {
 	sql               string
 	isInternal        bool
 	succ              bool
+	plan              string
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
@@ -275,6 +277,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.succ, err = strconv.ParseBool(value)
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
+	case variable.SlowLogPlan:
+		st.plan = value
 	}
 	if err != nil {
 		return errors.Wrap(err, "parse slow log failed `"+field+"` error")
@@ -319,6 +323,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	} else {
 		record = append(record, types.NewIntDatum(0))
 	}
+	record = append(record, types.NewStringDatum(st.plan))
 	record = append(record, types.NewStringDatum(st.prevStmt))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
