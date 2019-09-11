@@ -62,6 +62,10 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
+func (b *builtinRepeatSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
@@ -81,10 +85,6 @@ func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		}
 	}
 	return nil
-}
-
-func (b *builtinRepeatSig) vectorized() bool {
-	return true
 }
 
 func (b *builtinStringIsNullSig) vectorized() bool {
