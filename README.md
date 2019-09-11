@@ -12,7 +12,7 @@
 
 - [**Stack Overflow**](https://stackoverflow.com/questions/tagged/tidb)
 - [**Slack Channel**](https://pingcap.com/tidbslack/)
-- **User Group(Chinese)** [https://asktug.com](https://asktug.com)
+- [**User Group (Chinese)**](https://asktug.com)
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - [**Reddit**](https://www.reddit.com/r/TiDB/)
 - **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
