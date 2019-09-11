@@ -356,6 +356,11 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 			isNull = append(isNull, false)
 		}
 	}
+	var (
+		filterResult       int64
+		bVal, isNullResult bool
+		err                error
+	)
 	for _, filter := range filters {
 		isIntType := true
 		if filter.GetType().EvalType() != types.ETInt {
@@ -365,11 +370,6 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 			if !selected[row.Idx()] {
 				continue
 			}
-			var (
-				filterResult       int64
-				bVal, isNullResult bool
-				err                error
-			)
 			if isIntType {
 				filterResult, isNullResult, err = filter.EvalInt(ctx, row)
 				if err != nil {
