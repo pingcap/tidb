@@ -409,6 +409,9 @@ type SessionVars struct {
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt string
 
+	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
+	AllowRemoveAutoInc bool
+
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
@@ -475,6 +478,7 @@ func NewSessionVars() *SessionVars {
 		enableIndexMerge:            false,
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 		replicaRead:                 kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -898,6 +902,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
 			s.replicaRead = kv.ReplicaReadLeader
 		}
+	case TiDBAllowRemoveAutoInc:
+		s.AllowRemoveAutoInc = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

@@ -930,16 +930,16 @@ id	count	task	operator info
 Sort_13	3863988.24	root	supplier_cnt:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc, tpch.part.p_size:asc
 └─Projection_15	3863988.24	root	tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, 9_col_0
   └─HashAgg_18	3863988.24	root	group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey), firstrow(tpch.part.p_brand), firstrow(tpch.part.p_type), firstrow(tpch.part.p_size)
-    └─HashLeftJoin_28	3863988.24	root	anti semi join, inner:TableReader_60, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
+    └─HashLeftJoin_28	3863988.24	root	anti semi join, inner:TableReader_62, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
       ├─IndexMergeJoin_36	4829985.30	root	inner join, inner:IndexReader_34, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
       │ ├─TableReader_55	1200618.43	root	data:Selection_54
       │ │ └─Selection_54	1200618.43	cop	in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
       │ │   └─TableScan_53	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
       │ └─IndexReader_34	1.00	root	index:IndexScan_33
       │   └─IndexScan_33	1.00	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:true
-      └─TableReader_60	400000.00	root	data:Selection_59
-        └─Selection_59	400000.00	cop	like(tpch.supplier.s_comment, "%Customer%Complaints%", 92)
-          └─TableScan_58	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
+      └─TableReader_62	400000.00	root	data:Selection_61
+        └─Selection_61	400000.00	cop	like(tpch.supplier.s_comment, "%Customer%Complaints%", 92)
+          └─TableScan_60	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
 /*
 Q17 Small-Quantity-Order Revenue Query
 This query determines how much average yearly revenue would be lost if orders were no longer filled for small
