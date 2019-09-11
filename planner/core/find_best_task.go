@@ -512,7 +512,7 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	rowCount float64,
 	isCovered bool) {
 	idx := path.index
-	is, partialCost, rowCount := ds.getPhysicalIndexScan(prop, path, false, false)
+	is, partialCost, rowCount := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
 	rowSize := is.indexScanRowSize(idx, ds)
 	isCovered = isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle)
 	indexConds := path.indexFilters
@@ -543,7 +543,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	partialCost float64,
 	rowCount float64,
 	isCovered bool) {
-	ts, partialCost, rowCount := ds.getPhysicalTableScanWithoutSelection(prop, path, false)
+	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition)
@@ -652,7 +652,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	path := candidate.path
-	is, cost, _ := ds.getPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.isSingleScan)
+	is, cost, _ := ds.getOriginalPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.isSingleScan)
 	cop := &copTask{
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
@@ -973,7 +973,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
-	ts, cost, _ := ds.getPhysicalTableScanWithoutSelection(prop, candidate.path, candidate.isMatchProp)
+	ts, cost, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
@@ -1003,7 +1003,7 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 	}
 }
 
-func (ds *DataSource) getPhysicalTableScanWithoutSelection(prop *property.PhysicalProperty, path *accessPath, isMatchProp bool) (*PhysicalTableScan, float64, float64) {
+func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProperty, path *accessPath, isMatchProp bool) (*PhysicalTableScan, float64, float64) {
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
@@ -1065,7 +1065,7 @@ func (ds *DataSource) getPhysicalTableScanWithoutSelection(prop *property.Physic
 	return ts, cost, rowCount
 }
 
-func (ds *DataSource) getPhysicalIndexScan(prop *property.PhysicalProperty, path *accessPath, isMatchProp bool, isSingleScan bool) (*PhysicalIndexScan, float64, float64) {
+func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProperty, path *accessPath, isMatchProp bool, isSingleScan bool) (*PhysicalIndexScan, float64, float64) {
 	idx := path.index
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
