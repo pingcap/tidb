@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -54,5 +55,31 @@ func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinMonthSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
+		return err
+	}
+	times := result.Times()
+	for i := 0; i < len(times); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if times[i].IsZero() {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(times[i].String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+		} else {
+			times[i].Time = types.FromDate(times[i].Time.Year(), times[i].Time.Month(), times[i].Time.Day(), 0, 0, 0, 0)
+			times[i].Type = mysql.TypeDate
+		}
+	}
+	return nil
+}
+
+func (b *builtinDateSig) vectorized() bool {
 	return true
 }
