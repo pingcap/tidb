@@ -78,6 +78,10 @@ func (t *Tracker) SetLabel(label fmt.Stringer) {
 	t.label = label
 }
 
+func (t *Tracker) Label() fmt.Stringer {
+	return t.label
+}
+
 // AttachTo attaches this memory tracker as a child to another Tracker. If it
 // already has a parent, this function will remove it from the old parent.
 // Its consumed memory usage is used to update all its ancestors.

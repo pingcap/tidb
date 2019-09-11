@@ -41,10 +41,10 @@ var bufReaderPool = sync.Pool{
 	New: func() interface{} { return bufio.NewReaderSize(nil, readBufSize) },
 }
 
-var tmpDir = path.Join(os.TempDir(), "tidb-server-hashJoin")
+var tmpDir = path.Join(os.TempDir(), "tidb-server-"+os.Args[0])
 
 func init() {
-	_ = os.RemoveAll(tmpDir)
+	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
 	_ = os.Mkdir(tmpDir, 0755)
 }
 
@@ -54,7 +54,7 @@ type ListInDisk struct {
 	// offsets stores the offsets in disk of all RowPtr,
 	// the offset of one RowPtr is offsets[RowPtr.ChkIdx][RowPtr.RowIdx].
 	offsets [][]int64
-	// offWrite is the current offset for writing
+	// offWrite is the current offset for writing.
 	offWrite int64
 
 	disk        *os.File
@@ -62,14 +62,14 @@ type ListInDisk struct {
 	diskTracker *disk.Tracker // track disk usage.
 }
 
-var chunkListInDiskLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInDisk")
+var defaultChunkListInDiskLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInDisk")
 
 // NewListInDisk creates a new ListInDisk with field types.
 func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 	l := &ListInDisk{
 		fieldTypes: fieldTypes,
 		// TODO(fengliyuan): set the quota of disk usage.
-		diskTracker: disk.NewTracker(chunkListInDiskLabel, -1),
+		diskTracker: disk.NewTracker(defaultChunkListInDiskLabel, -1),
 	}
 	return l
 }
@@ -86,14 +86,14 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 		panic("chunk appended to List should have at least 1 row")
 	}
 	if l.disk == nil {
-		l.disk, err = ioutil.TempFile(tmpDir, "listInDisk")
+		l.disk, err = ioutil.TempFile(tmpDir, l.diskTracker.Label().String())
 		if err != nil {
 			return
 		}
 		l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
 		l.bufWriter.Reset(l.disk)
 	}
-	chk2 := chunkInDisk{Chunk: chk, off: l.offWrite}
+	chk2 := chunkInDisk{Chunk: chk, offWrite: l.offWrite}
 	n, err := chk2.WriteTo(l.bufWriter)
 	l.offWrite += n
 	if err != nil {
@@ -120,7 +120,7 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	if err != nil {
 		return
 	}
-	row = format.toRow(l.fieldTypes)
+	row = format.toMutRow(l.fieldTypes).ToRow()
 	return row, err
 }
 
@@ -156,7 +156,8 @@ func (l *ListInDisk) Close() error {
 // If a column of a row is null, the size of it is -1 and the data is empty.
 type chunkInDisk struct {
 	*Chunk
-	off int64
+	// offWrite is the current offset for writing.
+	offWrite int64
 	// offsetsOfRows stores the offset of each row.
 	offsetsOfRows []int64
 }
@@ -170,7 +171,7 @@ func (chk *chunkInDisk) WriteTo(w io.Writer) (written int64, err error) {
 	var format *diskFormatRow
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 		format = convertFromRow(chk.GetRow(rowIdx), format)
-		chk.offsetsOfRows = append(chk.offsetsOfRows, chk.off+written)
+		chk.offsetsOfRows = append(chk.offsetsOfRows, chk.offWrite+written)
 
 		n, err = chk.writeRowTo(w, format)
 		written += n
@@ -268,17 +269,33 @@ func convertFromRow(row Row, reuse *diskFormatRow) (format *diskFormatRow) {
 	return
 }
 
-// toRow deserializes diskFormatRow to Row.
-func (format *diskFormatRow) toRow(fields []*types.FieldType) Row {
-	chk := NewChunkWithCapacity(fields, 1)
+// toMutRow deserializes diskFormatRow to MutRow.
+func (format *diskFormatRow) toMutRow(fields []*types.FieldType) MutRow {
+	chk := &Chunk{columns: make([]*Column, 0, len(format.sizesOfColumns))}
 	var cellOff int
 	for colIdx, size := range format.sizesOfColumns {
-		if size == -1 {
-			chk.columns[colIdx].AppendNull()
+		col := &Column{length: 1}
+		elemSize := getFixedLen(fields[colIdx])
+		if size == -1 { // isNull
+			col.nullBitmap = []byte{0}
+			if elemSize == varElemLen {
+				col.offsets = []int64{0, 0}
+			} else {
+				buf := make([]byte, elemSize)
+				col.data = buf
+				col.elemBuf = buf
+			}
 		} else {
-			chk.columns[colIdx].AppendRaw(format.cells[cellOff])
+			col.nullBitmap = []byte{1}
+			col.data = format.cells[cellOff]
 			cellOff++
+			if elemSize == varElemLen {
+				col.offsets = []int64{0, int64(len(col.data))}
+			} else {
+				col.elemBuf = col.data
+			}
 		}
+		chk.columns = append(chk.columns, col)
 	}
-	return chk.GetRow(0)
+	return MutRow{c: chk}
 }

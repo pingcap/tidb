@@ -15,7 +15,9 @@ package chunk
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
+	"testing"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
@@ -24,6 +26,37 @@ import (
 )
 
 func (s *testChunkSuite) TestListInDisk(c *check.C) {
+	numChk, numRow := 2, 2
+	chks, fields, err := initListInDisk(numChk, numRow)
+	if err != nil {
+		c.Fatal(err)
+	}
+	l := NewListInDisk(fields)
+	defer func() {
+		err := l.Close()
+		c.Check(err, check.IsNil)
+		c.Check(l.disk, check.Not(check.IsNil))
+		_, err = os.Stat(l.disk.Name())
+		c.Check(os.IsNotExist(err), check.IsTrue)
+	}()
+	for _, chk := range chks {
+		err := l.Add(chk)
+		c.Check(err, check.IsNil)
+	}
+
+	c.Check(l.NumChunks(), check.Equals, numChk)
+	c.Check(l.GetDiskTracker().BytesConsumed() > 0, check.IsTrue)
+
+	for chkIdx := 0; chkIdx < numChk; chkIdx++ {
+		for rowIdx := 0; rowIdx < numRow; rowIdx++ {
+			row, err := l.GetRow(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+			c.Check(err, check.IsNil)
+			c.Check(row.ToRow().GetDatumRow(fields), check.DeepEquals, chks[chkIdx].GetRow(rowIdx).GetDatumRow(fields))
+		}
+	}
+}
+
+func initListInDisk(numChk, numRow int) ([]*Chunk, []*types.FieldType, error) {
 	fields := []*types.FieldType{
 		types.NewFieldType(mysql.TypeVarString),
 		types.NewFieldType(mysql.TypeLonglong),
@@ -31,15 +64,7 @@ func (s *testChunkSuite) TestListInDisk(c *check.C) {
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeJSON),
 	}
-	l := NewListInDisk(fields)
-	defer func() {
-		err := l.Close()
-		c.Check(err, check.IsNil)
-		_, err = os.Stat(l.disk.Name())
-		c.Check(os.IsNotExist(err), check.IsTrue)
-	}()
 
-	numChk, numRow := 2, 2
 	chks := make([]*Chunk, 0, numChk)
 	for chkIdx := 0; chkIdx < numChk; chkIdx++ {
 		chk := NewChunkWithCapacity(fields, 2)
@@ -49,25 +74,64 @@ func (s *testChunkSuite) TestListInDisk(c *check.C) {
 			chk.AppendNull(1)
 			chk.AppendNull(2)
 			chk.AppendInt64(3, data)
-			if chkIdx == 0 {
+			if chkIdx%2 == 0 {
 				chk.AppendJSON(4, json.CreateBinary(fmt.Sprint(data)))
 			} else {
 				chk.AppendNull(4)
 			}
 		}
 		chks = append(chks, chk)
-		err := l.Add(chk)
-		c.Check(err, check.IsNil)
 	}
+	return chks, fields, nil
+}
 
-	c.Check(l.NumChunks(), check.Equals, 2)
-	c.Check(l.GetDiskTracker().BytesConsumed() > 0, check.IsTrue)
+func BenchmarkListInDiskAdd(b *testing.B) {
+	numChk, numRow := 1, 2
+	chks, fields, err := initListInDisk(numChk, numRow)
+	if err != nil {
+		b.Fatal(err)
+	}
+	chk := chks[0]
+	l := NewListInDisk(fields)
+	defer l.Close()
 
-	for chkIdx := 0; chkIdx < numChk; chkIdx++ {
-		for rowIdx := 0; rowIdx < numRow; rowIdx++ {
-			row, err := l.GetRow(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-			c.Check(err, check.IsNil)
-			c.Check(row.GetDatumRow(fields), check.DeepEquals, chks[chkIdx].GetRow(rowIdx).GetDatumRow(fields))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		err := l.Add(chk)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkListInDiskGetRow(b *testing.B) {
+	numChk, numRow := 10000, 2
+	chks, fields, err := initListInDisk(numChk, numRow)
+	if err != nil {
+		b.Fatal(err)
+	}
+	l := NewListInDisk(fields)
+	defer l.Close()
+	for _, chk := range chks {
+		err := l.Add(chk)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	rand.Seed(0)
+	ptrs := make([]RowPtr, 0, b.N)
+	for i := 0; i < b.N; i++ {
+		ptrs = append(ptrs, RowPtr{
+			ChkIdx: rand.Uint32() % uint32(numChk),
+			RowIdx: rand.Uint32() % uint32(numRow),
+		})
+	}
+	b.ResetTimer()
+	// fmt.Println(b.N)
+	for i := 0; i < b.N; i++ {
+		_, err = l.GetRow(ptrs[i])
+		if err != nil {
+			b.Fatal(err)
 		}
 	}
 }
