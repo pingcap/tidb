@@ -1272,7 +1272,11 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 }
 
 func (la *LogicalAggregation) canPushToCop() bool {
-	// Child may be of other types in the future, such as limit, topn and projection.
+	// At present, only Aggregation, Limit, TopN can be push to cop task, and Projection will be supported in the future.
+	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
+	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
+
+	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
 	_, ok := la.children[0].(*DataSource)
 	return ok
 }
