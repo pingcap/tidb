@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/types"
 	"math"
 
 	"github.com/pingcap/tidb/util/chunk"
@@ -60,5 +61,30 @@ func (b *builtinSqrtSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinSqrtSig) vectorized() bool {
+	return true
+}
+			
+func (b *builtinAbsDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	zero := new(types.MyDecimal)
+	buf := new(types.MyDecimal)
+	d64s := result.Decimals()
+	for i := 0; i < len(d64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if d64s[i].IsNegative() {
+			if err := types.DecimalSub(zero, &d64s[i], buf); err != nil {
+				return err
+			}
+			d64s[i] = *buf
+		}
+	}
+	return nil
+}
+
+func (b *builtinAbsDecSig) vectorized() bool {
 	return true
 }
