@@ -757,12 +757,12 @@ func (s *testChunkSuite) TestGetRaw(c *check.C) {
 		col.AppendFloat32(float32(i))
 	}
 	it := NewIterator4Chunk(chk)
-	var i int64
+	var i int
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		f := float32(i)
 		b := (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
 		c.Assert(row.GetRaw(0), check.DeepEquals, b)
-		c.Assert(col.GetRaw(int(i)), check.DeepEquals, b)
+		c.Assert(col.GetRaw(i), check.DeepEquals, b)
 		i++
 	}
 
@@ -882,6 +882,56 @@ func BenchmarkTimeVec(b *testing.B) {
 			} else {
 				rs[i] = ds2[i]
 			}
+		}
+	}
+}
+
+func genNullCols(n int) []*Column {
+	cols := make([]*Column, n)
+	for i := range cols {
+		cols[i] = NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+		cols[i].ResizeInt64(1024, false)
+		for j := 0; j < 1024; j++ {
+			if rand.Intn(10) < 5 {
+				cols[i].SetNull(j, true)
+			}
+		}
+	}
+	return cols
+}
+
+func (s *testChunkSuite) TestVectorizedNulls(c *check.C) {
+	for i := 0; i < 256; i++ {
+		cols := genNullCols(4)
+		lCol, rCol := cols[0], cols[1]
+		vecResult, rowResult := cols[2], cols[3]
+		vecResult.SetNulls(0, 1024, false)
+		rowResult.SetNulls(0, 1024, false)
+		vecResult.MergeNulls(lCol, rCol)
+		for i := 0; i < 1024; i++ {
+			rowResult.SetNull(i, lCol.IsNull(i) || rCol.IsNull(i))
+		}
+
+		for i := 0; i < 1024; i++ {
+			c.Assert(rowResult.IsNull(i), check.Equals, vecResult.IsNull(i))
+		}
+	}
+}
+
+func BenchmarkMergeNullsVectorized(b *testing.B) {
+	cols := genNullCols(3)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		cols[0].MergeNulls(cols[1:]...)
+	}
+}
+
+func BenchmarkMergeNullsNonVectorized(b *testing.B) {
+	cols := genNullCols(3)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for i := 0; i < 1024; i++ {
+			cols[0].SetNull(i, cols[1].IsNull(i) || cols[2].IsNull(i))
 		}
 	}
 }
