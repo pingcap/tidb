@@ -52,6 +52,27 @@ func HasGetSetVarFunc(expr Expression) bool {
 	return false
 }
 
+// HasAssignSetVarFunc checks whether an expression contains SetVar function and assign a value
+func HasAssignSetVarFunc(expr Expression) bool {
+	scalaFunc, ok := expr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if scalaFunc.FuncName.L == ast.SetVar {
+		for _, arg := range scalaFunc.GetArgs() {
+			if _, ok := arg.(*ScalarFunction); ok {
+				return true
+			}
+		}
+	}
+	for _, arg := range scalaFunc.GetArgs() {
+		if HasAssignSetVarFunc(arg) {
+			return true
+		}
+	}
+	return false
+}
+
 // VectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
 func VectorizedExecute(ctx sessionctx.Context, exprs []Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk) error {
 	for colID, expr := range exprs {
@@ -315,11 +336,31 @@ func executeToString(ctx sessionctx.Context, expr Expression, fieldType *types.F
 // VectorizedFilter applies a list of filters to a Chunk and
 // returns a bool slice, which indicates whether a row is passed the filters.
 // Filters is executed vectorized.
-func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool) ([]bool, error) {
+func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool) (_ []bool, err error) {
+	selected, _, err = VectorizedFilterConsiderNull(ctx, filters, iterator, selected, nil)
+	return selected, err
+}
+
+// VectorizedFilterConsiderNull applies a list of filters to a Chunk and
+// returns two bool slices, `selected` indicates whether a row passed the
+// filters, `isNull` indicates whether the result of the filter is null.
+// Filters is executed vectorized.
+func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
 	selected = selected[:0]
 	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
 		selected = append(selected, true)
 	}
+	if isNull != nil {
+		isNull = isNull[:0]
+		for i, numRows := 0, iterator.Len(); i < numRows; i++ {
+			isNull = append(isNull, false)
+		}
+	}
+	var (
+		filterResult       int64
+		bVal, isNullResult bool
+		err                error
+	)
 	for _, filter := range filters {
 		isIntType := true
 		if filter.GetType().EvalType() != types.ETInt {
@@ -330,20 +371,23 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 				continue
 			}
 			if isIntType {
-				filterResult, isNull, err := filter.EvalInt(ctx, row)
+				filterResult, isNullResult, err = filter.EvalInt(ctx, row)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
-				selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
+				selected[row.Idx()] = selected[row.Idx()] && !isNullResult && (filterResult != 0)
 			} else {
 				// TODO: should rewrite the filter to `cast(expr as SIGNED) != 0` and always use `EvalInt`.
-				bVal, _, err := EvalBool(ctx, []Expression{filter}, row)
+				bVal, isNullResult, err = EvalBool(ctx, []Expression{filter}, row)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				selected[row.Idx()] = selected[row.Idx()] && bVal
 			}
+			if isNull != nil {
+				isNull[row.Idx()] = isNull[row.Idx()] || isNullResult
+			}
 		}
 	}
-	return selected, nil
+	return selected, isNull, nil
 }

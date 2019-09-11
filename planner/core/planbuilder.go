@@ -563,6 +563,17 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 		}
 
 		hasScanHint = true
+
+		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
+		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
+		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
+		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
+			if path := getTablePath(publicPaths); path != nil {
+				hasUseOrForce = true
+				path.forced = true
+				available = append(available, path)
+			}
+		}
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
@@ -1355,18 +1366,20 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, error) {
-	p := Show{
-		Tp:          show.Tp,
-		DBName:      show.DBName,
-		Table:       show.Table,
-		Column:      show.Column,
-		IndexName:   show.IndexName,
-		Flag:        show.Flag,
-		Full:        show.Full,
-		User:        show.User,
-		Roles:       show.Roles,
-		IfNotExists: show.IfNotExists,
-		GlobalScope: show.GlobalScope,
+	p := LogicalShow{
+		baseShowContent: baseShowContent{
+			Tp:          show.Tp,
+			DBName:      show.DBName,
+			Table:       show.Table,
+			Column:      show.Column,
+			IndexName:   show.IndexName,
+			Flag:        show.Flag,
+			Full:        show.Full,
+			User:        show.User,
+			Roles:       show.Roles,
+			IfNotExists: show.IfNotExists,
+			GlobalScope: show.GlobalScope,
+		},
 	}.Init(b.ctx)
 	isView := false
 	switch show.Tp {
@@ -1392,11 +1405,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
-	mockTablePlan := LogicalTableDual{placeHolder: true}.Init(b.ctx)
-	mockTablePlan.SetSchema(p.schema)
 	var err error
 	var np LogicalPlan
-	np = mockTablePlan
+	np = p
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
@@ -1412,11 +1423,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			return nil, err
 		}
 	}
-	if np != mockTablePlan {
-		fieldsLen := len(mockTablePlan.schema.Columns)
+	if np != p {
+		b.optFlag |= flagEliminateProjection
+		fieldsLen := len(p.schema.Columns)
 		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx)
 		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
-		for _, col := range mockTablePlan.schema.Columns {
+		for _, col := range p.schema.Columns {
 			proj.Exprs = append(proj.Exprs, col)
 			newCol := col.Clone().(*expression.Column)
 			newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
@@ -1424,24 +1436,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		}
 		proj.SetSchema(schema)
 		proj.SetChildren(np)
-		physical, err := DoOptimize(ctx, b.optFlag|flagEliminateProjection, proj)
-		if err != nil {
-			return nil, err
-		}
-		return substitutePlaceHolderDual(physical, p), nil
+		return proj, nil
 	}
 	return p, nil
-}
-
-func substitutePlaceHolderDual(src PhysicalPlan, dst PhysicalPlan) PhysicalPlan {
-	if dual, ok := src.(*PhysicalTableDual); ok && dual.placeHolder {
-		return dst
-	}
-	for i, child := range src.Children() {
-		newChild := substitutePlaceHolderDual(child, dst)
-		src.SetChild(i, newChild)
-	}
-	return src
 }
 
 func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
