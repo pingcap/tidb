@@ -262,6 +262,8 @@ type ResultSubset interface {
 	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
+	// RespTime returns the response time for the request.
+	RespTime() time.Duration
 }
 
 // Response represents the response returned from KV layer.
