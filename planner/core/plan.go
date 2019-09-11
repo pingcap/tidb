@@ -140,7 +140,6 @@ type PhysicalPlan interface {
 
 	// PhysicalID() int
 
-	//ExplainNormalizeInfo() string
 
 	// getChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty

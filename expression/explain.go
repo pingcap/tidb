@@ -37,6 +37,30 @@ func (expr *ScalarFunction) ExplainInfo() string {
 }
 
 // ExplainInfo implements the Expression interface.
+func (expr *ScalarFunction) NormalizeInfo() string {
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
+	for i, arg := range expr.GetArgs() {
+		buffer.WriteString(arg.NormalizeInfo())
+		if i+1 < len(expr.GetArgs()) {
+			buffer.WriteString(", ")
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
+}
+
+// ExplainInfo implements the Expression interface.
+func (expr *Column) NormalizeInfo() string {
+	return expr.ExplainInfo()
+}
+
+// ExplainInfo implements the Expression interface.
+func (expr *Constant) NormalizeInfo() string {
+	return "?"
+}
+
+// ExplainInfo implements the Expression interface.
 func (expr *Column) ExplainInfo() string {
 	return expr.String()
 }
