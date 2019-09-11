@@ -613,6 +613,7 @@ var tokenMap = map[string]int{
 	"TYPE":                     tp,
 	"UNBOUNDED":                unbounded,
 	"UNCOMMITTED":              uncommitted,
+	"UNICODE":                  unicodeSym,
 	"UNDEFINED":                undefined,
 	"UNION":                    union,
 	"UNIQUE":                   unique,
