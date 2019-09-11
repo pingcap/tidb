@@ -893,7 +893,7 @@ func (s *testIntegrationSuite) TestChangingDBCharset(c *C) {
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
 }
 
-func (s *testIntegrationSuite) TestDropAutoIncrementIndex(c *C) {
+func (s *testIntegrationSuite) TestDropAutoIncrement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -914,4 +914,12 @@ func (s *testIntegrationSuite) TestDropAutoIncrementIndex(c *C) {
 	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
 	dropIndexSQL = "alter table t1 drop index a"
 	assertErrMsg(dropIndexSQL)
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int auto_increment key)")
+	_, err := tk.Exec("alter table t modify column a int")
+	c.Assert(err, NotNil)
+	tk.MustExec("set @@tidb_allow_remove_auto_inc = on")
+	tk.MustExec("alter table t1 modify column a int")
+	tk.MustExec("set @@tidb_allow_remove_auto_inc = off")
 }
