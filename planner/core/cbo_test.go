@@ -905,9 +905,9 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 		"├─TableReader_17 9980.01 root data:Selection_16",
 		"│ └─Selection_16 9980.01 cop not(isnull(test.t1.a)), not(isnull(test.t1.c))",
 		"│   └─TableScan_15 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─IndexReader_12 9.98 root index:Selection_11",
-		"  └─Selection_11 9.98 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
-		"    └─IndexScan_10 10.00 cop table:t2, index:a, b, c, range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:true, stats:pseudo",
+		"└─IndexReader_12 1.25 root index:Selection_11",
+		"  └─Selection_11 1.25 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
+		"    └─IndexScan_10 1.25 cop table:t2, index:a, b, c, range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:true, stats:pseudo",
 	))
 
 	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
@@ -953,35 +953,8 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 			d int not null unique auto_increment
 		)
 	`)
-	rs := tk.MustQuery("explain analyze select t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
-
-	// Expected output is like:
-	//
-	// +--------------------------------+----------+------+-------------------------------------------------------------------------------------------------+----------------------------------+---------------+
-	// | id                             | count    | task | operator info                                                                                   | execution info                   | memory        |
-	// +--------------------------------+----------+------+-------------------------------------------------------------------------------------------------+----------------------------------+---------------+
-	// | Projection_9                   | 10.00    | root | test.t1.id, test.t2.a                                                                           | time:0s, loops:0, rows:0         | N/A           |
-	// | └─IndexJoin_13                 | 10.00    | root | inner join, inner:IndexLookUp_12, outer key:test.t1.a, inner key:test.t2.d                      | time:275.903µs, loops:1, rows:0  | 1.57421875 KB |
-	// |   ├─Projection_21              | 8.00     | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                                      | time:23.811µs, loops:1, rows:0   | N/A           |
-	// |   │ └─Selection_22             | 8.00     | root | eq(cast(mod(test.t1.a, 30)), 4)                                                                 | time:18.658µs, loops:1, rows:0   | N/A           |
-	// |   │   └─TableReader_25         | 10.00    | root | data:Selection_24                                                                               | time:15.488µs, loops:1, rows:0   | 117 Bytes     |
-	// |   │     └─Selection_24         | 10.00    | cop  | eq(test.t1.b, "t2")                                                                             | time:21.872µs, loops:1, rows:0   | N/A           |
-	// |   │       └─TableScan_23       | 10000.00 | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                                     | time:20.79µs, loops:1, rows:0    | N/A           |
-	// |   └─IndexLookUp_12             | 10.00    | root |                                                                                                 | time:0ns, loops:0, rows:0        | N/A           |
-	// |     ├─IndexScan_10             | 10.00    | cop  | table:t2, index:d, range: decided by [eq(test.t2.d, test.t1.a)], keep order:false, stats:pseudo | time:0ns, loops:0, rows:0        | N/A           |
-	// |     └─TableScan_11             | 10.00    | cop  | table:t2, keep order:false, stats:pseudo                                                        | time:0ns, loops:0, rows:0        | N/A           |
-	// +--------------------------------+----------+------+-------------------------------------------------------------------------------------------------+----------------------------------+---------------+
-	//
-	c.Assert(rs.Rows(), HasLen, 10)
-	hasIndexLookUp12 := false
-	for _, row := range rs.Rows() {
-		c.Assert(row, HasLen, 6)
-		if strings.HasSuffix(row[0].(string), "IndexLookUp_12") {
-			hasIndexLookUp12 = true
-			c.Assert(row[4], Equals, "time:0ns, loops:0, rows:0")
-		}
-	}
-	c.Assert(hasIndexLookUp12, IsTrue)
+	// Test when both tables are empty, EXPLAIN ANALYZE for IndexLookUp would not panic.
+	tk.MustExec("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
 }
 
 func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {

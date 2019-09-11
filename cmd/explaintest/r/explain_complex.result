@@ -120,9 +120,9 @@ Projection_13	1.00	root	test.gad.id, test.dd.id, test.gad.aid, test.gad.cm, test
   └─HashAgg_19	1.00	root	group by:test.dd.dic, test.gad.aid, funcs:firstrow(test.gad.id), firstrow(test.gad.aid), firstrow(test.gad.cm), firstrow(test.gad.p1), firstrow(test.gad.p2), firstrow(test.gad.p3), firstrow(test.gad.p4), firstrow(test.gad.p5), firstrow(test.gad.p6_md5), firstrow(test.gad.p7_md5), firstrow(test.gad.ext), firstrow(test.gad.t), firstrow(test.dd.id), firstrow(test.dd.dic), firstrow(test.dd.ip), firstrow(test.dd.t)
     └─IndexMergeJoin_30	0.00	root	inner join, inner:IndexLookUp_28, outer key:test.gad.aid, inner key:test.dd.aid, other cond:eq(test.dd.ip, test.gad.ip), gt(test.dd.t, test.gad.t)
       ├─IndexLookUp_28	0.00	root	
-      │ ├─IndexScan_25	10.00	cop	table:dd, index:aid, dic, range: decided by [eq(test.dd.aid, test.gad.aid)], keep order:true, stats:pseudo
+      │ ├─IndexScan_25	0.00	cop	table:dd, index:aid, dic, range: decided by [eq(test.dd.aid, test.gad.aid)], keep order:true, stats:pseudo
       │ └─Selection_27	0.00	cop	eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
-      │   └─TableScan_26	10.00	cop	table:dd, keep order:false, stats:pseudo
+      │   └─TableScan_26	0.00	cop	table:dd, keep order:false, stats:pseudo
       └─IndexLookUp_39	3.33	root	
         ├─IndexScan_36	3333.33	cop	table:gad, index:t, range:(1478143908,+inf], keep order:false, stats:pseudo
         └─Selection_38	3.33	cop	eq(test.gad.pt, "android"), not(isnull(test.gad.ip))
@@ -137,9 +137,9 @@ Projection_10	0.00	root	test.gad.id, test.sdk.id, test.gad.aid, test.gad.cm, tes
     │ └─Selection_32	0.00	cop	eq(test.gad.bm, 0), eq(test.gad.dit, "mac"), eq(test.gad.pt, "ios"), not(isnull(test.gad.dic))
     │   └─TableScan_31	3333.33	cop	table:gad, keep order:false, stats:pseudo
     └─IndexLookUp_22	0.00	root	
-      ├─IndexScan_19	10.00	cop	table:sdk, index:aid, dic, range: decided by [eq(test.sdk.aid, test.gad.aid)], keep order:true, stats:pseudo
+      ├─IndexScan_19	0.00	cop	table:sdk, index:aid, dic, range: decided by [eq(test.sdk.aid, test.gad.aid)], keep order:true, stats:pseudo
       └─Selection_21	0.00	cop	eq(test.sdk.bm, 0), eq(test.sdk.pt, "ios"), gt(test.sdk.t, 1477971479), not(isnull(test.sdk.mac)), not(isnull(test.sdk.t))
-        └─TableScan_20	10.00	cop	table:sdk, keep order:false, stats:pseudo
+        └─TableScan_20	0.00	cop	table:sdk, keep order:false, stats:pseudo
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	count	task	operator info
 Projection_5	1.00	root	test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, 3_col_0, 3_col_1
@@ -157,9 +157,9 @@ Projection_10	0.00	root	test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.d
     │ └─Selection_52	0.00	cop	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
     │   └─TableScan_51	10000.00	cop	table:dt, range:[0,+inf], keep order:false, stats:pseudo
     └─IndexLookUp_23	0.00	root	
-      ├─IndexScan_20	10.00	cop	table:rr, index:aid, dic, range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:true, stats:pseudo
+      ├─IndexScan_20	1.25	cop	table:rr, index:aid, dic, range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:true, stats:pseudo
       └─Selection_22	0.00	cop	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
-        └─TableScan_21	10.00	cop	table:rr, keep order:false, stats:pseudo
+        └─TableScan_21	1.25	cop	table:rr, keep order:false, stats:pseudo
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	count	task	operator info
 Projection_5	1.00	root	test.pp.pc, test.pp.cr, 3_col_0, 3_col_1, 3_col_2
@@ -251,11 +251,11 @@ Sort_10	1.00	root	test.d.left_value:asc
       │ │ ├─IndexScan_55	10.00	cop	table:d, index:ctx, range:[1,1], keep order:false, stats:pseudo
       │ │ └─Selection_57	0.01	cop	eq(test.d.status, 1000)
       │ │   └─TableScan_56	10.00	cop	table:d, keep order:false, stats:pseudo
-      │ └─IndexLookUp_37	0.01	root	
-      │   ├─Selection_35	9.99	cop	not(isnull(test.p.department_id))
-      │   │ └─IndexScan_33	10.00	cop	table:p, index:department_id, range: decided by [eq(test.p.department_id, test.d.id)], keep order:true, stats:pseudo
-      │   └─Selection_36	0.01	cop	eq(test.p.status, 1000)
-      │     └─TableScan_34	9.99	cop	table:p, keep order:false, stats:pseudo
+      │ └─IndexLookUp_37	0.00	root	
+      │   ├─Selection_35	1.25	cop	not(isnull(test.p.department_id))
+      │   │ └─IndexScan_33	1.25	cop	table:p, index:department_id, range: decided by [eq(test.p.department_id, test.d.id)], keep order:true, stats:pseudo
+      │   └─Selection_36	0.00	cop	eq(test.p.status, 1000)
+      │     └─TableScan_34	1.25	cop	table:p, keep order:false, stats:pseudo
       └─TableReader_68	9.99	root	data:Selection_67
         └─Selection_67	9.99	cop	eq(test.ep.status, 1000), not(isnull(test.ep.position_id))
           └─TableScan_66	10000.00	cop	table:ep, range:[-inf,+inf], keep order:false, stats:pseudo
