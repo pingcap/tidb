@@ -1,0 +1,110 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package expression
+
+import (
+	"math"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+)
+
+func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		return nil
+	}
+
+Loop:
+	for i := 0; i < input.NumRows(); i++ {
+		str := result.GetBytes(i)
+		for _, c := range str {
+			if c >= utf8.RuneSelf {
+				continue Loop
+			}
+		}
+		for i := range str {
+			if str[i] >= 'A' && str[i] <= 'Z' {
+				str[i] += 'a' - 'A'
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinLowerSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf2.Int64s()
+	for i := 0; i < n; i++ {
+		// TODO: introduce vectorized null-bitmap to speed it up.
+		if buf.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		num := nums[i]
+		if num < 1 {
+			result.AppendString("")
+			continue
+		}
+		if num > math.MaxInt32 {
+			// to avoid overflow when calculating uint64(byteLength)*uint64(num) later
+			num = math.MaxInt32
+		}
+
+		str := buf.GetString(i)
+		byteLength := len(str)
+		if uint64(byteLength)*uint64(num) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("repeat", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+		if int64(byteLength) > int64(b.tp.Flen)/num {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(strings.Repeat(str, int(num)))
+	}
+	return nil
+}
+
+func (b *builtinRepeatSig) vectorized() bool {
+	return true
+}
