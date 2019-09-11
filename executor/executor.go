@@ -1366,19 +1366,23 @@ func (e *UnionExec) Close() error {
 	return e.baseExecutor.Close()
 }
 
-func extractStmtHintsFromStmtNode(stmtNode ast.StmtNode) (stmtHints stmtctx.StmtHints, warns []error) {
-	var hints []*ast.TableOptimizerHint
+func extractStmtHintsFromStmtNode(stmtNode ast.StmtNode) []*ast.TableOptimizerHint {
 	switch x := stmtNode.(type) {
 	case *ast.SelectStmt:
-		hints = x.TableHints
+		return x.TableHints
 	case *ast.UpdateStmt:
-		hints = x.TableHints
+		return x.TableHints
 	case *ast.DeleteStmt:
-		hints = x.TableHints
+		return x.TableHints
 	// TODO: support hint for InsertStmt
+	case *ast.ExplainStmt:
+		return extractStmtHintsFromStmtNode(x.Stmt)
 	default:
-		return
+		return nil
 	}
+}
+
+func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, warns []error) {
 	var memoryQuotaHintList, noIndexMergeHintList, useToJAHintList, readReplicaHintList []*ast.TableOptimizerHint
 	for _, hint := range hints {
 		switch hint.HintName.L {
@@ -1401,11 +1405,11 @@ func extractStmtHintsFromStmtNode(stmtNode ast.StmtNode) (stmtHints stmtctx.Stmt
 		hint := memoryQuotaHintList[len(memoryQuotaHintList)-1]
 		// Executor use MemoryQuota < 0 to indicate no memory limit, here use it to handle hint syntax error.
 		if hint.MemoryQuota < 0 {
-			warn := errors.New("There are some syntax error in MEMORY_QUOTA hint, correct usage: MEMORY_QUOTA(10 M) or MEMORY_QUOTA(10 G)")
+			warn := errors.New("There are some syntax error in MEMORY_QUOTA hint, correct usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
 			warns = append(warns, warn)
 		} else {
 			stmtHints.HasMemQuotaHint = true
-			stmtHints.MemQuotaQuery = int64(hint.MemoryQuota)
+			stmtHints.MemQuotaQuery = hint.MemoryQuota
 		}
 	}
 	// Handle USE_TOJA
@@ -1442,7 +1446,8 @@ func extractStmtHintsFromStmtNode(stmtNode ast.StmtNode) (stmtHints stmtctx.Stmt
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
-	stmtHints, hintWarns := extractStmtHintsFromStmtNode(s)
+	hints := extractStmtHintsFromStmtNode(s)
+	stmtHints, hintWarns := handleStmtHints(hints)
 	vars := ctx.GetSessionVars()
 	memQuota := vars.MemQuotaQuery
 	if stmtHints.HasMemQuotaHint {

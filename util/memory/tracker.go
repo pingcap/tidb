@@ -62,6 +62,11 @@ func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 	}
 }
 
+// CheckBytesLimit check whether the bytes limit of the tracker is equal to a value.
+func (t *Tracker) CheckBytesLimit(val int64) bool {
+	return t.bytesLimit == val
+}
+
 // SetActionOnExceed sets the action when memory usage is out of memory quota.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionOnExceed = a
