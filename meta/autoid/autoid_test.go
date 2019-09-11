@@ -136,11 +136,11 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(id, Equals, int64(6544))
 
 	// Test the MaxInt64 is the upper bound of `alloc` function but not `rebase`.
-	err = alloc.Rebase(3, int64(9223372036854775806), true)
+	err = alloc.Rebase(3, int64(math.MaxInt64-1), true)
 	c.Assert(err, IsNil)
 	_, err = alloc.Alloc(3)
 	c.Assert(alloc, NotNil)
-	err = alloc.Rebase(3, int64(9223372036854775807), true)
+	err = alloc.Rebase(3, int64(math.MaxInt64), true)
 	c.Assert(err, IsNil)
 }
 
