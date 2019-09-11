@@ -47,7 +47,7 @@ func (key *stmtSummaryCacheKey) Hash() []byte {
 // A LRU cache that stores statement summary.
 type stmtSummaryByDigest struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
-	sync.RWMutex
+	sync.Mutex
 	summaryMap *kvcache.SimpleLRUCache
 }
 
