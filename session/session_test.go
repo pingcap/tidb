@@ -914,7 +914,7 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	tk.MustExec("insert into autoid values();")
 	tk.MustQuery("select * from autoid").Check(testkit.Rows("9223372036854775808", "9223372036854775810", "9223372036854775812"))
 	// In TiDB : _tidb_rowid will also consume the autoID when the auto_increment column is not the primary key.
-	// Using the MaxUint64 and MaxInt64 as the autoID upper limit like MySQL will cause _tidb_rowid alloc fail here.
+	// Using the MaxUint64 and MaxInt64 as the autoID upper limit like MySQL will cause _tidb_rowid allocation fail here.
 	_, err := tk.Exec("insert into autoid values(18446744073709551614)")
 	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
 	_, err = tk.Exec("insert into autoid values()")
