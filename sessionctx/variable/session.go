@@ -783,7 +783,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptWriteRowID:
 		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqToJoinAndAgg:
-		s.allowInSubqToJoinAndAgg = TiDBOptOn(val)
+		s.SetAllowInSubqToJoinAndAgg(TiDBOptOn(val))
 	case TiDBOptCorrelationThreshold:
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 	case TiDBOptCorrelationExpFactor:
@@ -893,14 +893,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:
-		s.enableIndexMerge = TiDBOptOn(val)
+		s.SetEnableIndexMerge(TiDBOptOn(val))
 	case TiDBEnableNoopFuncs:
 		s.EnableNoopFuncs = TiDBOptOn(val)
 	case TiDBReplicaRead:
 		if strings.EqualFold(val, "follower") {
-			s.replicaRead = kv.ReplicaReadFollower
+			s.SetReplicaRead(kv.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
-			s.replicaRead = kv.ReplicaReadLeader
+			s.SetReplicaRead(kv.ReplicaReadLeader)
 		}
 	case TiDBAllowRemoveAutoInc:
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
