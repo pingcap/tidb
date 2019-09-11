@@ -665,8 +665,8 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 		}
 		switch p.(type) {
 		case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
-			if runtimeStatsColl.GetReaderStats(explainID) != nil {
-				analyzeInfo += ", " + runtimeStatsColl.GetReaderStats(explainID).String()
+			if s := runtimeStatsColl.GetReaderStats(explainID); s != nil {
+				analyzeInfo += ", " + s.String()
 			}
 		}
 		row = append(row, analyzeInfo)

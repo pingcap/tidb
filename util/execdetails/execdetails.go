@@ -260,8 +260,8 @@ type ReaderRuntimeStats struct {
 	copRespTime []time.Duration
 }
 
-// RecordOneCopTask record once cop response time to update maxcopRespTime
-func (rrs *ReaderRuntimeStats) RecordOneCopTask(t time.Duration) {
+// recordOneCopTask record once cop response time to update maxcopRespTime
+func (rrs *ReaderRuntimeStats) recordOneCopTask(t time.Duration) {
 	rrs.Lock()
 	defer rrs.Unlock()
 	rrs.copRespTime = append(rrs.copRespTime, t)
@@ -271,7 +271,7 @@ func (rrs *ReaderRuntimeStats) String() string {
 	sort.Slice(rrs.copRespTime, func(i, j int) bool {
 		return rrs.copRespTime[i] < rrs.copRespTime[j]
 	})
-	s := "cop resp time "
+	s := "rpc time "
 	size := len(rrs.copRespTime)
 	if size == 0 {
 		return s + "max:0ns, min:0ns, avg:0ns, p80:0ns, p95:0ns"
@@ -284,7 +284,7 @@ func (rrs *ReaderRuntimeStats) String() string {
 	}
 	s += fmt.Sprintf(", avg:%v", time.Duration(sum/float64(size)))
 	s += fmt.Sprintf(", p80:%v", rrs.copRespTime[size*4/5])
-	s += fmt.Sprintf(", p95:%v", rrs.copRespTime[size*17/20])
+	s += fmt.Sprintf(", p95:%v", rrs.copRespTime[size*19/20])
 	return s
 }
 
@@ -345,7 +345,7 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tip
 // RecordOneReaderStats records a specific stats for TableReader, IndexReader and IndexLookupReader.
 func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, copRespTime time.Duration) {
 	readerStats := e.GetReaderStats(planID)
-	readerStats.RecordOneCopTask(copRespTime)
+	readerStats.recordOneCopTask(copRespTime)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
