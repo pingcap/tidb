@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -151,9 +152,7 @@ type ExecStmt struct {
 
 	StmtNode ast.StmtNode
 
-	Ctx sessionctx.Context
-	// StartTime stands for the starting time when executing the statement.
-	StartTime         time.Time
+	Ctx               sessionctx.Context
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
@@ -187,6 +186,11 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
+	startTime := time.Now()
+	defer func() {
+		a.Ctx.GetSessionVars().StmtCtx.DurationCompile = time.Since(startTime)
+	}()
+
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
@@ -204,7 +208,18 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
-	a.StartTime = time.Now()
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
+			panic(r)
+		}
+		err = errors.Errorf("%v", r)
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.Text), zap.Stack("stack"))
+	}()
+
 	sctx := a.Ctx
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
@@ -596,7 +611,7 @@ func (a *ExecStmt) logAudit() {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.StartTime)
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StmtCtx.StartTime)
 			audit.OnGeneralEvent(ctx, sessVars, plugin.Log, cmd)
 		}
 		return nil
@@ -614,7 +629,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		return
 	}
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(a.StartTime)
+	costTime := time.Since(a.Ctx.GetSessionVars().StmtCtx.StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
@@ -638,10 +653,36 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexNames, digest, statsInfos, copTaskInfo, memMax, succ, sql))
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(&variable.SlowQueryLogItems{
+			TxnTS:       txnTS,
+			SQL:         sql,
+			Digest:      digest,
+			TimeTotal:   costTime,
+			TimeParse:   a.Ctx.GetSessionVars().StmtCtx.DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().StmtCtx.DurationCompile,
+			IndexNames:  indexNames,
+			StatsInfos:  statsInfos,
+			CopTasks:    copTaskInfo,
+			ExecDetail:  execDetail,
+			MemMax:      memMax,
+			Succ:        succ,
+		}))
 	} else {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexNames, digest, statsInfos, copTaskInfo, memMax, succ, sql))
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(&variable.SlowQueryLogItems{
+			TxnTS:       txnTS,
+			SQL:         sql,
+			Digest:      digest,
+			TimeTotal:   costTime,
+			TimeParse:   a.Ctx.GetSessionVars().StmtCtx.DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().StmtCtx.DurationCompile,
+			IndexNames:  indexNames,
+			StatsInfos:  statsInfos,
+			CopTasks:    copTaskInfo,
+			ExecDetail:  execDetail,
+			MemMax:      memMax,
+			Succ:        succ,
+		}))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
@@ -652,7 +693,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql,
 			Digest:     digest,
-			Start:      a.StartTime,
+			Start:      a.Ctx.GetSessionVars().StmtCtx.StartTime,
 			Duration:   costTime,
 			Detail:     sessVars.StmtCtx.GetExecDetails(),
 			Succ:       succ,
