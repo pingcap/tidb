@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -222,10 +223,7 @@ func BenchmarkPreAllocChunk(b *testing.B) {
 
 func BenchmarkListAdd(b *testing.B) {
 	numChk, numRow := 1, 2
-	chks, fields, err := initChunks(numChk, numRow)
-	if err != nil {
-		b.Fatal(err)
-	}
+	chks, fields := initChunks(numChk, numRow)
 	chk := chks[0]
 	l := NewList(fields, numRow, numRow)
 
@@ -237,21 +235,21 @@ func BenchmarkListAdd(b *testing.B) {
 
 func BenchmarkListGetRow(b *testing.B) {
 	numChk, numRow := 10000, 2
-	chks, fields, err := initChunks(numChk, numRow)
-	if err != nil {
-		b.Fatal(err)
-	}
+	chks, fields := initChunks(numChk, numRow)
 	l := NewList(fields, numRow, numRow)
 	for _, chk := range chks {
 		l.Add(chk)
 	}
 	rand.Seed(0)
 	ptrs := make([]RowPtr, 0, b.N)
-	for i := 0; i < b.N; i++ {
+	for i := 0; i < mathutil.Min(b.N, 10000); i++ {
 		ptrs = append(ptrs, RowPtr{
 			ChkIdx: rand.Uint32() % uint32(numChk),
 			RowIdx: rand.Uint32() % uint32(numRow),
 		})
+	}
+	for i := 10000; i < cap(ptrs); i++ {
+		ptrs = append(ptrs, ptrs[i%10000])
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

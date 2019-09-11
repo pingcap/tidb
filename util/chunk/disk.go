@@ -124,7 +124,7 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(bufReader)
 	if err != nil {
-		return
+		return row, err
 	}
 	row = format.toMutRow(l.fieldTypes).ToRow()
 	return row, err
@@ -179,7 +179,7 @@ func (chk *chunkInDisk) WriteTo(w io.Writer) (written int64, err error) {
 		format = convertFromRow(chk.GetRow(rowIdx), format)
 		chk.offsetsOfRows = append(chk.offsetsOfRows, chk.offWrite+written)
 
-		n, err = chk.writeRowTo(w, format)
+		n, err = rowInDisk{diskFormatRow: *format}.WriteTo(w)
 		written += n
 		if err != nil {
 			return
@@ -188,15 +188,24 @@ func (chk *chunkInDisk) WriteTo(w io.Writer) (written int64, err error) {
 	return
 }
 
-// writeRowTo serializes a row of the chunk into the format of
+// getOffsetsOfRows gets the offset of each row.
+func (chk *chunkInDisk) getOffsetsOfRows() []int64 { return chk.offsetsOfRows }
+
+// rowInDisk represents a Row in format of diskFormatRow.
+type rowInDisk struct {
+	numCol int
+	diskFormatRow
+}
+
+// WriteTo serializes a row of the chunk into the format of
 // diskFormatRow, and writes to w.
-func (chk *chunkInDisk) writeRowTo(w io.Writer, format *diskFormatRow) (written int64, err error) {
-	n, err := w.Write(i64SliceToBytes(format.sizesOfColumns))
+func (row rowInDisk) WriteTo(w io.Writer) (written int64, err error) {
+	n, err := w.Write(i64SliceToBytes(row.sizesOfColumns))
 	written += int64(n)
 	if err != nil {
 		return
 	}
-	for _, data := range format.cells {
+	for _, data := range row.cells {
 		n, err = w.Write(data)
 		written += int64(n)
 		if err != nil {
@@ -204,14 +213,6 @@ func (chk *chunkInDisk) writeRowTo(w io.Writer, format *diskFormatRow) (written 
 		}
 	}
 	return
-}
-
-func (chk *chunkInDisk) getOffsetsOfRows() []int64 { return chk.offsetsOfRows }
-
-// rowInDisk represents a Row in format of diskFormatRow.
-type rowInDisk struct {
-	numCol int
-	diskFormatRow
 }
 
 // ReadFrom reads data of r, deserializes it from the format of diskFormatRow
@@ -247,10 +248,14 @@ type diskFormatRow struct {
 	// sizesOfColumns stores the size of each column in a row.
 	// -1 means the value of this column is null.
 	sizesOfColumns []int64 // -1 means null
-	cells          [][]byte
+	// cells represents raw data of not-null columns in one row.
+	// In convertFromRow, data from Row is shallow copied to cells.
+	// In toMutRow, data in cells is shallow copied to MutRow.
+	cells [][]byte
 }
 
-// convertFromRow serializes one row of chunk to diskFormatRow
+// convertFromRow serializes one row of chunk to diskFormatRow, then
+// we can use diskFormatRow to write to disk.
 func convertFromRow(row Row, reuse *diskFormatRow) (format *diskFormatRow) {
 	numCols := row.Chunk().NumCols()
 	if reuse != nil {

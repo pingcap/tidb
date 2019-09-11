@@ -19,13 +19,14 @@ import (
 	"os"
 	"testing"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
 
-func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType, error) {
+func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 	fields := []*types.FieldType{
 		types.NewFieldType(mysql.TypeVarString),
 		types.NewFieldType(mysql.TypeLonglong),
@@ -36,7 +37,7 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType, error) {
 
 	chks := make([]*Chunk, 0, numChk)
 	for chkIdx := 0; chkIdx < numChk; chkIdx++ {
-		chk := NewChunkWithCapacity(fields, 2)
+		chk := NewChunkWithCapacity(fields, numRow)
 		for rowIdx := 0; rowIdx < numRow; rowIdx++ {
 			data := int64(chkIdx*numRow + rowIdx)
 			chk.AppendString(0, fmt.Sprint(data))
@@ -51,20 +52,17 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType, error) {
 		}
 		chks = append(chks, chk)
 	}
-	return chks, fields, nil
+	return chks, fields
 }
 
 func (s *testChunkSuite) TestListInDisk(c *check.C) {
 	numChk, numRow := 2, 2
-	chks, fields, err := initChunks(numChk, numRow)
-	if err != nil {
-		c.Fatal(err)
-	}
+	chks, fields := initChunks(numChk, numRow)
 	l := NewListInDisk(fields)
 	defer func() {
 		err := l.Close()
 		c.Check(err, check.IsNil)
-		c.Check(l.disk, check.Not(check.IsNil))
+		c.Check(l.disk, check.NotNil)
 		_, err = os.Stat(l.disk.Name())
 		c.Check(os.IsNotExist(err), check.IsTrue)
 	}()
@@ -87,10 +85,7 @@ func (s *testChunkSuite) TestListInDisk(c *check.C) {
 
 func BenchmarkListInDiskAdd(b *testing.B) {
 	numChk, numRow := 1, 2
-	chks, fields, err := initChunks(numChk, numRow)
-	if err != nil {
-		b.Fatal(err)
-	}
+	chks, fields := initChunks(numChk, numRow)
 	chk := chks[0]
 	l := NewListInDisk(fields)
 	defer l.Close()
@@ -106,10 +101,7 @@ func BenchmarkListInDiskAdd(b *testing.B) {
 
 func BenchmarkListInDiskGetRow(b *testing.B) {
 	numChk, numRow := 10000, 2
-	chks, fields, err := initChunks(numChk, numRow)
-	if err != nil {
-		b.Fatal(err)
-	}
+	chks, fields := initChunks(numChk, numRow)
 	l := NewListInDisk(fields)
 	defer l.Close()
 	for _, chk := range chks {
@@ -120,15 +112,18 @@ func BenchmarkListInDiskGetRow(b *testing.B) {
 	}
 	rand.Seed(0)
 	ptrs := make([]RowPtr, 0, b.N)
-	for i := 0; i < b.N; i++ {
+	for i := 0; i < mathutil.Min(b.N, 10000); i++ {
 		ptrs = append(ptrs, RowPtr{
 			ChkIdx: rand.Uint32() % uint32(numChk),
 			RowIdx: rand.Uint32() % uint32(numRow),
 		})
 	}
+	for i := 10000; i < cap(ptrs); i++ {
+		ptrs = append(ptrs, ptrs[i%10000])
+	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err = l.GetRow(ptrs[i])
+		_, err := l.GetRow(ptrs[i])
 		if err != nil {
 			b.Fatal(err)
 		}
