@@ -1205,6 +1205,9 @@ func (s *session) IsCachedExecOk(ctx context.Context, prepared *ast.Prepared) (b
 		if ok {
 			return true, nil
 		}
+		prepared.CachedPlan = nil
+		logutil.Logger(ctx).Error("currently only point get " +
+			"plan should be cached in prepared, invalidate cached plan")
 	}
 	return false, nil
 }
