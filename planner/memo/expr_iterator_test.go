@@ -19,12 +19,12 @@ import (
 )
 
 func (s *testMemoSuite) TestNewExprIterFromGroupElem(c *C) {
-	g0 := NewGroup(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)))
+	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)), nil)
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 
-	g1 := NewGroup(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)))
+	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)), nil)
 	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g1.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
 	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
@@ -32,7 +32,7 @@ func (s *testMemoSuite) TestNewExprIterFromGroupElem(c *C) {
 	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx))
 	expr.Children = append(expr.Children, g0)
 	expr.Children = append(expr.Children, g1)
-	g2 := NewGroup(expr)
+	g2 := NewGroupWithSchema(expr, nil)
 
 	pattern := BuildPattern(OperandJoin, BuildPattern(OperandProjection), BuildPattern(OperandSelection))
 	iter := NewExprIterFromGroupElem(g2.Equivalents.Front(), pattern)
@@ -58,13 +58,13 @@ func (s *testMemoSuite) TestNewExprIterFromGroupElem(c *C) {
 }
 
 func (s *testMemoSuite) TestExprIterNext(c *C) {
-	g0 := NewGroup(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
+	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)), nil)
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
 
-	g1 := NewGroup(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)))
+	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)), nil)
 	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g1.Insert(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)))
 	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
@@ -73,7 +73,7 @@ func (s *testMemoSuite) TestExprIterNext(c *C) {
 	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx))
 	expr.Children = append(expr.Children, g0)
 	expr.Children = append(expr.Children, g1)
-	g2 := NewGroup(expr)
+	g2 := NewGroupWithSchema(expr, nil)
 
 	pattern := BuildPattern(OperandJoin, BuildPattern(OperandProjection), BuildPattern(OperandSelection))
 	iter := NewExprIterFromGroupElem(g2.Equivalents.Front(), pattern)
@@ -102,7 +102,7 @@ func (s *testMemoSuite) TestExprIterNext(c *C) {
 }
 
 func (s *testMemoSuite) TestExprIterReset(c *C) {
-	g0 := NewGroup(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
+	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)), nil)
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
@@ -111,13 +111,13 @@ func (s *testMemoSuite) TestExprIterReset(c *C) {
 	sel1 := NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx))
 	sel2 := NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx))
 	sel3 := NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx))
-	g1 := NewGroup(sel1)
+	g1 := NewGroupWithSchema(sel1, nil)
 	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g1.Insert(sel2)
 	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g1.Insert(sel3)
 
-	g2 := NewGroup(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)))
+	g2 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)), nil)
 	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g2.Insert(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)))
 	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
@@ -127,7 +127,7 @@ func (s *testMemoSuite) TestExprIterReset(c *C) {
 	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx))
 	expr.Children = append(expr.Children, g0)
 	expr.Children = append(expr.Children, g1)
-	g3 := NewGroup(expr)
+	g3 := NewGroupWithSchema(expr, nil)
 
 	// link sel 1~3 with Group 2
 	sel1.Children = append(sel1.Children, g2)

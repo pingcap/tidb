@@ -220,7 +220,8 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	// The getTxnStatus API is confusing, it really means rollback!
 	status, err := newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"))
 	c.Assert(err, IsNil)
-	c.Assert(status, Equals, TxnStatus(0))
+	c.Assert(status.ttl, Equals, uint64(0))
+	c.Assert(status.commitTS, Equals, uint64(0))
 
 	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
 	c.Assert(err, NotNil)
