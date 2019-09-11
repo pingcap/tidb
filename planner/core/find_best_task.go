@@ -512,37 +512,8 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	rowCount float64,
 	isCovered bool) {
 	idx := path.index
-	is := PhysicalIndexScan{
-		Table:            ds.tableInfo,
-		TableAsName:      ds.TableAsName,
-		DBName:           ds.DBName,
-		Columns:          ds.Columns,
-		Index:            idx,
-		IdxCols:          path.idxCols,
-		IdxColLens:       path.idxColLens,
-		AccessCondition:  path.accessConds,
-		Ranges:           path.ranges,
-		dataSourceSchema: ds.schema,
-		isPartition:      ds.isPartition,
-		physicalTableID:  ds.physicalTableID,
-	}.Init(ds.ctx)
-	statsTbl := ds.statisticTable
-	if statsTbl.Indices[idx.ID] != nil {
-		is.Hist = &statsTbl.Indices[idx.ID].Histogram
-	}
-	is.initSchema(ds.id, idx, path.fullIdxCols, true)
-	rowCount = path.countAfterAccess
-	if prop.ExpectedCnt < ds.stats.RowCount {
-		selectivity := ds.stats.RowCount / path.countAfterAccess
-		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
-	}
+	is, partialCost, rowCount := ds.getPhysicalIndexScan(prop, path, false, false)
 	rowSize := is.indexScanRowSize(idx, ds)
-	partialCost += rowCount * rowSize * ScanFactor
-	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	is.stats.StatsVersion = ds.statisticTable.Version
-	if ds.statisticTable.Pseudo {
-		is.stats.StatsVersion = statistics.PseudoVersion
-	}
 	isCovered = isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle)
 	indexConds := path.indexFilters
 	if indexConds != nil {
@@ -557,7 +528,7 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		if ds.statisticTable.Pseudo {
 			stats.StatsVersion = statistics.PseudoVersion
 		}
-		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats)
+		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, ds.blockOffset)
 		indexPlan.SetChildren(is)
 		partialCost += rowCount * rowSize * NetworkFactor
 		return indexPlan, partialCost, rowCount, isCovered
@@ -572,51 +543,15 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	partialCost float64,
 	rowCount float64,
 	isCovered bool) {
-	ts := PhysicalTableScan{
-		Table:           ds.tableInfo,
-		Columns:         ds.Columns,
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		isPartition:     ds.isPartition,
-		physicalTableID: ds.physicalTableID,
-		Ranges:          path.ranges,
-		AccessCondition: path.accessConds,
-		filterCondition: path.tableFilters,
-	}.Init(ds.ctx)
-	ts.SetSchema(ds.schema)
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
-			}
-		}
-	}
-	rowCount = path.countAfterAccess
-	// Adjust number of rows we actually need to scan if prop.ExpectedCnt is smaller than the count we calculated.
-	if prop.ExpectedCnt < ds.stats.RowCount {
-		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, false)
-		if ok {
-			rowCount = count
-		} else if corr < 1 {
-			correlationFactor := math.Pow(1-corr, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
-			selectivity := ds.stats.RowCount / rowCount
-			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
-		}
-	}
-	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	ts, partialCost, rowCount := ds.getPhysicalTableScanWithoutSelection(prop, path, false)
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
-	ts.stats.StatsVersion = ds.statisticTable.Version
-	if ds.statisticTable.Pseudo {
-		ts.stats.StatsVersion = statistics.PseudoVersion
-	}
-	partialCost += rowCount * rowSize * ScanFactor
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
-		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount))
+		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount), ds.blockOffset)
 		tablePlan.SetChildren(ts)
 		partialCost += rowCount * CopCPUFactor
 		partialCost += selectivity * rowCount * rowSize * NetworkFactor
@@ -636,7 +571,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
-	}.Init(ds.ctx)
+	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -658,7 +593,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
-		sel := PhysicalSelection{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount))
+		sel := PhysicalSelection{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
 		sel.SetChildren(ts)
 		return sel, partialCost
 	}
@@ -717,26 +652,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	path := candidate.path
-	idx := path.index
-	is := PhysicalIndexScan{
-		Table:            ds.tableInfo,
-		TableAsName:      ds.TableAsName,
-		DBName:           ds.DBName,
-		Columns:          ds.Columns,
-		Index:            idx,
-		IdxCols:          path.idxCols,
-		IdxColLens:       path.idxColLens,
-		AccessCondition:  path.accessConds,
-		Ranges:           path.ranges,
-		dataSourceSchema: ds.schema,
-		isPartition:      ds.isPartition,
-		physicalTableID:  ds.physicalTableID,
-	}.Init(ds.ctx, ds.blockOffset)
-	statsTbl := ds.statisticTable
-	if statsTbl.Indices[idx.ID] != nil {
-		is.Hist = &statsTbl.Indices[idx.ID].Histogram
-	}
-	rowCount := path.countAfterAccess
+	is, cost, _ := ds.getPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.isSingleScan)
 	cop := &copTask{
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
@@ -750,34 +666,19 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			TableAsName:     ds.TableAsName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
-		}.Init(ds.ctx, ds.blockOffset)
+		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
 	}
-	is.initSchema(ds.id, idx, path.fullIdxCols, cop.tablePlan != nil)
-	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
-	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if (candidate.isMatchProp || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
-		selectivity := ds.stats.RowCount / path.countAfterAccess
-		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
-	}
-	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	rowSize := is.indexScanRowSize(idx, ds)
-	cop.cst = rowCount * rowSize * ScanFactor
+	cop.cst = cost
 	task = cop
 	if candidate.isMatchProp {
-		if prop.Items[0].Desc {
-			is.Desc = true
-			cop.cst = rowCount * rowSize * DescScanFactor
-		}
 		if cop.tablePlan != nil {
 			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
 			cop.extraHandleCol = col
 			cop.doubleReadNeedProj = isNew
 		}
 		cop.keepOrder = true
-		is.KeepOrder = true
 	}
 	// prop.IsEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
@@ -1072,6 +973,37 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+	ts, cost, _ := ds.getPhysicalTableScanWithoutSelection(prop, candidate.path, candidate.isMatchProp)
+	copTask := &copTask{
+		tablePlan:         ts,
+		indexPlanFinished: true,
+		tblColHists:       ds.TblColHists,
+		cst:               cost,
+	}
+	task = copTask
+	if candidate.isMatchProp {
+		copTask.keepOrder = true
+	}
+	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	if prop.TaskTp == property.RootTaskType {
+		task = finishCopTask(ds.ctx, task)
+	} else if _, ok := task.(*rootTask); ok {
+		return invalidTask, nil
+	}
+	return task, nil
+}
+
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
+	// Add filter condition to table plan now.
+	if len(ts.filterCondition) > 0 {
+		copTask.cst += copTask.count() * CopCPUFactor
+		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
+		sel.SetChildren(ts)
+		copTask.tablePlan = sel
+	}
+}
+
+func (ds *DataSource) getPhysicalTableScanWithoutSelection(prop *property.PhysicalProperty, path *accessPath, isMatchProp bool) (*PhysicalTableScan, float64, float64) {
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
@@ -1079,6 +1011,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
+		Ranges:          path.ranges,
+		AccessCondition: path.accessConds,
+		filterCondition: path.tableFilters,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema)
 	if ts.Table.PKIsHandle {
@@ -1088,19 +1023,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 	}
-	path := candidate.path
-	ts.Ranges = path.ranges
-	ts.AccessCondition, ts.filterCondition = path.accessConds, path.tableFilters
 	rowCount := path.countAfterAccess
-	copTask := &copTask{
-		tablePlan:         ts,
-		indexPlanFinished: true,
-		tblColHists:       ds.TblColHists,
-	}
-	task = copTask
-	// Adjust number of rows we actually need to scan if prop.ExpectedCnt is smaller than the count we calculated.
 	if prop.ExpectedCnt < ds.stats.RowCount {
-		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, candidate.isMatchProp && prop.Items[0].Desc)
+		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, isMatchProp && prop.Items[0].Desc)
 		if ok {
 			// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
 			// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
@@ -1122,32 +1047,62 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	// We need NDV of columns since it may be used in cost estimation of join. Precisely speaking,
+	// we should track NDV of each histogram bucket, and sum up the NDV of buckets we actually need
+	// to scan, but this would only help improve accuracy of NDV for one column, for other columns,
+	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
+	// for all columns now, as we do in `deriveStatsByFilter`.
+	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
-	copTask.cst = rowCount * rowSize * ScanFactor
-	if candidate.isMatchProp {
+	cost := rowCount * rowSize * ScanFactor
+	if isMatchProp {
 		if prop.Items[0].Desc {
 			ts.Desc = true
-			copTask.cst = rowCount * rowSize * DescScanFactor
+			cost = rowCount * rowSize * DescScanFactor
 		}
 		ts.KeepOrder = true
-		copTask.keepOrder = true
 	}
-
-	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
-	if prop.TaskTp == property.RootTaskType {
-		task = finishCopTask(ds.ctx, task)
-	} else if _, ok := task.(*rootTask); ok {
-		return invalidTask, nil
-	}
-	return task, nil
+	return ts, cost, rowCount
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
-	// Add filter condition to table plan now.
-	if len(ts.filterCondition) > 0 {
-		copTask.cst += copTask.count() * CopCPUFactor
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
-		sel.SetChildren(ts)
-		copTask.tablePlan = sel
+func (ds *DataSource) getPhysicalIndexScan(prop *property.PhysicalProperty, path *accessPath, isMatchProp bool, isSingleScan bool) (*PhysicalIndexScan, float64, float64) {
+	idx := path.index
+	is := PhysicalIndexScan{
+		Table:            ds.tableInfo,
+		TableAsName:      ds.TableAsName,
+		DBName:           ds.DBName,
+		Columns:          ds.Columns,
+		Index:            idx,
+		IdxCols:          path.idxCols,
+		IdxColLens:       path.idxColLens,
+		AccessCondition:  path.accessConds,
+		Ranges:           path.ranges,
+		dataSourceSchema: ds.schema,
+		isPartition:      ds.isPartition,
+		physicalTableID:  ds.physicalTableID,
+	}.Init(ds.ctx, ds.blockOffset)
+	statsTbl := ds.statisticTable
+	if statsTbl.Indices[idx.ID] != nil {
+		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
+	rowCount := path.countAfterAccess
+	is.initSchema(ds.id, idx, path.fullIdxCols, !isSingleScan)
+	// Only use expectedCnt when it's smaller than the count we calculated.
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
+	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
+	if (isMatchProp || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
+		selectivity := ds.stats.RowCount / path.countAfterAccess
+		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
+	}
+	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	rowSize := is.indexScanRowSize(idx, ds)
+	cost := rowCount * rowSize * ScanFactor
+	if isMatchProp {
+		if prop.Items[0].Desc {
+			is.Desc = true
+			cost = rowCount * rowSize * DescScanFactor
+		}
+		is.KeepOrder = true
+	}
+	return is, cost, rowCount
 }

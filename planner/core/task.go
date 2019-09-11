@@ -475,7 +475,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		cst: t.cst,
 	}
 	if t.idxMergePartPlans != nil {
-		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan}.Init(ctx)
+		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
 		newTask.p = p
 		return newTask
 	}
