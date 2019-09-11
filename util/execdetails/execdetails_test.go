@@ -90,7 +90,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
-	if copStats[0].String() != "time:1.000000001s, loops:2, rows:20" {
+	if copStats[0].String() != "time:1.000000001s, loops:2, rows:20, concurrency:0" {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
