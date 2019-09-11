@@ -368,6 +368,20 @@ func (h *rpcHandler) handleKvCleanup(req *kvrpcpb.CleanupRequest) *kvrpcpb.Clean
 	return &resp
 }
 
+func (h *rpcHandler) handleKvCheckTxnStatus(req *kvrpcpb.CheckTxnStatusRequest) *kvrpcpb.CheckTxnStatusResponse {
+	if !h.checkKeyInRegion(req.PrimaryKey) {
+		panic("KvCheckTxnStatus: key not in region")
+	}
+	var resp kvrpcpb.CheckTxnStatusResponse
+	ttl, commitTS, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs())
+	if err != nil {
+		resp.Error = convertToKeyError(err)
+	} else {
+		resp.LockTtl, resp.CommitVersion = ttl, commitTS
+	}
+	return &resp
+}
+
 func (h *rpcHandler) handleTxnHeartBeat(req *kvrpcpb.TxnHeartBeatRequest) *kvrpcpb.TxnHeartBeatResponse {
 	if !h.checkKeyInRegion(req.PrimaryLock) {
 		panic("KvTxnHeartBeat: key not in region")
@@ -788,6 +802,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.Resp = handler.handleKvCleanup(r)
+	case tikvrpc.CmdCheckTxnStatus:
+		r := req.CheckTxnStatus()
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.Resp = &kvrpcpb.CheckTxnStatusResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.Resp = handler.handleKvCheckTxnStatus(r)
 	case tikvrpc.CmdTxnHeartBeat:
 		r := req.TxnHeartBeat()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
