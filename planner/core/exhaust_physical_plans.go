@@ -38,7 +38,7 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	us := PhysicalUnionScan{
 		Conditions: p.conditions,
 		HandleCol:  p.handleCol,
-	}.Init(p.ctx, p.stats, childProp)
+	}.Init(p.ctx, p.stats, p.blockOffset, childProp)
 	return []PhysicalPlan{us}
 }
 
@@ -146,7 +146,7 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 			LeftJoinKeys:    leftKeys,
 			RightJoinKeys:   rightKeys,
 		}
-		mergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+		mergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
 		mergeJoin.SetSchema(p.schema)
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		mergeJoin.initCompareFuncs()
@@ -242,7 +242,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 		RightJoinKeys:   rightKeys,
 		OtherConditions: p.OtherConditions,
 	}
-	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
 	enforcedPhysicalMergeJoin.SetSchema(p.schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
 	enforcedPhysicalMergeJoin.initCompareFuncs()
@@ -295,7 +295,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int)
 		basePhysicalJoin: baseJoin,
 		EqualConditions:  p.EqualConditions,
 		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency),
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	return hashJoin
 }
@@ -366,7 +366,7 @@ func (p *LogicalJoin) constructIndexJoin(
 		Ranges:           ranges,
 		KeepOuterOrder:   len(prop.Items) > 0,
 		CompareFilters:   compareFilters,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.idxColLens
 	}
@@ -426,7 +426,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
 // or match some part of on index. If so we will choose the best one and construct a index join.
 func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, outerIdx int) []PhysicalPlan {
-	innerChild := p.children[1-outerIdx]
+	outerChild, innerChild := p.children[outerIdx], p.children[1-outerIdx]
 	var (
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
@@ -450,6 +450,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			return nil
 		}
 	}
+	var avgInnerRowCnt float64
+	if outerChild.statsInfo().RowCount > 0 {
+		avgInnerRowCnt = p.equalCondOutCnt / outerChild.statsInfo().RowCount
+	}
 	var tblPath *accessPath
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
@@ -471,11 +475,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		if pkMatched {
 			joins := make([]PhysicalPlan, 0, 2)
 
-			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false)
+			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, avgInnerRowCnt)
 			joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 			// The index merge join's inner plan is different from index join, so we should consturct another inner plan
 			// for it.
-			innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true)
+			innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, avgInnerRowCnt)
 			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
@@ -507,12 +511,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 		joins := make([]PhysicalPlan, 0, 2)
 		rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.idxCols, outerJoinKeys)
-		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false)
+		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, avgInnerRowCnt)
 
 		joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 		// The index merge join's inner plan is different from index join, so we should consturct another inner plan
 		// for it.
-		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true)
+		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, avgInnerRowCnt)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 		return joins
 	}
@@ -564,7 +568,14 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 }
 
 // constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column, us *LogicalUnionScan, keepOrder bool) task {
+func (p *LogicalJoin) constructInnerTableScanTask(
+	ds *DataSource,
+	pk *expression.Column,
+	outerJoinKeys []*expression.Column,
+	us *LogicalUnionScan,
+	keepOrder bool,
+	rowCount float64,
+) task {
 	ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -575,11 +586,11 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 		Ranges:          ranges,
 		rangeDecidedBy:  outerJoinKeys,
 		KeepOrder:       keepOrder,
-	}.Init(ds.ctx)
+	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema)
 	ts.stats = &property.StatsInfo{
 		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
-		RowCount:     1,
+		RowCount:     math.Min(1.0, rowCount),
 		StatsVersion: ds.stats.StatsVersion,
 		// Cardinality would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
@@ -611,7 +622,7 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	physicalUnionScan := PhysicalUnionScan{
 		Conditions: us.conditions,
 		HandleCol:  us.handleCol,
-	}.Init(us.ctx, reader.statsInfo(), nil)
+	}.Init(us.ctx, reader.statsInfo(), us.blockOffset, nil)
 	physicalUnionScan.SetChildren(reader)
 	return physicalUnionScan
 }
@@ -625,6 +636,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	us *LogicalUnionScan,
 	rangeInfo string,
 	keepOrder bool,
+	rowCount float64,
 ) task {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
@@ -638,23 +650,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		KeepOrder:        keepOrder,
 		Ranges:           ranger.FullRange(),
 		rangeInfo:        rangeInfo,
-	}.Init(ds.ctx)
-
-	var rowCount float64
-	idxHist, ok := ds.statisticTable.Indices[path.index.ID]
-	// TODO: we are assuming that:
-	// - rows are uniformly distributed among the distinct values;
-	// - every outer row can find matches in inner table;
-	// The second assumption is too strong, we'd better analyze histograms
-	// of both sides to compute a factor we should multiply to the current
-	// estimated `rowCount`.
-	// We can improve this after https://github.com/pingcap/tidb/pull/8097
-	// is merged, since it provides some utilities we need.
-	if ok && !ds.statisticTable.Pseudo {
-		rowCount = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
-	} else {
-		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
-	}
+	}.Init(ds.ctx, ds.blockOffset)
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	cop := &copTask{
 		indexPlan:   is,
@@ -664,7 +660,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	if !isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table, TableAsName: ds.TableAsName}.Init(ds.ctx)
+		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table, TableAsName: ds.TableAsName}.Init(ds.ctx, ds.blockOffset)
 		ts.SetSchema(is.dataSourceSchema)
 		cop.tablePlan = ts
 	}
@@ -1177,7 +1173,7 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 		Exprs:                p.Exprs,
 		CalculateNoDelay:     p.CalculateNoDelay,
 		AvoidColumnEvaluator: p.AvoidColumnEvaluator,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), newProp)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
 }
@@ -1190,7 +1186,7 @@ func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
 			ByItems: lt.ByItems,
 			Count:   lt.Count,
 			Offset:  lt.Offset,
-		}.Init(lt.ctx, lt.stats, resultProp)
+		}.Init(lt.ctx, lt.stats, lt.blockOffset, resultProp)
 		ret = append(ret, topN)
 	}
 	return ret
@@ -1207,7 +1203,7 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 		limit := PhysicalLimit{
 			Count:  lt.Count,
 			Offset: lt.Offset,
-		}.Init(lt.ctx, lt.stats, resultProp)
+		}.Init(lt.ctx, lt.stats, lt.blockOffset, resultProp)
 		ret = append(ret, limit)
 	}
 	return ret
@@ -1245,6 +1241,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 		rightChOffset:    la.children[0].Schema().Len(),
 	}.Init(la.ctx,
 		la.stats.ScaleByExpectCnt(prop.ExpectedCnt),
+		la.blockOffset,
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: prop.Items},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	apply.SetSchema(la.schema)
@@ -1264,7 +1261,7 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 		PartitionBy:     p.PartitionBy,
 		OrderBy:         p.OrderBy,
 		Frame:           p.Frame,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProperty)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
 	window.SetSchema(p.Schema())
 	return []PhysicalPlan{window}
 }
@@ -1291,7 +1288,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 		agg := basePhysicalAgg{
 			GroupByItems: la.GroupByItems,
 			AggFuncs:     la.AggFuncs,
-		}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
+		}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, copiedChildProperty)
 		agg.SetSchema(la.schema.Clone())
 		enforcedAggs = append(enforcedAggs, agg)
 	}
@@ -1340,7 +1337,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			agg := basePhysicalAgg{
 				GroupByItems: la.GroupByItems,
 				AggFuncs:     la.AggFuncs,
-			}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
+			}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, copiedChildProperty)
 			agg.SetSchema(la.schema.Clone())
 			streamAggs = append(streamAggs, agg)
 		}
@@ -1362,7 +1359,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		agg := basePhysicalAgg{
 			GroupByItems: la.GroupByItems,
 			AggFuncs:     la.AggFuncs,
-		}.initForHash(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
+		}.initForHash(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
 		agg.SetSchema(la.schema.Clone())
 		hashAggs = append(hashAggs, agg)
 	}
@@ -1406,7 +1403,7 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	childProp := prop.Clone()
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProp)
 	return []PhysicalPlan{sel}
 }
 
@@ -1420,7 +1417,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 		limit := PhysicalLimit{
 			Offset: p.Offset,
 			Count:  p.Count,
-		}.Init(p.ctx, p.stats, resultProp)
+		}.Init(p.ctx, p.stats, p.blockOffset, resultProp)
 		ret = append(ret, limit)
 	}
 	return ret
@@ -1444,13 +1441,13 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	for range p.children {
 		chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt})
 	}
-	ua := PhysicalUnionAll{}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	ua := PhysicalUnionAll{}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	ua.SetSchema(p.Schema())
 	return []PhysicalPlan{ua}
 }
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {
-	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	return ps
 }
 
@@ -1460,7 +1457,7 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 		return nil
 	}
 	prop.ExpectedCnt = reqProp.ExpectedCnt
-	ps := NominalSort{}.Init(ls.ctx, prop)
+	ps := NominalSort{}.Init(ls.ctx, ls.blockOffset, prop)
 	return ps
 }
 
@@ -1481,6 +1478,6 @@ func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	if !prop.IsEmpty() {
 		return nil
 	}
-	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, &property.PhysicalProperty{ExpectedCnt: 2})
+	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, p.blockOffset, &property.PhysicalProperty{ExpectedCnt: 2})
 	return []PhysicalPlan{mor}
 }
