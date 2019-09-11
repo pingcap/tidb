@@ -242,7 +242,7 @@ func (g *defaultGener) gen() interface{} {
 		}
 		return *j
 	case types.ETString:
-		return fmt.Sprintf("%v", rand.Int())
+		return randString()
 	}
 	return nil
 }
@@ -325,6 +325,22 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vec
 			col.AppendString(v.(string))
 		}
 	}
+}
+
+func randString() string {
+	n := 10 + rand.Intn(10)
+	buf := make([]byte, n)
+	for i := range buf {
+		x := rand.Intn(62)
+		if x < 10 {
+			buf[i] = byte('0' + x)
+		} else if x-10 < 26 {
+			buf[i] = byte('a' + x - 10)
+		} else {
+			buf[i] = byte('A' + x - 10 - 26)
+		}
+	}
+	return string(buf)
 }
 
 func eType2FieldType(eType types.EvalType) *types.FieldType {
