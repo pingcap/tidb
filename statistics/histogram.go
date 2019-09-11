@@ -433,7 +433,7 @@ func (hg *Histogram) typeMatch(ranges []*ranger.Range) bool {
 
 // SplitRange splits the range according to the histogram lower bound. Note that we treat first bucket's lower bound
 // as -inf and last bucket's upper bound as +inf, so all the split ranges will totally fall in one of the (-inf, l(1)),
-// [l(1), u(2)]),...[l(n-2), l(n-1)), [l(n-1), +inf), where n is the number of buckets, l(i) is the i-th bucket's lower bound.
+// [l(1), l(2)),...[l(n-2), l(n-1)), [l(n-1), +inf), where n is the number of buckets, l(i) is the i-th bucket's lower bound.
 func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, oldRanges []*ranger.Range, encoded bool) ([]*ranger.Range, bool) {
 	if !hg.typeMatch(oldRanges) {
 		return oldRanges, false
