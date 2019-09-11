@@ -938,7 +938,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",
-			plan: "Show->Sel([eq(cast(key), 0)])",
+			plan: "Show->Sel([eq(cast(key), 0)])->Projection",
 		},
 		{
 			sql:  "do sleep(5)",
@@ -1297,10 +1297,36 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestProjectionEliminator(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select 1+num from (select 1+a as num from t) t1;",
+			best: "DataScan(t)->Projection",
+		},
+	}
+
+	ctx := context.Background()
+	for ith, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s %d", tt.sql, ith))
+	}
+}
+
 func (s *testPlanSuite) TestAllocID(c *C) {
 	ctx := MockContext()
-	pA := DataSource{}.Init(ctx)
-	pB := DataSource{}.Init(ctx)
+	pA := DataSource{}.Init(ctx, 0)
+	pB := DataSource{}.Init(ctx, 0)
 	c.Assert(pA.id+1, Equals, pB.id)
 }
 
@@ -1599,7 +1625,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 	}{
 		{
 			sql:  "select a, count(b) from t group by a",
-			best: "DataScan(t)->Projection->Projection",
+			best: "DataScan(t)->Projection",
 		},
 		{
 			sql:  "select sum(b) from t group by c, d, e",
@@ -1607,19 +1633,19 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		},
 		{
 			sql:  "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
-			best: "DataScan(t)->Projection->Projection",
+			best: "DataScan(t)->Projection",
 		},
 		{
 			sql:  "select count(1) from (select count(1), a as b from t group by a) tt group by b",
-			best: "DataScan(t)->Projection->Projection",
+			best: "DataScan(t)->Projection",
 		},
 		{
 			sql:  "select a, count(b) from t group by a",
-			best: "DataScan(t)->Projection->Projection",
+			best: "DataScan(t)->Projection",
 		},
 		{
 			sql:  "select a, count(distinct a, b) from t group by a",
-			best: "DataScan(t)->Projection->Projection",
+			best: "DataScan(t)->Projection",
 		},
 	}
 
@@ -1925,12 +1951,12 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		},
 		{
 			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by a",
-			best: "UnionAll{UnionAll{Dual->Projection->Projection->Dual->Projection->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection->Projection}->Projection->Sort",
+			best: "UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection}->Projection->Sort",
 			err:  false,
 		},
 		{
 			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by (select a)",
-			best: "Apply{UnionAll{UnionAll{Dual->Projection->Projection->Dual->Projection->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
+			best: "Apply{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
 			err:  false,
 		},
 	}
@@ -2245,7 +2271,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
-			result: "TableReader(Table(t))->Projection->Sort->Window(avg(cast(2_proj_window_3)) over(partition by 2_proj_window_2))->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(2_proj_window_3)) over(partition by 2_proj_window_2))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
@@ -2265,7 +2291,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(avg(a)) over() from t",
-			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over())",
@@ -2281,7 +2307,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
-			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(test.tt.a, test.t.a)]))->Window(sum(cast(test.tt.a)) over())->MaxOneRow->Sel([w])}->Projection",
+			result: "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.tt.a, test.t.a)]))->Window(sum(cast(test.tt.a)) over())->MaxOneRow->Sel([w])}->Projection",
 		},
 		{
 			sql:    "select avg(a) over() as w from t having w > 1",
@@ -2317,7 +2343,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(a) over w from t window w as (rows between 1 preceding AND 1 following)",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(rows between 1 preceding and 1 following))->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Window(sum(cast(test.t.a)) over(rows between 1 preceding and 1 following))->Projection",
 		},
 		{
 			sql:    "select sum(a) over(w order by b) from t window w as (order by a)",
@@ -2385,7 +2411,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select row_number() over(rows between 1 preceding and 1 following) from t",
-			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Window(row_number() over())->Projection",
 		},
 		{
 			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max from t group by c",
@@ -2409,7 +2435,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select ntile(null) over() from t",
-			result: "TableReader(Table(t))->Window(ntile(<nil>) over())->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Window(ntile(<nil>) over())->Projection",
 		},
 		{
 			sql:    "select avg(a) over w from t window w as(partition by b)",
@@ -2580,6 +2606,10 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			sql:    "select * from t where f > 1 and g > 1",
 			result: "PRIMARY_KEY,f,g,f_g",
 		},
+		{
+			sql:    "select count(1) from t",
+			result: "PRIMARY_KEY,c_d_e,f,g,f_g,c_d_e_str,e_d_c_str_prefix",
+		},
 	}
 	ctx := context.TODO()
 	for i, tt := range tests {
@@ -2593,12 +2623,12 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			c.Assert(err.Error(), Equals, tt.result, comment)
 			continue
 		}
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		lp := p.(LogicalPlan)
 		_, err = lp.recursiveDeriveStats()
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		var ds *DataSource
 		var byItems []*ByItems
 		for ds == nil {
@@ -2608,12 +2638,23 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			case *LogicalSort:
 				byItems = v.ByItems
 				lp = lp.Children()[0]
+			case *LogicalProjection:
+				newItems := make([]*ByItems, 0, len(byItems))
+				for _, col := range byItems {
+					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
+					switch expr := v.Exprs[idx].(type) {
+					case *expression.Column:
+						newItems = append(newItems, &ByItems{Expr: expr, Desc: col.Desc})
+					}
+				}
+				byItems = newItems
+				lp = lp.Children()[0]
 			default:
 				lp = lp.Children()[0]
 			}
 		}
 		paths := ds.skylinePruning(byItemsToProperty(byItems))
-		c.Assert(pathsName(paths), Equals, tt.result)
+		c.Assert(pathsName(paths), Equals, tt.result, comment)
 	}
 }
 

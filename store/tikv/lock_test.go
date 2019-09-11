@@ -202,29 +202,61 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 }
 
-func (s *testLockSuite) TestCheckTxnStatus(c *C) {
+func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	s.prewriteTxn(c, txn.(*tikvTxn))
 
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
-	status, err := newLockResolver(s.store).checkTxnStatus(bo, txn.StartTS(), []byte("key"), math.MaxUint64)
+	newTTL, err := sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
+	c.Assert(err, IsNil)
+	c.Assert(newTTL, Equals, uint64(666))
+
+	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 555)
+	c.Assert(err, IsNil)
+	c.Assert(newTTL, Equals, uint64(666))
+
+	// The getTxnStatus API is confusing, it really means rollback!
+	status, err := newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"))
+	c.Assert(err, IsNil)
+	c.Assert(status.ttl, Equals, uint64(0))
+	c.Assert(status.commitTS, Equals, uint64(0))
+
+	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
+	c.Assert(err, NotNil)
+	c.Assert(newTTL, Equals, uint64(0))
+}
+
+func (s *testLockSuite) TestCheckTxnStatus(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set(kv.Key("key"), []byte("value"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+
+	oracle := s.store.GetOracle()
+	currentTS, err := oracle.GetTimestamp(context.Background())
+	c.Assert(err, IsNil)
+	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
+	status, err := newLockResolver(s.store).checkTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
+	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(status.CommitTS(), Equals, uint64(0))
 
 	// The getTxnStatus API is confusing, it really means rollback!
 	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"))
 	c.Assert(err, IsNil)
 
-	status, err = newLockResolver(s.store).checkTxnStatus(bo, txn.StartTS(), []byte("key"), math.MaxUint64)
+	currentTS, err = oracle.GetTimestamp(context.Background())
+	c.Assert(err, IsNil)
+	status, err = newLockResolver(s.store).checkTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
 
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
-	status, err = newLockResolver(s.store).checkTxnStatus(bo, startTS, []byte("a"), math.MaxUint64)
+	status, err = newLockResolver(s.store).checkTxnStatus(bo, startTS, []byte("a"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, commitTS)

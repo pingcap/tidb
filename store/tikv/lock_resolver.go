@@ -266,7 +266,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 //    commit status.
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
-func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnExpired int64, resolved []uint64, err error) {
+func (lr *LockResolver) ResolveLocks(bo *Backoffer, startTS uint64, locks []*Lock) (msBeforeTxnExpired int64, resolved []uint64, err error) {
 	if len(locks) == 0 {
 		return
 	}
@@ -303,7 +303,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
 	for _, l := range expiredSecondaryLocks {
 		var status TxnStatus
-		status, err = lr.checkTxnStatus(bo, l.TxnID, l.Primary, currentTS)
+		status, err = lr.checkTxnStatus(bo, l.TxnID, l.Primary, startTS, currentTS)
 		if err != nil {
 			msBeforeTxnExpired = 0
 			err = errors.Trace(err)
@@ -341,12 +341,13 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 	return
 }
 
-func (lr *LockResolver) checkTxnStatus(bo *Backoffer, txnID uint64, primary []byte, currentTS uint64) (TxnStatus, error) {
+func (lr *LockResolver) checkTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS uint64, currentTS uint64) (TxnStatus, error) {
 	var status TxnStatus
 	req := tikvrpc.NewRequest(tikvrpc.CmdCheckTxnStatus, &kvrpcpb.CheckTxnStatusRequest{
-		PrimaryKey:   primary,
-		StartVersion: txnID,
-		CurrentTs:    currentTS,
+		PrimaryKey:    primary,
+		LockTs:        txnID,
+		CallerStartTs: callerStartTS,
+		CurrentTs:     currentTS,
 	})
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)

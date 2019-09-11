@@ -242,7 +242,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if types.ErrTruncated.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			logutil.BgLogger().Warn("truncate error", zap.Error(err1))
+			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
 		}
 		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
@@ -570,8 +570,9 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		if e.filterErr(err) != nil {
 			return types.Datum{}, err
 		}
-		// It's compatible with mysql. So it sets last insert id to the first row.
-		if e.rowCount == 1 {
+		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
+		// Cause autoID may be specified by user, judge only the first row is not suitable.
+		if e.lastInsertID == 0 {
 			e.lastInsertID = uint64(recordID)
 		}
 	}
@@ -617,25 +618,46 @@ func (e *InsertValues) handleWarning(err error) {
 func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) (int64, error)) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
-	err := e.batchGetInsertKeys(ctx, e.ctx, e.Table, rows)
+
+	// Get keys need to be checked.
+	toBeCheckedRows, err := e.getKeysNeedCheck(ctx, e.ctx, e.Table, rows)
 	if err != nil {
 		return err
 	}
+
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+
+	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
+	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
+		return err
+	}
+
 	// append warnings and get no duplicated error rows
-	for i, r := range e.toBeCheckedRows {
+	for i, r := range toBeCheckedRows {
 		skip := false
 		if r.handleKey != nil {
-			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
+			_, err := txn.Get(ctx, r.handleKey.newKV.key)
+			if err == nil {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 				continue
 			}
+			if !kv.IsErrNotFound(err) {
+				return err
+			}
 		}
 		for _, uk := range r.uniqueKeys {
-			if _, found := e.dupKVs[string(uk.newKV.key)]; found {
+			_, err := txn.Get(ctx, uk.newKV.key)
+			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 				skip = true
 				break
+			}
+			if !kv.IsErrNotFound(err) {
+				return err
 			}
 		}
 		// If row was checked with no duplicate keys,
@@ -646,12 +668,6 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			_, err = addRecord(ctx, rows[i])
 			if err != nil {
 				return err
-			}
-			if r.handleKey != nil {
-				e.dupKVs[string(r.handleKey.newKV.key)] = r.handleKey.newKV.value
-			}
-			for _, uk := range r.uniqueKeys {
-				e.dupKVs[string(uk.newKV.key)] = []byte{}
 			}
 		}
 	}
