@@ -78,6 +78,7 @@ func (t *Tracker) SetLabel(label fmt.Stringer) {
 	t.label = label
 }
 
+// Label gets the label of a Tracker.
 func (t *Tracker) Label() fmt.Stringer {
 	return t.label
 }
