@@ -393,7 +393,7 @@ type SessionVars struct {
 	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
 	ConnectionInfo *ConnectionInfo
 
-  // StartTime is the start time of the last query.
+	// StartTime is the start time of the last query.
 	StartTime time.Time
 
 	// DurationParse is the duration of pasing SQL string to AST of the last query.
@@ -402,7 +402,7 @@ type SessionVars struct {
 	// DurationCompile is the duration of compiling AST to execution plan of the last query.
 	DurationCompile time.Duration
 
-  	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
+	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
 }
 
