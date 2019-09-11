@@ -195,13 +195,13 @@ func GenHintsFromPhysicalPlan(p Plan) string {
 	return strings.Join(hintsStr, ", ")
 }
 
-func generateQBName(nodeType nodeType, offset int) model.CIStr {
-	if nodeType == typeDelete && offset == 0 {
+func generateQBName(nodeType nodeType, blockOffset int) model.CIStr {
+	if nodeType == typeDelete && blockOffset == 0 {
 		return model.NewCIStr(defaultDeleteBlockName)
-	} else if nodeType == typeUpdate && offset == 0 {
+	} else if nodeType == typeUpdate && blockOffset == 0 {
 		return model.NewCIStr(defaultUpdateBlockName)
 	}
-	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, offset))
+	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset))
 }
 
 func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
@@ -230,6 +230,13 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
 	}
 	switch pp := p.(type) {
+	case *PhysicalTableReader:
+		tbl := pp.TablePlans[0].(*PhysicalTableScan)
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, pp.blockOffset),
+			HintName: model.NewCIStr(HintIndex),
+			Tables:   []ast.HintTable{{TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
+		})
 	case *PhysicalIndexLookUpReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{

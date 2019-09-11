@@ -209,11 +209,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
-
 	var input []string
 	var output []struct {
-		SQL  string
-		Best string
+		SQL   string
+		Best  string
 		Hints string
 	}
 	s.testData.GetTestCases(c, &input, &output)
@@ -662,7 +661,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 		SQL     string
 		Best    string
 		Warning string
-		Hints  string
+		Hints   string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	ctx := context.Background()
@@ -819,7 +818,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		SQL     string
 		Best    string
 		HasWarn bool
-		Hints string
+		Hints   string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	ctx := context.Background()
@@ -862,8 +861,8 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Plan string
+		SQL   string
+		Plan  string
 		Hints string
 	}
 	s.testData.GetTestCases(c, &input, &output)
