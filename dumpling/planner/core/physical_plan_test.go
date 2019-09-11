@@ -211,8 +211,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Best string
+		SQL   string
+		Best  string
+		Hints string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
@@ -226,8 +227,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Best = core.ToString(p)
+			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, Commentf("for %s", tt))
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, Commentf("for %s", tt))
 	}
 }
 
@@ -658,6 +661,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 		SQL     string
 		Best    string
 		Warning string
+		Hints   string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	ctx := context.Background()
@@ -677,6 +681,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 			if len(warnings) > 0 {
 				output[i].Warning = warnings[0].Err.Error()
 			}
+			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best)
 		if output[i].Warning == "" {
@@ -686,6 +691,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning)
 			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning)
 		}
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -812,6 +818,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		SQL     string
 		Best    string
 		HasWarn bool
+		Hints   string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	ctx := context.Background()
@@ -826,6 +833,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 			output[i].SQL = test
 			output[i].Best = core.ToString(p)
 			output[i].HasWarn = len(se.GetSessionVars().StmtCtx.GetWarnings()) > 0
+			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -834,6 +842,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		} else {
 			c.Assert(warnings, HasLen, 0, comment)
 		}
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -852,8 +861,9 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Plan string
+		SQL   string
+		Plan  string
+		Hints string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	ctx := context.TODO()
@@ -867,8 +877,10 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
+			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
 	}
 }
 

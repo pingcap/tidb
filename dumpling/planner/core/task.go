@@ -478,7 +478,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			tablePlan:      t.tablePlan,
 			indexPlan:      t.indexPlan,
 			ExtraHandleCol: t.extraHandleCol,
-		}.Init(ctx)
+		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
 		// Add cost of building table reader executors. Handles are extracted in batch style,
 		// each handle is a range, the CPU cost of building copTasks should be:
@@ -510,7 +510,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		}
 		if t.doubleReadNeedProj {
 			schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, nil)
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 			proj.SetSchema(schema)
 			proj.SetChildren(p)
 			newTask.p = proj
@@ -518,12 +518,12 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			newTask.p = p
 		}
 	} else if t.indexPlan != nil {
-		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx)
+		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
 		splitCopAvg2CountAndSum(t.tablePlan)
-		p := PhysicalTableReader{tablePlan: t.tablePlan}.Init(ctx)
+		p := PhysicalTableReader{tablePlan: t.tablePlan}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
 	}
@@ -571,7 +571,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
 			// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 			stats := deriveLimitStats(childProfile, float64(newCount))
-			pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats)
+			pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
 		t = finishCopTask(p.ctx, cop)
@@ -652,7 +652,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 	topN := PhysicalTopN{
 		ByItems: newByItems,
 		Count:   newCount,
-	}.Init(p.ctx, stats)
+	}.Init(p.ctx, stats, p.blockOffset)
 	topN.SetChildren(childPlan)
 	return topN
 }
@@ -801,7 +801,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 		finalAgg := basePhysicalAgg{
 			AggFuncs:     finalAggFuncs,
 			GroupByItems: groupByItems,
-		}.initForStream(p.ctx, p.stats)
+		}.initForStream(p.ctx, p.stats, p.blockOffset)
 		finalAgg.schema = finalSchema
 		return partialAgg, finalAgg
 	}
@@ -809,7 +809,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	finalAgg := basePhysicalAgg{
 		AggFuncs:     finalAggFuncs,
 		GroupByItems: groupByItems,
-	}.initForHash(p.ctx, p.stats)
+	}.initForHash(p.ctx, p.stats, p.blockOffset)
 	finalAgg.schema = finalSchema
 	return partialAgg, finalAgg
 }
