@@ -97,10 +97,15 @@ func initProbeChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	return oldChk, colTypes
 }
 
-type hashCollision struct{}
+type hashCollision struct {
+	count int
+}
 
+func (h *hashCollision) Sum64() uint64 {
+	h.count++
+	return 0
+}
 func (h hashCollision) Write(p []byte) (n int, err error) { return len(p), nil }
-func (h hashCollision) Sum64() uint64                     { return 0 }
 func (h hashCollision) Reset()                            {}
 func (h hashCollision) Sum(b []byte) []byte               { panic("not implemented") }
 func (h hashCollision) Size() int                         { panic("not implemented") }
@@ -113,10 +118,13 @@ func (s *pkgTestSuite) TestHashRowContainer(c *C) {
 	s.testHashRowContainer(c, hashFunc, false)
 	s.testHashRowContainer(c, hashFunc, true)
 
+	h := &hashCollision{count: 0}
 	hashFuncCollision := func() hash.Hash64 {
-		return hashCollision{}
+		return h
 	}
 	s.testHashRowContainer(c, hashFuncCollision, false)
+	c.Check(h.count > 0, IsTrue)
+
 }
 
 func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, spill bool) {
@@ -130,8 +138,10 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	hCtx := &hashContext{
 		allTypes:  colTypes,
 		keyColIdx: []int{1, 2},
-		h:         hashFunc(),
-		buf:       make([]byte, 1),
+	}
+	hCtx.hasNull = make([]bool, numRows)
+	for i := 0; i < numRows; i++ {
+		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
 	rowContainer := newHashRowContainer(sctx, 0, hCtx)
 	rowContainer.GetMemTracker().AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
@@ -156,9 +166,9 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	probeCtx := &hashContext{
 		allTypes:  probeColType,
 		keyColIdx: []int{1, 2},
-		h:         hashFunc(),
-		buf:       make([]byte, 1),
 	}
+	probeCtx.hasNull = make([]bool, 1)
+	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	matched, err := rowContainer.GetMatchedRows(probeRow, probeCtx)
 	c.Check(err, IsNil)
 	if c.Check(len(matched), Equals, 2) {
