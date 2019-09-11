@@ -157,10 +157,15 @@ func (s *testMockTiKVSuite) mustRangeReverseScanOK(c *C, start, end string, limi
 }
 
 func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
+	s.mustPrewriteWithTTLOK(c, mutations, primary, startTS, 0)
+}
+
+func (s *testMockTiKVSuite) mustPrewriteWithTTLOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64, ttl uint64) {
 	req := &kvrpcpb.PrewriteRequest{
 		Mutations:    mutations,
 		PrimaryLock:  []byte(primary),
 		StartVersion: startTS,
+		LockTtl:      ttl,
 	}
 	errs := s.store.Prewrite(req)
 	for _, err := range errs {
@@ -604,11 +609,12 @@ func (s *testMockTiKVSuite) TestRC(c *C) {
 
 func (s testMarshal) TestMarshalmvccLock(c *C) {
 	l := mvccLock{
-		startTS: 47,
-		primary: []byte{'a', 'b', 'c'},
-		value:   []byte{'d', 'e'},
-		op:      kvrpcpb.Op_Put,
-		ttl:     444,
+		startTS:     47,
+		primary:     []byte{'a', 'b', 'c'},
+		value:       []byte{'d', 'e'},
+		op:          kvrpcpb.Op_Put,
+		ttl:         444,
+		minCommitTS: 666,
 	}
 	bin, err := l.MarshalBinary()
 	c.Assert(err, IsNil)
@@ -622,6 +628,7 @@ func (s testMarshal) TestMarshalmvccLock(c *C) {
 	c.Assert(l.ttl, Equals, l1.ttl)
 	c.Assert(string(l.primary), Equals, string(l1.primary))
 	c.Assert(string(l.value), Equals, string(l1.value))
+	c.Assert(l.minCommitTS, Equals, l1.minCommitTS)
 }
 
 func (s testMarshal) TestMarshalmvccValue(c *C) {
@@ -651,6 +658,30 @@ func (s *testMVCCLevelDB) TestErrors(c *C) {
 	c.Assert((&ErrConflict{}).Error(), Equals, "write conflict")
 }
 
+func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
+	s.mustPrewriteWithTTLOK(c, putMutations("pk", "val"), "pk", 5, 666)
+
+	ttl, commitTS, err := s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(666))
+	c.Assert(commitTS, Equals, uint64(0))
+
+	s.mustCommitOK(c, [][]byte{[]byte("pk")}, 5, 30)
+
+	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(0))
+	c.Assert(commitTS, Equals, uint64(30))
+
+	s.mustPrewriteWithTTLOK(c, putMutations("pk1", "val"), "pk1", 5, 666)
+	s.mustRollbackOK(c, [][]byte{[]byte("pk1")}, 5)
+
+	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk1"), 5, 0, 666)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(0))
+	c.Assert(commitTS, Equals, uint64(0))
+}
+
 func (s *testMVCCLevelDB) TestMvccGetByKey(c *C) {
 	s.mustPrewriteOK(c, putMutations("q1", "v5"), "p1", 5)
 	debugger, ok := s.store.(MVCCDebugger)
@@ -665,4 +696,23 @@ func (s *testMVCCLevelDB) TestMvccGetByKey(c *C) {
 		},
 	}
 	c.Assert(mvccInfo, DeepEquals, except)
+}
+
+func (s *testMVCCLevelDB) TestTxnHeartBeat(c *C) {
+	s.mustPrewriteWithTTLOK(c, putMutations("pk", "val"), "pk", 5, 666)
+
+	// Update the ttl
+	ttl, err := s.store.TxnHeartBeat([]byte("pk"), 5, 888)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Greater, uint64(666))
+
+	// Advise ttl is small
+	ttl, err = s.store.TxnHeartBeat([]byte("pk"), 5, 300)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Greater, uint64(300))
+
+	// The lock has already been clean up
+	c.Assert(s.store.Cleanup([]byte("pk"), 5), IsNil)
+	_, err = s.store.TxnHeartBeat([]byte("pk"), 5, 1000)
+	c.Assert(err, NotNil)
 }

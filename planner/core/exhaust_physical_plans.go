@@ -426,7 +426,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
 // or match some part of on index. If so we will choose the best one and construct a index join.
 func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, outerIdx int) []PhysicalPlan {
-	innerChild := p.children[1-outerIdx]
+	outerChild, innerChild := p.children[outerIdx], p.children[1-outerIdx]
 	var (
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
@@ -450,6 +450,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			return nil
 		}
 	}
+	var avgInnerRowCnt float64
+	if outerChild.statsInfo().RowCount > 0 {
+		avgInnerRowCnt = p.equalCondOutCnt / outerChild.statsInfo().RowCount
+	}
 	var tblPath *accessPath
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
@@ -471,11 +475,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		if pkMatched {
 			joins := make([]PhysicalPlan, 0, 2)
 
-			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false)
+			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, avgInnerRowCnt)
 			joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 			// The index merge join's inner plan is different from index join, so we should consturct another inner plan
 			// for it.
-			innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true)
+			innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, avgInnerRowCnt)
 			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
@@ -507,12 +511,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 		joins := make([]PhysicalPlan, 0, 2)
 		rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.idxCols, outerJoinKeys)
-		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false)
+		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, avgInnerRowCnt)
 
 		joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 		// The index merge join's inner plan is different from index join, so we should consturct another inner plan
 		// for it.
-		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true)
+		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, avgInnerRowCnt)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 		return joins
 	}
@@ -564,7 +568,14 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 }
 
 // constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column, us *LogicalUnionScan, keepOrder bool) task {
+func (p *LogicalJoin) constructInnerTableScanTask(
+	ds *DataSource,
+	pk *expression.Column,
+	outerJoinKeys []*expression.Column,
+	us *LogicalUnionScan,
+	keepOrder bool,
+	rowCount float64,
+) task {
 	ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -579,7 +590,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 	ts.SetSchema(ds.schema)
 	ts.stats = &property.StatsInfo{
 		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
-		RowCount:     1,
+		RowCount:     math.Min(1.0, rowCount),
 		StatsVersion: ds.stats.StatsVersion,
 		// Cardinality would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
@@ -590,7 +601,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
-		cst:               scanFactor * rowSize * ts.stats.RowCount,
+		cst:               ScanFactor * rowSize * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
@@ -625,6 +636,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	us *LogicalUnionScan,
 	rangeInfo string,
 	keepOrder bool,
+	rowCount float64,
 ) task {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
@@ -639,22 +651,6 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		Ranges:           ranger.FullRange(),
 		rangeInfo:        rangeInfo,
 	}.Init(ds.ctx)
-
-	var rowCount float64
-	idxHist, ok := ds.statisticTable.Indices[path.index.ID]
-	// TODO: we are assuming that:
-	// - rows are uniformly distributed among the distinct values;
-	// - every outer row can find matches in inner table;
-	// The second assumption is too strong, we'd better analyze histograms
-	// of both sides to compute a factor we should multiply to the current
-	// estimated `rowCount`.
-	// We can improve this after https://github.com/pingcap/tidb/pull/8097
-	// is merged, since it provides some utilities we need.
-	if ok && !ds.statisticTable.Pseudo {
-		rowCount = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
-	} else {
-		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
-	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	cop := &copTask{
 		indexPlan:   is,
@@ -670,7 +666,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	is.initSchema(ds.id, path.index, path.fullIdxCols, cop.tablePlan != nil)
 	rowSize := is.indexScanRowSize(path.index, ds)
-	cop.cst = rowCount * rowSize * scanFactor
+	cop.cst = rowCount * rowSize * ScanFactor
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo)
 	tmpPath := &accessPath{
 		indexFilters:     indexConds,

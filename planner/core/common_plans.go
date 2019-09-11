@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -365,24 +364,6 @@ type Deallocate struct {
 	baseSchemaProducer
 
 	Name string
-}
-
-// Show represents a show plan.
-type Show struct {
-	physicalSchemaProducer
-
-	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName      string
-	Table       *ast.TableName  // Used for showing columns.
-	Column      *ast.ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr
-	Flag        int                  // Some flag parsed from sql, such as FULL.
-	User        *auth.UserIdentity   // Used for show grants.
-	Roles       []*auth.RoleIdentity // Used for show grants.
-	Full        bool
-	IfNotExists bool // Used for `show create database if not exists`
-
-	GlobalScope bool // Used by show variables
 }
 
 // Set represents a plan for set stmt.

@@ -1106,11 +1106,11 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 		"  ├─TableReader_15 2.00 root data:TableScan_14",
 		"  │ └─TableScan_14 2.00 cop table:t, range:[-inf,+inf], keep order:false",
 		"  └─StreamAgg_20 1.00 root funcs:count(1)",
-		"    └─IndexMergeJoin_40 2.00 root inner join, inner:TableReader_38, outer key:test.s.a, inner key:test.t1.a",
+		"    └─IndexMergeJoin_42 2.00 root inner join, inner:TableReader_40, outer key:test.s.a, inner key:test.t1.a",
 		"      ├─IndexReader_31 2.00 root index:IndexScan_30",
 		"      │ └─IndexScan_30 2.00 cop table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
-		"      └─TableReader_38 1.00 root data:TableScan_37",
-		"        └─TableScan_37 1.00 cop table:t1, range: decided by [test.s.a], keep order:true",
+		"      └─TableReader_40 1.00 root data:TableScan_39",
+		"        └─TableScan_39 1.00 cop table:t1, range: decided by [test.s.a], keep order:true",
 	))
 	testKit.MustQuery("select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
 		"1",
