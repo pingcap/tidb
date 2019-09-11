@@ -195,7 +195,6 @@ func makeMutRowUint64Column(val uint64) *Column {
 func makeMutRowBytesColumn(bin []byte) *Column {
 	col := newMutRowVarLenColumn(len(bin))
 	copy(col.data, bin)
-	col.nullBitmap[0] = 1
 	return col
 }
 
