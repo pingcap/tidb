@@ -48,6 +48,7 @@ const (
 	CmdPessimisticLock
 	CmdPessimisticRollback
 	CmdTxnHeartBeat
+	CmdCheckTxnStatus
 
 	CmdRawGet CmdType = 256 + iota
 	CmdRawBatchGet
@@ -128,6 +129,8 @@ func (t CmdType) String() string {
 		return "MvccGetByStartTS"
 	case CmdSplitRegion:
 		return "SplitRegion"
+	case CmdCheckTxnStatus:
+		return "CheckTxnStatus"
 	case CmdDebugGetRegionProperties:
 		return "DebugGetRegionProperties"
 	case CmdTxnHeartBeat:
@@ -302,9 +305,14 @@ func (req *Request) DebugGetRegionProperties() *debugpb.GetRegionPropertiesReque
 	return req.req.(*debugpb.GetRegionPropertiesRequest)
 }
 
-// Empty returns BatchCommandsEmptyRequest in request
+// Empty returns BatchCommandsEmptyRequest in request.
 func (req *Request) Empty() *tikvpb.BatchCommandsEmptyRequest {
 	return req.req.(*tikvpb.BatchCommandsEmptyRequest)
+}
+
+// CheckTxnStatus returns CheckTxnStatusRequest in request.
+func (req *Request) CheckTxnStatus() *kvrpcpb.CheckTxnStatusRequest {
+	return req.req.(*kvrpcpb.CheckTxnStatusRequest)
 }
 
 // TxnHeartBeat returns TxnHeartBeatRequest in request.
@@ -361,6 +369,8 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticRollback{PessimisticRollback: req.PessimisticRollback()}}
 	case CmdEmpty:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Empty{Empty: req.Empty()}}
+	case CmdCheckTxnStatus:
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_CheckTxnStatus{CheckTxnStatus: req.CheckTxnStatus()}}
 	case CmdTxnHeartBeat:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_TxnHeartBeat{TxnHeartBeat: req.TxnHeartBeat()}}
 	}
@@ -512,6 +522,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.SplitRegion().Context = ctx
 	case CmdTxnHeartBeat:
 		req.TxnHeartBeat().Context = ctx
+	case CmdCheckTxnStatus:
+		req.CheckTxnStatus().Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -732,6 +744,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.SplitRegion(ctx, req.SplitRegion())
 	case CmdEmpty:
 		resp.Resp, err = &tikvpb.BatchCommandsEmptyResponse{}, nil
+	case CmdCheckTxnStatus:
+		resp.Resp, err = client.KvCheckTxnStatus(ctx, req.CheckTxnStatus())
 	case CmdTxnHeartBeat:
 		resp.Resp, err = client.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
 	default:
