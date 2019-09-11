@@ -530,24 +530,24 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	if statsTbl.Indices[idx.ID] != nil {
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
-	is.initSchema(ds.id, idx, true)
+	is.initSchema(ds.id, idx, path.fullIdxCols, true)
 	rowCount = path.countAfterAccess
 	if prop.ExpectedCnt < ds.stats.RowCount {
 		selectivity := ds.stats.RowCount / path.countAfterAccess
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
 	rowSize := is.indexScanRowSize(idx, ds)
-	partialCost += rowCount * rowSize * scanFactor
+	partialCost += rowCount * rowSize * ScanFactor
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.stats.StatsVersion = ds.statisticTable.Version
 	if ds.statisticTable.Pseudo {
 		is.stats.StatsVersion = statistics.PseudoVersion
 	}
-	isCovered = isCoveringIndex(ds.schema.Columns, path.index.Columns, ds.tableInfo.PKIsHandle)
+	isCovered = isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle)
 	indexConds := path.indexFilters
 	if indexConds != nil {
 		var selectivity float64
-		partialCost += rowCount * copCPUFactor
+		partialCost += rowCount * CopCPUFactor
 		if path.countAfterAccess > 0 {
 			selectivity = path.countAfterIndex / path.countAfterAccess
 		}
@@ -559,10 +559,10 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		}
 		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats)
 		indexPlan.SetChildren(is)
-		partialCost += rowCount * rowSize * netWorkFactor
+		partialCost += rowCount * rowSize * NetworkFactor
 		return indexPlan, partialCost, rowCount, isCovered
 	}
-	partialCost += rowCount * rowSize * netWorkFactor
+	partialCost += rowCount * rowSize * NetworkFactor
 	indexPlan = is
 	return indexPlan, partialCost, rowCount, isCovered
 }
@@ -609,7 +609,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	if ds.statisticTable.Pseudo {
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
-	partialCost += rowCount * rowSize * scanFactor
+	partialCost += rowCount * rowSize * ScanFactor
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition)
 		if err != nil {
@@ -618,11 +618,11 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		}
 		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount))
 		tablePlan.SetChildren(ts)
-		partialCost += rowCount * copCPUFactor
-		partialCost += selectivity * rowCount * rowSize * netWorkFactor
+		partialCost += rowCount * CopCPUFactor
+		partialCost += selectivity * rowCount * rowSize * NetworkFactor
 		return tablePlan, partialCost, rowCount, true
 	}
-	partialCost += rowCount * rowSize * netWorkFactor
+	partialCost += rowCount * rowSize * NetworkFactor
 	tablePlan = ts
 	return tablePlan, partialCost, rowCount, true
 }
@@ -646,13 +646,13 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		}
 	}
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
-	partialCost += totalRowCount * rowSize * scanFactor
+	partialCost += totalRowCount * rowSize * ScanFactor
 	ts.stats = ds.tableStats.ScaleByExpectCnt(totalRowCount)
 	if ds.statisticTable.Pseudo {
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
 	if len(tableFilters) > 0 {
-		partialCost += totalRowCount * copCPUFactor
+		partialCost += totalRowCount * CopCPUFactor
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, tableFilters)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
@@ -665,7 +665,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	return ts, partialCost
 }
 
-func isCoveringIndex(columns []*expression.Column, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
+func isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, pkIsHandle bool) bool {
 	for _, col := range columns {
 		if pkIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 			continue
