@@ -913,8 +913,8 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	tk.MustExec("insert into autoid values();")
 	tk.MustExec("insert into autoid values();")
 	tk.MustQuery("select * from autoid").Check(testkit.Rows("9223372036854775808", "9223372036854775810", "9223372036854775812"))
-	// TiDB characteristics : _tidb_rowid will also consume the autoID when the auto_increment column is not the primary key.
-	// Behaviour like MySQL using the MaxUint64 and MaxInt64 as the autoID upper limit will cause _tidb_rowid alloc fail here.
+	// In TiDB : _tidb_rowid will also consume the autoID when the auto_increment column is not the primary key.
+	// Using the MaxUint64 and MaxInt64 as the autoID upper limit like MySQL will cause _tidb_rowid alloc fail here.
 	_, err := tk.Exec("insert into autoid values(18446744073709551614)")
 	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
 	_, err = tk.Exec("insert into autoid values()")
@@ -940,8 +940,8 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	// Corner cases for signed bigint auto_increment Columns.
 	tk.MustExec("drop table if exists autoid")
 	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
-	// TiDB characteristics: _tidb_rowid will also consume the autoID when the auto_increment column is not the primary key.
-	// Behaviour like MySQL using the MaxUint64 and MaxInt64 as autoID upper limit will cause insert fail if the values is
+	// In TiDB : _tidb_rowid will also consume the autoID when the auto_increment column is not the primary key.
+	// Using the MaxUint64 and MaxInt64 as autoID upper limit like MySQL will cause insert fail if the values is
 	// 9223372036854775806. Because _tidb_rowid will be allocated 9223372036854775807 at same time.
 	tk.MustExec("insert into autoid values(9223372036854775805);")
 	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid use index()").Check(testkit.Rows("9223372036854775805 9223372036854775806"))
