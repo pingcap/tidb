@@ -1803,6 +1803,27 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 			best:    "TableReader(Table(t))",
 			hasWarn: true,
 		},
+		// use both use_index and ignore_index, same as index hints in sql.
+		{
+			sql:     "select /*+ use_index(t, c_d_e), ignore_index(t, f)*/ c from t order by c",
+			best:    "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
+			hasWarn: false,
+		},
+		{
+			sql:     "select /*+ use_index(t, f), ignore_index(t, f)*/ c from t order by c",
+			best:    "TableReader(Table(t))->Sort",
+			hasWarn: false,
+		},
+		{
+			sql:     "select /*+ use_index(t, c_d_e), ignore_index(t, c_d_e)*/ c from t order by c",
+			best:    "TableReader(Table(t))->Sort",
+			hasWarn: false,
+		},
+		{
+			sql:     "select /*+ use_index(t, c_d_e, f), ignore_index(t, c_d_e)*/ c from t order by c",
+			best:    "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))->Sort",
+			hasWarn: false,
+		},
 	}
 	ctx := context.Background()
 	for i, test := range tests {
