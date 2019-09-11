@@ -511,7 +511,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				constraints = append(constraints, constraint)
 				col.Flag |= mysql.PriKeyFlag
 			case ast.ColumnOptionUniqKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Name: colDef.Name.Name.O, Keys: keys}
+				constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Keys: keys}
 				constraints = append(constraints, constraint)
 				col.Flag |= mysql.UniqueKeyFlag
 			case ast.ColumnOptionDefaultValue:

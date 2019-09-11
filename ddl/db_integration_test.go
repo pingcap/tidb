@@ -1582,6 +1582,18 @@ func (s *testIntegrationSuite4) TestAlterColumn(c *C) {
 	_, err = s.tk.Exec("alter table t1 modify column c bigint;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+
+	s.tk.MustExec("drop table if exists multi_unique")
+	s.tk.MustExec("create table multi_unique (a int unique unique)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a int key primary key unique unique)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a int key unique unique key unique)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a serial serial default value)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a serial serial default value serial default value)")
+	s.tk.MustExec("drop table multi_unique")
 }
 
 func (s *testIntegrationSuite) assertWarningExec(c *C, sql string, expectedWarn *terror.Error) {
