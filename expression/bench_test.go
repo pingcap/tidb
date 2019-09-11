@@ -257,6 +257,15 @@ func (rig *rangeInt64Gener) gen() interface{} {
 	return int64(rand.Intn(rig.end-rig.begin) + rig.begin)
 }
 
+// numStrGener is used to generate number strings.
+type numStrGener struct {
+	rangeInt64Gener
+}
+
+func (g *numStrGener) gen() interface{} {
+	return fmt.Sprintf("%v", g.rangeInt64Gener.gen())
+}
+
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
 type randLenStrGener struct {
 	lenBegin int
@@ -759,6 +768,32 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					b.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 				}
 			})
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	for _, eType := range eTypes {
+		input := chunk.New([]*types.FieldType{eType2FieldType(eType)}, 1024, 1024)
+		var gen dataGenerator = &defaultGener{nullRation: 0.1, eType: eType}
+		if eType == types.ETString {
+			gen = &numStrGener{rangeInt64Gener{-10, 10}}
+		}
+		fillColumn(eType, input, 0, vecExprBenchCase{geners: []dataGenerator{gen}})
+		exprs := []Expression{&Column{Index: 0, RetType: eType2FieldType(eType)}}
+
+		selected, nulls, err := VecEvalBool(mock.NewContext(), exprs, input, nil, nil)
+		c.Assert(err, IsNil)
+
+		it := chunk.NewIterator4Chunk(input)
+		i := 0
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			ok, null, err := EvalBool(mock.NewContext(), exprs, row)
+			c.Assert(err, IsNil)
+			c.Assert(null, Equals, nulls[i])
+			c.Assert(ok, Equals, selected[i])
+			i++
 		}
 	}
 }

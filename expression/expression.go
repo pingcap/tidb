@@ -208,33 +208,116 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 	return true, false, nil
 }
 
-func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, results []bool) ([]bool, error) {
+func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
 	n := input.NumRows()
-	results = results[:0]
-	for i := 0; i < n; i++ {
-		results = append(results, true)
+	selected = selected[:0]
+	nulls = nulls[:0]
+	for i := 0; i < n; i ++ {
+		selected = append(selected, false)
+		nulls = append(nulls, false)
 	}
+
+	defer input.SetSel(input.Sel())
+	// TODO: recycle the sel slice
+	sel := make([]int, n)
+	for i := range sel {
+		sel[i] = i
+	}
+	input.SetSel(sel)
+
 	for _, expr := range exprList {
 		eType := expr.GetType().EvalType()
 		buf, err := newBuffer(eType, n) // TODO: recycle this buffer
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		switch eType {
-		case types.ETInt:
-			buf.ResizeInt64(n, false)
-			if err := expr.VecEvalInt(ctx, input, buf); err != nil {
-				return nil, err
+
+		if err := vecEval(ctx, expr, input, buf); err != nil {
+			return nil, nil, err
+		}
+
+		isEQCondFromIn := IsEQCondFromIn(expr)
+		hasUnsignedFlag := mysql.HasUnsignedFlag(expr.GetType().Flag)
+		var v interface{}
+		isNull, d, j := false, new(types.Datum), 0
+		for i := range sel {
+			isNull = buf.IsNull(i)
+			if isNull {
+				d.SetValue(nil)
+			} else {
+				switch eType {
+				case types.ETInt:
+					if hasUnsignedFlag {
+						v = uint64(buf.GetInt64(i))
+					} else {
+						v = buf.GetUint64(i)
+					}
+				case types.ETReal:
+					v = buf.GetFloat64(i)
+				case types.ETDuration:
+					v = buf.GetDuration(i, 0)
+				case types.ETDatetime, types.ETTimestamp:
+					v = buf.GetTime(i)
+				case types.ETString:
+					v = buf.GetString(i)
+				case types.ETJson:
+					v = buf.GetJSON(i)
+				case types.ETDecimal:
+					v = buf.GetDecimal(i)
+				}
+				d.SetValue(v) // TODO: remove datum here to speed up
 			}
-		case types.ETReal:
-		case types.ETDuration:
-		case types.ETDatetime, types.ETTimestamp:
-		case types.ETString:
-		case types.ETJson:
-		case types.ETDecimal:
+
+			if d.IsNull() {
+				if !isEQCondFromIn { // same as EvalBool
+					continue
+				}
+				nulls[sel[i]] = true
+				continue
+			}
+
+			b, err := d.ToBool(ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				return nil, nil, err
+			}
+			if b == 0 {
+				continue
+			}
+			sel[j] = sel[i] // this row passes this filter
+			j++
+		}
+		sel = sel[:j]
+		input.SetSel(sel)
+	}
+
+	for _, i := range sel {
+		if !nulls[i] {
+			selected[i] = true
 		}
 	}
-	return nil, nil
+
+	return selected, nulls, nil
+}
+
+func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) error {
+	var err error
+	switch expr.GetType().EvalType() {
+	case types.ETInt:
+		err = expr.VecEvalInt(ctx, input, result)
+	case types.ETReal:
+		err = expr.VecEvalReal(ctx, input, result)
+	case types.ETDuration:
+		err = expr.VecEvalDuration(ctx, input, result)
+	case types.ETDatetime, types.ETTimestamp:
+		err = expr.VecEvalTime(ctx, input, result)
+	case types.ETString:
+		err = expr.VecEvalString(ctx, input, result)
+	case types.ETJson:
+		err = expr.VecEvalJSON(ctx, input, result)
+	case types.ETDecimal:
+		err = expr.VecEvalDecimal(ctx, input, result)
+	}
+	return err
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
