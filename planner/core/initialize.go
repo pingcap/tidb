@@ -85,6 +85,8 @@ const (
 	TypeIndexReader = "IndexReader"
 	// TypeWindow is the type of Window.
 	TypeWindow = "Window"
+	// TypeTableGather is the type of TableGather.
+	TypeTableGather = "TableGather"
 )
 
 // Init initializes LogicalAggregation.
@@ -103,6 +105,18 @@ func (p LogicalJoin) Init(ctx sessionctx.Context, offset int) *LogicalJoin {
 func (ds DataSource) Init(ctx sessionctx.Context, offset int) *DataSource {
 	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeTableScan, &ds, offset)
 	return &ds
+}
+
+// Init initializes TableGather.
+func (tg TableGather) Init(ctx sessionctx.Context, offset int) *TableGather {
+	tg.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeTableGather, &tg, offset)
+	return &tg
+}
+
+// Init initializes TableScan.
+func (ts TableScan) Init(ctx sessionctx.Context, offset int) *TableScan {
+	ts.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeTableScan, &ts, offset)
+	return &ts
 }
 
 // Init initializes LogicalApply.
@@ -384,8 +398,10 @@ func (p PhysicalIndexLookUpReader) Init(ctx sessionctx.Context, offset int) *Phy
 // Init initializes PhysicalTableReader.
 func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalTableReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeTableReader, &p, offset)
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.schema = p.tablePlan.Schema()
+	if p.tablePlan != nil {
+		p.TablePlans = flattenPushDownPlan(p.tablePlan)
+		p.schema = p.tablePlan.Schema()
+	}
 	return &p
 }
 
