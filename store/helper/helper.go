@@ -657,8 +657,8 @@ type StoreDetailStat struct {
 	Capacity        string    `json:"capacity"`
 	Available       string    `json:"available"`
 	LeaderCount     int64     `json:"leader_count"`
-	LeaderWeight    int64     `json:"leader_weight"`
-	LeaderScore     int64     `json:"leader_score"`
+	LeaderWeight    float64   `json:"leader_weight"`
+	LeaderScore     float64   `json:"leader_score"`
 	LeaderSize      int64     `json:"leader_size"`
 	RegionCount     int64     `json:"region_count"`
 	RegionWeight    float64   `json:"region_weight"`
