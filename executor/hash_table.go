@@ -15,6 +15,7 @@ package executor
 
 import (
 	"hash"
+	"hash/fnv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
@@ -47,8 +48,28 @@ const (
 type hashContext struct {
 	allTypes  []*types.FieldType
 	keyColIdx []int
-	h         hash.Hash64
 	buf       []byte
+	hashVals  []hash.Hash64
+	hasNull   []bool
+}
+
+func (hc *hashContext) initHash(rows int) {
+	if hc.buf == nil {
+		hc.buf = make([]byte, 1)
+	}
+
+	if len(hc.hashVals) < rows {
+		hc.hasNull = make([]bool, rows)
+		hc.hashVals = make([]hash.Hash64, rows)
+		for i := 0; i < rows; i++ {
+			hc.hashVals[i] = fnv.New64()
+		}
+	} else {
+		for i := 0; i < rows; i++ {
+			hc.hasNull[i] = false
+			hc.hashVals[i].Reset()
+		}
+	}
 }
 
 // hashRowContainer handles the rows and the hash map of a table.
@@ -133,22 +154,24 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 // value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 	chkIdx := uint32(c.records.NumChunks())
-	c.records.Add(chk)
-	var (
-		hasNull bool
-		err     error
-		key     uint64
-	)
 	numRows := chk.NumRows()
-	for j := 0; j < numRows; j++ {
-		hasNull, key, err = c.getJoinKeyFromChkRow(c.sc, chk.GetRow(j), c.hCtx)
+
+	c.records.Add(chk)
+	c.hCtx.initHash(numRows)
+
+	hCtx := c.hCtx
+	for _, colIdx := range c.hCtx.keyColIdx {
+		err := codec.HashChunkColumns(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if hasNull {
+	}
+	for i := 0; i < numRows; i++ {
+		if c.hCtx.hasNull[i] {
 			continue
 		}
-		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(j)}
+		key := c.hCtx.hashVals[i].Sum64()
+		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
 		c.hashTable.Put(key, rowPtr)
 	}
 	return nil
@@ -161,9 +184,9 @@ func (*hashRowContainer) getJoinKeyFromChkRow(sc *stmtctx.StatementContext, row 
 			return true, 0, nil
 		}
 	}
-	hCtx.h.Reset()
-	err = codec.HashChunkRow(sc, hCtx.h, row, hCtx.allTypes, hCtx.keyColIdx, hCtx.buf)
-	return false, hCtx.h.Sum64(), err
+	hCtx.initHash(1)
+	err = codec.HashChunkRow(sc, hCtx.hashVals[0], row, hCtx.allTypes, hCtx.keyColIdx, hCtx.buf)
+	return false, hCtx.hashVals[0].Sum64(), err
 }
 
 func (c hashRowContainer) Len() int {
