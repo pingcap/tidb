@@ -942,15 +942,16 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
 }
 
 // CheckTxnStatus checks the primary lock of a transaction to decide its status.
-// primaryKey + lockTS together could locate the primary lock.
-// callerStartTS is the start ts of reader transaction.
-// currentTS is the current ts, but it may be inaccurate. Just use it to check TTL.
 // The return values are (ttl, commitTS, err):
 // If the transaction is active, this function returns the ttl of the lock;
 // If the transaction is committed, this function returns the commitTS;
 // If the transaction is rollbacked, this function returns (0, 0, nil)
 // Note that CheckTxnStatus may also push forward the `minCommitTS` of the
 // transaction, so it's not simply a read-only operation.
+//
+// primaryKey + lockTS together could locate the primary lock.
+// callerStartTS is the start ts of reader transaction.
+// currentTS is the current ts, but it may be inaccurate. Just use it to check TTL.
 func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64) (uint64, uint64, error) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()

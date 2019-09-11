@@ -293,7 +293,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, startTS uint64, locks []*Loc
 		return
 	}
 
-	currentTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
 	if err != nil {
 		return 0, nil, err
 	}

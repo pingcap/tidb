@@ -565,13 +565,8 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		}
 		start := time.Now()
 
-		callerTS := c.startTS
-		if c.forUpdateTS > callerTS {
-			// Prewrite pessimistic transaction should not meet lock, so the code should
-			// not run here? Anyway, use a larger one is always correct.
-			callerTS = c.forUpdateTS
-		}
-		msBeforeExpired, _, err := c.store.lockResolver.ResolveLocks(bo, callerTS, locks)
+		// Prewrite pessimistic transaction should not meet lock?
+		msBeforeExpired, _, err := c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
