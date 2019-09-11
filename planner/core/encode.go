@@ -65,8 +65,6 @@ type planInfo struct {
 	fields []string
 }
 
-const tabWidth = 8
-
 func (pn *PlanDecoder) Decode(planString string) (string, error) {
 	str, err := decompress(planString)
 	if err != nil {
@@ -76,7 +74,6 @@ func (pn *PlanDecoder) Decode(planString string) (string, error) {
 	nodes := strings.Split(str, "\n")
 	pn.depths = make([]int, 0, len(nodes))
 	planInfos := make([]*planInfo, 0, len(nodes))
-	maxPlanIDSize := 0
 	for _, node := range nodes {
 		p, err := decodePlanInfo(node)
 		if err != nil {
@@ -87,9 +84,6 @@ func (pn *PlanDecoder) Decode(planString string) (string, error) {
 		}
 		planInfos = append(planInfos, p)
 		pn.depths = append(pn.depths, p.depth)
-		if p.depth*2+len(p.fields[0]) > maxPlanIDSize {
-			maxPlanIDSize = p.depth*2 + len(p.fields[0])
-		}
 	}
 
 	pn.initPlanTreeIndents()
@@ -99,23 +93,10 @@ func (pn *PlanDecoder) Decode(planString string) (string, error) {
 		pn.fillIndent(parentIndex, i)
 	}
 
-	maxPlanIDSize = maxPlanIDSize + (tabWidth - maxPlanIDSize%4)
-	fmt.Printf("max: %v\n", maxPlanIDSize)
 	pn.buf.Reset()
 	for i, p := range planInfos {
 		pn.buf.WriteString(string(pn.indents[i]))
-		pn.buf.WriteString(p.fields[0])
-		length := maxPlanIDSize - len(p.fields[0]) - p.depth*2
-		if length%tabWidth == 0 {
-			length = length / tabWidth
-		} else {
-			length = length/tabWidth + 1
-		}
-		fmt.Printf("depth: %v,len: %v, length: %v\n", p.depth, len(p.fields[0]), length)
-		for j := 0; j < length; j++ {
-			pn.buf.WriteByte('\t')
-		}
-		for i := 1; i < len(p.fields); i++ {
+		for i := 0; i < len(p.fields); i++ {
 			pn.buf.WriteString(p.fields[i])
 			pn.buf.WriteByte('\t')
 		}
