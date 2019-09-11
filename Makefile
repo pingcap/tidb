@@ -63,7 +63,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint tidy testSuite check-static vet
+check: fmt gogenerate errcheck lint tidy testSuite check-static vet
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
@@ -95,6 +95,10 @@ check-slow:tools/bin/gometalinter tools/bin/gosec
 errcheck:tools/bin/errcheck
 	@echo "errcheck"
 	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+
+gogenerate:
+	@echo "go generate ./..."
+	./tools/check/check-gogenerate.sh
 
 lint:tools/bin/revive
 	@echo "linting"
