@@ -30,6 +30,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.IsNull: {
 		{types.ETInt, []types.EvalType{types.ETString}, []dataGenerator{&randLenStrGener{10, 20}}},
+		{types.ETInt, []types.EvalType{types.ETString}, []dataGenerator{&defaultGener{0.2, types.ETString}}},
 	},
 }
 
