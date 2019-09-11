@@ -15,6 +15,7 @@ package chunk
 
 import (
 	"math"
+	"math/rand"
 	"strconv"
 	"strings"
 	"testing"
@@ -216,5 +217,44 @@ func BenchmarkPreAllocChunk(b *testing.B) {
 		for j := 0; j < 32768; j++ {
 			finalChk.preAlloc(row)
 		}
+	}
+}
+
+func BenchmarkListAdd(b *testing.B) {
+	numChk, numRow := 1, 2
+	chks, fields, err := initChunks(numChk, numRow)
+	if err != nil {
+		b.Fatal(err)
+	}
+	chk := chks[0]
+	l := NewList(fields, numRow, numRow)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		l.Add(chk)
+	}
+}
+
+func BenchmarkListGetRow(b *testing.B) {
+	numChk, numRow := 10000, 2
+	chks, fields, err := initChunks(numChk, numRow)
+	if err != nil {
+		b.Fatal(err)
+	}
+	l := NewList(fields, numRow, numRow)
+	for _, chk := range chks {
+		l.Add(chk)
+	}
+	rand.Seed(0)
+	ptrs := make([]RowPtr, 0, b.N)
+	for i := 0; i < b.N; i++ {
+		ptrs = append(ptrs, RowPtr{
+			ChkIdx: rand.Uint32() % uint32(numChk),
+			RowIdx: rand.Uint32() % uint32(numRow),
+		})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		l.GetRow(ptrs[i])
 	}
 }
