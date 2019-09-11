@@ -55,3 +55,39 @@ func (b *builtinGreatestDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 func (b *builtinGreatestDecimalSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinLeastDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	d64s := result.Decimals()
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalDecimal(b.ctx, input, buf); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			} else if buf.IsNull(i) {
+				result.SetNull(i, true)
+				continue
+			}
+			v := buf.GetDecimal(i)
+			if v.Compare(&d64s[i]) < 0 {
+				d64s[i] = *v
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinLeastDecimalSig) vectorized() bool {
+	return true
+}
