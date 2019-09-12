@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -187,7 +188,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	startTime := time.Now()
 	defer func() {
-		a.Ctx.GetSessionVars().StmtCtx.DurationCompile = time.Since(startTime)
+		a.Ctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
 
 	is := GetInfoSchema(a.Ctx)
@@ -207,6 +208,18 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
+			panic(r)
+		}
+		err = errors.Errorf("%v", r)
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.Text), zap.Stack("stack"))
+	}()
+
 	sctx := a.Ctx
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
@@ -496,6 +509,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
+	a.Ctx.GetSessionVars().StartTime = time.Now()
+	a.Ctx.GetSessionVars().DurationCompile = time.Duration(0)
+	a.Ctx.GetSessionVars().DurationParse = time.Duration(0)
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -598,7 +614,7 @@ func (a *ExecStmt) logAudit() {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StmtCtx.StartTime)
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
 			audit.OnGeneralEvent(ctx, sessVars, plugin.Log, cmd)
 		}
 		return nil
@@ -616,7 +632,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		return
 	}
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(a.Ctx.GetSessionVars().StmtCtx.StartTime)
+	costTime := time.Since(a.Ctx.GetSessionVars().StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
@@ -645,8 +661,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			SQL:         sql,
 			Digest:      digest,
 			TimeTotal:   costTime,
-			TimeParse:   a.Ctx.GetSessionVars().StmtCtx.DurationParse,
-			TimeCompile: a.Ctx.GetSessionVars().StmtCtx.DurationCompile,
+			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
 			IndexNames:  indexNames,
 			StatsInfos:  statsInfos,
 			CopTasks:    copTaskInfo,
@@ -661,8 +677,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			SQL:         sql,
 			Digest:      digest,
 			TimeTotal:   costTime,
-			TimeParse:   a.Ctx.GetSessionVars().StmtCtx.DurationParse,
-			TimeCompile: a.Ctx.GetSessionVars().StmtCtx.DurationCompile,
+			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
 			IndexNames:  indexNames,
 			StatsInfos:  statsInfos,
 			CopTasks:    copTaskInfo,
@@ -680,7 +696,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql,
 			Digest:     digest,
-			Start:      a.Ctx.GetSessionVars().StmtCtx.StartTime,
+			Start:      a.Ctx.GetSessionVars().StartTime,
 			Duration:   costTime,
 			Detail:     sessVars.StmtCtx.GetExecDetails(),
 			Succ:       succ,

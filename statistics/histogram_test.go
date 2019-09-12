@@ -120,3 +120,14 @@ num: 30 lower_bound: 12 upper_bound: 14 repeats: 10`
 	c.Assert(err, IsNil, Commentf("Test failed: %v", err))
 	c.Assert(newIdx.String(), Equals, idxResult)
 }
+
+func (s *testStatisticsSuite) TestValueToString4InvalidKey(c *C) {
+	bytes, err := codec.EncodeKey(nil, nil, types.NewDatum(1), types.NewDatum(0.5))
+	c.Assert(err, IsNil)
+	// Append invalid flag.
+	bytes = append(bytes, 20)
+	datum := types.NewDatum(bytes)
+	res, err := ValueToString(&datum, 3)
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, "(1, 0.5, \x14)")
+}
