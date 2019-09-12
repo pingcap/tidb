@@ -28,6 +28,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -72,8 +73,8 @@ type LogConfig struct {
 }
 
 // NewLogConfig creates a LogConfig.
-func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, disableTimestamp bool) *LogConfig {
-	return &LogConfig{
+func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, disableTimestamp bool, opts ...func(*zaplog.Config)) *LogConfig {
+	c := &LogConfig{
 		Config: zaplog.Config{
 			Level:            level,
 			Format:           format,
@@ -82,6 +83,10 @@ func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, di
 		},
 		SlowQueryFile: slowQueryFile,
 	}
+	for _, opt := range opts {
+		opt(&c.Config)
+	}
+	return c
 }
 
 // isSKippedPackageName tests wether path name is on log library calling stack.
@@ -324,7 +329,7 @@ func InitLogger(cfg *LogConfig) error {
 
 // InitZapLogger initializes a zap logger with cfg.
 func InitZapLogger(cfg *LogConfig) error {
-	gl, props, err := zaplog.InitLogger(&cfg.Config)
+	gl, props, err := zaplog.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
 	if err != nil {
 		return errors.Trace(err)
 	}
