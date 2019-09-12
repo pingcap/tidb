@@ -597,7 +597,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
-						c.Assert(val, Equals, d64s[i])
+						c.Assert(val.Duration, Equals, d64s[i])
 					}
 					i++
 				}
