@@ -24,7 +24,11 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+<<<<<<< HEAD
 	"github.com/pingcap/parser/mysql"
+=======
+	zaplog "github.com/pingcap/log"
+>>>>>>> cbf4ddc... *: improve the format of the error log (#12155)
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
@@ -98,6 +102,9 @@ type Log struct {
 	Format string `toml:"format" json:"format"`
 	// Disable automatic timestamps in output.
 	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
+	// DisableErrorStack stops annotating logs with the full stack error
+	// message.
+	DisableErrorStack bool `toml:"disable-error-stack" json:"disable-error-stack"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
@@ -318,6 +325,7 @@ var defaultConf = Config{
 		SlowQueryFile:      "tidb-slow.log",
 		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
+		DisableErrorStack:  true,
 		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
 	},
 	Status: Status{
@@ -417,7 +425,7 @@ func (c *Config) Load(confFile string) error {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp)
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = l.DisableErrorStack })
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.
