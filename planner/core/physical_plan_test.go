@@ -776,20 +776,20 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 		warning string
 	}{
 		{
-			sql:  "select /*+ AGG_TO_COP(), HASH_AGG(), INDEX(t) */ sum(a) from t group by a",
+			sql:  "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from t group by a",
 			best: "TableReader(Table(t)->HashAgg)->HashAgg",
 		},
 		{
-			sql:  "select /*+ AGG_TO_COP(), INDEX(t) */ sum(b) from t group by b",
+			sql:  "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from t group by b",
 			best: "TableReader(Table(t)->HashAgg)->HashAgg",
 		},
 		{
-			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), INDEX(t) */ distinct a from t group by a",
+			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from t group by a",
 			best:    "TableReader(Table(t)->HashAgg)->HashAgg->HashAgg",
 			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
 		},
 		{
-			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), INDEX(t1), INDEX(t2) */ sum(t1.a) from t t1, t t2 where t1.a = t2.b group by t1.a",
+			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1, t t2 where t1.a = t2.b group by t1.a",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->Projection->HashAgg",
 			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
 		},
@@ -888,6 +888,8 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	ctx := context.Background()
 	for i, test := range input {
 		comment := Commentf("case:%v sql:%s", i, test)
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
