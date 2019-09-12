@@ -17,8 +17,8 @@ explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b =
 id	count	task	operator info
 Projection_11	5.00	root	9_aux_0
 └─Apply_13	5.00	root	CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, 7_col_0)
-  ├─TableReader_15	5.00	root	data:TableScan_14
-  │ └─TableScan_14	5.00	cop	table:t, range:[-inf,+inf], keep order:false
+  ├─IndexReader_15	5.00	root	index:IndexScan_14
+  │ └─IndexScan_14	5.00	cop	table:t, index:b, c, d, range:[NULL,+inf], keep order:false
   └─StreamAgg_20	1.00	root	funcs:count(1)
     └─IndexJoin_23	0.50	root	inner join, inner:TableReader_22, outer key:test.s.a, inner key:test.t1.a
       ├─IndexReader_27	1.00	root	index:IndexScan_26

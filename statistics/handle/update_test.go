@@ -1529,24 +1529,24 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 	}{
 		{
 			sql: "select * from t where a <= 50 or (a > 130 and a < 140)",
-			hist: "column:1 ndv:30 totColSize:0\n" +
-				"num: 8 lower_bound: -128 upper_bound: 7 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+			hist: "column:1 ndv:20 totColSize:0\n" +
+				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 1\n" +
+				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 1\n" +
+				"num: 4 lower_bound: 16 upper_bound: 19 repeats: 1",
 			colID: 1,
 		},
 		{
 			sql: "select * from t where a >= 10",
-			hist: "column:1 ndv:30 totColSize:0\n" +
-				"num: 8 lower_bound: -128 upper_bound: 7 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 127 repeats: 0",
+			hist: "column:1 ndv:20 totColSize:0\n" +
+				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 1\n" +
+				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 1\n" +
+				"num: 4 lower_bound: 16 upper_bound: 19 repeats: 1",
 			colID: 1,
 		},
 		{
 			sql: "select * from t use index(idx) where a = 1 and (b <= 50 or (b > 130 and b < 140))",
 			hist: "column:2 ndv:20 totColSize:20\n" +
-				"num: 7 lower_bound: -128 upper_bound: 6 repeats: 0\n" +
+				"num: 9 lower_bound: -128 upper_bound: 6 repeats: 0\n" +
 				"num: 7 lower_bound: 7 upper_bound: 13 repeats: 1\n" +
 				"num: 6 lower_bound: 14 upper_bound: 19 repeats: 1",
 			colID: 2,
