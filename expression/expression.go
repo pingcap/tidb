@@ -299,8 +299,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	return selected, nulls, nil
 }
 
-func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) error {
-	var err error
+func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
 	switch expr.GetType().EvalType() {
 	case types.ETInt:
 		err = expr.VecEvalInt(ctx, input, result)
@@ -317,7 +316,7 @@ func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result
 	case types.ETDecimal:
 		err = expr.VecEvalDecimal(ctx, input, result)
 	}
-	return err
+	return
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
