@@ -3,16 +3,26 @@
     "name": "TestIndexHint",
     "cases": [
       // simple case
-      "select /*+ INDEX(t, c_d_e) */ * from t",
-      "select /*+ INDEX(t, c_d_e) */ * from t t1",
-      "select /*+ INDEX(t1, c_d_e) */ * from t t1",
-      "select /*+ INDEX(t1, c_d_e), INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+      "select /*+ USE_INDEX(t, c_d_e) */ * from t",
+      "select /*+ IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
+      "select /*+ IGNORE_INDEX(t, c_d_e) */ t1.c from t t1 order by t1.c",
+      "select /*+ USE_INDEX(t1, c_d_e) */ * from t t1",
+      "select /*+ IGNORE_INDEX(t1, c_d_e) */ t1.c from t t1 order by t1.c",
+      "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+      "select /*+ IGNORE_INDEX(t1, c_d_e), IGNORE_INDEX(t2, f), HASH_JOIN(t1) */ * from t t1, t t2 where t1.a = t2.b",
       // test multiple indexes
-      "select /*+ INDEX(t, c_d_e, f, g) */ * from t order by f",
+      "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
       // use TablePath when the hint only contains table.
-      "select /*+ INDEX(t) */ f from t where f > 10",
+      "select /*+ USE_INDEX(t) */ f from t where f > 10",
       // there will be a warning instead of error when index not exist
-      "select /*+ INDEX(t, no_such_index) */ * from t"
+      "select /*+ USE_INDEX(t, no_such_index) */ * from t",
+      "select /*+ IGNORE_INDEX(t, no_such_index) */ * from t",
+      // use both use_index and ignore_index, same as index hints in sql.
+      "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ USE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c"
     ]
   },
   {
@@ -362,8 +372,20 @@
       "select max(a), b from t;",
       // If max/min contains scalar function, we can still do transformation.
       "select max(a+1) from t;",
-      // Do nothing to max+min.
+      // Min + Max to Limit + Sort + Join.
       "select max(a), min(a) from t;",
+      // Min + Max with range condition.
+      "select max(a), min(a) from t where a > 10",
+      // Min + Max with unified index range condition.
+      "select max(d), min(d) from t where c = 1 and d > 10",
+      // Min + Max with multiple columns
+      "select max(a), max(c), min(f) from t",
+      // Do nothing if any column has no index.
+      "select max(a), max(b) from t",
+      // Do nothing if any column has a non-range condition.
+      "select max(a), max(c) from t where c > 10",
+      // Do nothing if the condition cannot be pushed down to range.
+      "select max(a), min(a) from t where a * 3 + 10 < 100",
       // Do nothing to max with groupby.
       "select max(a) from t group by b;",
       // If inner is not a data source, we can still do transformation.
