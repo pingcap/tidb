@@ -188,7 +188,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	startTime := time.Now()
 	defer func() {
-		a.Ctx.GetSessionVars().StmtCtx.DurationCompile = time.Since(startTime)
+		a.Ctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
 
 	is := GetInfoSchema(a.Ctx)
@@ -509,6 +509,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
+	a.Ctx.GetSessionVars().StartTime = time.Now()
+	a.Ctx.GetSessionVars().DurationCompile = time.Duration(0)
+	a.Ctx.GetSessionVars().DurationParse = time.Duration(0)
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -611,7 +614,7 @@ func (a *ExecStmt) logAudit() {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StmtCtx.StartTime)
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
 			audit.OnGeneralEvent(ctx, sessVars, plugin.Log, cmd)
 		}
 		return nil
@@ -629,7 +632,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		return
 	}
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(a.Ctx.GetSessionVars().StmtCtx.StartTime)
+	costTime := time.Since(a.Ctx.GetSessionVars().StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
@@ -658,8 +661,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			SQL:         sql,
 			Digest:      digest,
 			TimeTotal:   costTime,
-			TimeParse:   a.Ctx.GetSessionVars().StmtCtx.DurationParse,
-			TimeCompile: a.Ctx.GetSessionVars().StmtCtx.DurationCompile,
+			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
 			IndexNames:  indexNames,
 			StatsInfos:  statsInfos,
 			CopTasks:    copTaskInfo,
@@ -674,8 +677,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			SQL:         sql,
 			Digest:      digest,
 			TimeTotal:   costTime,
-			TimeParse:   a.Ctx.GetSessionVars().StmtCtx.DurationParse,
-			TimeCompile: a.Ctx.GetSessionVars().StmtCtx.DurationCompile,
+			TimeParse:   a.Ctx.GetSessionVars().DurationParse,
+			TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
 			IndexNames:  indexNames,
 			StatsInfos:  statsInfos,
 			CopTasks:    copTaskInfo,
@@ -693,7 +696,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql,
 			Digest:     digest,
-			Start:      a.Ctx.GetSessionVars().StmtCtx.StartTime,
+			Start:      a.Ctx.GetSessionVars().StartTime,
 			Duration:   costTime,
 			Detail:     sessVars.StmtCtx.GetExecDetails(),
 			Succ:       succ,
