@@ -117,6 +117,14 @@ func BoolToIntStr(b bool) string {
 	return "0"
 }
 
+// BoolToInt32 converts bool to int32
+func BoolToInt32(b bool) int32 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // we only support MySQL now
 var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "gtid_mode", "OFF"},
@@ -702,6 +710,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBLowResolutionTSO, "0"},
 	{ScopeSession, TiDBExpensiveQueryTimeThreshold, strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold)},
 	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
+	{ScopeGlobal, TiDBEnableStmtSummary, BoolToIntStr(DefTiDBEnableStmtSummary)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
