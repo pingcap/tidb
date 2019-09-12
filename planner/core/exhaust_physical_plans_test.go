@@ -40,8 +40,8 @@ func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Sche
 
 func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 	s.ctx.GetSessionVars().PlanID = -1
-	joinNode := LogicalJoin{}.Init(s.ctx)
-	dataSourceNode := DataSource{}.Init(s.ctx)
+	joinNode := LogicalJoin{}.Init(s.ctx, 0)
+	dataSourceNode := DataSource{}.Init(s.ctx, 0)
 	dsSchema := expression.NewSchema()
 	dsSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -102,12 +102,10 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	joinNode.SetSchema(expression.MergeSchema(dsSchema, outerChildSchema))
-	var idxCols []*model.IndexColumn
-	idxCols = append(idxCols, &model.IndexColumn{Name: model.NewCIStr("a"), Length: types.UnspecifiedLength})
-	idxCols = append(idxCols, &model.IndexColumn{Name: model.NewCIStr("b"), Length: types.UnspecifiedLength})
-	idxCols = append(idxCols, &model.IndexColumn{Name: model.NewCIStr("c"), Length: 2})
-	idxCols = append(idxCols, &model.IndexColumn{Name: model.NewCIStr("d"), Length: types.UnspecifiedLength})
-	idxInfo := &model.IndexInfo{Columns: idxCols}
+	path := &accessPath{
+		idxCols:    append(make([]*expression.Column, 0, 4), dsSchema.Columns...),
+		idxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength, 2, types.UnspecifiedLength},
+	}
 
 	tests := []struct {
 		innerKeys       []*expression.Column
@@ -227,7 +225,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		c.Assert(err, IsNil)
 		joinNode.OtherConditions = others
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil}
-		_, err = helper.analyzeLookUpFilters(idxInfo, dataSourceNode, tt.innerKeys)
+		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys)
 		c.Assert(err, IsNil)
 		c.Assert(fmt.Sprintf("%v", helper.chosenRanges), Equals, tt.ranges, Commentf("test case: #%v", i))
 		c.Assert(fmt.Sprintf("%v", helper.idxOff2KeyOff), Equals, tt.idxOff2KeyOff)

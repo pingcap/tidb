@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -940,9 +941,9 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 	tk.MustExec("CREATE TABLE `s` (`a` int, `b` char (20))")
 	tk.MustExec("CREATE INDEX idx_s_a ON s(`a`)")
 	tk.MustExec("INSERT INTO s VALUES (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (2, 'vtdiockfpn'), (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (6, 'ckfp')")
-	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t join s on t.a = s.a").Check(testkit.Rows("-277544960", "-277544960"))
-	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a").Check(testkit.Rows("148307968", "-1327693824", "-277544960", "-277544960"))
-	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t right join s on t.a = s.a").Check(testkit.Rows("-277544960", "<nil>", "<nil>", "-277544960", "<nil>", "<nil>"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t join s on t.a = s.a").Sort().Check(testkit.Rows("-277544960", "-277544960"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a").Sort().Check(testkit.Rows("-1327693824", "-277544960", "-277544960", "148307968"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t right join s on t.a = s.a").Sort().Check(testkit.Rows("-277544960", "-277544960", "<nil>", "<nil>", "<nil>", "<nil>"))
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t(a BIGINT PRIMARY KEY, b BIGINT);")
 	tk.MustExec("INSERT INTO t VALUES(1, 2);")
@@ -1065,9 +1066,9 @@ func (s *testSuite2) TestHashJoin(c *C) {
 	c.Assert(len(row), Equals, 7)
 	outerExecInfo := row[1][4].(string)
 	// FIXME: revert this result to 1 after TableReaderExecutor can handle initChunkSize.
-	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "5")
+	c.Assert(outerExecInfo[strings.Index(outerExecInfo, "rows")+5:strings.Index(outerExecInfo, "rows")+6], Equals, "5")
 	innerExecInfo := row[4][4].(string)
-	c.Assert(innerExecInfo[len(innerExecInfo)-1:], Equals, "0")
+	c.Assert(innerExecInfo[strings.Index(innerExecInfo, "rows")+5:strings.Index(innerExecInfo, "rows")+6], Equals, "0")
 }
 
 func (s *testSuite2) TestJoinDifferentDecimals(c *C) {
