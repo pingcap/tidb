@@ -774,26 +774,44 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 
 func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	gens := make([]dataGenerator, 0, len(eTypes))
 	for _, eType := range eTypes {
-		input := chunk.New([]*types.FieldType{eType2FieldType(eType)}, 1024, 1024)
-		var gen dataGenerator = &defaultGener{nullRation: 0.1, eType: eType}
 		if eType == types.ETString {
-			gen = &numStrGener{rangeInt64Gener{-10, 10}}
+			gens = append(gens, &numStrGener{rangeInt64Gener{0, 10}})
+		} else {
+			gens = append(gens, &defaultGener{nullRation: 0.05, eType: eType})
 		}
-		fillColumn(eType, input, 0, vecExprBenchCase{geners: []dataGenerator{gen}})
-		exprs := []Expression{&Column{Index: 0, RetType: eType2FieldType(eType)}}
+	}
 
-		selected, nulls, err := VecEvalBool(mock.NewContext(), exprs, input, nil, nil)
-		c.Assert(err, IsNil)
+	for numCols := 1; numCols <= 10; numCols++ {
+		for round := 0; round < 64; round++ {
+			ts := make([]types.EvalType, 0, numCols)
+			gs := make([]dataGenerator, 0, numCols)
+			fts := make([]*types.FieldType, 0, numCols)
+			for i := 0; i < numCols; i++ {
+				idx := rand.Intn(len(eTypes))
+				ts = append(ts, eTypes[idx])
+				gs = append(gs, gens[idx])
+				fts = append(fts, eType2FieldType(eTypes[idx]))
+			}
+			input := chunk.New(fts, 1024, 1024)
+			exprs := make([]Expression, 0, numCols)
+			for i := 0; i < numCols; i++ {
+				fillColumn(ts[i], input, i, vecExprBenchCase{geners: gs})
+				exprs = append(exprs, &Column{Index: i, RetType: fts[i]})
+			}
 
-		it := chunk.NewIterator4Chunk(input)
-		i := 0
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			ok, null, err := EvalBool(mock.NewContext(), exprs, row)
+			selected, nulls, err := VecEvalBool(mock.NewContext(), exprs, input, nil, nil)
 			c.Assert(err, IsNil)
-			c.Assert(null, Equals, nulls[i])
-			c.Assert(ok, Equals, selected[i])
-			i++
+			it := chunk.NewIterator4Chunk(input)
+			i := 0
+			for row := it.Begin(); row != it.End(); row = it.Next() {
+				ok, null, err := EvalBool(mock.NewContext(), exprs, row)
+				c.Assert(err, IsNil)
+				c.Assert(null, Equals, nulls[i])
+				c.Assert(ok, Equals, selected[i])
+				i++
+			}
 		}
 	}
 }
