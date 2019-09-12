@@ -359,7 +359,7 @@ func tryToCombineAggFunc(outer, inner *aggregation.AggFuncDesc, innerIsGbItem bo
 	combined.Args[0] = expr
 
 	if innerIsGbItem {
-		// If the item being aggregated in outter aggregation is group-by item of inner aggregation. We can only do elimination on very
+		// If the item being aggregated in outer aggregation is group-by item of inner aggregation. We can only do elimination on very
 		// few conditions.
 		// For example, `select sum(at) from (select count(a) as at, b as bt from t group by a, b) as t group by bt`
 		// AggFunc `count(a)` is always 1 and `sum(at)` is distinct number of `a`. We only consider the simplest case here because for
@@ -378,11 +378,7 @@ func tryToCombineAggFunc(outer, inner *aggregation.AggFuncDesc, innerIsGbItem bo
 	case inner.Name == ast.AggFuncBitAnd && outer.Name == ast.AggFuncBitAnd:
 	case inner.Name == ast.AggFuncBitOr && outer.Name == ast.AggFuncBitOr:
 	case inner.Name == ast.AggFuncBitXor && outer.Name == ast.AggFuncBitXor:
-		if inner.HasDistinct {
-			return nil
-		}
-	case inner.Name == ast.AggFuncGroupConcat && outer.Name == ast.AggFuncGroupConcat:
-		if inner.HasDistinct {
+		if inner.HasDistinct || outer.HasDistinct {
 			return nil
 		}
 	case inner.Name == ast.AggFuncSum && outer.Name == ast.AggFuncSum:
