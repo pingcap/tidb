@@ -63,7 +63,7 @@ type PhysicalTableReader struct {
 
 // GetPhysicalReader returns PhysicalTableReader for logical TableGather.
 func (tg *TableGather) GetPhysicalReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
-	reader := PhysicalTableReader{}.Init(tg.ctx)
+	reader := PhysicalTableReader{}.Init(tg.ctx, tg.blockOffset)
 	reader.stats = stats
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
@@ -496,5 +496,5 @@ func BuildMergeJoinPlan(ctx sessionctx.Context, joinType JoinType, leftKeys, rig
 		LeftJoinKeys:  leftKeys,
 		RightJoinKeys: rightKeys,
 	}
-	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil)
+	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil, 0)
 }
