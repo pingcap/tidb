@@ -257,7 +257,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 				switch eType {
 				case types.ETInt:
 					if hasUnsignedFlag {
-						d.SetUint64(uint64(buf.GetInt64(i)))
+						d.SetUint64(buf.GetUint64(i))
 					} else {
 						d.SetInt64(buf.GetInt64(i))
 					}
