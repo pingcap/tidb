@@ -458,14 +458,14 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	return err
 }
 
-func (imw *innerMergeWorker) checkChunkIsFull(ctx context.Context, task *lookUpMergeJoinTask, chk *chunk.Chunk) bool {
-	if chk.IsFull() {
+func (imw *innerMergeWorker) checkChunkIsFull(ctx context.Context, task *lookUpMergeJoinTask, chk **chunk.Chunk) bool {
+	if (*chk).IsFull() {
 		select {
-		case task.results <- chk:
+		case task.results <- *chk:
 		case <-ctx.Done():
 			return true
 		}
-		chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
+		*chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
 	}
 	return false
 }
@@ -480,18 +480,16 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 				return
 			}
 		}
-		return
 	}()
 
 	task.outerIter = chunk.NewIterator4Chunk(task.outerResult)
 	task.outerIter.Begin()
 	if task.innerResults.Len() == 0 {
-		for task.outerIter.Current() != task.outerIter.End() {
-			imw.joiner.onMissMatch(false, task.outerIter.Current(), chk)
-			if done := imw.checkChunkIsFull(ctx, task, chk); done {
+		for outerRow := task.outerIter.Begin(); outerRow != task.outerIter.End(); outerRow = task.outerIter.Next() {
+			imw.joiner.onMissMatch(false, outerRow, chk)
+			if done := imw.checkChunkIsFull(ctx, task, &chk); done {
 				return nil
 			}
-			task.outerIter.Next()
 		}
 		return
 	}
@@ -508,10 +506,9 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 		if len(task.outerMatch) > 0 && !task.outerMatch[outerRow.Idx()] {
 			continue
 		}
-		task.sameKeyIter.Begin()
 		cmpResult := initCmpResult
 		if len(task.sameKeyRows) > 0 {
-			cmpResult, err = imw.compare(outerRow, task.sameKeyIter.Current())
+			cmpResult, err = imw.compare(outerRow, task.sameKeyIter.Begin())
 			if err != nil {
 				return err
 			}
@@ -531,7 +528,7 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 
 			task.hasMatch = task.hasMatch || matched
 			task.hasNull = task.hasNull || isNull
-			if done := imw.checkChunkIsFull(ctx, task, chk); done {
+			if done := imw.checkChunkIsFull(ctx, task, &chk); done {
 				return nil
 			}
 		}
@@ -541,7 +538,7 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 		}
 		task.hasMatch = false
 		task.hasNull = false
-		if done := imw.checkChunkIsFull(ctx, task, chk); done {
+		if done := imw.checkChunkIsFull(ctx, task, &chk); done {
 			return nil
 		}
 	}
@@ -553,17 +550,18 @@ func (imw *innerMergeWorker) fetchNextInnerRows(task *lookUpMergeJoinTask, key c
 	task.sameKeyRows = task.sameKeyRows[:0]
 	task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyRows)
 	task.sameKeyIter.Begin()
-	if task.innerIter.Current() == task.innerIter.End() {
+	curRow := task.innerIter.Current()
+	if curRow == task.innerIter.End() {
 		return nil
 	}
 
 	var err error
 	var cmpRes int
-	for cmpRes, err = imw.compare(key, task.innerIter.Current()); ((cmpRes >= 0 && !imw.desc) || (cmpRes <= 0 && imw.desc)) && err == nil; cmpRes, err = imw.compare(key, task.innerIter.Current()) {
+	for cmpRes, err = imw.compare(key, curRow); ((cmpRes >= 0 && !imw.desc) || (cmpRes <= 0 && imw.desc)) && err == nil; cmpRes, err = imw.compare(key, curRow) {
 		if cmpRes == 0 {
-			task.sameKeyRows = append(task.sameKeyRows, task.innerIter.Current())
+			task.sameKeyRows = append(task.sameKeyRows, curRow)
 		}
-		if task.innerIter.Next() == task.innerIter.End() {
+		if curRow = task.innerIter.Next(); curRow == task.innerIter.End() {
 			break
 		}
 	}
