@@ -527,7 +527,7 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 		}
 
 		for task.sameKeyIter.Current() != task.sameKeyIter.End() {
-			matched, isNull, err := imw.joiner.tryToMatch(outerRow, task.sameKeyIter, chk)
+			matched, isNull, err := imw.joiner.tryToMatchInners(outerRow, task.sameKeyIter, chk)
 			if err != nil {
 				return err
 			}
