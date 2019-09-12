@@ -221,7 +221,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	n := input.NumRows()
 	selected = selected[:0]
 	nulls = nulls[:0]
-	for i := 0; i < n; i ++ {
+	for i := 0; i < n; i++ {
 		selected = append(selected, false)
 		nulls = append(nulls, false)
 	}
@@ -230,7 +230,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	sel := selPool.Get().([]int)
 	defer selPool.Put(sel)
 	sel = sel[:0]
-	for i := 0; i < n; i ++ {
+	for i := 0; i < n; i++ {
 		sel = append(sel, i)
 	}
 	input.SetSel(sel)
