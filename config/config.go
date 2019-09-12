@@ -319,9 +319,9 @@ type PessimisticTxn struct {
 
 // StmtSummary is the config for statement summary.
 type StmtSummary struct {
-	// How many statements can be kept in the table
+	// The maximum number of statements kept in memory.
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
-	// How long can a normalizedSQL / sampleSQL be
+	// The maximum length of displayed normalized SQL and sample SQL.
 	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
 }
 

@@ -297,7 +297,7 @@ const (
 	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
 	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
 
-	// TiDBEnableStmtSummary indicates to enable statement summary
+	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 )
 
