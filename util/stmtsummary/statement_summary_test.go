@@ -81,7 +81,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	s.ssMap.AddStatement(stmtExecInfo1)
 	summary, ok := s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
-	c.Assert(*summary.(*stmtSummaryByDigest), Equals, expectedSummary)
+	c.Assert(*summary.(*stmtSummaryByDigest) == expectedSummary, IsTrue)
 
 	// Second statement
 	stmtExecInfo2 := &StmtExecInfo{
@@ -104,7 +104,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	s.ssMap.AddStatement(stmtExecInfo2)
 	summary, ok = s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
-	c.Assert(*summary.(*stmtSummaryByDigest), Equals, expectedSummary)
+	c.Assert(*summary.(*stmtSummaryByDigest) == expectedSummary, IsTrue)
 
 	// Third statement
 	stmtExecInfo3 := &StmtExecInfo{
@@ -127,7 +127,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	s.ssMap.AddStatement(stmtExecInfo3)
 	summary, ok = s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
-	c.Assert(*summary.(*stmtSummaryByDigest), Equals, expectedSummary)
+	c.Assert(*summary.(*stmtSummaryByDigest) == expectedSummary, IsTrue)
 
 	// Fourth statement that in a different schema
 	stmtExecInfo4 := &StmtExecInfo{
