@@ -16,6 +16,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -208,6 +209,14 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 	return true, false, nil
 }
 
+var (
+	selPool = sync.Pool{
+		New: func() interface{} {
+			return make([]int, 1024)
+		},
+	}
+)
+
 func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
 	n := input.NumRows()
 	selected = selected[:0]
@@ -218,16 +227,17 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	}
 
 	defer input.SetSel(input.Sel())
-	// TODO: recycle the sel slice
-	sel := make([]int, n)
-	for i := range sel {
-		sel[i] = i
+	sel := selPool.Get().([]int)
+	defer selPool.Put(sel)
+	sel = sel[:0]
+	for i := 0; i < n; i ++ {
+		sel = append(sel, i)
 	}
 	input.SetSel(sel)
 
 	for _, expr := range exprList {
 		eType := expr.GetType().EvalType()
-		buf, err := newBuffer(eType, n) // TODO: recycle this buffer
+		buf, err := globalColumnAllocator.get(eType, n)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -238,8 +248,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 
 		isEQCondFromIn := IsEQCondFromIn(expr)
 		hasUnsignedFlag := mysql.HasUnsignedFlag(expr.GetType().Flag)
-		var v interface{}
-		isNull, d, j := false, new(types.Datum), 0
+		isNull, d, j := false, types.Datum{}, 0
 		for i := range sel {
 			isNull = buf.IsNull(i)
 			if isNull {
@@ -248,24 +257,23 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 				switch eType {
 				case types.ETInt:
 					if hasUnsignedFlag {
-						v = uint64(buf.GetInt64(i))
+						d.SetUint64(uint64(buf.GetInt64(i)))
 					} else {
-						v = buf.GetUint64(i)
+						d.SetInt64(buf.GetInt64(i))
 					}
 				case types.ETReal:
-					v = buf.GetFloat64(i)
+					d.SetFloat64(buf.GetFloat64(i))
 				case types.ETDuration:
-					v = buf.GetDuration(i, 0)
+					d.SetMysqlDuration(buf.GetDuration(i, 0))
 				case types.ETDatetime, types.ETTimestamp:
-					v = buf.GetTime(i)
+					d.SetMysqlTime(buf.GetTime(i))
 				case types.ETString:
-					v = buf.GetString(i)
+					d.SetString(buf.GetString(i))
 				case types.ETJson:
-					v = buf.GetJSON(i)
+					d.SetMysqlJSON(buf.GetJSON(i))
 				case types.ETDecimal:
-					v = buf.GetDecimal(i)
+					d.SetMysqlDecimal(buf.GetDecimal(i))
 				}
-				d.SetValue(v) // TODO: remove datum here to speed up
 			}
 
 			if d.IsNull() {
@@ -288,6 +296,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		}
 		sel = sel[:j]
 		input.SetSel(sel)
+		globalColumnAllocator.put(buf)
 	}
 
 	for _, i := range sel {

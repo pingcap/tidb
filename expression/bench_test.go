@@ -772,7 +772,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 }
 
-func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
+func genVecEvalBool(numCols int, colTypes []types.EvalType) (CNFExprs, *chunk.Chunk) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	gens := make([]dataGenerator, 0, len(eTypes))
 	for _, eType := range eTypes {
@@ -783,25 +783,39 @@ func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 		}
 	}
 
+	ts := make([]types.EvalType, 0, numCols)
+	gs := make([]dataGenerator, 0, numCols)
+	fts := make([]*types.FieldType, 0, numCols)
+	for i := 0; i < numCols; i++ {
+		idx := rand.Intn(len(eTypes))
+		if colTypes != nil {
+			for j := range eTypes {
+				if colTypes[i] == eTypes[j] {
+					idx = j
+					break
+				}
+			}
+		}
+		ts = append(ts, eTypes[idx])
+		gs = append(gs, gens[idx])
+		fts = append(fts, eType2FieldType(eTypes[idx]))
+	}
+
+	input := chunk.New(fts, 1024, 1024)
+	exprs := make(CNFExprs, 0, numCols)
+	for i := 0; i < numCols; i++ {
+		fillColumn(ts[i], input, i, vecExprBenchCase{geners: gs})
+		exprs = append(exprs, &Column{Index: i, RetType: fts[i]})
+	}
+	return exprs, input
+}
+
+func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
+	ctx := mock.NewContext()
 	for numCols := 1; numCols <= 10; numCols++ {
 		for round := 0; round < 64; round++ {
-			ts := make([]types.EvalType, 0, numCols)
-			gs := make([]dataGenerator, 0, numCols)
-			fts := make([]*types.FieldType, 0, numCols)
-			for i := 0; i < numCols; i++ {
-				idx := rand.Intn(len(eTypes))
-				ts = append(ts, eTypes[idx])
-				gs = append(gs, gens[idx])
-				fts = append(fts, eType2FieldType(eTypes[idx]))
-			}
-			input := chunk.New(fts, 1024, 1024)
-			exprs := make([]Expression, 0, numCols)
-			for i := 0; i < numCols; i++ {
-				fillColumn(ts[i], input, i, vecExprBenchCase{geners: gs})
-				exprs = append(exprs, &Column{Index: i, RetType: fts[i]})
-			}
-
-			selected, nulls, err := VecEvalBool(mock.NewContext(), exprs, input, nil, nil)
+			exprs, input := genVecEvalBool(numCols, nil)
+			selected, nulls, err := VecEvalBool(ctx, exprs, input, nil, nil)
 			c.Assert(err, IsNil)
 			it := chunk.NewIterator4Chunk(input)
 			i := 0
@@ -813,5 +827,58 @@ func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 				i++
 			}
 		}
+	}
+}
+
+func BenchmarkVecEvalBool(b *testing.B) {
+	ctx := mock.NewContext()
+	selected := make([]bool, 0, 1024)
+	nulls := make([]bool, 0, 1024)
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	for numCols := 1; numCols <= 3; numCols ++ {
+		typeCombination := make([]types.EvalType, numCols)
+		var combFunc func(nCols int)
+		combFunc = func(nCols int) {
+			if nCols == 0 {
+				name := ""
+				for _, t := range typeCombination {
+					for i := range eTypes {
+						if t == eTypes[i] {
+							name += tNames[t] + "/"
+						}
+					}
+				}
+				exprs, input := genVecEvalBool(numCols, typeCombination)
+				b.Run("Vec-"+name, func(b *testing.B) {
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						_, _, err := VecEvalBool(ctx, exprs, input, selected, nulls)
+						if err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+				b.Run("Row-"+name, func(b *testing.B) {
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						it := chunk.NewIterator4Chunk(input)
+						for row := it.Begin(); row != it.End(); row = it.Next() {
+							_, _, err := EvalBool(ctx, exprs, row)
+							if err != nil {
+								b.Fatal(err)
+							}
+						}
+					}
+				})
+				return
+			}
+			for _, eType := range eTypes {
+				typeCombination[nCols-1] = eType
+				combFunc(nCols - 1)
+			}
+		}
+
+		combFunc(numCols)
 	}
 }
