@@ -37,19 +37,17 @@ func GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
 }
 
 var implementationMap = map[memo.Operand][]ImplementationRule{
-	/**
-	OperandSelection: []ImplementationRule{
-		nil,
-	},
-	OperandProjection: []ImplementationRule{
-		nil,
-	},
-	*/
 	memo.OperandTableDual: {
 		&ImplTableDual{},
 	},
 	memo.OperandProjection: {
 		&ImplProjection{},
+	},
+	memo.OperandTableScan: {
+		&ImplTableScan{},
+	},
+	memo.OperandTableGather: {
+		&ImplTableGather{},
 	},
 }
 
@@ -69,7 +67,7 @@ func (r *ImplTableDual) Match(expr *memo.GroupExpr, prop *property.PhysicalPrope
 func (r *ImplTableDual) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicDual := expr.ExprNode.(*plannercore.LogicalTableDual)
-	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats)
+	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats, logicDual.SelectBlockOffset())
 	dual.SetSchema(logicProp.Schema)
 	return impl.NewTableDualImpl(dual), nil
 }
@@ -95,7 +93,47 @@ func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phy
 		Exprs:                logicProj.Exprs,
 		CalculateNoDelay:     logicProj.CalculateNoDelay,
 		AvoidColumnEvaluator: logicProj.AvoidColumnEvaluator,
-	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), childProp)
+	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicProj.SelectBlockOffset(), childProp)
 	proj.SetSchema(logicProp.Schema)
 	return impl.NewProjectionImpl(proj), nil
+}
+
+// ImplTableGather implements TableGather as PhysicalTableReader.
+type ImplTableGather struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplTableGather) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return true
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplTableGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicProp := expr.Group.Prop
+	tg := expr.ExprNode.(*plannercore.TableGather)
+	reader := tg.GetPhysicalReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+	return impl.NewTableReaderImpl(reader, tg.Source.TblColHists), nil
+}
+
+// ImplTableScan implements TableScan as PhysicalTableScan.
+type ImplTableScan struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	ts := expr.ExprNode.(*plannercore.TableScan)
+	return prop.IsEmpty() || (len(prop.Items) == 1 && ts.Handle != nil && prop.Items[0].Col.Equal(nil, ts.Handle))
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicProp := expr.Group.Prop
+	logicalScan := expr.ExprNode.(*plannercore.TableScan)
+	ts := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	if !reqProp.IsEmpty() {
+		ts.KeepOrder = true
+		ts.Desc = reqProp.Items[0].Desc
+	}
+	tblCols, tblColHists := logicalScan.Source.TblCols, logicalScan.Source.TblColHists
+	return impl.NewTableScanImpl(ts, tblCols, tblColHists), nil
 }
