@@ -218,6 +218,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		if rs == nil {
 			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil)
 			s.(*executor.ExecStmt).SummaryStmt()
+			sessVars.PrevStmt = s.OriginText()
 		}
 	}()
 
