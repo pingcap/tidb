@@ -16,10 +16,12 @@ package stmtsummary
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -161,6 +163,11 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	}
 
 	ssMap.Lock()
+	// Check again. Statements could be added before disabling the flag and after Clear()
+	if atomic.LoadInt32(&variable.EnableStmtSummary) == 0 {
+		ssMap.Unlock()
+		return
+	}
 	value, ok := ssMap.summaryMap.Get(key)
 	if !ok {
 		newSummary := newStmtSummaryByDigest(sei)
@@ -210,4 +217,15 @@ func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 	}
 
 	return rows
+}
+
+// OnEnableStmtSummaryModified is triggered once EnableStmtSummary is modified.
+func OnEnableStmtSummaryModified(newValue string) error {
+	if variable.TiDBOptOn(newValue) {
+		atomic.StoreInt32(&variable.EnableStmtSummary, 1)
+	} else {
+		atomic.StoreInt32(&variable.EnableStmtSummary, 0)
+		StmtSummaryByDigestMap.Clear()
+	}
+	return nil
 }

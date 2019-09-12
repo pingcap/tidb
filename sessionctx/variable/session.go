@@ -420,9 +420,6 @@ type SessionVars struct {
 
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
-
-	// Enable statement summary
-	EnableStmtSummary bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -480,7 +477,6 @@ func NewSessionVars() *SessionVars {
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 		ReplicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
-		EnableStmtSummary:           DefTiDBEnableStmtSummary,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -867,8 +863,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBAllowRemoveAutoInc:
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
-	case TiDBEnableStmtSummary:
-		s.EnableStmtSummary = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

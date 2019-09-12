@@ -20,7 +20,9 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -38,6 +40,8 @@ type testTableSuite struct {
 }
 
 func (s *testTableSuite) SetUpSuite(c *C) {
+	variable.RegisterGlobalSysVarObserver(variable.TiDBEnableStmtSummary, stmtsummary.OnEnableStmtSummaryModified)
+
 	testleak.BeforeTest()
 
 	var err error
@@ -71,15 +75,12 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10))")
 
-	// Statement summary is disabled in default
+	// Statement summary is disabled by default
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 	tk.MustExec("insert into t values(1, 'a')")
 	tk.MustQuery("select * from performance_schema.events_statements_summary_by_digest").Check(testkit.Rows())
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	defer func() {
-		tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	}()
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
@@ -110,4 +111,19 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from performance_schema.events_statements_summary_by_digest
 		order by exec_count desc limit 1`,
 	).Check(testkit.Rows("test 4 4 insert into t values(1, 'a')"))
+
+	// Disable it again
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
+
+	// Create a new session to test
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	// This statement shouldn't be summarized
+	tk.MustQuery("select * from t where a=2")
+
+	// The table should be cleared
+	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest`,
+	).Check(testkit.Rows())
 }

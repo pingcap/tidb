@@ -17,12 +17,14 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -34,6 +36,7 @@ type testStmtSummarySuite struct {
 
 func (s *testStmtSummarySuite) SetUpSuite(c *C) {
 	s.ssMap = newStmtSummaryByDigestMap()
+	atomic.StoreInt32(&variable.EnableStmtSummary, 1)
 }
 
 func TestT(t *testing.T) {
@@ -313,4 +316,31 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	summary := value.(*stmtSummaryByDigest)
 	c.Assert(len(summary.normalizedSQL), Equals, int(maxSQLLength))
 	c.Assert(len(summary.sampleSQL), Equals, int(maxSQLLength))
+}
+
+// Test setting EnableStmtSummary to 0
+func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
+	s.ssMap.Clear()
+	OnEnableStmtSummaryModified("0")
+
+	stmtExecInfo1 := &StmtExecInfo{
+		SchemaName:    "schema_name",
+		OriginalSQL:   "original_sql1",
+		NormalizedSQL: "normalized_sql",
+		Digest:        "digest",
+		TotalLatency:  10000,
+		AffectedRows:  100,
+		SentRows:      100,
+		StartTime:     time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+	}
+
+	s.ssMap.AddStatement(stmtExecInfo1)
+	datums := s.ssMap.ToDatum()
+	c.Assert(len(datums), Equals, 0)
+
+	OnEnableStmtSummaryModified("1")
+
+	s.ssMap.AddStatement(stmtExecInfo1)
+	datums = s.ssMap.ToDatum()
+	c.Assert(len(datums), Equals, 1)
 }
