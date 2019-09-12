@@ -42,6 +42,7 @@ var (
 	_ PhysicalPlan = &PhysicalTableReader{}
 	_ PhysicalPlan = &PhysicalIndexReader{}
 	_ PhysicalPlan = &PhysicalIndexLookUpReader{}
+	_ PhysicalPlan = &PhysicalIndexMergeReader{}
 	_ PhysicalPlan = &PhysicalHashAgg{}
 	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
@@ -59,6 +60,21 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
+}
+
+// GetPhysicalReader returns PhysicalTableReader for logical TableGather.
+func (tg *TableGather) GetPhysicalReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+	reader := PhysicalTableReader{}.Init(tg.ctx, tg.blockOffset)
+	reader.stats = stats
+	reader.SetSchema(schema)
+	reader.childrenReqProps = props
+	return reader
+}
+
+// SetChildren overrides PhysicalPlan SetChildren interface.
+func (p *PhysicalTableReader) SetChildren(children ...PhysicalPlan) {
+	p.tablePlan = children[0]
+	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 }
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -85,6 +101,18 @@ type PhysicalIndexLookUpReader struct {
 	tablePlan  PhysicalPlan
 
 	ExtraHandleCol *expression.Column
+}
+
+// PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
+type PhysicalIndexMergeReader struct {
+	physicalSchemaProducer
+
+	// PartialPlans flats the partialPlans to construct executor pb.
+	PartialPlans [][]PhysicalPlan
+	// TablePlans flats the tablePlan to construct executor pb.
+	TablePlans   []PhysicalPlan
+	partialPlans []PhysicalPlan
+	tablePlan    PhysicalPlan
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -481,5 +509,5 @@ func BuildMergeJoinPlan(ctx sessionctx.Context, joinType JoinType, leftKeys, rig
 		LeftJoinKeys:  leftKeys,
 		RightJoinKeys: rightKeys,
 	}
-	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil)
+	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil, 0)
 }

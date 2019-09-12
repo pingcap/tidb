@@ -44,7 +44,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -179,6 +181,7 @@ func (a *recordSet) Close() error {
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.Ctx.GetSessionVars().PrevStmt = a.stmt.OriginText()
 	a.stmt.logAudit()
+	a.stmt.SummaryStmt()
 	return err
 }
 
@@ -257,6 +260,18 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
+			panic(r)
+		}
+		err = errors.Errorf("%v", r)
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.Text), zap.Stack("stack"))
+	}()
+
 	sctx := a.Ctx
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
@@ -531,7 +546,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		errStr := err.Error()
 		conflictCommitTS := extractConflictCommitTS(errStr)
 		if conflictCommitTS == 0 {
-			logutil.Logger(ctx).Warn("failed to extract conflictCommitTS when write conflicted")
+			logutil.Logger(ctx).Warn("failed to extract conflictCommitTS when write conflicted", zap.String("err", errStr))
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
 		logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
@@ -764,6 +779,27 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
+}
+
+// SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
+func (a *ExecStmt) SummaryStmt() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.InRestrictedSQL || atomic.LoadInt32(&variable.EnableStmtSummary) == 0 {
+		return
+	}
+	stmtCtx := sessVars.StmtCtx
+	normalizedSQL, digest := stmtCtx.SQLDigest()
+	costTime := time.Since(sessVars.StartTime)
+	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
+		SchemaName:    sessVars.CurrentDB,
+		OriginalSQL:   a.Text,
+		NormalizedSQL: normalizedSQL,
+		Digest:        digest,
+		TotalLatency:  uint64(costTime.Nanoseconds()),
+		AffectedRows:  stmtCtx.AffectedRows(),
+		SentRows:      0,
+		StartTime:     sessVars.StartTime,
+	})
 }
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:

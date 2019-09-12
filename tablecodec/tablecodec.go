@@ -560,6 +560,26 @@ func DecodeIndexKV(key, value []byte, colsLen int, pkStatus PrimaryKeyStatus) ([
 	return values, nil
 }
 
+// DecodeIndexHandle uses to decode the handle from index key/value.
+func DecodeIndexHandle(key, value []byte, colsLen int, pkTp *types.FieldType) (int64, error) {
+	_, b, err := CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		d, err := DecodeColumnValue(b, pkTp, nil)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return d.GetInt64(), nil
+
+	} else if len(value) >= 8 {
+		return DecodeIndexValueAsHandle(value)
+	}
+	// Should never execute to here.
+	return 0, errors.Errorf("no handle in index key: %v, value: %v", key, value)
+}
+
 // DecodeIndexValueAsHandle uses to decode index value as handle id.
 func DecodeIndexValueAsHandle(data []byte) (int64, error) {
 	var h int64
@@ -621,6 +641,14 @@ func GenTableRecordPrefix(tableID int64) kv.Key {
 func GenTableIndexPrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(tablePrefix)+8+len(indexPrefixSep))
 	return appendTableIndexPrefix(buf, tableID)
+}
+
+// IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
+// since the untouched index key/value is no need to commit.
+func IsUntouchedIndexKValue(k, v []byte) bool {
+	vLen := len(v)
+	return (len(k) > 11 && k[0] == 't' && k[10] == 'i') &&
+		((vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag)
 }
 
 // GenTablePrefix composes table record and index prefix: "t[tableID]".

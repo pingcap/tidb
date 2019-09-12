@@ -112,6 +112,7 @@ type selectResult struct {
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
 	copPlanIDs []fmt.Stringer
+	rootPlanID fmt.Stringer
 
 	memTracker *memory.Tracker
 }
@@ -265,7 +266,7 @@ func (r *selectResult) getSelectResp() error {
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
-		r.updateCopRuntimeStats(re.result.GetExecDetails().CalleeAddress)
+		r.updateCopRuntimeStats(re.result.GetExecDetails().CalleeAddress, re.result.RespTime())
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
@@ -276,7 +277,7 @@ func (r *selectResult) getSelectResp() error {
 	}
 }
 
-func (r *selectResult) updateCopRuntimeStats(callee string) {
+func (r *selectResult) updateCopRuntimeStats(callee string, respTime time.Duration) {
 	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
@@ -288,6 +289,7 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 		return
 	}
 
+	r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID.String(), respTime)
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {

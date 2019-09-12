@@ -757,12 +757,12 @@ func (s *testChunkSuite) TestGetRaw(c *check.C) {
 		col.AppendFloat32(float32(i))
 	}
 	it := NewIterator4Chunk(chk)
-	var i int64
+	var i int
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		f := float32(i)
 		b := (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
 		c.Assert(row.GetRaw(0), check.DeepEquals, b)
-		c.Assert(col.GetRaw(int(i)), check.DeepEquals, b)
+		c.Assert(col.GetRaw(i), check.DeepEquals, b)
 		i++
 	}
 
@@ -821,7 +821,7 @@ func BenchmarkDurationVec(b *testing.B) {
 
 	b.ResetTimer()
 	for k := 0; k < b.N; k++ {
-		result.ResizeDuration(1024, true)
+		result.ResizeGoDuration(1024, true)
 		for i := 0; i < 1024; i++ {
 			d1 := types.Duration{Duration: ds1[i]}
 			d2 := types.Duration{Duration: ds2[i]}
