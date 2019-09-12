@@ -73,185 +73,188 @@ const (
 	TypeTableGather = "TableGather"
 )
 
+// plan id.
 const (
-	TypeSelID int = iota + 1
-	TypeSetID
-	TypeProjID
-	TypeAggID
-	TypeStreamAggID
-	TypeHashAggID
-	TypeShowID
-	TypeJoinID
-	TypeUnionID
-	TypeTableScanID
-	TypeMemTableScanID
-	TypeUnionScanID
-	TypeIdxScanID
-	TypeSortID
-	TypeTopNID
-	TypeLimitID
-	TypeHashLeftJoinID
-	TypeHashRightJoinID
-	TypeMergeJoinID
-	TypeIndexJoinID
-	TypeIndexMergeJoinID
-	TypeApplyID
-	TypeMaxOneRowID
-	TypeExistsID
-	TypeDualID
-	TypeLockID
-	TypeInsertID
-	TypeUpdateID
-	TypeDeleteID
-	TypeIndexLookUpID
-	TypeTableReaderID
-	TypeIndexReaderID
-	TypeWindowID
+	typeSelID int = iota + 1
+	typeSetID
+	typeProjID
+	typeAggID
+	typeStreamAggID
+	typeHashAggID
+	typeShowID
+	typeJoinID
+	typeUnionID
+	typeTableScanID
+	typeMemTableScanID
+	typeUnionScanID
+	typeIdxScanID
+	typeSortID
+	typeTopNID
+	typeLimitID
+	typeHashLeftJoinID
+	typeHashRightJoinID
+	typeMergeJoinID
+	typeIndexJoinID
+	typeIndexMergeJoinID
+	typeApplyID
+	typeMaxOneRowID
+	typeExistsID
+	typeDualID
+	typeLockID
+	typeInsertID
+	typeUpdateID
+	typeDeleteID
+	typeIndexLookUpID
+	typeTableReaderID
+	typeIndexReaderID
+	typeWindowID
 )
 
+// TypeStringToPhysicalID converts the plan type string to plan id.
 func TypeStringToPhysicalID(tp string) int {
 	switch tp {
 	case TypeSel:
-		return TypeSelID
+		return typeSelID
 	case TypeSet:
-		return TypeSetID
+		return typeSetID
 	case TypeProj:
-		return TypeProjID
+		return typeProjID
 	case TypeAgg:
-		return TypeAggID
+		return typeAggID
 	case TypeStreamAgg:
-		return TypeStreamAggID
+		return typeStreamAggID
 	case TypeHashAgg:
-		return TypeHashAggID
+		return typeHashAggID
 	case TypeShow:
-		return TypeShowID
+		return typeShowID
 	case TypeJoin:
-		return TypeJoinID
+		return typeJoinID
 	case TypeUnion:
-		return TypeUnionID
+		return typeUnionID
 	case TypeTableScan:
-		return TypeTableScanID
+		return typeTableScanID
 	case TypeMemTableScan:
-		return TypeMemTableScanID
+		return typeMemTableScanID
 	case TypeUnionScan:
-		return TypeUnionScanID
+		return typeUnionScanID
 	case TypeIdxScan:
-		return TypeIdxScanID
+		return typeIdxScanID
 	case TypeSort:
-		return TypeSortID
+		return typeSortID
 	case TypeTopN:
-		return TypeTopNID
+		return typeTopNID
 	case TypeLimit:
-		return TypeLimitID
+		return typeLimitID
 	case TypeHashLeftJoin:
-		return TypeHashLeftJoinID
+		return typeHashLeftJoinID
 	case TypeHashRightJoin:
-		return TypeHashRightJoinID
+		return typeHashRightJoinID
 	case TypeMergeJoin:
-		return TypeMergeJoinID
+		return typeMergeJoinID
 	case TypeIndexJoin:
-		return TypeIndexJoinID
+		return typeIndexJoinID
 	case TypeIndexMergeJoin:
-		return TypeIndexMergeJoinID
+		return typeIndexMergeJoinID
 	case TypeApply:
-		return TypeApplyID
+		return typeApplyID
 	case TypeMaxOneRow:
-		return TypeMaxOneRowID
+		return typeMaxOneRowID
 	case TypeExists:
-		return TypeExistsID
+		return typeExistsID
 	case TypeDual:
-		return TypeDualID
+		return typeDualID
 	case TypeLock:
-		return TypeLockID
+		return typeLockID
 	case TypeInsert:
-		return TypeInsertID
+		return typeInsertID
 	case TypeUpdate:
-		return TypeUpdateID
+		return typeUpdateID
 	case TypeDelete:
-		return TypeDeleteID
+		return typeDeleteID
 	case TypeIndexLookUp:
-		return TypeIndexLookUpID
+		return typeIndexLookUpID
 	case TypeTableReader:
-		return TypeTableReaderID
+		return typeTableReaderID
 	case TypeIndexReader:
-		return TypeIndexReaderID
+		return typeIndexReaderID
 	case TypeWindow:
-		return TypeWindowID
+		return typeWindowID
 	}
 	// Should never reach here.
 	return 0
 }
 
+// PhysicalIDToTypeString converts the plan id to plan type string.
 func PhysicalIDToTypeString(id int) string {
 	switch id {
-	case TypeSelID:
+	case typeSelID:
 		return TypeSel
-	case TypeSetID:
+	case typeSetID:
 		return TypeSet
-	case TypeProjID:
+	case typeProjID:
 		return TypeProj
-	case TypeAggID:
+	case typeAggID:
 		return TypeAgg
-	case TypeStreamAggID:
+	case typeStreamAggID:
 		return TypeStreamAgg
-	case TypeHashAggID:
+	case typeHashAggID:
 		return TypeHashAgg
-	case TypeShowID:
+	case typeShowID:
 		return TypeShow
-	case TypeJoinID:
+	case typeJoinID:
 		return TypeJoin
-	case TypeUnionID:
+	case typeUnionID:
 		return TypeUnion
-	case TypeTableScanID:
+	case typeTableScanID:
 		return TypeTableScan
-	case TypeMemTableScanID:
+	case typeMemTableScanID:
 		return TypeMemTableScan
-	case TypeUnionScanID:
+	case typeUnionScanID:
 		return TypeUnionScan
-	case TypeIdxScanID:
+	case typeIdxScanID:
 		return TypeIdxScan
-	case TypeSortID:
+	case typeSortID:
 		return TypeSort
-	case TypeTopNID:
+	case typeTopNID:
 		return TypeTopN
-	case TypeLimitID:
+	case typeLimitID:
 		return TypeLimit
-	case TypeHashLeftJoinID:
+	case typeHashLeftJoinID:
 		return TypeHashLeftJoin
-	case TypeHashRightJoinID:
+	case typeHashRightJoinID:
 		return TypeHashRightJoin
-	case TypeMergeJoinID:
+	case typeMergeJoinID:
 		return TypeMergeJoin
-	case TypeIndexJoinID:
+	case typeIndexJoinID:
 		return TypeIndexJoin
-	case TypeIndexMergeJoinID:
+	case typeIndexMergeJoinID:
 		return TypeIndexMergeJoin
-	case TypeApplyID:
+	case typeApplyID:
 		return TypeApply
-	case TypeMaxOneRowID:
+	case typeMaxOneRowID:
 		return TypeMaxOneRow
-	case TypeExistsID:
+	case typeExistsID:
 		return TypeExists
-	case TypeDualID:
+	case typeDualID:
 		return TypeDual
-	case TypeLockID:
+	case typeLockID:
 		return TypeLock
-	case TypeInsertID:
+	case typeInsertID:
 		return TypeInsert
-	case TypeUpdateID:
+	case typeUpdateID:
 		return TypeUpdate
-	case TypeDeleteID:
+	case typeDeleteID:
 		return TypeDelete
-	case TypeIndexLookUpID:
+	case typeIndexLookUpID:
 		return TypeIndexLookUp
-	case TypeTableReaderID:
+	case typeTableReaderID:
 		return TypeTableReader
-	case TypeIndexReaderID:
+	case typeIndexReaderID:
 		return TypeIndexReader
-	case TypeWindowID:
+	case typeWindowID:
 		return TypeWindow
 	}
 
 	// Should never reach here.
-	return "unknowPlanID" + strconv.Itoa(id)
+	return "UnknownPlanID" + strconv.Itoa(id)
 }

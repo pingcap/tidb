@@ -31,52 +31,35 @@ const (
 )
 
 const (
-	RootTaskType = "0"
-	CopTaskType  = "1"
+	rootTaskType = "0"
+	copTaskType  = "1"
 )
 
 const (
-	LineBreaker    = '\n'
-	LineBreakerStr = "\n"
-	Separator      = '\t'
-	SeparatorStr   = "\t"
+	lineBreaker    = '\n'
+	lineBreakerStr = "\n"
+	separator      = '\t'
+	separatorStr   = "\t"
 )
-
-func encodeID(planType string, id int) string {
-	planID := TypeStringToPhysicalID(planType)
-	return strconv.Itoa(planID) + "_" + strconv.Itoa(id)
-}
-
-func EncodePlanNode(depth, pid int, planType string, taskType string, rowCount float64, explainInfo string, buf *bytes.Buffer) {
-	buf.WriteString(strconv.Itoa(depth))
-	buf.WriteByte(Separator)
-	buf.WriteString(encodeID(planType, pid))
-	buf.WriteByte(Separator)
-	buf.WriteString(taskType)
-	buf.WriteByte(Separator)
-	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
-	buf.WriteByte(Separator)
-	buf.WriteString(explainInfo)
-	buf.WriteByte(LineBreaker)
-}
 
 var decoderPool = sync.Pool{
 	New: func() interface{} {
-		return &PlanDecoder{}
+		return &planDecoder{}
 	},
 }
 
+// DecodePlan use to decode the string to plan tree.
 func DecodePlan(planString string) string {
-	pd := decoderPool.Get().(*PlanDecoder)
+	pd := decoderPool.Get().(*planDecoder)
 	defer decoderPool.Put(pd)
-	str, err := pd.Decode(planString)
+	str, err := pd.decode(planString)
 	if err != nil {
 		terror.Log(err)
 	}
 	return str
 }
 
-type PlanDecoder struct {
+type planDecoder struct {
 	buf       bytes.Buffer
 	depths    []int
 	indents   [][]rune
@@ -88,13 +71,13 @@ type planInfo struct {
 	fields []string
 }
 
-func (pn *PlanDecoder) Decode(planString string) (string, error) {
+func (pn *planDecoder) decode(planString string) (string, error) {
 	str, err := decompress(planString)
 	if err != nil {
 		return "", err
 	}
 
-	nodes := strings.Split(str, LineBreakerStr)
+	nodes := strings.Split(str, lineBreakerStr)
 	if len(pn.depths) < len(nodes) {
 		pn.depths = make([]int, 0, len(nodes))
 		pn.planInfos = make([]*planInfo, 0, len(nodes))
@@ -125,12 +108,12 @@ func (pn *PlanDecoder) Decode(planString string) (string, error) {
 	pn.buf.Reset()
 	for i, p := range planInfos {
 		if i > 0 {
-			pn.buf.WriteByte(LineBreaker)
+			pn.buf.WriteByte(lineBreaker)
 		}
 		pn.buf.WriteString(string(pn.indents[i]))
 		for j := 0; j < len(p.fields); j++ {
 			if j > 0 {
-				pn.buf.WriteByte(Separator)
+				pn.buf.WriteByte(separator)
 			}
 			pn.buf.WriteString(p.fields[j])
 		}
@@ -139,7 +122,7 @@ func (pn *PlanDecoder) Decode(planString string) (string, error) {
 	return pn.buf.String(), nil
 }
 
-func (pn *PlanDecoder) initPlanTreeIndents() {
+func (pn *planDecoder) initPlanTreeIndents() {
 	pn.indents = pn.indents[:0]
 	for i := 0; i < len(pn.depths); i++ {
 		indent := make([]rune, 2*pn.depths[i])
@@ -155,8 +138,31 @@ func (pn *PlanDecoder) initPlanTreeIndents() {
 	}
 }
 
+func (pn *planDecoder) findParentIndex(childIndex int) int {
+	for i := childIndex - 1; i > 0; i-- {
+		if pn.depths[i]+1 == pn.depths[childIndex] {
+			return i
+		}
+	}
+	return 0
+}
+func (pn *planDecoder) fillIndent(parentIndex, childIndex int) {
+	depth := pn.depths[childIndex]
+	if depth == 0 {
+		return
+	}
+	idx := depth*2 - 2
+	for i := childIndex - 1; i > parentIndex; i-- {
+		if pn.indents[i][idx] == TreeLastNode {
+			pn.indents[i][idx] = TreeMiddleNode
+			break
+		}
+		pn.indents[i][idx] = TreeBody
+	}
+}
+
 func decodePlanInfo(str string) (*planInfo, error) {
-	values := strings.Split(str, SeparatorStr)
+	values := strings.Split(str, separatorStr)
 	if len(values) < 2 {
 		return nil, nil
 	}
@@ -175,7 +181,7 @@ func decodePlanInfo(str string) (*planInfo, error) {
 			p.depth = depth
 		// plan ID
 		case 1:
-			ids := strings.Split(v, "_")
+			ids := strings.Split(v, idSeparator)
 			if len(ids) != 2 {
 				return nil, errors.Errorf("decode plan: %v error, invalid plan id: %v", str, v)
 			}
@@ -183,10 +189,10 @@ func decodePlanInfo(str string) (*planInfo, error) {
 			if err != err {
 				return nil, errors.Errorf("decode plan: %v, plan id: %v, error: %v", str, v, err)
 			}
-			p.fields = append(p.fields, PhysicalIDToTypeString(planID)+"_"+ids[1])
+			p.fields = append(p.fields, PhysicalIDToTypeString(planID)+idSeparator+ids[1])
 		// task type
 		case 2:
-			if v == RootTaskType {
+			if v == rootTaskType {
 				p.fields = append(p.fields, "root")
 			} else {
 				p.fields = append(p.fields, "cop")
@@ -198,29 +204,32 @@ func decodePlanInfo(str string) (*planInfo, error) {
 	return p, nil
 }
 
-func (pn *PlanDecoder) findParentIndex(childIndex int) int {
-	for i := childIndex - 1; i > 0; i-- {
-		if pn.depths[i]+1 == pn.depths[childIndex] {
-			return i
-		}
+// EncodePlanNode is used to encode the plan to a string.
+func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float64, explainInfo string, buf *bytes.Buffer) {
+	buf.WriteString(strconv.Itoa(depth))
+	buf.WriteByte(separator)
+	buf.WriteString(encodeID(planType, pid))
+	buf.WriteByte(separator)
+	if isRoot {
+		buf.WriteString(encodeID(rootTaskType, pid))
+	} else {
+		buf.WriteString(encodeID(copTaskType, pid))
 	}
-	return 0
-}
-func (pn *PlanDecoder) fillIndent(parentIndex, childIndex int) {
-	depth := pn.depths[childIndex]
-	if depth == 0 {
-		return
-	}
-	idx := depth*2 - 2
-	for i := childIndex - 1; i > parentIndex; i-- {
-		if pn.indents[i][idx] == TreeLastNode {
-			pn.indents[i][idx] = TreeMiddleNode
-			break
-		}
-		pn.indents[i][idx] = TreeBody
-	}
+	buf.WriteByte(separator)
+	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
+	buf.WriteByte(separator)
+	buf.WriteString(explainInfo)
+	buf.WriteByte(lineBreaker)
 }
 
+const idSeparator = "_"
+
+func encodeID(planType string, id int) string {
+	planID := TypeStringToPhysicalID(planType)
+	return strconv.Itoa(planID) + idSeparator + strconv.Itoa(id)
+}
+
+// Compress is used to compress the input with zlib.
 func Compress(input []byte) (string, error) {
 	var in bytes.Buffer
 	w, err := zlib.NewWriterLevel(&in, zlib.BestCompression)

@@ -10,29 +10,27 @@ import (
 
 var encoderPool = sync.Pool{
 	New: func() interface{} {
-		return &PlanEncoder{}
+		return &planEncoder{}
 	},
 }
 
-type PlanEncoder struct {
+type planEncoder struct {
 	buf          bytes.Buffer
 	encodedPlans map[int]bool
 }
 
+// EncodePlan is used to encodePlan the plan to the plan tree with compressing.
 func EncodePlan(p PhysicalPlan) string {
-	pn := encoderPool.Get().(*PlanEncoder)
+	pn := encoderPool.Get().(*planEncoder)
 	defer encoderPool.Put(pn)
-	return pn.Encode(p)
+	return pn.encodePlanTree(p)
 }
 
-func (pn *PlanEncoder) Encode(p PhysicalPlan) string {
+func (pn *planEncoder) encodePlanTree(p PhysicalPlan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
-	pn.encode(p, RootTaskType, 0)
+	pn.encodePlan(p, true, 0)
 	bs := pn.buf.Bytes()
-	if len(bs) > 0 && bs[len(bs)-1] == LineBreaker {
-		bs = bs[:len(bs)-1]
-	}
 	str, err := Compress(bs)
 	if err != nil {
 		terror.Log(err)
@@ -40,8 +38,8 @@ func (pn *PlanEncoder) Encode(p PhysicalPlan) string {
 	return str
 }
 
-func (pn *PlanEncoder) encode(p PhysicalPlan, taskType string, depth int) {
-	EncodePlanNode(depth, p.ID(), p.TP(), taskType, p.statsInfo().RowCount, p.ExplainInfo(), &pn.buf)
+func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
+	EncodePlanNode(depth, p.ID(), p.TP(), isRoot, p.statsInfo().RowCount, p.ExplainInfo(), &pn.buf)
 	pn.encodedPlans[p.ID()] = true
 
 	depth++
@@ -49,15 +47,15 @@ func (pn *PlanEncoder) encode(p PhysicalPlan, taskType string, depth int) {
 		if pn.encodedPlans[child.ID()] {
 			continue
 		}
-		pn.encode(child.(PhysicalPlan), taskType, depth)
+		pn.encodePlan(child.(PhysicalPlan), isRoot, depth)
 	}
 	switch copPlan := p.(type) {
 	case *PhysicalTableReader:
-		pn.encode(copPlan.tablePlan, CopTaskType, depth)
+		pn.encodePlan(copPlan.tablePlan, false, depth)
 	case *PhysicalIndexReader:
-		pn.encode(copPlan.indexPlan, CopTaskType, depth)
+		pn.encodePlan(copPlan.indexPlan, false, depth)
 	case *PhysicalIndexLookUpReader:
-		pn.encode(copPlan.indexPlan, CopTaskType, depth)
-		pn.encode(copPlan.tablePlan, CopTaskType, depth)
+		pn.encodePlan(copPlan.indexPlan, false, depth)
+		pn.encodePlan(copPlan.tablePlan, false, depth)
 	}
 }
