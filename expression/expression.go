@@ -249,10 +249,9 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 
 		isEQCondFromIn := IsEQCondFromIn(expr)
 		hasUnsignedFlag := mysql.HasUnsignedFlag(expr.GetType().Flag)
-		isNull, d, j := false, types.Datum{}, 0
+		d, j := types.Datum{}, 0
 		for i := range sel {
-			isNull = buf.IsNull(i)
-			if isNull {
+			if buf.IsNull(i) {
 				d.SetValue(nil)
 			} else {
 				switch eType {
