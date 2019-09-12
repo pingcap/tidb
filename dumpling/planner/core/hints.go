@@ -234,14 +234,14 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 		tbl := pp.TablePlans[0].(*PhysicalTableScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   generateQBName(nodeType, pp.blockOffset),
-			HintName: model.NewCIStr(HintIndex),
+			HintName: model.NewCIStr(HintUseIndex),
 			Tables:   []ast.HintTable{{TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 		})
 	case *PhysicalIndexLookUpReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   generateQBName(nodeType, pp.blockOffset),
-			HintName: model.NewCIStr(HintIndex),
+			HintName: model.NewCIStr(HintUseIndex),
 			Tables:   []ast.HintTable{{TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
@@ -249,7 +249,7 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   generateQBName(nodeType, pp.blockOffset),
-			HintName: model.NewCIStr(HintIndex),
+			HintName: model.NewCIStr(HintUseIndex),
 			Tables:   []ast.HintTable{{TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
