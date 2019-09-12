@@ -176,12 +176,12 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		err = parseStmtArgs(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues)
 		stmt.Reset()
 		if err != nil {
-			return errors.WithMessage(err, cc.preparedStmt2String(stmtID))
+			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
 	rs, err := stmt.Execute(ctx, args...)
 	if err != nil {
-		return errors.WithMessage(err, cc.preparedStmt2String(stmtID))
+		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
 	if rs == nil {
 		return cc.writeOK()
@@ -201,7 +201,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	}
 	err = cc.writeResultset(ctx, rs, true, 0, 0)
 	if err != nil {
-		return errors.WithMessage(err, cc.preparedStmt2String(stmtID))
+		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
 	return nil
 }
@@ -220,7 +220,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
-		return errors.WithMessage(mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
 	}
 	sql := ""
@@ -230,13 +230,14 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute, 0)
 	rs := stmt.GetResultSet()
 	if rs == nil {
-		return errors.WithMessage(mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
 	err = cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
+	err = errors.New("12121")
 	if err != nil {
-		return errors.WithMessage(err, cc.preparedStmt2String(stmtID))
+		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
 	return nil
 }
