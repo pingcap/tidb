@@ -753,6 +753,70 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestAggToCopHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "insert into mysql.opt_rule_blacklist values(\"aggregation_eliminate\")")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin reload opt_rule_blacklist")
+	c.Assert(err, IsNil)
+
+	tests := []struct {
+		sql     string
+		best    string
+		warning string
+	}{
+		{
+			sql:  "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from t group by a",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from t group by b",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from t group by a",
+			best:    "TableReader(Table(t)->HashAgg)->HashAgg->HashAgg",
+			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
+		},
+		{
+			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1, t t2 where t1.a = t2.b group by t1.a",
+			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->Projection->HashAgg",
+			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
+		},
+	}
+	ctx := context.Background()
+	for i, test := range tests {
+		comment := Commentf("case:%v sql:%s", i, test)
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+
+		stmt, err := s.ParseOneStmt(test.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		c.Assert(err, IsNil)
+		c.Assert(core.ToString(p), Equals, test.best, comment)
+
+		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+		if test.warning == "" {
+			c.Assert(len(warnings), Equals, 0, comment)
+		} else {
+			c.Assert(len(warnings), Equals, 1, comment)
+			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
+			c.Assert(warnings[0].Err.Error(), Equals, test.warning, comment)
+		}
+	}
+}
+
 func (s *testPlanSuite) TestHintAlias(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -824,6 +888,8 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	ctx := context.Background()
 	for i, test := range input {
 		comment := Commentf("case:%v sql:%s", i, test)
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 

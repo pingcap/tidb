@@ -442,7 +442,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
 	plan4Agg := LogicalAggregation{}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
-		plan4Agg.preferAggType = hint.preferAggType
+		plan4Agg.aggHints = hint.aggHints
 	}
 	plan4Agg.SetChildren(np)
 
@@ -571,7 +571,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
-		plan4Agg.preferAggType = hint.preferAggType
+		plan4Agg.aggHints = hint.aggHints
 	}
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
@@ -608,7 +608,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
-		plan4Agg.preferAggType = hint.preferAggType
+		plan4Agg.aggHints = hint.aggHints
 	}
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
