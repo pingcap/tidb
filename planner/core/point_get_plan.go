@@ -160,7 +160,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				tableDual := PhysicalTableDual{}
 				tableDual.names = fp.outputNames
 				tableDual.SetSchema(fp.Schema())
-				return tableDual.Init(ctx, &property.StatsInfo{})
+				return tableDual.Init(ctx, &property.StatsInfo{}, 0)
 			}
 			if x.LockTp == ast.SelectLockForUpdate {
 				// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
@@ -269,7 +269,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) P
 
 	ua := PhysicalUnionAll{
 		IsPointGetUnion: true,
-	}.Init(ctx, children[0].statsInfo().Scale(float64(len(children))), chReqProps...)
+	}.Init(ctx, children[0].statsInfo().Scale(float64(len(children))), 0, chReqProps...)
 	ua.SetSchema(children[0].Schema())
 	ua.SetChildren(children...)
 	return ua
@@ -382,7 +382,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 
 func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		basePlan:    newBasePlan(ctx, "Point_Get"),
+		basePlan:    newBasePlan(ctx, "Point_Get", 0),
 		schema:      schema,
 		TblInfo:     tbl,
 		outputNames: names,
@@ -612,7 +612,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	if fastSelect.IsTableDual {
 		return PhysicalTableDual{
 			names: fastSelect.outputNames,
-		}.Init(ctx, &property.StatsInfo{})
+		}.Init(ctx, &property.StatsInfo{}, 0)
 	}
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true
@@ -691,7 +691,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	if fastSelect.IsTableDual {
 		return PhysicalTableDual{
 			names: fastSelect.outputNames,
-		}.Init(ctx, &property.StatsInfo{})
+		}.Init(ctx, &property.StatsInfo{}, 0)
 	}
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true
