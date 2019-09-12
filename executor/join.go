@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"sync"
 	"sync/atomic"
 
@@ -334,8 +333,6 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 	hCtx := &hashContext{
 		allTypes:  retTypes(e.outerExec),
 		keyColIdx: outerKeyColIdx,
-		h:         fnv.New64(),
-		buf:       make([]byte, 1),
 	}
 	for ok := true; ok; {
 		if e.finished.Load().(bool) {
@@ -378,7 +375,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 	iter := chunk.NewIterator4Slice(innerRows)
 	hasMatch, hasNull := false, false
 	for iter.Begin(); iter.Current() != iter.End(); {
-		matched, isNull, err := e.joiners[workerID].tryToMatch(outerRow, iter, joinResult.chk)
+		matched, isNull, err := e.joiners[workerID].tryToMatchInners(outerRow, iter, joinResult.chk)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -506,8 +503,6 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 	hCtx := &hashContext{
 		allTypes:  allTypes,
 		keyColIdx: innerKeyColIdx,
-		h:         fnv.New64(),
-		buf:       make([]byte, 1),
 	}
 	initList := chunk.NewList(allTypes, e.initCap, e.maxChunkSize)
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx, initList)
@@ -673,7 +668,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 			e.innerIter.Begin()
 		}
 
-		matched, isNull, err := e.joiner.tryToMatch(*e.outerRow, e.innerIter, req)
+		matched, isNull, err := e.joiner.tryToMatchInners(*e.outerRow, e.innerIter, req)
 		e.hasMatch = e.hasMatch || matched
 		e.hasNull = e.hasNull || isNull
 
