@@ -33,6 +33,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
 	github.com/pingcap/failpoint v0.0.0-20191029060244-12f4ac2fd11d
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
+<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20200317043902-2838e21ca222
 	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
 	github.com/pingcap/parser v3.1.0-beta.1.0.20200318061433-f0b8f6cdca0d+incompatible
@@ -41,6 +42,18 @@ require (
 	github.com/pingcap/tipb v0.0.0-20200401093201-cc8b75c53383
 	github.com/prometheus/client_golang v1.0.0
 	github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4
+=======
+	github.com/pingcap/kvproto v0.0.0-20190904075355-9a1bd6a31da2
+	github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd
+	github.com/pingcap/parser v0.0.0-20190912032624-978b8272c04e
+	github.com/pingcap/pd v0.0.0-20190712044914-75a1f9f3062b
+	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
+	github.com/pingcap/tipb v0.0.0-20190806070524-16909e03435e
+	github.com/prometheus/client_golang v0.9.0
+	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
+	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
+	github.com/prometheus/procfs v0.0.0-20181005140218-185b4288413d // indirect
+>>>>>>> cbf4ddc... *: improve the format of the error log (#12155)
 	github.com/remyoudompheng/bigfft v0.0.0-20190512091148-babf20351dd7 // indirect
 	github.com/shirou/gopsutil v2.19.10+incompatible
 	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect
