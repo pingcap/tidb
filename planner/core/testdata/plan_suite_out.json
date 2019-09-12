@@ -896,7 +896,7 @@
       },
       {
         "SQL": "select max(a), max(c), min(f) from t",
-        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]]->Limit, Table(t))->Limit->StreamAgg}->IndexLookUp(Index(t.f)[[NULL,+inf]]->Limit, Table(t))->Limit->StreamAgg}"
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->StreamAgg}->IndexReader(Index(t.f)[[NULL,+inf]]->Limit)->Limit->StreamAgg}"
       },
       {
         "SQL": "select max(a), max(b) from t",

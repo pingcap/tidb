@@ -14,6 +14,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/parser/model"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -95,12 +96,25 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 	switch p := plan.(type) {
 	case *LogicalSelection:
-		sel := LogicalSelection{Conditions: p.Conditions}.Init(p.ctx)
+		newConditions := make([]expression.Expression, len(p.Conditions))
+		copy(newConditions, p.Conditions)
+		sel := LogicalSelection{Conditions: newConditions}.Init(p.ctx)
 		sel.SetChildren(a.cloneSubPlans(p.children[0]))
 		return sel
 	case *DataSource:
+		// Quick clone a DataSource.
+		// ReadOnly fields uses a shallow copy, while the fields which will be overwritten must use a deep copy.
 		newDs := *p
-		newDs.self = &newDs
+		newDs.baseLogicalPlan = newBaseLogicalPlan(p.ctx, p.tp, &newDs)
+		newDs.schema = p.schema.Clone()
+		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
+		copy(newDs.Columns, p.Columns)
+		newAccessPaths := make([]*accessPath, 0, len(p.possibleAccessPaths))
+		for _, path := range p.possibleAccessPaths {
+			newPath := *path
+			newAccessPaths = append(newAccessPaths, &newPath)
+		}
+		newDs.possibleAccessPaths = newAccessPaths
 		return &newDs
 	}
 	// This won't happen, because we have checked the subtree.
@@ -129,6 +143,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) 
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.ctx)
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
+		newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]})
 		aggs = append(aggs, newAgg)
 	}
 	return aggs, true
