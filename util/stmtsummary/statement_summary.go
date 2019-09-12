@@ -220,12 +220,11 @@ func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 }
 
 // OnEnableStmtSummaryModified is triggered once EnableStmtSummary is modified.
-func OnEnableStmtSummaryModified(newValue string) error {
+func OnEnableStmtSummaryModified(newValue string) {
 	if variable.TiDBOptOn(newValue) {
 		atomic.StoreInt32(&variable.EnableStmtSummary, 1)
 	} else {
 		atomic.StoreInt32(&variable.EnableStmtSummary, 0)
 		StmtSummaryByDigestMap.Clear()
 	}
-	return nil
 }

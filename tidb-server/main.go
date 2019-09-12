@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/signal"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
@@ -511,8 +510,6 @@ func setGlobalVars() {
 	variable.SysVars[variable.Socket].Value = cfg.Socket
 	variable.SysVars[variable.DataDir].Value = cfg.Path
 	variable.SysVars[variable.TiDBSlowQueryFile].Value = cfg.Log.SlowQueryFile
-
-	variable.RegisterGlobalSysVarObserver(variable.TiDBEnableStmtSummary, stmtsummary.OnEnableStmtSummaryModified)
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)

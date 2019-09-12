@@ -20,9 +20,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -40,8 +38,6 @@ type testTableSuite struct {
 }
 
 func (s *testTableSuite) SetUpSuite(c *C) {
-	variable.RegisterGlobalSysVarObserver(variable.TiDBEnableStmtSummary, stmtsummary.OnEnableStmtSummaryModified)
-
 	testleak.BeforeTest()
 
 	var err error

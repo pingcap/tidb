@@ -1776,12 +1776,6 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 				return err
 			}
 		}
-		if !succ {
-			err = variable.NotifyGlobalSysVarModify(varName, varVal)
-			if err != nil {
-				return err
-			}
-		}
 	}
 
 	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
