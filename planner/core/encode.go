@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/parser/terror"
-	. "github.com/pingcap/tidb/util/plan"
+	"github.com/pingcap/tidb/planner/codec"
 )
 
 var encoderPool = sync.Pool{
@@ -31,7 +31,7 @@ func (pn *planEncoder) encodePlanTree(p PhysicalPlan) string {
 	pn.buf.Reset()
 	pn.encodePlan(p, true, 0)
 	bs := pn.buf.Bytes()
-	str, err := Compress(bs)
+	str, err := codec.Compress(bs)
 	if err != nil {
 		terror.Log(err)
 	}
@@ -39,7 +39,7 @@ func (pn *planEncoder) encodePlanTree(p PhysicalPlan) string {
 }
 
 func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
-	EncodePlanNode(depth, p.ID(), p.TP(), isRoot, p.statsInfo().RowCount, p.ExplainInfo(), &pn.buf)
+	codec.EncodePlanNode(depth, p.ID(), p.TP(), isRoot, p.statsInfo().RowCount, p.ExplainInfo(), &pn.buf)
 	pn.encodedPlans[p.ID()] = true
 
 	depth++

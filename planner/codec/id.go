@@ -1,4 +1,4 @@
-package plan
+package codec
 
 import "strconv"
 

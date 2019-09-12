@@ -1,4 +1,4 @@
-package plan
+package codec
 
 import (
 	"bytes"
@@ -211,9 +211,9 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 	buf.WriteString(encodeID(planType, pid))
 	buf.WriteByte(separator)
 	if isRoot {
-		buf.WriteString(encodeID(rootTaskType, pid))
+		buf.WriteString(rootTaskType)
 	} else {
-		buf.WriteString(encodeID(copTaskType, pid))
+		buf.WriteString(copTaskType)
 	}
 	buf.WriteByte(separator)
 	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))

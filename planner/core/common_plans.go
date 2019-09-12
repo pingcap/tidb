@@ -27,13 +27,13 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/planner/codec"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
-	. "github.com/pingcap/tidb/util/plan"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -662,7 +662,7 @@ func (e *Explain) prettyIdentifier(id, indent string, isLastChild bool) string {
 
 	indentBytes := []rune(indent)
 	for i := len(indentBytes) - 1; i >= 0; i-- {
-		if indentBytes[i] != TreeBody {
+		if indentBytes[i] != codec.TreeBody {
 			continue
 		}
 
@@ -671,35 +671,35 @@ func (e *Explain) prettyIdentifier(id, indent string, isLastChild bool) string {
 		// 1. TreeLastNode, if this operator is the last child.
 		// 2. TreeMiddleNode, if this operator is not the last child..
 		if isLastChild {
-			indentBytes[i] = TreeLastNode
+			indentBytes[i] = codec.TreeLastNode
 		} else {
-			indentBytes[i] = TreeMiddleNode
+			indentBytes[i] = codec.TreeMiddleNode
 		}
 		break
 	}
 
 	// Replace the TreeGap between the TreeBody and the node to a
 	// TreeNodeIdentifier.
-	indentBytes[len(indentBytes)-1] = TreeNodeIdentifier
+	indentBytes[len(indentBytes)-1] = codec.TreeNodeIdentifier
 	return string(indentBytes) + id
 }
 
 func (e *Explain) getIndent4Child(indent string, isLastChild bool) string {
 	if !isLastChild {
-		return string(append([]rune(indent), TreeBody, TreeGap))
+		return string(append([]rune(indent), codec.TreeBody, codec.TreeGap))
 	}
 
 	// If the current node is the last node of the current operator tree, we
 	// need to end this sub-tree by changing the closest TreeBody to a TreeGap.
 	indentBytes := []rune(indent)
 	for i := len(indentBytes) - 1; i >= 0; i-- {
-		if indentBytes[i] == TreeBody {
-			indentBytes[i] = TreeGap
+		if indentBytes[i] == codec.TreeBody {
+			indentBytes[i] = codec.TreeGap
 			break
 		}
 	}
 
-	return string(append(indentBytes, TreeBody, TreeGap))
+	return string(append(indentBytes, codec.TreeBody, codec.TreeGap))
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
