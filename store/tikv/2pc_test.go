@@ -542,6 +542,16 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	// When the CheckTxnStatus function is available, update getLockInfo and uncomment here.
 	// lockInfo2 := s.getLockInfo(c, key2)
 	// c.Assert(lockInfo2.LockTtl, Equals, lockInfo.LockTtl)
+
+	// Check primary lock TTL is auto increasing while the pessimistic txn is ongoing.
+	for i := 0; i < 50; i++ {
+		lockInfoNew := s.getLockInfo(c, key)
+		if lockInfoNew.LockTtl > lockInfo.LockTtl {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	c.Assert(false, IsTrue, Commentf("update pessimistic ttl fail"))
 }
 
 func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
