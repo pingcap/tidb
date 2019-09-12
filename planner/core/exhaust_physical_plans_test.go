@@ -40,8 +40,8 @@ func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Sche
 
 func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 	s.ctx.GetSessionVars().PlanID = -1
-	joinNode := LogicalJoin{}.Init(s.ctx)
-	dataSourceNode := DataSource{}.Init(s.ctx)
+	joinNode := LogicalJoin{}.Init(s.ctx, 0)
+	dataSourceNode := DataSource{}.Init(s.ctx, 0)
 	dsSchema := expression.NewSchema()
 	dsSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),

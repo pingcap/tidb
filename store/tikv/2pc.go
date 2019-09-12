@@ -211,6 +211,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
+			if tablecodec.IsUntouchedIndexKValue(k, v) {
+				return nil
+			}
 			op := pb.Op_Put
 			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
 				op = pb.Op_Insert
@@ -1049,7 +1052,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 				zap.Uint64("txnStartTS", c.startTS))
 			return errors.Trace(err)
 		}
-		logutil.Logger(ctx).Debug("2PC succeed with error",
+		logutil.Logger(ctx).Debug("got some exceptions, but 2PC was still successful",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
 	}
