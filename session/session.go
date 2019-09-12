@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -1173,14 +1174,13 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 func (s *session) CachedPlanExec(ctx context.Context,
 	stmtID uint32, prepared *ast.Prepared, args []types.Datum) (sqlexec.RecordSet, error) {
 	// compile ExecStmt
-	startTime := time.Now()
 	is := executor.GetInfoSchema(s)
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
 		return nil, err
 	}
 	execAst.BinaryArgs = args
-	execPlan, err := plannercore.OptimizeExecStmt(ctx, s, execAst, is)
+	execPlan, err := planner.OptimizeExecStmt(ctx, s, execAst, is)
 	if err != nil {
 		return nil, err
 	}
@@ -1191,7 +1191,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		Ctx:         s,
 		OutputNames: execPlan.OutputNames(),
 	}
-	s.GetSessionVars().DurationCompile = time.Since(startTime)
+	s.GetSessionVars().DurationCompile = time.Since(s.sessionVars.StartTime)
 	stmt.Text = prepared.Stmt.Text()
 	s.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
 	logQuery(stmt.OriginText(), s.sessionVars)
@@ -1206,16 +1206,16 @@ func (s *session) CachedPlanExec(ctx context.Context,
 // Be careful for the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
 func (s *session) IsCachedExecOk(ctx context.Context, prepared *ast.Prepared) (bool, error) {
-	if prepared.CachedPlan != nil {
-		// check auto commit
-		if !s.GetSessionVars().IsAutocommit() {
-			return false, nil
-		}
-		// maybe we'd better check cached plan type here, current
-		// only point select allowed see getPhysicalPlan
-		return true, nil
+	if prepared.CachedPlan == nil {
+		return false, nil
 	}
-	return false, nil
+	// check auto commit
+	if !s.GetSessionVars().IsAutocommit() {
+		return false, nil
+	}
+	// maybe we'd better check cached plan type here, current
+	// only point select will be cached, see "getPhysicalPlan" func
+	return true, nil
 }
 
 // ExecutePreparedStmt executes a prepared statement.
@@ -1224,8 +1224,8 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	s.sessionVars.StartTime = time.Now()
 	prepared, ok := s.sessionVars.PreparedStmts[stmtID]
 	if !ok {
-		err = errors.Errorf("Prepared statement not found")
-		logutil.Logger(ctx).Error("prepared not found", zap.Uint32("stmtID", stmtID))
+		err = plannercore.ErrStmtNotFound
+		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
 	ok, err = s.IsCachedExecOk(ctx, prepared)
