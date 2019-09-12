@@ -235,7 +235,6 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	}
 
 	err = cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
-	err = errors.New("12121")
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
