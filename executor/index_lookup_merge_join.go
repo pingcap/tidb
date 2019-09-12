@@ -120,8 +120,6 @@ type outerMergeWorker struct {
 	ctx      sessionctx.Context
 	executor Executor
 
-	executorChk *chunk.Chunk
-
 	maxBatchSize int
 	batchSize    int
 
@@ -205,7 +203,6 @@ func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMerg
 		ctx:                   e.ctx,
 		lookup:                e,
 		executor:              e.children[0],
-		executorChk:           chunk.NewChunkWithCapacity(e.outerMergeCtx.rowTypes, e.maxChunkSize),
 		resultCh:              resultCh,
 		innerCh:               innerCh,
 		batchSize:             32,
@@ -461,6 +458,18 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	return err
 }
 
+func (imw *innerMergeWorker) checkChunkIsFull(ctx context.Context, task *lookUpMergeJoinTask, chk *chunk.Chunk) bool {
+	if chk.IsFull() {
+		select {
+		case task.results <- chk:
+		case <-ctx.Done():
+			return true
+		}
+		chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
+	}
+	return false
+}
+
 func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
 	chk := chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
 	defer func() {
@@ -473,18 +482,14 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 		}
 		return
 	}()
+
 	task.outerIter = chunk.NewIterator4Chunk(task.outerResult)
 	task.outerIter.Begin()
 	if task.innerResults.Len() == 0 {
 		for task.outerIter.Current() != task.outerIter.End() {
 			imw.joiner.onMissMatch(false, task.outerIter.Current(), chk)
-			if chk.IsFull() {
-				select {
-				case task.results <- chk:
-				case <-ctx.Done():
-					return nil
-				}
-				chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
+			if done := imw.checkChunkIsFull(ctx, task, chk); done {
+				return nil
 			}
 			task.outerIter.Next()
 		}
@@ -493,58 +498,31 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 
 	task.innerIter = chunk.NewIterator4List(task.innerResults)
 	task.innerIter.Begin()
-	initCmpResult := -1
+	task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyRows)
+	initCmpResult := 1
 	if imw.innerMergeCtx.desc {
-		initCmpResult = 1
+		initCmpResult = -1
 	}
-	for task.outerIter.Current() != task.outerIter.End() {
-		outerRow := task.outerIter.Current()
-		if task.sameKeyIter == nil || task.sameKeyIter.Current() == task.sameKeyIter.End() {
-			cmpResult := initCmpResult
-			if len(task.outerMatch) > 0 && !task.outerMatch[outerRow.Idx()] {
-				task.outerIter.Next()
-				continue
-			}
-			if task.innerIter.Current() != task.innerIter.End() {
-				cmpResult, err = imw.compare(outerRow, task.innerIter.Current())
-				if err != nil {
-					return err
-				}
-			}
-			if (cmpResult >= 0 && !imw.innerMergeCtx.desc) || (cmpResult <= 0 && imw.innerMergeCtx.desc) {
-				err = imw.fetchNextInnerRows(task, outerRow)
-				if err != nil {
-					return
-				}
-			} else {
-				cmp := -1
-				if task.sameKeyIter != nil && len(task.sameKeyRows) > 0 {
-					cmp, err = imw.compare(outerRow, task.sameKeyIter.Begin())
-					if err != nil {
-						return
-					}
-				}
-				if cmp != 0 {
-					imw.joiner.onMissMatch(false, outerRow, chk)
 
-					task.outerIter.Next()
-					if len(task.sameKeyRows) > 0 {
-						task.sameKeyRows = task.sameKeyRows[:0]
-						task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyRows)
-					}
-					task.hasMatch = false
-					task.hasNull = false
-
-					if chk.IsFull() {
-						select {
-						case task.results <- chk:
-						case <-ctx.Done():
-							return nil
-						}
-						chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
-					}
-					continue
-				}
+	for outerRow := task.outerIter.Begin(); outerRow != task.outerIter.End(); outerRow = task.outerIter.Next() {
+		if len(task.outerMatch) > 0 && !task.outerMatch[outerRow.Idx()] {
+			continue
+		}
+		task.sameKeyIter.Begin()
+		cmpResult := initCmpResult
+		if len(task.sameKeyRows) > 0 {
+			cmpResult, err = imw.compare(outerRow, task.sameKeyIter.Current())
+			if err != nil {
+				return err
+			}
+		}
+		if (cmpResult > 0 && !imw.innerMergeCtx.desc) || (cmpResult < 0 && imw.innerMergeCtx.desc) {
+			err = imw.fetchNextInnerRows(task, outerRow)
+			if err != nil {
+				return err
+			}
+			if len(task.sameKeyRows) == 0 {
+				break
 			}
 		}
 
@@ -556,34 +534,18 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 
 			task.hasMatch = task.hasMatch || matched
 			task.hasNull = task.hasNull || isNull
-
-			if chk.IsFull() {
-				select {
-				case task.results <- chk:
-				case <-ctx.Done():
-					return nil
-				}
-				chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
-				break
-			}
-		}
-
-		if task.sameKeyIter.Current() == task.sameKeyIter.End() {
-			if !task.hasMatch {
-				imw.joiner.onMissMatch(task.hasNull, outerRow, chk)
-			}
-			task.outerIter.Next()
-			task.hasMatch = false
-			task.hasNull = false
-		}
-
-		if chk.IsFull() {
-			select {
-			case task.results <- chk:
-			case <-ctx.Done():
+			if done := imw.checkChunkIsFull(ctx, task, chk); done {
 				return nil
 			}
-			chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
+		}
+
+		if !task.hasMatch {
+			imw.joiner.onMissMatch(task.hasNull, outerRow, chk)
+		}
+		task.hasMatch = false
+		task.hasNull = false
+		if done := imw.checkChunkIsFull(ctx, task, chk); done {
+			return nil
 		}
 	}
 
@@ -604,8 +566,7 @@ func (imw *innerMergeWorker) fetchNextInnerRows(task *lookUpMergeJoinTask, key c
 		if cmpRes == 0 {
 			task.sameKeyRows = append(task.sameKeyRows, task.innerIter.Current())
 		}
-		task.innerIter.Next()
-		if task.innerIter.Current() == task.innerIter.End() {
+		if task.innerIter.Next() == task.innerIter.End() {
 			break
 		}
 	}
