@@ -1047,12 +1047,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	// We need NDV of columns since it may be used in cost estimation of join. Precisely speaking,
-	// we should track NDV of each histogram bucket, and sum up the NDV of buckets we actually need
-	// to scan, but this would only help improve accuracy of NDV for one column, for other columns,
-	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
-	// for all columns now, as we do in `deriveStatsByFilter`.
-	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
 	cost := rowCount * rowSize * ScanFactor
 	if isMatchProp {

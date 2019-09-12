@@ -596,7 +596,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.
 			selectivity = selectionFactor
 		}
 		if isIm {
-			path.countAfterAccess = path.countAfterAccess * selectivity
+			path.countAfterIndex = path.countAfterAccess * selectivity
 		} else {
 			path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)
 		}
