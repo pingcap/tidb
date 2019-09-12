@@ -59,7 +59,8 @@ type copTask struct {
 	tblColHists *statistics.HistColl
 	// tblCols stores the original columns of DataSource before being pruned, it
 	// is used to compute average row width when computing scan cost.
-	tblCols []*expression.Column
+	tblCols           []*expression.Column
+	idxMergePartPlans []PhysicalPlan
 }
 
 func (t *copTask) invalid() bool {
@@ -472,6 +473,11 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	t.cst /= copIterWorkers
 	newTask := &rootTask{
 		cst: t.cst,
+	}
+	if t.idxMergePartPlans != nil {
+		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		newTask.p = p
+		return newTask
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
 		p := PhysicalIndexLookUpReader{

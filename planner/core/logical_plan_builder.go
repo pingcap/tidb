@@ -2379,6 +2379,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	ds.SetSchema(schema)
 
+	// Init fullIdxCols, fullIdxColLens for accessPaths.
+	for _, path := range ds.possibleAccessPaths {
+		if !path.isTablePath {
+			path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+		}
+	}
+
 	var result LogicalPlan = ds
 
 	// If this SQL is executed in a non-readonly transaction, we need a
