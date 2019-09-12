@@ -390,6 +390,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if v <= 0 {
 			return value, errors.Errorf("tidb_wait_split_region_timeout(%d) cannot be smaller than 1", v)
 		}
+	case TiDBAllowRemoveAutoInc:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "on", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "off", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	}
 	return value, nil
 }
