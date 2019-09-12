@@ -145,6 +145,11 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalIndexMergeReader) ExplainInfo() string {
+	return ""
+}
+
+// ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalUnionScan) ExplainInfo() string {
 	return string(expression.SortedExplainExpressionList(p.Conditions))
 }
