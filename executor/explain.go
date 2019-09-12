@@ -15,10 +15,7 @@ package executor
 
 import (
 	"context"
-	"fmt"
-
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/planner/codec"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -94,14 +91,5 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 	if e.analyzeExec != nil {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	}
-	genPlanNormalizeString(e.explain.StmtPlan)
 	return e.explain.Rows, nil
-}
-
-func genPlanNormalizeString(p core.Plan) {
-	str, err := core.EncodePlan(p.(core.PhysicalPlan))
-	fmt.Printf("\n\n\nencode plan\n-----------------------\n%v\n---------%v-------------------\n", str, err)
-
-	decodePlan, err := codec.DecodePlan(str)
-	fmt.Printf("decode plan \n-----------------------\n%v\n-----------err: %v -----------------\n", decodePlan, err)
 }
