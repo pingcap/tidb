@@ -25,6 +25,9 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 	ast.Greatest: {
 		{types.ETDecimal, []types.EvalType{types.ETDecimal, types.ETDecimal, types.ETDecimal}, nil},
 	},
+	ast.Least: {
+		{types.ETDecimal, []types.EvalType{types.ETDecimal, types.ETDecimal, types.ETDecimal}, nil},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinCompareEvalOneVec(c *C) {
