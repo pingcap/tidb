@@ -614,7 +614,7 @@ func (tm *ttlManager) close() {
 }
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
-	bo := NewBackoffer(context.Background(), CommitMaxBackoff)
+	bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
 	ticker := time.NewTicker(2 * time.Millisecond)
 	defer ticker.Stop()
 	for {
