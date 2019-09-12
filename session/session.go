@@ -974,6 +974,16 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	// If command == mysql.ComSleep, it means the SQL execution is finished. The processinfo is reset to SLEEP.
+	// If the SQL finished and the session is not in transaction, the current start timestamp need to reset to 0.
+	// Otherwise, it should be set to the transaction start timestamp.
+	// Why not reset the transaction start timestamp to 0 when transaction committed?
+	// Because the select statement and other statements need this timestamp to read data,
+	// after the transaction is committed. e.g. SHOW MASTER STATUS;
+	var curTxnStartTS uint64
+	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
+		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
 		DB:               s.sessionVars.CurrentDB,
@@ -982,7 +992,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Time:             t,
 		State:            s.Status(),
 		Info:             sql,
-		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+		CurTxnStartTS:    curTxnStartTS,
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,

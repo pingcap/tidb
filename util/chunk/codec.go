@@ -66,7 +66,7 @@ func (c *Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	// encode offsets.
 	if !col.isFixed() {
 		numOffsetBytes := (col.length + 1) * 8
-		offsetBytes := c.i64SliceToBytes(col.offsets)
+		offsetBytes := i64SliceToBytes(col.offsets)
 		buffer = append(buffer, offsetBytes[:numOffsetBytes]...)
 	}
 
@@ -75,7 +75,7 @@ func (c *Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	return buffer
 }
 
-func (c *Codec) i64SliceToBytes(i64s []int64) (b []byte) {
+func i64SliceToBytes(i64s []int64) (b []byte) {
 	if len(i64s) == 0 {
 		return nil
 	}
@@ -128,7 +128,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	numDataBytes := int64(numFixedBytes * col.length)
 	if numFixedBytes == -1 {
 		numOffsetBytes := (col.length + 1) * 8
-		col.offsets = append(col.offsets[:0], c.bytesToI64Slice(buffer[:numOffsetBytes])...)
+		col.offsets = append(col.offsets[:0], bytesToI64Slice(buffer[:numOffsetBytes])...)
 		buffer = buffer[numOffsetBytes:]
 		numDataBytes = col.offsets[col.length]
 	} else if cap(col.elemBuf) < numFixedBytes {
@@ -152,7 +152,7 @@ func (c *Codec) setAllNotNull(col *Column) {
 	}
 }
 
-func (c *Codec) bytesToI64Slice(b []byte) (i64s []int64) {
+func bytesToI64Slice(b []byte) (i64s []int64) {
 	if len(b) == 0 {
 		return nil
 	}

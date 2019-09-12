@@ -254,8 +254,8 @@ type LogicalAggregation struct {
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
 
-	// preferAggType stores preferred aggregation algorithm type.
-	preferAggType uint
+	// aggHints stores aggregation hint information.
+	aggHints aggHintInfo
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
@@ -423,9 +423,9 @@ func getTablePath(paths []*accessPath) *accessPath {
 }
 
 func (ds *DataSource) buildTableGather() LogicalPlan {
-	ts := TableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx)
+	ts := TableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
-	tg := TableGather{Source: ds}.Init(ds.ctx)
+	tg := TableGather{Source: ds}.Init(ds.ctx, ds.blockOffset)
 	tg.SetSchema(ds.Schema())
 	tg.SetChildren(ts)
 	return tg
