@@ -65,7 +65,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 				us := LogicalUnionScan{
 					conditions: p.conditions,
 					handleCol:  p.handleCol,
-				}.Init(ua.ctx)
+				}.Init(ua.ctx, ua.blockOffset)
 				us.SetChildren(child)
 				children = append(children, us)
 			}
@@ -132,7 +132,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 
 		// Not a deep copy.
 		newDataSource := *ds
-		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), codec.TypeTableScan, &newDataSource)
+		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), codec.TypeTableScan, &newDataSource, ds.blockOffset)
 		newDataSource.isPartition = true
 		newDataSource.physicalTableID = pi.Definitions[i].ID
 		// There are many expression nodes in the plan tree use the original datasource
@@ -144,7 +144,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 	if len(children) == 0 {
 		// No result after table pruning.
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx())
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
 		tableDual.schema = ds.Schema()
 		return tableDual, nil
 	}
@@ -152,7 +152,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		// No need for the union all.
 		return children[0], nil
 	}
-	unionAll := LogicalUnionAll{}.Init(ds.SCtx())
+	unionAll := LogicalUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema)
 	return unionAll, nil

@@ -71,6 +71,8 @@ const (
 	TypeWindow = "Window"
 	// TypeTableGather is the type of TableGather.
 	TypeTableGather = "TableGather"
+	// TypeIndexMerge is the type of IndexMergeReader
+	TypeIndexMerge = "IndexMerge"
 )
 
 // plan id.
@@ -108,6 +110,8 @@ const (
 	typeTableReaderID
 	typeIndexReaderID
 	typeWindowID
+	typeTableGatherID
+	typeIndexMergeID
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -179,6 +183,10 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeIndexReaderID
 	case TypeWindow:
 		return typeWindowID
+	case TypeTableGather:
+		return typeTableGatherID
+	case TypeIndexMerge:
+		return typeIndexMergeID
 	}
 	// Should never reach here.
 	return 0
@@ -253,6 +261,10 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeIndexReader
 	case typeWindowID:
 		return TypeWindow
+	case typeTableGatherID:
+		return TypeTableGather
+	case typeIndexMergeID:
+		return TypeIndexMerge
 	}
 
 	// Should never reach here.
