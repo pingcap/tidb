@@ -67,14 +67,17 @@ func DecodePlan(planString string) (string, error) {
 	}
 	pd := decoderPool.Get().(*planDecoder)
 	defer decoderPool.Put(pd)
+	pd.buf.Reset()
+	pd.decompressBuf.Reset()
 	return pd.decode(planString)
 }
 
 type planDecoder struct {
-	buf       bytes.Buffer
-	depths    []int
-	indents   [][]rune
-	planInfos []*planInfo
+	buf           bytes.Buffer
+	depths        []int
+	indents       [][]rune
+	planInfos     []*planInfo
+	decompressBuf bytes.Buffer
 }
 
 type planInfo struct {
@@ -82,21 +85,21 @@ type planInfo struct {
 	fields []string
 }
 
-func (pn *planDecoder) decode(planString string) (string, error) {
-	str, err := decompress(planString)
+func (pd *planDecoder) decode(planString string) (string, error) {
+	str, err := decompress(planString, &pd.decompressBuf)
 	if err != nil {
 		return "", err
 	}
 
 	nodes := strings.Split(str, lineBreakerStr)
-	if len(pn.depths) < len(nodes) {
-		pn.depths = make([]int, 0, len(nodes))
-		pn.planInfos = make([]*planInfo, 0, len(nodes))
-		pn.indents = make([][]rune, 0, len(nodes))
+	if len(pd.depths) < len(nodes) {
+		pd.depths = make([]int, 0, len(nodes))
+		pd.planInfos = make([]*planInfo, 0, len(nodes))
+		pd.indents = make([][]rune, 0, len(nodes))
 	}
-	pn.depths = pn.depths[:0]
-	pn.planInfos = pn.planInfos[:0]
-	planInfos := pn.planInfos
+	pd.depths = pd.depths[:0]
+	pd.planInfos = pd.planInfos[:0]
+	planInfos := pd.planInfos
 	for _, node := range nodes {
 		p, err := decodePlanInfo(node)
 		if err != nil {
@@ -106,38 +109,37 @@ func (pn *planDecoder) decode(planString string) (string, error) {
 			continue
 		}
 		planInfos = append(planInfos, p)
-		pn.depths = append(pn.depths, p.depth)
+		pd.depths = append(pd.depths, p.depth)
 	}
 
-	pn.initPlanTreeIndents()
+	pd.initPlanTreeIndents()
 
-	for i := 1; i < len(pn.depths); i++ {
-		parentIndex := pn.findParentIndex(i)
-		pn.fillIndent(parentIndex, i)
+	for i := 1; i < len(pd.depths); i++ {
+		parentIndex := pd.findParentIndex(i)
+		pd.fillIndent(parentIndex, i)
 	}
 
-	pn.buf.Reset()
 	for i, p := range planInfos {
 		if i > 0 {
-			pn.buf.WriteByte(lineBreaker)
+			pd.buf.WriteByte(lineBreaker)
 		}
-		pn.buf.WriteString(string(pn.indents[i]))
+		pd.buf.WriteString(string(pd.indents[i]))
 		for j := 0; j < len(p.fields); j++ {
 			if j > 0 {
-				pn.buf.WriteByte(separator)
+				pd.buf.WriteByte(separator)
 			}
-			pn.buf.WriteString(p.fields[j])
+			pd.buf.WriteString(p.fields[j])
 		}
 	}
 
-	return pn.buf.String(), nil
+	return pd.buf.String(), nil
 }
 
-func (pn *planDecoder) initPlanTreeIndents() {
-	pn.indents = pn.indents[:0]
-	for i := 0; i < len(pn.depths); i++ {
-		indent := make([]rune, 2*pn.depths[i])
-		pn.indents = append(pn.indents, indent)
+func (pd *planDecoder) initPlanTreeIndents() {
+	pd.indents = pd.indents[:0]
+	for i := 0; i < len(pd.depths); i++ {
+		indent := make([]rune, 2*pd.depths[i])
+		pd.indents = append(pd.indents, indent)
 		if len(indent) == 0 {
 			continue
 		}
@@ -149,26 +151,26 @@ func (pn *planDecoder) initPlanTreeIndents() {
 	}
 }
 
-func (pn *planDecoder) findParentIndex(childIndex int) int {
+func (pd *planDecoder) findParentIndex(childIndex int) int {
 	for i := childIndex - 1; i > 0; i-- {
-		if pn.depths[i]+1 == pn.depths[childIndex] {
+		if pd.depths[i]+1 == pd.depths[childIndex] {
 			return i
 		}
 	}
 	return 0
 }
-func (pn *planDecoder) fillIndent(parentIndex, childIndex int) {
-	depth := pn.depths[childIndex]
+func (pd *planDecoder) fillIndent(parentIndex, childIndex int) {
+	depth := pd.depths[childIndex]
 	if depth == 0 {
 		return
 	}
 	idx := depth*2 - 2
 	for i := childIndex - 1; i > parentIndex; i-- {
-		if pn.indents[i][idx] == TreeLastNode {
-			pn.indents[i][idx] = TreeMiddleNode
+		if pd.indents[i][idx] == TreeLastNode {
+			pd.indents[i][idx] = TreeMiddleNode
 			break
 		}
-		pn.indents[i][idx] = TreeBody
+		pd.indents[i][idx] = TreeBody
 	}
 }
 
@@ -241,9 +243,8 @@ func encodeID(planType string, id int) string {
 }
 
 // Compress is used to compress the input with zlib.
-func Compress(input []byte) (string, error) {
-	var in bytes.Buffer
-	w, err := zlib.NewWriterLevel(&in, zlib.BestCompression)
+func Compress(input []byte, buf *bytes.Buffer) (string, error) {
+	w, err := zlib.NewWriterLevel(buf, zlib.BestCompression)
 	if err != nil {
 		return "", err
 	}
@@ -255,10 +256,10 @@ func Compress(input []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return base64.StdEncoding.EncodeToString(in.Bytes()), nil
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
-func decompress(str string) (string, error) {
+func decompress(str string, buf *bytes.Buffer) (string, error) {
 	decodeBytes, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
 		return "", err
@@ -268,10 +269,9 @@ func decompress(str string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var outbuf bytes.Buffer
-	_, err = io.Copy(&outbuf, out)
+	_, err = io.Copy(buf, out)
 	if err != nil {
 		return "", err
 	}
-	return outbuf.String(), nil
+	return buf.String(), nil
 }
