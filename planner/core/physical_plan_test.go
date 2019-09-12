@@ -211,8 +211,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Best string
+		SQL   string
+		Best  string
+		Hints string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
@@ -226,8 +227,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Best = core.ToString(p)
+			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, Commentf("for %s", tt))
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, Commentf("for %s", tt))
 	}
 }
 
@@ -497,7 +500,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		// Test Index Join + UnionScan + IndexScan.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
-			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(test.t2.c,test.t1.a)->Projection",
+			best: "IndexMergeJoin{IndexReader(Index(t.f)[[NULL,+inf]])->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(test.t1.a,test.t2.c)->Projection",
 			is:   s.is,
 		},
 		// Index Join + Union Scan + Union All is not supported now.
@@ -658,6 +661,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 		SQL     string
 		Best    string
 		Warning string
+		Hints   string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	ctx := context.Background()
@@ -677,6 +681,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 			if len(warnings) > 0 {
 				output[i].Warning = warnings[0].Err.Error()
 			}
+			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best)
 		if output[i].Warning == "" {
@@ -686,6 +691,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning)
 			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning)
 		}
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -743,6 +749,70 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 			c.Assert(len(warnings), Equals, 1, comment)
 			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
 			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning, comment)
+		}
+	}
+}
+
+func (s *testPlanSuite) TestAggToCopHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "insert into mysql.opt_rule_blacklist values(\"aggregation_eliminate\")")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin reload opt_rule_blacklist")
+	c.Assert(err, IsNil)
+
+	tests := []struct {
+		sql     string
+		best    string
+		warning string
+	}{
+		{
+			sql:  "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from t group by a",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from t group by b",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from t group by a",
+			best:    "TableReader(Table(t)->HashAgg)->HashAgg->HashAgg",
+			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
+		},
+		{
+			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1, t t2 where t1.a = t2.b group by t1.a",
+			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->Projection->HashAgg",
+			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
+		},
+	}
+	ctx := context.Background()
+	for i, test := range tests {
+		comment := Commentf("case:%v sql:%s", i, test)
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+
+		stmt, err := s.ParseOneStmt(test.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		c.Assert(err, IsNil)
+		c.Assert(core.ToString(p), Equals, test.best, comment)
+
+		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+		if test.warning == "" {
+			c.Assert(len(warnings), Equals, 0, comment)
+		} else {
+			c.Assert(len(warnings), Equals, 1, comment)
+			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
+			c.Assert(warnings[0].Err.Error(), Equals, test.warning, comment)
 		}
 	}
 }
@@ -812,11 +882,14 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		SQL     string
 		Best    string
 		HasWarn bool
+		Hints   string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	ctx := context.Background()
 	for i, test := range input {
 		comment := Commentf("case:%v sql:%s", i, test)
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
@@ -826,6 +899,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 			output[i].SQL = test
 			output[i].Best = core.ToString(p)
 			output[i].HasWarn = len(se.GetSessionVars().StmtCtx.GetWarnings()) > 0
+			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -834,6 +908,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		} else {
 			c.Assert(warnings, HasLen, 0, comment)
 		}
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -852,8 +927,9 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Plan string
+		SQL   string
+		Plan  string
+		Hints string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	ctx := context.TODO()
@@ -867,8 +943,10 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
+			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
 	}
 }
 

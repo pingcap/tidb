@@ -544,7 +544,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		errStr := err.Error()
 		conflictCommitTS := extractConflictCommitTS(errStr)
 		if conflictCommitTS == 0 {
-			logutil.Logger(ctx).Warn("failed to extract conflictCommitTS when write conflicted")
+			logutil.Logger(ctx).Warn("failed to extract conflictCommitTS when write conflicted", zap.String("err", errStr))
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
 		logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
