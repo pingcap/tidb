@@ -217,6 +217,7 @@ var (
 	}
 )
 
+// VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
 func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
 	n := input.NumRows()
 	selected = selected[:0]
