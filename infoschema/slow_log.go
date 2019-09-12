@@ -324,7 +324,17 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	} else {
 		record = append(record, types.NewIntDatum(0))
 	}
-	record = append(record, types.NewStringDatum(codec.DecodePlan(st.plan)))
+	planString := st.plan
+	if len(planString) > 0 {
+		decodePlanString, err := codec.DecodePlan(st.plan)
+		if err == nil {
+			planString = decodePlanString
+		} else {
+			logutil.BgLogger().Error("encode plan tree error", zap.String("plan", st.plan), zap.Error(err))
+		}
+
+	}
+	record = append(record, types.NewStringDatum(planString))
 	record = append(record, types.NewStringDatum(st.prevStmt))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record

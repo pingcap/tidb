@@ -752,7 +752,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, isSelect bool) {
 	}
 	if isSelect && atomic.LoadUint32(&cfg.Log.SlowLogPlan) == 1 {
 		if p, ok := a.Plan.(plannercore.PhysicalPlan); ok {
-			slowItems.Plan = plannercore.EncodePlan(p)
+			planTree, err := plannercore.EncodePlan(p)
+			if err == nil {
+				slowItems.Plan = planTree
+			} else {
+				logutil.BgLogger().Error("encode plan tree error", zap.Error(err))
+			}
 		}
 	}
 	if costTime < threshold {

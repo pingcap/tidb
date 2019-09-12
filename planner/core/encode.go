@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"sync"
 
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/planner/codec"
 )
 
@@ -20,22 +19,18 @@ type planEncoder struct {
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
-func EncodePlan(p PhysicalPlan) string {
+func EncodePlan(p PhysicalPlan) (string, error) {
 	pn := encoderPool.Get().(*planEncoder)
 	defer encoderPool.Put(pn)
 	return pn.encodePlanTree(p)
 }
 
-func (pn *planEncoder) encodePlanTree(p PhysicalPlan) string {
+func (pn *planEncoder) encodePlanTree(p PhysicalPlan) (string, error) {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
 	pn.encodePlan(p, true, 0)
 	bs := pn.buf.Bytes()
-	str, err := codec.Compress(bs)
-	if err != nil {
-		terror.Log(err)
-	}
-	return str
+	return codec.Compress(bs)
 }
 
 func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {

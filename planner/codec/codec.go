@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
 )
 
 const (
@@ -49,14 +48,13 @@ var decoderPool = sync.Pool{
 }
 
 // DecodePlan use to decode the string to plan tree.
-func DecodePlan(planString string) string {
+func DecodePlan(planString string) (string, error) {
+	if len(planString) == 0 {
+		return "", nil
+	}
 	pd := decoderPool.Get().(*planDecoder)
 	defer decoderPool.Put(pd)
-	str, err := pd.decode(planString)
-	if err != nil {
-		terror.Log(err)
-	}
-	return str
+	return pd.decode(planString)
 }
 
 type planDecoder struct {
