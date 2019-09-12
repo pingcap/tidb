@@ -221,8 +221,8 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 500;")
 	c.Assert(err, IsNil)
 
-	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
-	c.Assert(err, NotNil)
+	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(3);")
+	c.Assert(err, IsNil)
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
 	c.Assert(err, IsNil)
@@ -230,8 +230,8 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
 	c.Assert(err, IsNil)
 
-	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
-	c.Assert(err, NotNil)
+	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(3);")
+	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
 }
