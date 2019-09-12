@@ -521,9 +521,6 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 			if err != nil {
 				return err
 			}
-			if len(task.sameKeyRows) == 0 {
-				break
-			}
 		}
 
 		for task.sameKeyIter.Current() != task.sameKeyIter.End() {
@@ -600,7 +597,6 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 		if dLookUpKey == nil {
 			continue
 		}
-		dLookUpKeys = append(dLookUpKeys, dLookUpKey)
 
 		if imw.hasPrefixCol {
 			for i := range imw.outerMergeCtx.keyCols {
@@ -610,6 +606,7 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 				}
 			}
 		}
+		dLookUpKeys = append(dLookUpKeys, dLookUpKey)
 	}
 
 	return dLookUpKeys, nil

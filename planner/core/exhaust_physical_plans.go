@@ -387,6 +387,16 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 	indexMergeJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
+		hasPrefixCol := false
+		for _, l := range join.IdxColLens {
+			if l != types.UnspecifiedLength {
+				hasPrefixCol = true
+				break
+			}
+		}
+		if hasPrefixCol {
+			continue
+		}
 		// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
 		isOuterKeysPrefix := len(join.OuterJoinKeys) <= len(prop.Items)
 		compareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
