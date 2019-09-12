@@ -363,6 +363,9 @@ func CheckNotNull(cols []*Column, row []types.Datum) error {
 
 // GetColOriginDefaultValue gets default value of the column from original default value.
 func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
+	if col.OriginDefaultValue != nil && col.DefaultValueBit != nil && col.Tp == mysql.TypeBit {
+		col.OriginDefaultValue = col.DefaultValueBit
+	}
 	return getColDefaultValue(ctx, col, col.OriginDefaultValue)
 }
 
