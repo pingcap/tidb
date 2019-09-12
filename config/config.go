@@ -106,9 +106,9 @@ type Log struct {
 	Format string `toml:"format" json:"format"`
 	// Disable automatic timestamps in output.
 	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
-	// DisableErrorVerbose stops annotating logs with the full verbose error
+	// DisableErrorStack stops annotating logs with the full stack error
 	// message.
-	DisableErrorVerbose bool `toml:"disable-error-verbose" json:"disable-error-verbose"`
+	DisableErrorStack bool `toml:"disable-error-stack" json:"disable-error-stack"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
@@ -341,14 +341,14 @@ var defaultConf = Config{
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
-		Level:               "info",
-		Format:              "text",
-		File:                logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
-		SlowQueryFile:       "tidb-slow.log",
-		SlowThreshold:       logutil.DefaultSlowThreshold,
-		ExpensiveThreshold:  10000,
-		DisableErrorVerbose: true,
-		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
+		Level:              "info",
+		Format:             "text",
+		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
+		SlowQueryFile:      "tidb-slow.log",
+		SlowThreshold:      logutil.DefaultSlowThreshold,
+		ExpensiveThreshold: 10000,
+		DisableErrorStack:  true,
+		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -608,7 +608,7 @@ var TableLockDelayClean = func() uint64 {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = l.DisableErrorVerbose })
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = l.DisableErrorStack })
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.

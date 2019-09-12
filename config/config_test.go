@@ -100,7 +100,7 @@ max-batch-size=128
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
 	// Test for lof config.
-	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.DisableErrorVerbose }))
+	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.DisableErrorStack }))
 
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{
