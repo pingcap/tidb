@@ -281,6 +281,9 @@ const (
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
+
+	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
+	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 )
 
 // Default TiDB system variable values.
@@ -344,6 +347,7 @@ const (
 	DefTiDBWaitSplitRegionFinish       = true
 	DefTiDBExpensiveQueryTimeThreshold = 60  // 60s
 	DefWaitSplitRegionTimeout          = 300 // 300s
+	DefTiDBEnableStmtSummary           = false
 )
 
 // Process global variables.
@@ -363,4 +367,5 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
+	EnableStmtSummary              int32  = BoolToInt32(DefTiDBEnableStmtSummary)
 )
