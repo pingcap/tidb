@@ -298,7 +298,7 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 			leftCond, rightCond = p.pushDownConstExpr(expr, leftCond, rightCond, deriveLeft || deriveRight)
 			continue
 		}
-		
+
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
 			if !left.Schema().Contains(col) {
