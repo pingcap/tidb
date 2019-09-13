@@ -226,22 +226,20 @@ StreamAgg_12	1.00	root	funcs:sum(col_0)
 explain select 1 in (select c2 from t2) from t1;
 id	count	task	operator info
 Projection_6	10000.00	root	5_aux_0
-└─HashLeftJoin_7	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_14
+└─HashLeftJoin_7	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_13, other cond:eq(1, test.t2.c2)
   ├─IndexReader_11	10000.00	root	index:IndexScan_10
   │ └─IndexScan_10	10000.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
-  └─TableReader_14	10.00	root	data:Selection_13
-    └─Selection_13	10.00	cop	eq(1, test.t2.c2)
-      └─TableScan_12	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableReader_13	10000.00	root	data:TableScan_12
+    └─TableScan_12	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(6 in (select c2 from t2)) from t1;
 id	count	task	operator info
 StreamAgg_12	1.00	root	funcs:sum(col_0)
-└─Projection_22	10000.00	root	cast(5_aux_0)
-  └─HashLeftJoin_21	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_20
+└─Projection_21	10000.00	root	cast(5_aux_0)
+  └─HashLeftJoin_20	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_19, other cond:eq(6, test.t2.c2)
     ├─IndexReader_17	10000.00	root	index:IndexScan_16
     │ └─IndexScan_16	10000.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
-    └─TableReader_20	10.00	root	data:Selection_19
-      └─Selection_19	10.00	cop	eq(6, test.t2.c2)
-        └─TableScan_18	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableReader_19	10000.00	root	data:TableScan_18
+      └─TableScan_18	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain format="dot" select sum(t1.c1 in (select c1 from t2)) from t1;
 dot contents
 
@@ -281,7 +279,7 @@ color=black
 label = "root"
 "Projection_6" -> "HashLeftJoin_7"
 "HashLeftJoin_7" -> "IndexReader_11"
-"HashLeftJoin_7" -> "TableReader_14"
+"HashLeftJoin_7" -> "TableReader_13"
 }
 subgraph cluster10{
 node [style=filled, color=lightgrey]
@@ -289,14 +287,14 @@ color=black
 label = "cop"
 "IndexScan_10"
 }
-subgraph cluster13{
+subgraph cluster12{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_13" -> "TableScan_12"
+"TableScan_12"
 }
 "IndexReader_11" -> "IndexScan_10"
-"TableReader_14" -> "Selection_13"
+"TableReader_13" -> "TableScan_12"
 }
 
 drop table if exists t1, t2, t3, t4;

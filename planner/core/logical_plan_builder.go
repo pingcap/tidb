@@ -238,7 +238,7 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
-	left, right := p.children[0], p.children[1]
+		left, right := p.children[0], p.children[1]
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && len(binop.GetArgs()) == 2 {
@@ -284,6 +284,13 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 				}
 			}
 		}
+
+		if expression.IsEQCondFromIn(expr) {
+			// check null flag
+			otherCond = append(otherCond, expr)
+			continue
+		}
+
 		columns := expression.ExtractColumns(expr)
 		// `columns` may be empty, if the condition is like `correlated_column op constant`, or `constant`,
 		// push this kind of constant condition down according to join type.
@@ -300,6 +307,7 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 				allFromRight = false
 			}
 		}
+
 		if allFromRight {
 			rightCond = append(rightCond, expr)
 		} else if allFromLeft {

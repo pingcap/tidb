@@ -787,6 +787,9 @@ func (s *testSuite2) TestSubquery(c *C) {
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustQuery("select * from t1 where a in (select a from t2)").Check(testkit.Rows("1"))
 
+	tk.MustExec("insert into t2 value(null);")
+	tk.MustQuery("select * from t1 where 1 not in (select b from t2)").Check(testkit.Rows())
+
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
 

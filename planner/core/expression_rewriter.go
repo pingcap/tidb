@@ -349,6 +349,9 @@ func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r e
 		if lCol, ok := l.(*expression.Column); ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 			rCol.InOperand = false
 		}
+		if lcon, ok := l.(*expression.Constant); ok && !lcon.Value.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			rCol.InOperand = false
+		}
 	}
 	condition, er.err = er.constructBinaryOpFunction(l, r, ast.EQ)
 	if er.err != nil {
@@ -712,21 +715,35 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 		return v, true
 	}
-	var rexpr expression.Expression
-	if np.Schema().Len() == 1 {
-		rexpr = np.Schema().Columns[0]
-		rCol := rexpr.(*expression.Column)
-		// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
-		// normal column equal condition, so we specially mark the inner operand here.
-		if v.Not || asScalar {
+	// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
+	// normal column equal condition, so we specially mark the inner operand here.
+	if v.Not || asScalar {
+		for i, rCol := range np.Schema().Columns {
+			lexpr2 := lexpr
+			lSf, isSf := lexpr.(*expression.ScalarFunction)
+			if isSf {
+				lexpr2 = lSf.GetArgs()[i]
+			}
 			rCol.InOperand = true
 			// If both input columns of `in` expression are not null, we can treat the expression
 			// as normal column equal condition instead.
-			lCol, ok := lexpr.(*expression.Column)
+			lCol, ok := lexpr2.(*expression.Column)
 			if ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 				rCol.InOperand = false
 			}
+			lcon, ok := lexpr2.(*expression.Constant)
+			if ok && !lcon.Value.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+				rCol.InOperand = false
+			}
+			if isSf {
+				lSf.GetArgs()[i] = lexpr2
+			}
 		}
+	}
+
+	var rexpr expression.Expression
+	if np.Schema().Len() == 1 {
+		rexpr = np.Schema().Columns[0]
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
 		for _, col := range np.Schema().Columns {

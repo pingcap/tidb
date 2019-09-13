@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -61,6 +61,26 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 	result := make([]*Column, 0, 8)
 	return extractColumns(result, expr, nil)
+}
+
+func ExprsContainInOperand(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Column:
+			if v.InOperand {
+				return true
+			}
+		case *Constant:
+			if v.InOperand {
+				return true
+			}
+		case *ScalarFunction:
+			if ExprsContainInOperand(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ExtractCorColumns extracts correlated column from given expression.
@@ -134,6 +154,10 @@ func setExprColumnInOperand(expr Expression) Expression {
 		col := v.Clone().(*Column)
 		col.InOperand = true
 		return col
+	case *Constant:
+		con := v.Clone().(*Constant)
+		con.InOperand = true
+		return con
 	case *ScalarFunction:
 		args := v.GetArgs()
 		for i, arg := range args {

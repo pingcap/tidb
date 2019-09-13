@@ -165,9 +165,7 @@ func IsEQCondFromIn(expr Expression) bool {
 	if !ok || sf.FuncName.L != ast.EQ {
 		return false
 	}
-	cols := make([]*Column, 0, 1)
-	cols = ExtractColumnsFromExpressions(cols, sf.GetArgs(), isColumnInOperand)
-	return len(cols) > 0
+	return ExprsContainInOperand(sf.GetArgs())
 }
 
 // EvalBool evaluates expression list to a boolean value. The first returned value

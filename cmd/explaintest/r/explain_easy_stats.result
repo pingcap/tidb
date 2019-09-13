@@ -123,12 +123,11 @@ set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
 id	count	task	operator info
 Projection_6	1999.00	root	5_aux_0
-└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_14
+└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_13, other cond:eq(1, test.t2.c2)
   ├─IndexReader_11	1999.00	root	index:IndexScan_10
   │ └─IndexScan_10	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
-  └─TableReader_14	0.00	root	data:Selection_13
-    └─Selection_13	0.00	cop	eq(1, test.t2.c2)
-      └─TableScan_12	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
+  └─TableReader_13	1985.00	root	data:TableScan_12
+    └─TableScan_12	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
@@ -139,7 +138,7 @@ color=black
 label = "root"
 "Projection_6" -> "HashLeftJoin_7"
 "HashLeftJoin_7" -> "IndexReader_11"
-"HashLeftJoin_7" -> "TableReader_14"
+"HashLeftJoin_7" -> "TableReader_13"
 }
 subgraph cluster10{
 node [style=filled, color=lightgrey]
@@ -147,14 +146,14 @@ color=black
 label = "cop"
 "IndexScan_10"
 }
-subgraph cluster13{
+subgraph cluster12{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_13" -> "TableScan_12"
+"TableScan_12"
 }
 "IndexReader_11" -> "IndexScan_10"
-"TableReader_14" -> "Selection_13"
+"TableReader_13" -> "TableScan_12"
 }
 
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
