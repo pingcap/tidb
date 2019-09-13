@@ -336,6 +336,9 @@ type SessionVars struct {
 
 	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
 	ConnectionInfo *ConnectionInfo
+
+	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
+	AllowRemoveAutoInc bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -381,6 +384,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionFinish:     DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:    DefWaitSplitRegionTimeout,
 		CommandValue:              uint32(mysql.ComSleep),
+		AllowRemoveAutoInc:        DefTiDBAllowRemoveAutoInc,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -675,6 +679,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.WaitSplitRegionFinish = TiDBOptOn(val)
 	case TiDBWaitSplitRegionTimeout:
 		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeout))
+	case TiDBAllowRemoveAutoInc:
+		s.AllowRemoveAutoInc = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

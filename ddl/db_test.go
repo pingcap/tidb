@@ -1885,7 +1885,9 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	s.mustExec(c, "set @@tidb_allow_remove_auto_inc = on")
 	s.mustExec(c, "alter table mc modify column a bigint") // Drops auto_increment
+	s.mustExec(c, "set @@tidb_allow_remove_auto_inc = off")
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
