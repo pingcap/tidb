@@ -787,8 +787,14 @@ func (s *testSuite2) TestSubquery(c *C) {
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustQuery("select * from t1 where a in (select a from t2)").Check(testkit.Rows("1"))
 
-	tk.MustExec("insert into t2 value(null);")
+	tk.MustExec("insert into t2 value(null)")
+	tk.MustQuery("select * from t1 where 1 in (select b from t2)").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t1 where 1 not in (select b from t2)").Check(testkit.Rows())
+	tk.MustExec("delete from t2 where b=1")
+	tk.MustQuery("select 1 in (select b from t2) from t1").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 1 not in (select b from t2) from t1").Check(testkit.Rows("<nil>"))
+	// TODO: this query will cause an index out of range panic
+	// tk.MustQuery("select 1 not in (select null from t1) from t2").Check(testkit.Rows())
 
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }

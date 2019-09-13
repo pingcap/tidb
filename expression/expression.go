@@ -165,7 +165,7 @@ func IsEQCondFromIn(expr Expression) bool {
 	if !ok || sf.FuncName.L != ast.EQ {
 		return false
 	}
-	return ExprsContainInOperand(sf.GetArgs())
+	return exprsContainInOperand(sf.GetArgs())
 }
 
 // EvalBool evaluates expression list to a boolean value. The first returned value

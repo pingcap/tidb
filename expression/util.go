@@ -63,7 +63,7 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	return extractColumns(result, expr, nil)
 }
 
-func ExprsContainInOperand(exprs []Expression) bool {
+func exprsContainInOperand(exprs []Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Column:
@@ -75,7 +75,7 @@ func ExprsContainInOperand(exprs []Expression) bool {
 				return true
 			}
 		case *ScalarFunction:
-			if ExprsContainInOperand(v.GetArgs()) {
+			if exprsContainInOperand(v.GetArgs()) {
 				return true
 			}
 		}
