@@ -179,8 +179,8 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 	}
 }
 
-// UpdateMinStartTS updates self server min start timestamp from etcd.
-func (is *InfoSyncer) UpdateMinStartTS() {
+// ReportMinStartTS reports self server min start timestamp to ETCD.
+func (is *InfoSyncer) ReportMinStartTS() {
 	if is.manager == nil {
 		// Server may not start in time.
 		return
@@ -225,14 +225,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	is.session = session
 
 	err = is.storeServerInfo(ctx)
-	if err != nil {
-		return err
-	}
-	err = is.storeMinStartTS(ctx)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // getInfo gets server information from etcd according to the key and opts.
