@@ -794,7 +794,7 @@ func (s *testSuite2) TestSubquery(c *C) {
 	tk.MustQuery("select 1 in (select 1 from t2) from t1").Check(testkit.Rows("1"))
 	tk.MustQuery("select 1 not in (select b from t2) from t1").Check(testkit.Rows("0"))
 	tk.MustQuery("select 1 not in (select 1 from t2) from t1").Check(testkit.Rows("0"))
-	
+
 	tk.MustExec("delete from t2 where b=1")
 	tk.MustQuery("select 1 in (select b from t2) from t1").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select 1 not in (select b from t2) from t1").Check(testkit.Rows("<nil>"))
