@@ -154,10 +154,6 @@ func setExprColumnInOperand(expr Expression) Expression {
 		col := v.Clone().(*Column)
 		col.InOperand = true
 		return col
-	case *Constant:
-		con := v.Clone().(*Constant)
-		con.InOperand = true
-		return con
 	case *ScalarFunction:
 		args := v.GetArgs()
 		for i, arg := range args {
