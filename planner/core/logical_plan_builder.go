@@ -283,12 +283,12 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 					continue
 				}
 			}
-		}
 
-		if expression.IsEQCondFromIn(expr) {
-			// check null flag
-			otherCond = append(otherCond, expr)
-			continue
+			if binop.FuncName.L == ast.EQ &&expression.IsEQCondFromIn(expr) {
+				// should I check null flag?
+				otherCond = append(otherCond, expr)
+				continue
+			} 
 		}
 
 		columns := expression.ExtractColumns(expr)
