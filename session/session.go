@@ -1197,7 +1197,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	logQuery(stmt.OriginText(), s.sessionVars)
 
 	// run ExecStmt
-	rs, err := stmt.GetPointRecord(ctx, is, s)
+	rs, err := stmt.GetPointRecord(ctx, is)
 	s.txn.changeToInvalid()
 	return rs, err
 }

@@ -211,25 +211,23 @@ type ExecStmt struct {
 }
 
 // GetPointRecord short path for point exec directly from plan, keep only necessary steps
-func (a *ExecStmt) GetPointRecord(ctx context.Context, is infoschema.InfoSchema,
-	sctx sessionctx.Context) (*recordSet, error) {
+func (a *ExecStmt) GetPointRecord(ctx context.Context, is infoschema.InfoSchema) (*recordSet, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("ExecStmt.GetPointRecord", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", a.OriginText())
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	var err error
-	var startTs uint64 = math.MaxUint64
-	err = sctx.InitTxnWithStartTS(startTs)
+	startTs := uint64(math.MaxUint64)
+	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
 		return nil, err
 	}
-	sctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
-	b := newExecutorBuilder(sctx, is)
+	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
+	b := newExecutorBuilder(a.Ctx, is)
 	exec := b.build(a.Plan)
 	if b.err != nil {
-		return nil, errors.Trace(b.err)
+		return nil, b.err
 	}
 	if err = exec.Open(ctx); err != nil {
 		terror.Call(exec.Close)

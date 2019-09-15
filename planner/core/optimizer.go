@@ -90,7 +90,8 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 	for _, v := range vs {
 		if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
 			if v.err == nil {
-				return ErrPrivilegeCheckFail
+
+				return sinceErrPrivilegeCheckFail
 			}
 			return v.err
 		}
