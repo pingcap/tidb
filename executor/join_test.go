@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -997,7 +998,7 @@ func (s *testSuite2) TestMergejoinOrder(c *C) {
 	tk.MustExec("insert into t2 select a*100, b*100 from t1;")
 
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
-		"MergeJoin_20 10000.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
+		"MergeJoin_20 10000.00 root left outer join, left key:Column#1, right key:Column#3, left cond:[ne(Column#1, 3)]",
 		"├─TableReader_12 10000.00 root data:TableScan_11",
 		"│ └─TableScan_11 10000.00 cop table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
 		"└─TableReader_14 6666.67 root data:TableScan_13",
@@ -1065,9 +1066,9 @@ func (s *testSuite2) TestHashJoin(c *C) {
 	c.Assert(len(row), Equals, 7)
 	outerExecInfo := row[1][4].(string)
 	// FIXME: revert this result to 1 after TableReaderExecutor can handle initChunkSize.
-	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "5")
+	c.Assert(outerExecInfo[strings.Index(outerExecInfo, "rows")+5:strings.Index(outerExecInfo, "rows")+6], Equals, "5")
 	innerExecInfo := row[4][4].(string)
-	c.Assert(innerExecInfo[len(innerExecInfo)-1:], Equals, "0")
+	c.Assert(innerExecInfo[strings.Index(innerExecInfo, "rows")+5:strings.Index(innerExecInfo, "rows")+6], Equals, "0")
 }
 
 func (s *testSuite2) TestJoinDifferentDecimals(c *C) {
