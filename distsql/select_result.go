@@ -180,9 +180,18 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
-	//	fmt.Println(datasize)
-	//	fmt.Println(timecost)
 	chk.Reset()
+	// Check the returned data is default/arrow format.
+	if r.selectResp == nil || len(r.selectResp.RowBatchData) == 0 {
+		err := r.getSelectResp()
+		if err != nil || r.selectResp == nil {
+			return errors.Trace(err)
+		}
+		if len(r.selectResp.RowBatchData) == 0 {
+			r.decodeType = DecodeTypeDefault
+		}
+	}
+
 	switch r.decodeType {
 	case DecodeTypeDefault:
 		return r.readFromDefault(ctx, chk)
