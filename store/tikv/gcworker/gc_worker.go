@@ -298,19 +298,19 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 		logutil.Logger(ctx).Warn("[gc worker] gc status is disabled.")
 		return false, 0, nil
 	}
-	globalMinStartTime, err := w.getGlobalMinStartTime()
+	now, err := w.getOracleTime()
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-	ok, err := w.checkGCInterval(globalMinStartTime)
+	ok, err := w.checkGCInterval(now)
 	if err != nil || !ok {
 		return false, 0, errors.Trace(err)
 	}
-	newSafePoint, err := w.calculateNewSafePoint(globalMinStartTime)
+	newSafePoint, err := w.calculateNewSafePoint(now)
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
-	err = w.saveTime(gcLastRunTimeKey, globalMinStartTime)
+	err = w.saveTime(gcLastRunTimeKey, now)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -321,16 +321,17 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	return true, oracle.ComposeTS(oracle.GetPhysical(*newSafePoint), 0), nil
 }
 
-func (w *GCWorker) getGlobalMinStartTime() (time.Time, error) {
+// calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
+func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
 	kvs, err := w.store.GetSafePointKV().GetWithPrefix("/tidb/server/minstartts")
 	if err != nil {
-		return time.Time{}, err
+		return safePoint
 	}
 	var globalMinStartTS uint64 = math.MaxUint64
 	for _, v := range kvs {
 		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 8)
 		if err != nil {
-			return time.Time{}, err
+			return safePoint
 		}
 		if minStartTS != 0 && minStartTS < globalMinStartTS {
 			globalMinStartTS = minStartTS
@@ -338,20 +339,16 @@ func (w *GCWorker) getGlobalMinStartTime() (time.Time, error) {
 	}
 	physical := oracle.ExtractPhysical(globalMinStartTS)
 	sec, nsec := physical/1e3, (physical%1e3)*1e6
-	globalMinTime := time.Unix(sec, nsec)
-	now, err := w.getOracleTime()
-	if err != nil {
-		return time.Time{}, err
+	globalMinStartTime := time.Unix(sec, nsec)
+
+	diff := safePoint.Sub(globalMinStartTime)
+	maxTxnTimeUse := time.Duration(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse+10) * time.Second
+	// If the transaction is not too old, we could use it as the new safe point.
+	if diff < maxTxnTimeUse && globalMinStartTime.Before(safePoint) {
+		return globalMinStartTime
 	}
-	diff := now.Sub(globalMinTime)
-	maxTxnTimeUse := time.Duration(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse) * time.Second
-	if diff > maxTxnTimeUse {
-		return now.Add(-maxTxnTimeUse), nil
-	}
-	if diff < 0 {
-		return now, nil
-	}
-	return globalMinTime, nil
+
+	return safePoint
 }
 
 func (w *GCWorker) getOracleTime() (time.Time, error) {
@@ -479,7 +476,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	safePoint := now.Add(-*lifeTime)
+	safePoint := w.calSafePointByMinStartTS(now.Add(-*lifeTime))
 	// We should never decrease safePoint.
 	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
 		logutil.BgLogger().Info("[gc worker] last safe point is later than current one."+
