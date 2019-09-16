@@ -57,6 +57,10 @@ func (b *builtinCastIntAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 	rs := result.Float64s()
 
 	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.SetNull(i,true)
+			continue
+		}
 		if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 			rs[i] = float64(i64s[i])
 		} else if b.inUnion && i64s[i] < 0 {
