@@ -35,10 +35,8 @@ import (
 )
 
 var (
-	_        SelectResult = (*selectResult)(nil)
-	_        SelectResult = (*streamResult)(nil)
-	datasize int64        = 0
-	timecost int64        = 0
+	_ SelectResult = (*selectResult)(nil)
+	_ SelectResult = (*streamResult)(nil)
 )
 
 // DecodeType indicates the encode type.
