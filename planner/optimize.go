@@ -37,7 +37,6 @@ import (
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
-		return fp, fp.OutputNames(), nil
 		if !isPointGetWithoutDoubleRead(sctx, fp) {
 			sctx.PrepareTxnFuture(ctx)
 		}

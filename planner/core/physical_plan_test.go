@@ -981,7 +981,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSplitAvg(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		core.Preprocess(se, stmt, s.is)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 
 		c.Assert(core.ToString(p), Equals, tt.plan, comment)

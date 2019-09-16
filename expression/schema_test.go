@@ -41,7 +41,7 @@ func (s *testEvalSuite) generateSchema(colCount int) *Schema {
 }
 
 func (s *testEvalSuite) TestSchemaString(c *C) {
-	schema := s.generateSchema(5, "T", "B")
+	schema := s.generateSchema(5)
 	c.Assert(schema.String(), Equals, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: []")
 	generateKeys4Schema(schema)
 	c.Assert(schema.String(), Equals, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: [[Column#1],[Column#2],[Column#3],[Column#4]]")
