@@ -1365,13 +1365,14 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 	base.maxChunkSize = 1
 	if v.IndexInfo != nil {
 		return &SplitIndexRegionExec{
-			baseExecutor: base,
-			tableInfo:    v.TableInfo,
-			indexInfo:    v.IndexInfo,
-			lower:        v.Lower,
-			upper:        v.Upper,
-			num:          v.Num,
-			valueLists:   v.ValueLists,
+			baseExecutor:   base,
+			tableInfo:      v.TableInfo,
+			partitionNames: v.PartitionNames,
+			indexInfo:      v.IndexInfo,
+			lower:          v.Lower,
+			upper:          v.Upper,
+			num:            v.Num,
+			valueLists:     v.ValueLists,
 		}
 	}
 	if len(v.ValueLists) > 0 {

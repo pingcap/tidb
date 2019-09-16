@@ -4304,6 +4304,63 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 		c.Assert(rows[i*4+6][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
 		c.Assert(rows[i*4+7][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
 	}
+
+	// Test split partition table index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int,index idx(a)) partition by hash(a) partitions 5;")
+	tk.MustQuery("split table t between (0) and (4000000) regions 4;").Check(testkit.Rows("20 1"))
+	tk.MustQuery("split table t index idx between (0) and (4000000) regions 4;").Check(testkit.Rows("20 1"))
+	re = tk.MustQuery("show table t regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 40)
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(len(tbl.Meta().GetPartitionInfo().Definitions), Equals, 5)
+	for i := 0; i < 5; i++ {
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[i*8+0][1], Equals, fmt.Sprintf("t_%d_r", p.ID))
+		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_i_1_", p.ID))
+		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	}
+
+	// Test split index region for partition table with specified partition.
+	tk.MustQuery("split table t partition (p4) index idx between (0) and (1000000) regions 5;").Check(testkit.Rows("4 1"))
+	re = tk.MustQuery("show table t regions")
+	rows = re.Rows()
+	//re.Check(testkit.Rows(""))
+	c.Assert(len(rows), Equals, 44)
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(len(tbl.Meta().GetPartitionInfo().Definitions), Equals, 5)
+	for i := 0; i < 4; i++ {
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[i*8+0][1], Equals, fmt.Sprintf("t_%d_r", p.ID))
+		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_i_1_", p.ID))
+		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	}
+	for i := 4; i < 5; i++ {
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[i*8+0][1], Equals, fmt.Sprintf("t_%d_r", p.ID))
+		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_i_1_", p.ID))
+		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+8][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+9][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+10][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+11][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	}
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {

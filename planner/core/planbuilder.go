@@ -1965,8 +1965,9 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	mockTablePlan.SetSchema(schema)
 
 	p := &SplitRegion{
-		TableInfo: tblInfo,
-		IndexInfo: indexInfo,
+		TableInfo:      tblInfo,
+		PartitionNames: node.PartitionNames,
+		IndexInfo:      indexInfo,
 	}
 	p.SetSchema(buildSplitRegionsSchema())
 	// Split index regions by user specified value lists.

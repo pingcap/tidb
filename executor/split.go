@@ -43,12 +43,13 @@ import (
 type SplitIndexRegionExec struct {
 	baseExecutor
 
-	tableInfo  *model.TableInfo
-	indexInfo  *model.IndexInfo
-	lower      []types.Datum
-	upper      []types.Datum
-	num        int
-	valueLists [][]types.Datum
+	tableInfo      *model.TableInfo
+	partitionNames []model.CIStr
+	indexInfo      *model.IndexInfo
+	lower          []types.Datum
+	upper          []types.Datum
+	num            int
+	valueLists     [][]types.Datum
 
 	done bool
 	splitRegionResult
@@ -113,38 +114,12 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 }
 
 func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
-	var idxKeys [][]byte
-	if e.num > 0 {
-		idxKeys = make([][]byte, 0, e.num)
-	} else {
-		idxKeys = make([][]byte, 0, len(e.valueLists)+1)
-	}
-	// Split in the start of the index key.
-	startIdxKey := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, e.indexInfo.ID)
-	idxKeys = append(idxKeys, startIdxKey)
-
-	// Split in the end for the other index key.
-	for _, idx := range e.tableInfo.Indices {
-		if idx.ID <= e.indexInfo.ID {
-			continue
-		}
-		endIdxKey := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, idx.ID)
-		idxKeys = append(idxKeys, endIdxKey)
-		break
+	// Split index regions by user specified value lists.
+	if len(e.valueLists) > 0 {
+		return e.getSplitIdxKeysFromValueList()
 	}
 
 	index := tables.NewIndex(e.tableInfo.ID, e.tableInfo, e.indexInfo)
-	// Split index regions by user specified value lists.
-	if len(e.valueLists) > 0 {
-		for _, v := range e.valueLists {
-			idxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, v, math.MinInt64, nil)
-			if err != nil {
-				return nil, err
-			}
-			idxKeys = append(idxKeys, idxKey)
-		}
-		return idxKeys, nil
-	}
 	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
 	lowerIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.lower, math.MinInt64, nil)
 	if err != nil {
@@ -164,7 +139,124 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 		}
 		return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, lowerStr, upperStr)
 	}
-	return getValuesList(lowerIdxKey, upperIdxKey, e.num, idxKeys), nil
+
+	return e.getSplitIdxKeysFromBound()
+}
+
+func (e *SplitIndexRegionExec) getSplitIdxKeysFromValueList() (keys [][]byte, err error) {
+	pi := e.tableInfo.GetPartitionInfo()
+	if pi == nil {
+		keys = make([][]byte, 0, len(e.valueLists)+1)
+		return e.getSplitIdxPhysicalKeysFromValueList(e.tableInfo.ID, keys)
+	}
+
+	// Split for all table partitions.
+	if len(e.partitionNames) == 0 {
+		keys = make([][]byte, 0, (len(e.valueLists)+1)*len(pi.Definitions))
+		for _, p := range pi.Definitions {
+			keys, err = e.getSplitIdxPhysicalKeysFromValueList(p.ID, keys)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return keys, nil
+	}
+
+	// Split for specified table partitions.
+	keys = make([][]byte, 0, (len(e.valueLists)+1)*len(e.partitionNames))
+	for _, name := range e.partitionNames {
+		pid, err := tables.FindPartitionByName(e.tableInfo, name.L)
+		if err != nil {
+			return nil, err
+		}
+		keys, err = e.getSplitIdxPhysicalKeysFromValueList(pid, keys)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return keys, nil
+}
+
+func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromValueList(physicalID int64, keys [][]byte) ([][]byte, error) {
+	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
+	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
+	for _, v := range e.valueLists {
+		idxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, v, math.MinInt64, nil)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, idxKey)
+	}
+	return keys, nil
+}
+
+func (e *SplitIndexRegionExec) getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID int64, keys [][]byte) [][]byte {
+	// Split in the start of the index key.
+	startIdxKey := tablecodec.EncodeTableIndexPrefix(physicalID, e.indexInfo.ID)
+	keys = append(keys, startIdxKey)
+
+	// Split in the end for the other index key.
+	for _, idx := range e.tableInfo.Indices {
+		if idx.ID <= e.indexInfo.ID {
+			continue
+		}
+		endIdxKey := tablecodec.EncodeTableIndexPrefix(physicalID, idx.ID)
+		keys = append(keys, endIdxKey)
+		break
+	}
+	return keys
+}
+
+func (e *SplitIndexRegionExec) getSplitIdxKeysFromBound() (keys [][]byte, err error) {
+	pi := e.tableInfo.GetPartitionInfo()
+	if pi == nil {
+		keys = make([][]byte, 0, e.num)
+		return e.getSplitIdxPhysicalKeysFromBound(e.tableInfo.ID, keys)
+	}
+
+	// Split for all table partitions.
+	if len(e.partitionNames) == 0 {
+		keys = make([][]byte, 0, e.num*len(pi.Definitions))
+		for _, p := range pi.Definitions {
+			keys, err = e.getSplitIdxPhysicalKeysFromBound(p.ID, keys)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return keys, nil
+	}
+
+	// Split for specified table partitions.
+	keys = make([][]byte, 0, e.num*len(e.partitionNames))
+	for _, name := range e.partitionNames {
+		pid, err := tables.FindPartitionByName(e.tableInfo, name.L)
+		if err != nil {
+			return nil, err
+		}
+		keys, err = e.getSplitIdxPhysicalKeysFromBound(pid, keys)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return keys, nil
+}
+
+func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64, keys [][]byte) ([][]byte, error) {
+	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
+	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
+	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
+	lowerIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.lower, math.MinInt64, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Use math.MinInt64 as handle_id for the upper index key to avoid affecting calculate split point.
+	// If use math.MaxInt64 here, test of `TestSplitIndex` will report error.
+	upperIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.upper, math.MinInt64, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return getValuesList(lowerIdxKey, upperIdxKey, e.num, keys), nil
 }
 
 // getValuesList is used to get `num` values between lower and upper value.
