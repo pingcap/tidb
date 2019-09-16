@@ -253,9 +253,11 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		for i := range sel {
 			if buf.IsNull(i) {
 				if !isEQCondFromIn {
-					nulls[sel[i]] = false // nulls may be set to true
+					nulls[sel[i]] = false
 					continue
 				}
+				// In this case, we set this row to null and let it pass this filter.
+				// The null flag may be set to false later by other expressions in some cases.
 				nulls[sel[i]] = true
 				sel[j] = sel[i]
 				j++
