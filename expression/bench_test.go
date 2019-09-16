@@ -512,14 +512,18 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	return baseFunc, input, result
 }
 
-var vecTestFuncSig = flag.String("vec_test_func_sig", "",
-	"input the signature that you want to test.")
-
 // testVectorizedBuiltinFunc is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	flag.Parse()
-	TestFuncName := *vecTestFuncSig
+	var testFunc map[string]bool
+	testFunc = make(map[string]bool)
+	argList := flag.Args() // flag.Args() 返回 -args 后面的所有参数，以切片表示，每个元素代表一个参数
+	testAll := true
+	for _, arg := range argList {
+		testFunc[arg] = true
+		testAll = false
+	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
@@ -528,7 +532,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
 
-			if TestFuncName != "" && TestFuncName != baseFuncName {
+			if !testAll && testFunc[baseFuncName] != true {
 				continue
 			}
 
@@ -655,7 +659,14 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	ctx := mock.NewContext()
 
 	flag.Parse()
-	TestFuncName := *vecTestFuncSig
+	var testFunc map[string]bool
+	testFunc = make(map[string]bool)
+	argList := flag.Args() // flag.Args() 返回 -args 后面的所有参数，以切片表示，每个元素代表一个参数
+	testAll := true
+	for _, arg := range argList {
+		testFunc[arg] = true
+		testAll = false
+	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
@@ -663,7 +674,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
 
-			if TestFuncName != "" && TestFuncName != baseFuncName {
+			if !testAll && testFunc[baseFuncName] != true {
 				continue
 			}
 
