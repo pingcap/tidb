@@ -489,7 +489,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 
 	if err != nil {
-		err = errors.Annotatef(err, "previous statement: %s", s.GetSessionVars().PrevStmt)
 		logutil.Logger(ctx).Warn("commit failed",
 			zap.String("finished txn", s.txn.GoString()),
 			zap.Error(err))
