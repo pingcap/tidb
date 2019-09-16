@@ -82,7 +82,7 @@ slow-query-file = "tidb-slow.log"
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
 
-# slow-log-plan uses to enable record query plan in slow log.
+# slow-log-plan is used to enable record query plan in slow log.
 # 0 is disable. 1 is enable.
 slow-log-plan = 0
 
