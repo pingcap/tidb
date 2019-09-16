@@ -86,6 +86,10 @@ func (s *testSuite) TestConsume(c *C) {
 
 func (s *testSuite) TestOOMAction(c *C) {
 	tracker := NewTracker(stringutil.StringerStr("oom tracker"), 100)
+	// make sure no panic here.
+	tracker.Consume(10000)
+
+	tracker = NewTracker(stringutil.StringerStr("oom tracker"), 100)
 	action := &mockAction{}
 	tracker.SetActionOnExceed(action)
 

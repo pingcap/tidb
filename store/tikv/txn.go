@@ -249,7 +249,7 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	case kv.KeyOnly:
 		txn.snapshot.keyOnly = val.(bool)
 	case kv.SnapshotTS:
-		txn.snapshot.version.Ver = val.(uint64)
+		txn.snapshot.setSnapshotTS(val.(uint64))
 	}
 }
 
