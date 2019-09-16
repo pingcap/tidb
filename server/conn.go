@@ -1044,9 +1044,8 @@ func (cc *clientConn) writeReq(filePath string) error {
 	return cc.flush()
 }
 
-var defaultLoadDataBatchCnt uint64 = 20000
-
-func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
+func insertDataWithCommit(ctx context.Context, prevData,
+	curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
 	var reachLimit bool
 	for {
@@ -1057,21 +1056,74 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-		err := loadDataInfo.CheckAndInsertOneBatch(ctx)
+		// push into commit task queue
+		err = loadDataInfo.EnqOneTask(ctx)
 		if err != nil {
-			return nil, err
-		}
-		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
-			return nil, err
-		}
-		// Make sure that there are no retries when committing.
-		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
-			return nil, err
+			return prevData, err
 		}
 		curData = prevData
 		prevData = nil
 	}
 	return prevData, nil
+}
+
+// processStream process input stream from network
+func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.LoadDataInfo) {
+	var err error
+	var shouldBreak bool
+	var prevData, curData []byte
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(ctx).Error("process routine panicked",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+		}
+		if err != nil || r != nil {
+			loadDataInfo.ForceQuit()
+		} else {
+			loadDataInfo.CloseTaskQueue()
+		}
+	}()
+	for {
+		curData, err = cc.readPacket()
+		if err != nil {
+			if terror.ErrorNotEqual(err, io.EOF) {
+				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
+				break
+			}
+		}
+		if len(curData) == 0 {
+			shouldBreak = true
+			if len(prevData) == 0 {
+				break
+			}
+		}
+		select {
+		case <-loadDataInfo.QuitCh:
+			err = errors.New("processStream forced to quit")
+		default:
+		}
+		if err != nil {
+			break
+		}
+		// prepare batch and enqueue task
+		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
+		if err != nil {
+			break
+		}
+		if shouldBreak {
+			break
+		}
+	}
+	if err != nil {
+		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+	} else {
+		err = loadDataInfo.EnqOneTask(ctx)
+		if err != nil {
+			logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+		}
+	}
 }
 
 // handleLoadData does the additional work after processing the 'load data' query.
@@ -1090,46 +1142,17 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return err
 	}
 
-	var shouldBreak bool
-	var prevData, curData []byte
-	// TODO: Make the loadDataRowCnt settable.
-	loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
+	loadDataInfo.InitQueues()
+	loadDataInfo.SetMaxRowsInBatch(uint64(loadDataInfo.Ctx.GetSessionVars().DMLBatchSize))
+	loadDataInfo.StartStopWatcher()
 	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return err
 	}
-	for {
-		curData, err = cc.readPacket()
-		if err != nil {
-			if terror.ErrorNotEqual(err, io.EOF) {
-				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
-				break
-			}
-		}
-		if len(curData) == 0 {
-			shouldBreak = true
-			if len(prevData) == 0 {
-				break
-			}
-		}
-		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
-		if err != nil {
-			break
-		}
-		if shouldBreak {
-			break
-		}
-	}
+	// processStream process input data, enqueue commit task
+	go processStream(ctx, cc, loadDataInfo)
+	err = loadDataInfo.CommitWork(ctx)
 	loadDataInfo.SetMessage()
-
-	if err != nil {
-		loadDataInfo.Ctx.StmtRollback()
-	} else {
-		err = loadDataInfo.CheckAndInsertOneBatch(ctx)
-		if err == nil {
-			err = loadDataInfo.Ctx.StmtCommit()
-		}
-	}
 
 	var txn kv.Transaction
 	var err1 error
