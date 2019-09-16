@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -189,10 +190,15 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
 	}
-	prepared, ok := vars.PreparedStmts[e.ExecID]
+	preparedPointer, ok := vars.PreparedStmts[e.ExecID]
 	if !ok {
 		return errors.Trace(ErrStmtNotFound)
 	}
+	preparedObj, ok := preparedPointer.(*PrepareObject)
+	if !ok {
+		return errors.Errorf("invalid PrepareObject type")
+	}
+	prepared := preparedObj.PreparedAst
 	vars.StmtCtx.StmtType = prepared.StmtType
 
 	paramLen := len(e.PrepareParams)
@@ -234,7 +240,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
-	err := e.getPhysicalPlan(ctx, sctx, is, prepared)
+	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
 	}
@@ -242,13 +248,28 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) error {
+func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
+	preparedObj *PrepareObject, is infoschema.InfoSchema) error {
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, preparedObj.VisitInfos); err != nil {
+			return err
+		}
+	}
+	err := CheckTableLock(sctx, is, preparedObj.VisitInfos)
+	return err
+}
+
+func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedObj *PrepareObject) error {
 	var cacheKey kvcache.Key
+	prepared := preparedObj.PreparedAst
 	sessionVars := sctx.GetSessionVars()
 	sessionVars.StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
+			if err := e.checkPreparedPriv(ctx, sctx, preparedObj, is); err != nil {
+				return err
+			}
 			if metrics.ResettablePlanCacheCounterFortTest {
 				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 			} else {

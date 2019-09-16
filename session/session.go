@@ -265,16 +265,21 @@ func (s *session) cleanRetryInfo() {
 
 	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
 	var cacheKey kvcache.Key
+	var preparedAst *ast.Prepared
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
-		cacheKey = plannercore.NewPSTMTPlanCacheKey(
-			s.sessionVars, firstStmtID, s.sessionVars.PreparedStmts[firstStmtID].SchemaVersion,
-		)
+		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
+			preparedObj, ok := preparedPointer.(*plannercore.PrepareObject)
+			if ok {
+				preparedAst = preparedObj.PreparedAst
+				cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion)
+			}
+		}
 	}
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
-			if i > 0 {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, s.sessionVars.PreparedStmts[stmtID].SchemaVersion)
+			if i > 0 && preparedAst != nil {
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, preparedAst.SchemaVersion)
 			}
 			s.PreparedPlanCache().Delete(cacheKey)
 		}
