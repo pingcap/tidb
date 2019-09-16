@@ -18,11 +18,14 @@
 package expression
 
 import (
+	"encoding/hex"
 	"sort"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
@@ -44,6 +47,7 @@ var (
 	_ functionClass = &rowCountFunctionClass{}
 	_ functionClass = &tidbVersionFunctionClass{}
 	_ functionClass = &tidbIsDDLOwnerFunctionClass{}
+	_ functionClass = &tidbDecodeKeyFunctionClass{}
 )
 
 var (
@@ -57,6 +61,7 @@ var (
 	_ builtinFunc = &builtinVersionSig{}
 	_ builtinFunc = &builtinTiDBVersionSig{}
 	_ builtinFunc = &builtinRowCountSig{}
+	_ builtinFunc = &builtinTiDBDecodeKeySig{}
 )
 
 type databaseFunctionClass struct {
@@ -588,4 +593,63 @@ func (b *builtinRowCountSig) Clone() builtinFunc {
 func (b *builtinRowCountSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
 	res = int64(b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows)
 	return res, false, nil
+}
+
+type tidbDecodeKeyFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbDecodeKeyFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	sig := &builtinTiDBDecodeKeySig{bf}
+	return sig, nil
+}
+
+type builtinTiDBDecodeKeySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
+	newSig := &builtinTiDBDecodeKeySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinTiDBIsDDLOwnerSig.
+func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error) {
+	s, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	key, err := hex.DecodeString(s)
+	if err != nil {
+		return "", false, err
+	}
+	return decodeKey(key), false, nil
+}
+
+func decodeKey(key []byte) string {
+	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
+	if err == nil {
+		str := "tableID=" + strconv.FormatInt(tableID, 10) + ", indexID=" + strconv.FormatInt(indexID, 10) + ", indexValues={"
+		for i, v := range indexValues {
+			if i > 0 {
+				str += ","
+			}
+			str += v
+		}
+		str += "}"
+		return str
+	}
+
+	tableID, handle, err := tablecodec.DecodeRecordKey(key)
+	if err == nil {
+		return "tableID=" + strconv.FormatInt(tableID, 10) + ", handle=" + strconv.FormatInt(handle, 10)
+	}
+
+	// TODO: try to decode other type key.
+	return string(key)
 }
