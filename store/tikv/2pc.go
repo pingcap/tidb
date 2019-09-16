@@ -616,28 +616,19 @@ func (tm *ttlManager) close() {
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 	bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-tm.ch:
 			return
 		case <-ticker.C:
-			ts, err := c.store.GetOracle().GetTimestamp(bo.ctx)
-			if err != nil {
-				if err1 := bo.Backoff(BoPDRPC, err); err1 != nil {
-					logutil.BgLogger().Error("keepAlive fail",
-						zap.Error(err1))
-					return
-				}
-				continue
-			}
 
-			ms := oracle.ExtractPhysical(ts)
-			ms += 3000
-			newTTL := oracle.EncodeTSO(ms)
+			start := oracle.GetTimeFromTS(c.startTS)
+			elapsed := time.Since(start) / time.Millisecond
+			newTTL := uint64(elapsed) + PessimisticLockTTL
 
-			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
+			_, err := sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
 				logutil.BgLogger().Warn("send TxnHeartBeat failed",
 					zap.Error(err),

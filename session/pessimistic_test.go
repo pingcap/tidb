@@ -44,8 +44,8 @@ type testPessimisticSuite struct {
 
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	// Set it to 300ms for testing lock resolve.
-	tikv.PessimisticLockTTL = 300
+	// Set it to 15s for testing lock resolve.
+	tikv.PessimisticLockTTL = 15000
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.MustNewMVCCStore()
@@ -368,9 +368,9 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	// Check pessimistic lock is not resolved.
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update conflict set c = 4 where id = 1")
-	time.Sleep(300 * time.Millisecond)
 	tk2.MustExec("begin optimistic")
 	tk2.MustExec("update conflict set c = 5 where id = 1")
+	// TODO: ResolveLock block until timeout, takes about 40s, makes CI slow!
 	_, err := tk2.Exec("commit")
 	c.Check(err, NotNil)
 
