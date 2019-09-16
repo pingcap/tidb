@@ -57,7 +57,7 @@ var (
 
 // Global variable set by config file.
 var (
-	PessimisticLockTTL uint64
+	PessimisticLockTTL uint64 = 15000 // 15s ~ 40s
 )
 
 func (ca twoPhaseCommitAction) String() string {
