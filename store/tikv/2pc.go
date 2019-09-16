@@ -622,11 +622,21 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			return
 		case <-ticker.C:
 
-			start := oracle.GetTimeFromTS(c.startTS)
-			elapsed := time.Since(start) / time.Millisecond
-			newTTL := uint64(elapsed) + PessimisticLockTTL
+			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
+			if err != nil {
+				err1 := bo.Backoff(BoPDRPC, err)
+				if err1 != nil {
+					logutil.BgLogger().Warn("keepAlive get tso fail",
+						zap.Error(err))
+					return
+				}
+				continue
+			}
 
-			_, err := sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
+			// ttl = now - start ts + lock ttl
+			newTTL := uint64(oracle.ExtractPhysical(now)-oracle.ExtractPhysical(c.startTS)) + PessimisticLockTTL
+
+			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
 				logutil.BgLogger().Warn("send TxnHeartBeat failed",
 					zap.Error(err),
