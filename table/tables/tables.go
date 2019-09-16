@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -942,7 +943,7 @@ func OverflowShardBits(rowID int64, shardRowIDBits uint64) bool {
 
 func (t *tableCommon) calcShard(startTS uint64) int64 {
 	var buf [8]byte
-	binary.LittleEndian.PutUint64(buf[:], startTS)
+	binary.LittleEndian.PutUint64(buf[:], rand.Uint64())
 	hashVal := int64(murmur3.Sum32(buf[:]))
 	return (hashVal & (1<<t.meta.ShardRowIDBits - 1)) << (64 - t.meta.ShardRowIDBits - 1)
 }
