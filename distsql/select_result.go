@@ -16,7 +16,6 @@ package distsql
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -206,13 +205,8 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 			if err != nil || r.selectResp == nil {
 				return err
 			}
-			for i := 0; i < len(r.selectResp.Chunks); i++ {
-				atomic.AddInt64(&datasize, int64(len(r.selectResp.Chunks[i].RowsData)))
-			}
 		}
-		starttime := time.Now()
 		err := r.readRowsData(chk)
-		atomic.AddInt64(&timecost, int64(time.Since(starttime)))
 		if err != nil {
 			return err
 		}
@@ -229,11 +223,8 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 		if err != nil || r.selectResp == nil {
 			return errors.Trace(err)
 		}
-		atomic.AddInt64(&datasize, int64(len(r.selectResp.RowBatchData)))
 	}
-	starttime := time.Now()
 	r.readRowBatch(chk)
-	atomic.AddInt64(&timecost, int64(time.Since(starttime)))
 	return nil
 }
 
