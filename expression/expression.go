@@ -227,13 +227,13 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		nulls = append(nulls, false)
 	}
 
-	defer input.SetSel(input.Sel())
 	sel := selPool.Get().([]int)
 	defer selPool.Put(sel)
 	sel = sel[:0]
 	for i := 0; i < n; i++ {
 		sel = append(sel, i)
 	}
+	defer input.SetSel(input.Sel())
 	input.SetSel(sel)
 
 	for _, expr := range exprList {
@@ -253,8 +253,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		for i := range sel {
 			if buf.IsNull(i) {
 				if !isEQCondFromIn {
-					selected[sel[i]] = false
-					nulls[sel[i]] = false
+					nulls[sel[i]] = false // nulls may be set to true
 					continue
 				}
 				nulls[sel[i]] = true
