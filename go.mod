@@ -43,8 +43,8 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20190703131923-d9830856b531
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
-	github.com/pingcap/parser v0.0.0-20190912032624-978b8272c04e
-	github.com/pingcap/pd v0.0.0-20190712044914-75a1f9f3062b
+	github.com/pingcap/parser v0.0.0-20190910041007-2a177b291004
+	github.com/pingcap/pd v0.0.0-20190711034019-ee98bf9063e9
 	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
 	github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330
 	github.com/prometheus/client_golang v0.9.0
