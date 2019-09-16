@@ -957,10 +957,7 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 				if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
 					return err
 				}
-				if err = mvcc.db.Write(batch, nil); err != nil {
-					return err
-				}
-				return nil
+				return mvcc.db.Write(batch, nil)
 			}
 
 			// Otherwise, return a locked error to with the TTL information.
@@ -996,12 +993,6 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 	}
 	batch.Put(writeKey, writeValue)
 	return nil
-
-	err = rollbackKey(mvcc.db, batch, key, startTS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return mvcc.db.Write(batch, nil)
 }
 
 // CheckTxnStatus checks the primary lock of a transaction to decide its status.
