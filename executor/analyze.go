@@ -63,7 +63,7 @@ type AnalyzeExec struct {
 var (
 	// MaxSampleSize is the size of samples for once analyze.
 	// It's public for test.
-	MaxSampleSize = 10000
+	MaxSampleSize = int64(10000)
 	// RandSeed is the seed for randing package.
 	// It's public for test.
 	RandSeed = int64(1)
@@ -464,7 +464,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		collectors[i] = &statistics.SampleCollector{
 			IsMerger:      true,
 			FMSketch:      statistics.NewFMSketch(maxSketchSize),
-			MaxSampleSize: int64(MaxSampleSize),
+			MaxSampleSize: atomic.LoadInt64(&MaxSampleSize),
 			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
 		}
 	}
@@ -1133,7 +1133,7 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 	}
 
 	randPos := make([]uint64, 0, MaxSampleSize+1)
-	for i := 0; i < MaxSampleSize; i++ {
+	for i := 0; i < int(MaxSampleSize); i++ {
 		randPos = append(randPos, uint64(rander.Int63n(int64(e.rowCount))))
 	}
 	sort.Slice(randPos, func(i, j int) bool { return randPos[i] < randPos[j] })
@@ -1183,7 +1183,7 @@ type analyzeIndexIncrementalExec struct {
 
 func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult {
 	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
-	values, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
+	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
