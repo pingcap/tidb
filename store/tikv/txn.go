@@ -309,6 +309,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 
 	defer func() {
+		committer.ttlManager.close()
 		ctxValue := ctx.Value(execdetails.CommitDetailCtxKey)
 		if ctxValue != nil {
 			commitDetail := ctxValue.(**execdetails.CommitDetails)
@@ -359,6 +360,7 @@ func (txn *tikvTxn) Rollback() error {
 	// Clean up pessimistic lock.
 	if txn.IsPessimistic() && txn.committer != nil {
 		err := txn.rollbackPessimisticLocks()
+		txn.committer.ttlManager.close()
 		if err != nil {
 			logutil.BgLogger().Error(err.Error())
 		}

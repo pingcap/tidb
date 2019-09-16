@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -615,27 +616,34 @@ func (tm *ttlManager) close() {
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 	bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
-	ticker := time.NewTicker(2 * time.Millisecond)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-tm.ch:
 			return
 		case <-ticker.C:
-			ms := c.store.GetOracle().UntilExpired(c.startTS, c.ttl)
-			if ms > 0 && uint64(ms) > defaultLockTTL {
+			ts, err := c.store.GetOracle().GetTimestamp(bo.ctx)
+			if err != nil {
+				if err1 := bo.Backoff(BoPDRPC, err); err1 != nil {
+					logutil.BgLogger().Error("keepAlive fail",
+						zap.Error(err1))
+					return
+				}
 				continue
 			}
 
-			adviseTTL := c.ttl + 2000
-			realTTL, err := sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, adviseTTL)
+			ms := oracle.ExtractPhysical(ts)
+			ms += 3000
+			newTTL := oracle.EncodeTSO(ms)
+
+			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
 				logutil.BgLogger().Warn("send TxnHeartBeat failed",
 					zap.Error(err),
 					zap.Uint64("txnStartTS", c.startTS))
 				return
 			}
-			c.ttl = realTTL
 		}
 	}
 }
@@ -946,7 +954,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		committed := c.mu.committed
 		undetermined := c.mu.undeterminedErr != nil
 		c.mu.RUnlock()
-		c.ttlManager.close()
 		if !committed && !undetermined {
 			c.cleanWg.Add(1)
 			go func() {
