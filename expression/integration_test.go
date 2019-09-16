@@ -4130,7 +4130,7 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	result.Check(testkit.Rows("tableID=43, handle=42451"))
 
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
-	result.Check(testkit.Rows("tableID=411, indexID=1, indexValues={RW01,768221109,}"))
+	result.Check(testkit.Rows("tableID=411, indexID=1, indexValues=015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

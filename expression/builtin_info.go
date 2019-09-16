@@ -19,6 +19,7 @@ package expression
 
 import (
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strconv"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/printer"
 )
 
@@ -624,32 +626,31 @@ func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	key, err := hex.DecodeString(s)
-	if err != nil {
-		return "", false, err
-	}
-	return decodeKey(key), false, nil
+	return decodeKey(s), false, nil
 }
 
-func decodeKey(key []byte) string {
-	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
-	if err == nil {
-		str := "tableID=" + strconv.FormatInt(tableID, 10) + ", indexID=" + strconv.FormatInt(indexID, 10) + ", indexValues={"
-		for i, v := range indexValues {
-			if i > 0 {
-				str += ","
-			}
-			str += v
-		}
-		str += "}"
-		return str
+func decodeKey(s string) string {
+	key, err := hex.DecodeString(s)
+	if err != nil {
+		return s
 	}
-
+	// Auto decode byte if needs.
+	_, bs, err := codec.DecodeBytes([]byte(key), nil)
+	if err == nil {
+		key = bs
+	}
+	// Try decode as table record key.
 	tableID, handle, err := tablecodec.DecodeRecordKey(key)
 	if err == nil {
 		return "tableID=" + strconv.FormatInt(tableID, 10) + ", handle=" + strconv.FormatInt(handle, 10)
 	}
+	// Try decode as table index key.
+	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKeyPrefix(key)
+	if err == nil {
+		idxValueStr := fmt.Sprintf("%X", indexValues)
+		return "tableID=" + strconv.FormatInt(tableID, 10) + ", indexID=" + strconv.FormatInt(indexID, 10) + ", indexValues=" + idxValueStr
+	}
 
 	// TODO: try to decode other type key.
-	return string(key)
+	return s
 }
