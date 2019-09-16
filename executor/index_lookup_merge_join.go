@@ -95,19 +95,17 @@ type lookUpMergeJoinTask struct {
 	outerMatch  []bool
 	outerIter   chunk.Iterator
 
-	innerResults *chunk.List
-	innerIter    chunk.Iterator
+	innerResult *chunk.Chunk
+	innerIter   chunk.Iterator
 
 	sameKeyRows []chunk.Row
 	sameKeyIter chunk.Iterator
 
 	doneErr  chan error
-	done     bool
 	hasMatch bool
 	hasNull  bool
 
-	wgSetResultsSize sync.WaitGroup
-	results          chan *chunk.Chunk
+	results chan *chunk.Chunk
 
 	memTracker *memory.Tracker
 }
@@ -137,7 +135,7 @@ type innerMergeWorker struct {
 	taskCh        <-chan *lookUpMergeJoinTask
 	outerMergeCtx outerMergeCtx
 	ctx           sessionctx.Context
-	executorChk   *chunk.Chunk
+	innerExec     Executor
 	joiner        joiner
 	retFieldTypes []*types.FieldType
 
@@ -224,7 +222,6 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 		outerMergeCtx:         e.outerMergeCtx,
 		taskCh:                taskCh,
 		ctx:                   e.ctx,
-		executorChk:           chunk.NewChunkWithCapacity(e.innerMergeCtx.rowTypes, e.maxChunkSize),
 		indexRanges:           copiedRanges,
 		nextColCompareFilters: e.lastColHelper,
 		keyOff2IdxOff:         e.keyOff2IdxOff,
@@ -249,13 +246,11 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 	req.Reset()
 	task := e.getFinishedTask(ctx)
 	for task != nil {
-		task.wgSetResultsSize.Wait()
 		select {
 		case chk := <-task.results:
 			req.Append(chk, 0, chk.NumRows())
 			return nil
 		case err := <-task.doneErr:
-			task.done = true
 			if err != nil {
 				return err
 			}
@@ -271,8 +266,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) *lookUpMergeJoinTask {
 	task := e.task
 	if task != nil {
-		task.wgSetResultsSize.Wait()
-		if !task.done || len(task.results) > 0 {
+		if len(task.results) > 0 {
 			return task
 		}
 	}
@@ -298,7 +292,6 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			task := &lookUpMergeJoinTask{
 				results: make(chan *chunk.Chunk, 1),
 				doneErr: make(chan error, 1),
-				done:    true,
 			}
 			task.doneErr <- err
 			omw.pushToChan(ctx, task, omw.resultCh)
@@ -311,7 +304,6 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		task, err := omw.buildTask(ctx)
 		if err != nil {
 			task.doneErr <- err
-			task.wgSetResultsSize.Done()
 			omw.pushToChan(ctx, task, omw.resultCh)
 			return
 		}
@@ -343,10 +335,10 @@ func (omw *outerMergeWorker) pushToChan(ctx context.Context, task *lookUpMergeJo
 func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
 	newFirstChunk(omw.executor)
 	task := &lookUpMergeJoinTask{
+		results:     make(chan *chunk.Chunk, 4),
 		doneErr:     make(chan error, 1),
 		outerResult: newFirstChunk(omw.executor),
 	}
-	task.wgSetResultsSize.Add(1)
 	task.memTracker = memory.NewTracker(stringutil.MemoizeStr(func() string { return fmt.Sprintf("lookup join task %p", task) }), -1)
 	task.memTracker.AttachTo(omw.parentMemTracker)
 
@@ -367,7 +359,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 
 	newMemUsage := task.outerResult.MemoryUsage()
 	task.memTracker.Consume(newMemUsage - oldMemUsage)
-	if task.outerResult.NumRows() == 0 {
+	if task.outerResult == nil || task.outerResult.NumRows() == 0 {
 		return nil, nil
 	}
 	if omw.outerMergeCtx.needOuterSort {
@@ -446,14 +438,15 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		return err
 	}
 	dLookUpKeys = imw.dedupDatumLookUpKeys(dLookUpKeys)
-
-	err = imw.fetchinnerResultss(ctx, task, dLookUpKeys)
+	imw.innerExec, err = imw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, imw.indexRanges, imw.keyOff2IdxOff, imw.nextColCompareFilters)
 	if err != nil {
 		return err
 	}
-
-	task.results = make(chan *chunk.Chunk, task.innerResults.NumChunks()+1)
-	task.wgSetResultsSize.Done()
+	defer terror.Call(imw.innerExec.Close)
+	_, err = imw.fetchInnerResult(ctx, task)
+	if err != nil {
+		return err
+	}
 	err = imw.doMergeJoin(ctx, task)
 	return err
 }
@@ -483,8 +476,7 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 	}()
 
 	task.outerIter = chunk.NewIterator4Chunk(task.outerResult)
-	task.outerIter.Begin()
-	if task.innerResults.Len() == 0 {
+	if task.innerResult == nil || task.innerResult.NumRows() == 0 {
 		for outerRow := task.outerIter.Begin(); outerRow != task.outerIter.End(); outerRow = task.outerIter.Next() {
 			imw.joiner.onMissMatch(false, outerRow, chk)
 			if done := imw.checkChunkIsFull(ctx, task, &chk); done {
@@ -494,8 +486,6 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 		return
 	}
 
-	task.innerIter = chunk.NewIterator4List(task.innerResults)
-	task.innerIter.Begin()
 	task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyRows)
 	initCmpResult := 1
 	if imw.innerMergeCtx.desc {
@@ -514,7 +504,7 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 			}
 		}
 		if (cmpResult > 0 && !imw.innerMergeCtx.desc) || (cmpResult < 0 && imw.innerMergeCtx.desc) {
-			err = imw.fetchNextInnerRows(task, outerRow)
+			err = imw.fetchNextInnerRows(ctx, task, outerRow)
 			if err != nil {
 				return err
 			}
@@ -546,29 +536,38 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 	return nil
 }
 
-func (imw *innerMergeWorker) fetchNextInnerRows(task *lookUpMergeJoinTask, key chunk.Row) error {
-	task.sameKeyRows = task.sameKeyRows[:0]
-	task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyRows)
-	task.sameKeyIter.Begin()
-	curRow := task.innerIter.Current()
-	if curRow == task.innerIter.End() {
+func (imw *innerMergeWorker) fetchNextInnerRows(ctx context.Context, task *lookUpMergeJoinTask, key chunk.Row) (err error) {
+	if task.innerResult == nil {
 		return nil
 	}
+	task.sameKeyRows = task.sameKeyRows[:0]
+	defer func() {
+		task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyRows)
+		task.sameKeyIter.Begin()
+	}()
 
-	var err error
+	curRow := task.innerIter.Current()
+	if curRow == task.innerIter.End() {
+		curRow, err = imw.fetchInnerResult(ctx, task)
+		if err != nil || task.innerResult == nil || task.innerResult.NumRows() == 0 {
+			return
+		}
+		curRow = task.innerIter.Current()
+	}
+
 	var cmpRes int
 	for cmpRes, err = imw.compare(key, curRow); ((cmpRes >= 0 && !imw.desc) || (cmpRes <= 0 && imw.desc)) && err == nil; cmpRes, err = imw.compare(key, curRow) {
 		if cmpRes == 0 {
 			task.sameKeyRows = append(task.sameKeyRows, curRow)
 		}
 		if curRow = task.innerIter.Next(); curRow == task.innerIter.End() {
-			break
+			curRow, err = imw.fetchInnerResult(ctx, task)
+			if err != nil || task.innerResult == nil || task.innerResult.NumRows() == 0 {
+				break
+			}
 		}
 	}
-	task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyRows)
-	task.sameKeyIter.Begin()
-
-	return err
+	return
 }
 
 func (imw *innerMergeWorker) compare(outerRow, innerRow chunk.Row) (int, error) {
@@ -671,28 +670,14 @@ func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*indexJoinLoo
 	return deDupedLookUpContents
 }
 
-func (imw *innerMergeWorker) fetchinnerResultss(ctx context.Context, task *lookUpMergeJoinTask, dLookUpContent []*indexJoinLookUpContent) error {
-	innerExec, err := imw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpContent, imw.indexRanges, imw.keyOff2IdxOff, imw.nextColCompareFilters)
-	if err != nil {
-		return err
+func (imw *innerMergeWorker) fetchInnerResult(ctx context.Context, task *lookUpMergeJoinTask) (beginRow chunk.Row, err error) {
+	task.innerResult = chunk.NewChunkWithCapacity(retTypes(imw.innerExec), imw.ctx.GetSessionVars().MaxChunkSize)
+	err = Next(ctx, imw.innerExec, task.innerResult)
+	if task.innerResult != nil {
+		task.innerIter = chunk.NewIterator4Chunk(task.innerResult)
+		beginRow = task.innerIter.Begin()
 	}
-	defer terror.Call(innerExec.Close)
-	innerResults := chunk.NewList(retTypes(innerExec), imw.ctx.GetSessionVars().MaxChunkSize, imw.ctx.GetSessionVars().MaxChunkSize)
-	innerResults.GetMemTracker().SetLabel(innerResultLabel)
-	innerResults.GetMemTracker().AttachTo(task.memTracker)
-	for {
-		err := Next(ctx, innerExec, imw.executorChk)
-		if err != nil {
-			return err
-		}
-		if imw.executorChk.NumRows() == 0 {
-			break
-		}
-		innerResults.Add(imw.executorChk)
-		imw.executorChk = newFirstChunk(innerExec)
-	}
-	task.innerResults = innerResults
-	return nil
+	return
 }
 
 // Close implements the Executor interface.
