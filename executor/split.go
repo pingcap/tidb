@@ -243,11 +243,12 @@ func datumSliceToString(ds []types.Datum) (string, error) {
 type SplitTableRegionExec struct {
 	baseExecutor
 
-	tableInfo  *model.TableInfo
-	lower      types.Datum
-	upper      types.Datum
-	num        int
-	valueLists [][]types.Datum
+	tableInfo      *model.TableInfo
+	partitionNames []model.CIStr
+	lower          types.Datum
+	upper          types.Datum
+	num            int
+	valueLists     [][]types.Datum
 
 	done bool
 	splitRegionResult
@@ -359,20 +360,10 @@ func isCtxDone(ctx context.Context) bool {
 var minRegionStepValue = uint64(1000)
 
 func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
-	var keys [][]byte
-	if e.num > 0 {
-		keys = make([][]byte, 0, e.num)
-	} else {
-		keys = make([][]byte, 0, len(e.valueLists))
-	}
-	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
 	if len(e.valueLists) > 0 {
-		for _, v := range e.valueLists {
-			key := tablecodec.EncodeRecordKey(recordPrefix, v[0].GetInt64())
-			keys = append(keys, key)
-		}
-		return keys, nil
+		return e.getSplitTableKeysFromValueList()
 	}
+
 	isUnsigned := false
 	if e.tableInfo.PKIsHandle {
 		if pkCol := e.tableInfo.GetPkColInfo(); pkCol != nil {
@@ -402,17 +393,89 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 		return nil, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
 	}
 
+	return e.getSplitTableKeysFromBound(lowerValue, int64(step))
+}
+
+func (e *SplitTableRegionExec) getSplitTableKeysFromValueList() ([][]byte, error) {
+	var keys [][]byte
+	pi := e.tableInfo.GetPartitionInfo()
+	if pi == nil {
+		keys = make([][]byte, 0, len(e.valueLists))
+		return e.getSplitTablePhysicalKeysFromValueList(e.tableInfo.ID, keys), nil
+	}
+
+	// Split for all table partitions.
+	if len(e.partitionNames) == 0 {
+		keys = make([][]byte, 0, len(e.valueLists)*len(pi.Definitions))
+		for _, p := range pi.Definitions {
+			keys = e.getSplitTablePhysicalKeysFromValueList(p.ID, keys)
+		}
+		return keys, nil
+	}
+
+	// Split for specified table partitions.
+	keys = make([][]byte, 0, len(e.valueLists)*len(e.partitionNames))
+	for _, name := range e.partitionNames {
+		pid, err := tables.FindPartitionByName(e.tableInfo, name.L)
+		if err != nil {
+			return nil, err
+		}
+		keys = e.getSplitTablePhysicalKeysFromValueList(pid, keys)
+	}
+	return keys, nil
+}
+
+func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromValueList(physicalID int64, keys [][]byte) [][]byte {
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
+	for _, v := range e.valueLists {
+		key := tablecodec.EncodeRecordKey(recordPrefix, v[0].GetInt64())
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func (e *SplitTableRegionExec) getSplitTableKeysFromBound(low, step int64) ([][]byte, error) {
+	var keys [][]byte
+	pi := e.tableInfo.GetPartitionInfo()
+	if pi == nil {
+		keys = make([][]byte, 0, e.num)
+		return e.getSplitTablePhysicalKeysFromBound(e.tableInfo.ID, low, step, keys), nil
+	}
+
+	// Split for all table partitions.
+	if len(e.partitionNames) == 0 {
+		keys = make([][]byte, 0, e.num*len(pi.Definitions))
+		for _, p := range pi.Definitions {
+			keys = e.getSplitTablePhysicalKeysFromBound(p.ID, low, step, keys)
+		}
+		return keys, nil
+	}
+
+	// Split for specified table partitions.
+	keys = make([][]byte, 0, e.num*len(e.partitionNames))
+	for _, name := range e.partitionNames {
+		pid, err := tables.FindPartitionByName(e.tableInfo, name.L)
+		if err != nil {
+			return nil, err
+		}
+		keys = e.getSplitTablePhysicalKeysFromBound(pid, low, step, keys)
+	}
+	return keys, nil
+}
+
+func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID, low, step int64, keys [][]byte) [][]byte {
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 	// Split a separate region for index.
 	if len(e.tableInfo.Indices) > 0 {
 		keys = append(keys, recordPrefix)
 	}
-	recordID := lowerValue
+	recordID := low
 	for i := 1; i < e.num; i++ {
-		recordID += int64(step)
+		recordID += step
 		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
 		keys = append(keys, key)
 	}
-	return keys, nil
+	return keys
 }
 
 // RegionMeta contains a region's peer detail

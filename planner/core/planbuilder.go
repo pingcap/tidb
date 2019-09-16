@@ -2082,7 +2082,8 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	mockTablePlan.SetSchema(schema)
 
 	p := &SplitRegion{
-		TableInfo: tblInfo,
+		TableInfo:      tblInfo,
+		PartitionNames: node.PartitionNames,
 	}
 	p.SetSchema(buildSplitRegionsSchema())
 	if len(node.SplitOpt.ValueLists) > 0 {
