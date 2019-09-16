@@ -927,10 +927,8 @@ func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
 			return 0, autoid.ErrAutoincReadFailed
 		}
 		txnCtx := ctx.GetSessionVars().TxnCtx
-		if txnCtx.Shard == nil {
-			shard := t.calcShard(txnCtx.StartTS)
-			txnCtx.Shard = &shard
-		}
+		shard := t.calcShard(txnCtx.StartTS)
+		txnCtx.Shard = &shard
 		rowID |= *txnCtx.Shard
 	}
 	return rowID, nil
