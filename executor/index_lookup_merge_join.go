@@ -41,8 +41,8 @@ import (
 // The execution flow is very similar to IndexLookUpReader:
 // 1. outerWorker read N outer rows, build a task and send it to result channel and inner worker channel.
 // 2. The innerWorker receives the task, builds key ranges from outer rows and fetch inner rows, then do merge join.
-// 3. main thread receives the task and fetch results from the channel in task one by one. If channel has been closed,
-// 4. main thread receives the next task.
+// 3. main thread receives the task and fetch results from the channel in task one by one.
+// 4. If channel has been closed, main thread receives the next task.
 type IndexLookUpMergeJoin struct {
 	baseExecutor
 
@@ -98,13 +98,10 @@ type lookUpMergeJoinTask struct {
 	innerResult *chunk.Chunk
 	innerIter   chunk.Iterator
 
-	sameKeyRows []chunk.Row
-	sameKeyIter chunk.Iterator
+	sameKeyInnerRows []chunk.Row
+	sameKeyIter      chunk.Iterator
 
-	doneErr  chan error
-	hasMatch bool
-	hasNull  bool
-
+	doneErr chan error
 	results chan *chunk.Chunk
 
 	memTracker *memory.Tracker
@@ -393,6 +390,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 		}
 		task.memTracker.Consume(int64(cap(task.outerMatch)))
 	}
+	task.outerIter = chunk.NewIterator4Chunk(task.outerResult)
 	return task, nil
 }
 
@@ -475,18 +473,17 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 		}
 	}()
 
-	task.outerIter = chunk.NewIterator4Chunk(task.outerResult)
 	if task.innerResult == nil || task.innerResult.NumRows() == 0 {
 		for outerRow := task.outerIter.Begin(); outerRow != task.outerIter.End(); outerRow = task.outerIter.Next() {
 			imw.joiner.onMissMatch(false, outerRow, chk)
-			if done := imw.checkChunkIsFull(ctx, task, &chk); done {
+			if imw.checkChunkIsFull(ctx, task, &chk) {
 				return nil
 			}
 		}
 		return
 	}
 
-	task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyRows)
+	task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyInnerRows)
 	initCmpResult := 1
 	if imw.innerMergeCtx.desc {
 		initCmpResult = -1
@@ -497,7 +494,7 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 			continue
 		}
 		cmpResult := initCmpResult
-		if len(task.sameKeyRows) > 0 {
+		if len(task.sameKeyInnerRows) > 0 {
 			cmpResult, err = imw.compare(outerRow, task.sameKeyIter.Begin())
 			if err != nil {
 				return err
@@ -510,25 +507,24 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 			}
 		}
 
+		hasMatch, hasNull := false, false
 		for task.sameKeyIter.Current() != task.sameKeyIter.End() {
 			matched, isNull, err := imw.joiner.tryToMatchInners(outerRow, task.sameKeyIter, chk)
 			if err != nil {
 				return err
 			}
 
-			task.hasMatch = task.hasMatch || matched
-			task.hasNull = task.hasNull || isNull
-			if done := imw.checkChunkIsFull(ctx, task, &chk); done {
+			hasMatch = hasMatch || matched
+			hasNull = hasNull || isNull
+			if imw.checkChunkIsFull(ctx, task, &chk) {
 				return nil
 			}
 		}
 
-		if !task.hasMatch {
-			imw.joiner.onMissMatch(task.hasNull, outerRow, chk)
+		if !hasMatch {
+			imw.joiner.onMissMatch(hasNull, outerRow, chk)
 		}
-		task.hasMatch = false
-		task.hasNull = false
-		if done := imw.checkChunkIsFull(ctx, task, &chk); done {
+		if imw.checkChunkIsFull(ctx, task, &chk) {
 			return nil
 		}
 	}
@@ -540,9 +536,9 @@ func (imw *innerMergeWorker) fetchNextInnerRows(ctx context.Context, task *lookU
 	if task.innerResult == nil {
 		return nil
 	}
-	task.sameKeyRows = task.sameKeyRows[:0]
+	task.sameKeyInnerRows = task.sameKeyInnerRows[:0]
 	defer func() {
-		task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyRows)
+		task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyInnerRows)
 		task.sameKeyIter.Begin()
 	}()
 
@@ -557,7 +553,7 @@ func (imw *innerMergeWorker) fetchNextInnerRows(ctx context.Context, task *lookU
 	var cmpRes int
 	for cmpRes, err = imw.compare(key, curRow); ((cmpRes >= 0 && !imw.desc) || (cmpRes <= 0 && imw.desc)) && err == nil; cmpRes, err = imw.compare(key, curRow) {
 		if cmpRes == 0 {
-			task.sameKeyRows = append(task.sameKeyRows, curRow)
+			task.sameKeyInnerRows = append(task.sameKeyInnerRows, curRow)
 		}
 		if curRow = task.innerIter.Next(); curRow == task.innerIter.End() {
 			curRow, err = imw.fetchInnerResult(ctx, task)
