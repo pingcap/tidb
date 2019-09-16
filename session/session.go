@@ -974,6 +974,16 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	// If command == mysql.ComSleep, it means the SQL execution is finished. The processinfo is reset to SLEEP.
+	// If the SQL finished and the session is not in transaction, the current start timestamp need to reset to 0.
+	// Otherwise, it should be set to the transaction start timestamp.
+	// Why not reset the transaction start timestamp to 0 when transaction committed?
+	// Because the select statement and other statements need this timestamp to read data,
+	// after the transaction is committed. e.g. SHOW MASTER STATUS;
+	var curTxnStartTS uint64
+	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
+		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
 		DB:               s.sessionVars.CurrentDB,
@@ -982,7 +992,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Time:             t,
 		State:            s.Status(),
 		Info:             sql,
-		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+		CurTxnStartTS:    curTxnStartTS,
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
@@ -1006,7 +1016,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
-			logutil.Logger(ctx).Warn("run statement error",
+			logutil.Logger(ctx).Warn("run statement failed",
 				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
 				zap.Error(err),
 				zap.String("session", s.String()))
@@ -1064,9 +1074,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
-		logutil.Logger(ctx).Warn("parse sql error",
+		logutil.Logger(ctx).Warn("parse SQL failed",
 			zap.Error(err),
-			zap.String("sql", sql))
+			zap.String("SQL", sql))
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(startTS)
@@ -1092,9 +1102,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			logutil.Logger(ctx).Warn("compile sql error",
+			logutil.Logger(ctx).Warn("compile SQL failed",
 				zap.Error(err),
-				zap.String("sql", sql))
+				zap.String("SQL", sql))
 			return nil, err
 		}
 		durCompile := time.Since(startTS)
@@ -1710,6 +1720,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
+	variable.TiDBEnableStmtSummary,
 }
 
 var (

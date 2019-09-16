@@ -242,7 +242,7 @@ func (g *defaultGener) gen() interface{} {
 		}
 		return *j
 	case types.ETString:
-		return fmt.Sprintf("%v", rand.Int())
+		return randString()
 	}
 	return nil
 }
@@ -289,17 +289,7 @@ type vecExprBenchCase struct {
 	geners []dataGenerator
 }
 
-var vecExprBenchCases = map[string][]vecExprBenchCase{
-	ast.Cast: {
-		{types.ETInt, []types.EvalType{types.ETInt}, nil},
-	},
-	ast.Repeat: {
-		{types.ETString, []types.EvalType{types.ETString, types.ETInt}, []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
-	},
-	ast.Log10: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
-	},
-}
+type vecExprBenchCases map[string][]vecExprBenchCase
 
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vecExprBenchCase) {
 	batchSize := 1024
@@ -335,6 +325,22 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vec
 			col.AppendString(v.(string))
 		}
 	}
+}
+
+func randString() string {
+	n := 10 + rand.Intn(10)
+	buf := make([]byte, n)
+	for i := range buf {
+		x := rand.Intn(62)
+		if x < 10 {
+			buf[i] = byte('0' + x)
+		} else if x-10 < 26 {
+			buf[i] = byte('a' + x - 10)
+		} else {
+			buf[i] = byte('A' + x - 10 - 26)
+		}
+	}
+	return string(buf)
 }
 
 func eType2FieldType(eType types.EvalType) *types.FieldType {
@@ -379,9 +385,11 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 	return expr, input, output
 }
 
-func (s *testEvaluatorSuite) TestVectorizedEvalOneVec(c *C) {
+// testVectorizedEvalOneVec is used to verify that the special vectorized
+// expression is evaluated correctly during projection
+func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
-	for funcName, testCases := range vecExprBenchCases {
+	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, input, output := genVecExprBenchCase(ctx, funcName, testCase)
 			output2 := output.CopyConstruct()
@@ -424,9 +432,11 @@ func (s *testEvaluatorSuite) TestVectorizedEvalOneVec(c *C) {
 	}
 }
 
-func BenchmarkVectorizedEvalOneVec(b *testing.B) {
+// benchmarkVectorizedEvalOneVec is used to get the effect of
+// using the special vectorized expression evaluations during projection
+func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
-	for funcName, testCases := range vecExprBenchCases {
+	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, input, output := genVecExprBenchCase(ctx, funcName, testCase)
 			exprName := expr.String()
@@ -501,8 +511,10 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	return baseFunc, input, result
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
-	for funcName, testCases := range vecExprBenchCases {
+// testVectorizedBuiltinFunc is used to verify that the special vectorized
+// expression is evaluated correctly
+func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
+	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
 			baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
@@ -548,7 +560,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
-						c.Assert(val, Equals, d64s[i])
+						c.Assert(*val, Equals, d64s[i])
 					}
 					i++
 				}
@@ -576,7 +588,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
-						c.Assert(val, Equals, d64s[i])
+						c.Assert(val.Duration, Equals, d64s[i])
 					}
 					i++
 				}
@@ -585,11 +597,13 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 				c.Assert(err, IsNil)
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalDuration(row)
+					val, isNull, err := baseFunc.evalJSON(row)
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
-						c.Assert(val, Equals, output.GetJSON(i))
+						var cmp int
+						cmp = json.CompareBinary(val, output.GetJSON(i))
+						c.Assert(cmp, Equals, 0)
 					}
 					i++
 				}
@@ -621,9 +635,11 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinFunc(c *C) {
 	}
 }
 
-func BenchmarkVectorizedBuiltinFunc(b *testing.B) {
+// benchmarkVectorizedBuiltinFunc is used to get the effect of
+// using the special vectorized expression evaluations
+func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
-	for funcName, testCases := range vecExprBenchCases {
+	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))

@@ -25,27 +25,36 @@ import (
 
 // FindBestPlan is the optimization entrance of the cascades planner. The
 // optimization is composed of 2 phases: exploration and implementation.
-func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (plannercore.Plan, error) {
+func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (p plannercore.PhysicalPlan, err error) {
 	rootGroup := convert2Group(logical)
-	err := onPhaseExploration(sctx, rootGroup)
+	err = onPhaseExploration(sctx, rootGroup)
 	if err != nil {
 		return nil, err
 	}
-	best, err := onPhaseImplementation(sctx, rootGroup)
-	return best, err
+	p, err = onPhaseImplementation(sctx, rootGroup)
+	if err != nil {
+		return nil, err
+	}
+	err = p.ResolveIndices()
+	return p, err
 }
 
-// convert2Group converts a logical plan to expression groups.
-func convert2Group(node plannercore.LogicalPlan) *memo.Group {
+// convert2GroupExpr converts a logical plan to a GroupExpr.
+func convert2GroupExpr(node plannercore.LogicalPlan) *memo.GroupExpr {
 	e := memo.NewGroupExpr(node)
 	e.Children = make([]*memo.Group, 0, len(node.Children()))
 	for _, child := range node.Children() {
 		childGroup := convert2Group(child)
 		e.Children = append(e.Children, childGroup)
 	}
-	g := memo.NewGroup(e)
+	return e
+}
+
+// convert2Group converts a logical plan to a Group.
+func convert2Group(node plannercore.LogicalPlan) *memo.Group {
+	e := convert2GroupExpr(node)
+	g := memo.NewGroupWithSchema(e, node.Schema())
 	// Stats property for `Group` would be computed after exploration phase.
-	g.Prop = &property.LogicalProperty{Schema: node.Schema()}
 	return g
 }
 
@@ -109,22 +118,23 @@ func findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error)
 				continue
 			}
 
-			newExpr, erase, err := rule.OnTransform(iter)
+			newExprs, erase, _, err := rule.OnTransform(iter)
 			if err != nil {
 				return false, err
 			}
 
 			eraseCur = eraseCur || erase
-			if !g.Insert(newExpr) {
-				continue
+			for _, e := range newExprs {
+				if !g.Insert(e) {
+					continue
+				}
+				// If the new Group expression is successfully inserted into the
+				// current Group, we mark the Group expression and the Group as
+				// unexplored to enable the exploration on the new Group expression
+				// and all the antecedent groups.
+				e.Explored = false
+				g.Explored = false
 			}
-
-			// If the new Group expression is successfully inserted into the
-			// current Group, we mark the Group expression and the Group as
-			// unexplored to enable the exploration on the new Group expression
-			// and all the antecedent groups.
-			newExpr.Explored = false
-			g.Explored = false
 		}
 	}
 	return eraseCur, nil
@@ -153,7 +163,7 @@ func fillGroupStats(g *memo.Group) (err error) {
 }
 
 // onPhaseImplementation starts implementation physical operators from given root Group.
-func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.Plan, error) {
+func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.PhysicalPlan, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
@@ -259,7 +269,9 @@ func implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.PhysicalProperty) 
 		if err != nil {
 			return nil, err
 		}
-		impls = append(impls, impl)
+		if impl != nil {
+			impls = append(impls, impl)
+		}
 	}
 	return impls, nil
 }

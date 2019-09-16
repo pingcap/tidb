@@ -54,8 +54,8 @@ func (iter *ExprIter) Next() (found bool) {
 		return true
 	}
 
-	// It's root node.
-	if iter.Group == nil {
+	// It's root node or leaf ANY node.
+	if iter.Group == nil || iter.Operand == OperandAny {
 		return false
 	}
 
@@ -102,6 +102,10 @@ func (iter *ExprIter) Matched() bool {
 func (iter *ExprIter) Reset() (findMatch bool) {
 	defer func() { iter.matched = findMatch }()
 
+	if iter.Operand == OperandAny {
+		return true
+	}
+
 	for elem := iter.Group.GetFirstElem(iter.Operand); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*GroupExpr)
 		exprOperand := GetOperand(expr.ExprNode)
@@ -129,6 +133,11 @@ func (iter *ExprIter) Reset() (findMatch bool) {
 	return false
 }
 
+// GetExpr returns the root GroupExpr of the iterator.
+func (iter *ExprIter) GetExpr() *GroupExpr {
+	return iter.Element.Value.(*GroupExpr)
+}
+
 // NewExprIterFromGroupElem creates the iterator on the Group Element.
 func NewExprIterFromGroupElem(elem *list.Element, p *Pattern) *ExprIter {
 	expr := elem.Value.(*GroupExpr)
@@ -147,7 +156,6 @@ func newExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
 	if len(p.Children) != len(expr.Children) {
 		return nil
 	}
-
 	iter := &ExprIter{Operand: p.Operand, matched: true}
 	for i := range p.Children {
 		childIter := newExprIterFromGroup(expr.Children[i], p.Children[i])
@@ -161,6 +169,9 @@ func newExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
 
 // newExprIterFromGroup creates the iterator on the Group.
 func newExprIterFromGroup(g *Group, p *Pattern) *ExprIter {
+	if p.Operand == OperandAny {
+		return &ExprIter{Group: g, Operand: OperandAny, matched: true}
+	}
 	for elem := g.GetFirstElem(p.Operand); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*GroupExpr)
 		if !p.Operand.Match(GetOperand(expr.ExprNode)) {
