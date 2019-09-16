@@ -16,9 +16,9 @@ package expression
 // This file contains benchmarks of our expression evaluation.
 
 import (
-	"flag"
 	"fmt"
 	"math/rand"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -512,14 +512,15 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	return baseFunc, input, result
 }
 
-var vecTestFuncSig = flag.String("vec_test_func_sig", "",
-	"input the signature you want to test")
-
 // testVectorizedBuiltinFunc is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
-	flag.Parse()
-	TestFuncName := *vecTestFuncSig
+	// If you just want to run a specified vectorized built-in function.
+	// You should input "export vec_test_func_sig=XXXsig" first, which "XXXsig" means
+	// the expression function signature you want to test.
+	// If you want to test all of them, just ignore it or "export vec_test_func_sig="
+	// The following benchmark is also like this.
+	TestFuncName := os.Getenv("vec_test_func_sig")
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
@@ -602,7 +603,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 					c.Assert(err, IsNil)
 					c.Assert(isNull, Equals, output.IsNull(i))
 					if !isNull {
-						c.Assert(val.Duration, Equals, d64s[i])
+						c.Assert(val, Equals, d64s[i])
 					}
 					i++
 				}
@@ -654,8 +655,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
 
-	flag.Parse()
-	TestFuncName := *vecTestFuncSig
+	TestFuncName := os.Getenv("vec_test_func_sig")
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
