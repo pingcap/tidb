@@ -287,7 +287,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	}{
 		{
 			sql:  "select count(*) from t group by e",
-			best: "IndexReader(Index(t.e)[[NULL,+inf]]->StreamAgg)->StreamAgg",
+			best: "IndexReader(Index(t.e)[[NULL,+inf]])->HashAgg",
 		},
 		{
 			sql:  "select count(*) from t where e <= 10 group by e",
@@ -299,7 +299,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where c > '1' group by b",
-			best: "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(Column#3, 1)])->StreamAgg)->StreamAgg",
+			best: "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(Column#3, 1)]))->HashAgg",
 		},
 		{
 			sql:  "select count(*) from t where e = 1 group by b",
@@ -411,7 +411,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t where c1 in (select c1 from t1)",
-			best: "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(Column#1))]))->TableReader(Table(t1)->Sel([not(isnull(Column#3))])->HashAgg)->HashAgg}(Column#1,Column#3)->Projection",
+			best: "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(Column#1))]))->TableReader(Table(t1)->Sel([not(isnull(Column#3))]))->HashAgg}(Column#1,Column#3)->Projection",
 		},
 		{
 			sql:  "select * from t, t1 where t.c1 = t1.c1",
@@ -688,29 +688,29 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
 			"Projection_11 10.00 root Column#15",
-			"└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(Column#3, Column#13)",
+			"└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(Column#3, Column#13)",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
-			"  └─StreamAgg_20 1.00 root funcs:count(1)",
-			"    └─HashLeftJoin_21 1.00 root inner join, inner:TableReader_28, equal:[eq(Column#5, Column#9)]",
-			"      ├─TableReader_25 1.00 root data:Selection_24",
-			"      │ └─Selection_24 1.00 cop eq(Column#5, Column#1), not(isnull(Column#5))",
-			"      │   └─TableScan_23 10.00 cop table:s, range:[-inf,+inf], keep order:false",
-			"      └─TableReader_28 1.00 root data:Selection_27",
-			"        └─Selection_27 1.00 cop eq(Column#9, Column#1), not(isnull(Column#9))",
-			"          └─TableScan_26 10.00 cop table:t1, range:[-inf,+inf], keep order:false",
+			"  └─StreamAgg_22 1.00 root funcs:count(1)",
+			"    └─HashLeftJoin_23 1.00 root inner join, inner:TableReader_33, equal:[eq(Column#5, Column#9)]",
+			"      ├─TableReader_27 1.00 root data:Selection_26",
+			"      │ └─Selection_26 1.00 cop eq(Column#5, Column#1), not(isnull(Column#5))",
+			"      │   └─TableScan_25 10.00 cop table:s, range:[-inf,+inf], keep order:false",
+			"      └─TableReader_33 1.00 root data:Selection_32",
+			"        └─Selection_32 1.00 cop eq(Column#9, Column#1), not(isnull(Column#9))",
+			"          └─TableScan_31 10.00 cop table:t1, range:[-inf,+inf], keep order:false",
 		))
 	tk.MustQuery("explain select (select concat(t1.a, \",\", t1.b) from t t1 where t1.a=t.a and t1.c=t.c) from t").
 		Check(testkit.Rows(
 			"Projection_8 10.00 root Column#9",
-			"└─Apply_10 10.00 root CARTESIAN left outer join, inner:MaxOneRow_13",
+			"└─Apply_10 10.00 root CARTESIAN left outer join, inner:MaxOneRow_15",
 			"  ├─TableReader_12 10.00 root data:TableScan_11",
 			"  │ └─TableScan_11 10.00 cop table:t, range:[-inf,+inf], keep order:false",
-			"  └─MaxOneRow_13 1.00 root ",
-			"    └─Projection_14 0.10 root concat(cast(Column#5), \",\", cast(Column#6))",
-			"      └─IndexReader_17 0.10 root index:Selection_16",
-			"        └─Selection_16 0.10 cop eq(Column#5, Column#1)",
-			"          └─IndexScan_15 1.00 cop table:t1, index:c, b, a, range: decided by [eq(Column#7, Column#3)], keep order:false",
+			"  └─MaxOneRow_15 1.00 root ",
+			"    └─Projection_16 0.10 root concat(cast(Column#5), \",\", cast(Column#6))",
+			"      └─IndexReader_19 0.10 root index:Selection_18",
+			"        └─Selection_18 0.10 cop eq(Column#5, Column#1)",
+			"          └─IndexScan_17 1.00 cop table:t1, index:c, b, a, range: decided by [eq(Column#7, Column#3)], keep order:false",
 		))
 }
 
@@ -901,25 +901,25 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 	tk.MustExec("create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))")
 
 	tk.MustQuery("explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c;").Check(testkit.Rows(
-		"IndexJoin_9 12475.01 root inner join, inner:IndexReader_8, outer key:Column#1, inner key:Column#5, other cond:eq(Column#3, Column#7), gt(Column#6, minus(Column#2, 1)), lt(Column#6, plus(Column#2, 1))",
-		"├─TableReader_12 9980.01 root data:Selection_11",
-		"│ └─Selection_11 9980.01 cop not(isnull(Column#1)), not(isnull(Column#3))",
-		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─IndexReader_8 9.98 root index:Selection_7",
-		"  └─Selection_7 9.98 cop not(isnull(Column#5)), not(isnull(Column#7))",
-		"    └─IndexScan_6 10.00 cop table:t2, index:a, b, c, range: decided by [eq(Column#5, Column#1) gt(Column#6, minus(Column#2, 1)) lt(Column#6, plus(Column#2, 1))], keep order:false, stats:pseudo",
+		"IndexMergeJoin_14 12475.01 root inner join, inner:IndexReader_12, outer key:Column#1, inner key:Column#5, other cond:eq(Column#3, Column#7), gt(Column#6, minus(Column#2, 1)), lt(Column#6, plus(Column#2, 1))",
+		"├─TableReader_17 9980.01 root data:Selection_16",
+		"│ └─Selection_16 9980.01 cop not(isnull(Column#1)), not(isnull(Column#3))",
+		"│   └─TableScan_15 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─IndexReader_12 1.25 root index:Selection_11",
+		"  └─Selection_11 1.25 cop not(isnull(Column#5)), not(isnull(Column#7))",
+		"    └─IndexScan_10 1.25 cop table:t2, index:a, b, c, range: decided by [eq(Column#5, Column#1) gt(Column#6, minus(Column#2, 1)) lt(Column#6, plus(Column#2, 1))], keep order:true, stats:pseudo",
 	))
 
 	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
 	tk.MustQuery("explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
 		"Projection_7 0.00 root Column#1, Column#2, Column#4, Column#5",
-		"└─HashRightJoin_9 0.00 root inner join, inner:TableReader_12, equal:[eq(Column#5, Column#2)]",
-		"  ├─TableReader_12 0.00 root data:Selection_11",
-		"  │ └─Selection_11 0.00 cop isnull(Column#5), not(isnull(Column#5))",
-		"  │   └─TableScan_10 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"  └─TableReader_15 9990.00 root data:Selection_14",
-		"    └─Selection_14 9990.00 cop not(isnull(Column#2))",
-		"      └─TableScan_13 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─HashRightJoin_9 0.00 root inner join, inner:IndexReader_15, equal:[eq(Column#5, Column#2)]",
+		"  ├─IndexReader_15 0.00 root index:Selection_14",
+		"  │ └─Selection_14 0.00 cop isnull(Column#5), not(isnull(Column#5))",
+		"  │   └─IndexScan_13 10000.00 cop table:t2, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
+		"  └─IndexReader_21 9990.00 root index:Selection_20",
+		"    └─Selection_20 9990.00 cop not(isnull(Column#2))",
+		"      └─IndexScan_19 10000.00 cop table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
 	))
 }
 
@@ -953,36 +953,8 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 			d int not null unique auto_increment
 		)
 	`)
-	rs := tk.MustQuery("explain analyze select t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
-
-	// Expected output is like:
-	//
-	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
-	// | id                             | count    | task | operator info                                                                    | execution info                   |
-	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
-	// | Projection_9                   | 10.00    | root | test.t1.id, test.t2.a                                                            | time:203.355µs, loops:1, rows:0  |
-	// | └─IndexJoin_13                 | 10.00    | root | inner join, inner:IndexLookUp_12, outer key:test.t1.a, inner key:test.t2.d       | time:199.633µs, loops:1, rows:0  |
-	// |   ├─Projection_16              | 8.00     | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                       | time:164.587µs, loops:1, rows:0  |
-	// |   │ └─Selection_17             | 8.00     | root | eq(cast(mod(test.t1.a, 30)), 4)                                                  | time:157.768µs, loops:1, rows:0  |
-	// |   │   └─TableReader_20         | 10.00    | root | data:Selection_19                                                                | time:154.61µs, loops:1, rows:0   |
-	// |   │     └─Selection_19         | 10.00    | cop  | eq(test.t1.b, "t2")                                                              | time:28.824µs, loops:1, rows:0   |
-	// |   │       └─TableScan_18       | 10000.00 | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                      | time:27.654µs, loops:1, rows:0   |
-	// |   └─IndexLookUp_12             | 10.00    | root |                                                                                  | time:0ns, loops:0, rows:0        |
-	// |     ├─IndexScan_10             | 10.00    | cop  | table:t2, index:d, range: decided by [test.t1.a], keep order:false, stats:pseudo | time:0ns, loops:0, rows:0        |
-	// |     └─TableScan_11             | 10.00    | cop  | table:t2, keep order:false, stats:pseudo                                         | time:0ns, loops:0, rows:0        |
-	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
-	// 10 rows in set (0.00 sec)
-	//
-	c.Assert(rs.Rows(), HasLen, 10)
-	hasIndexLookUp12 := false
-	for _, row := range rs.Rows() {
-		c.Assert(row, HasLen, 6)
-		if strings.HasSuffix(row[0].(string), "IndexLookUp_12") {
-			hasIndexLookUp12 = true
-			c.Assert(row[4], Equals, "time:0ns, loops:0, rows:0")
-		}
-	}
-	c.Assert(hasIndexLookUp12, IsTrue)
+	// Test when both tables are empty, EXPLAIN ANALYZE for IndexLookUp would not panic.
+	tk.MustExec("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
 }
 
 func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
@@ -997,82 +969,84 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int not null, index idx_b(b))")
+	tk.MustExec("create table t(a int primary key, b int not null, c int not null default 0, index idx_bc(b, c))")
 	tk.MustExec("set session tidb_opt_correlation_exp_factor = 0")
 	// Pseudo stats.
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;").Check(testkit.Rows(
-		"Limit_11 1.00 root offset:0, count:1",
-		"└─IndexReader_21 1.00 root index:Limit_20",
-		"  └─Limit_20 1.00 cop offset:0, count:1",
-		"    └─IndexScan_19 1.00 cop table:t, index:b, range:[2,2], keep order:true, stats:pseudo",
+		"TopN_8 1.00 root Column#1:asc, offset:0, count:1",
+		"└─IndexReader_16 1.00 root index:TopN_15",
+		"  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
+		"    └─IndexScan_14 10.00 cop table:t, index:b, c, range:[2,2], keep order:false, stats:pseudo",
 	))
 	// Positive correlation.
-	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
+	tk.MustExec("insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;").Check(testkit.Rows(
-		"Limit_11 1.00 root offset:0, count:1",
-		"└─IndexReader_21 1.00 root index:Limit_20",
-		"  └─Limit_20 1.00 cop offset:0, count:1",
-		"    └─IndexScan_19 1.00 cop table:t, index:b, range:[2,2], keep order:true",
+		"TopN_8 1.00 root Column#1:asc, offset:0, count:1",
+		"└─IndexReader_16 1.00 root index:TopN_15",
+		"  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
+		"    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[2,2], keep order:false",
 	))
 	// Negative correlation.
 	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values (1, 25),(2, 24),(3, 23),(4, 23),(5, 21),(6, 20),(7, 19),(8, 18),(9, 17),(10, 16),(11, 15),(12, 14),(13, 13),(14, 12),(15, 11),(16, 10),(17, 9),(18, 8),(19, 7),(20, 6),(21, 5),(22, 4),(23, 3),(24, 2),(25, 1)")
+	tk.MustExec("insert into t (a, b) values (1, 25),(2, 24),(3, 23),(4, 23),(5, 21),(6, 20),(7, 19),(8, 18),(9, 17),(10, 16),(11, 15),(12, 14),(13, 13),(14, 12),(15, 11),(16, 10),(17, 9),(18, 8),(19, 7),(20, 6),(21, 5),(22, 4),(23, 3),(24, 2),(25, 1)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b <= 6 ORDER BY a limit 1").Check(testkit.Rows(
 		"TopN_8 1.00 root Column#1:asc, offset:0, count:1",
 		"└─IndexReader_16 1.00 root index:TopN_15",
 		"  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, range:[-inf,6], keep order:false",
+		"    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[-inf,6], keep order:false",
 	))
 	// Outer plan of index join (to test that correct column ID is used).
 	tk.MustQuery("EXPLAIN SELECT *, t1.a IN (SELECT t2.b FROM t t2) FROM t t1 WHERE t1.b <= 6 ORDER BY t1.a limit 1").Check(testkit.Rows(
 		"Limit_17 1.00 root offset:0, count:1",
-		"└─IndexJoin_58 1.00 root left outer semi join, inner:IndexReader_57, outer key:test.t1.a, inner key:test.t2.b",
-		"  ├─TopN_23 1.00 root test.t1.a:asc, offset:0, count:1",
-		"  │ └─IndexReader_31 1.00 root index:TopN_30",
-		"  │   └─TopN_30 1.00 cop test.t1.a:asc, offset:0, count:1",
-		"  │     └─IndexScan_29 6.00 cop table:t1, index:b, range:[-inf,6], keep order:false",
-		"  └─IndexReader_57 1.04 root index:IndexScan_56",
-		"    └─IndexScan_56 1.04 cop table:t2, index:b, range: decided by [eq(test.t2.b, test.t1.a)], keep order:false",
+		"└─IndexMergeJoin_68 1.00 root left outer semi join, inner:IndexReader_66, outer key:Column#1, inner key:Column#8",
+		"  ├─TopN_27 1.00 root Column#1:asc, offset:0, count:1",
+		"  │ └─IndexReader_35 1.00 root index:TopN_34",
+		"  │   └─TopN_34 1.00 cop Column#1:asc, offset:0, count:1",
+		"  │     └─IndexScan_33 6.00 cop table:t1, index:b, c, range:[-inf,6], keep order:false",
+		"  └─IndexReader_66 1.04 root index:IndexScan_65",
+		"    └─IndexScan_65 1.04 cop table:t2, index:b, c, range: decided by [eq(Column#8, Column#1)], keep order:true",
 	))
 	// Desc TableScan.
 	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 2),(8, 2),(9, 2),(10, 2),(11, 2),(12, 2),(13, 2),(14, 2),(15, 2),(16, 2),(17, 2),(18, 2),(19, 2),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
+	tk.MustExec("insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 2),(8, 2),(9, 2),(10, 2),(11, 2),(12, 2),(13, 2),(14, 2),(15, 2),(16, 2),(17, 2),(18, 2),(19, 2),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 1 ORDER BY a desc limit 1").Check(testkit.Rows(
-		"Limit_11 1.00 root offset:0, count:1",
-		"└─IndexReader_21 1.00 root index:Limit_20",
-		"  └─Limit_20 1.00 cop offset:0, count:1",
-		"    └─IndexScan_19 1.00 cop table:t, index:b, range:[1,1], keep order:true, desc",
+		"TopN_8 1.00 root Column#1:desc, offset:0, count:1",
+		"└─IndexReader_16 1.00 root index:TopN_15",
+		"  └─TopN_15 1.00 cop Column#1:desc, offset:0, count:1",
+		"    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[1,1], keep order:false",
 	))
 	// Correlation threshold not met.
 	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 2),(10, 1),(11, 1),(12, 1),(13, 1),(14, 2),(15, 2),(16, 1),(17, 2),(18, 1),(19, 2),(20, 1),(21, 2),(22, 1),(23, 1),(24, 1),(25, 1)")
+	tk.MustExec("insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 2),(10, 1),(11, 1),(12, 1),(13, 1),(14, 2),(15, 2),(16, 1),(17, 2),(18, 1),(19, 2),(20, 1),(21, 2),(22, 1),(23, 1),(24, 1),(25, 1)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1").Check(testkit.Rows(
 		"Limit_11 1.00 root offset:0, count:1",
-		"└─IndexReader_21 1.00 root index:Limit_20",
-		"  └─Limit_20 1.00 cop offset:0, count:1",
-		"    └─IndexScan_19 1.00 cop table:t, index:b, range:[2,2], keep order:true",
+		"└─TableReader_22 1.00 root data:Limit_21",
+		"  └─Limit_21 1.00 cop offset:0, count:1",
+		"    └─Selection_20 1.00 cop eq(Column#2, 2)",
+		"      └─TableScan_19 4.17 cop table:t, range:[-inf,+inf], keep order:true",
 	))
 	tk.MustExec("set session tidb_opt_correlation_exp_factor = 1")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1").Check(testkit.Rows(
-		"Limit_11 1.00 root offset:0, count:1",
-		"└─IndexReader_21 1.00 root index:Limit_20",
-		"  └─Limit_20 1.00 cop offset:0, count:1",
-		"    └─IndexScan_19 1.00 cop table:t, index:b, range:[2,2], keep order:true",
+		"TopN_8 1.00 root Column#1:asc, offset:0, count:1",
+		"└─IndexReader_16 1.00 root index:TopN_15",
+		"  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
+		"    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[2,2], keep order:false",
 	))
 	tk.MustExec("set session tidb_opt_correlation_exp_factor = 0")
 	// TableScan has access conditions, but correlation is 1.
 	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
+	tk.MustExec("insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"Limit_11 1.00 root offset:0, count:1",
-		"└─IndexReader_21 1.00 root index:Limit_20",
-		"  └─Limit_20 1.00 cop offset:0, count:1",
-		"    └─IndexScan_19 1.25 cop table:t, index:b, range:(2 0,2 +inf], keep order:true",
+		"TopN_8 1.00 root Column#1:asc, offset:0, count:1",
+		"└─IndexReader_19 1.00 root index:TopN_18",
+		"  └─TopN_18 1.00 cop Column#1:asc, offset:0, count:1",
+		"    └─Selection_17 6.00 cop gt(Column#1, 0)",
+		"      └─IndexScan_16 6.00 cop table:t, index:b, c, range:[2,2], keep order:false",
 	))
 	// Multi-column filter.
 	tk.MustExec("drop table t")
@@ -1080,11 +1054,11 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	tk.MustExec("insert into t(a, b, c) values (1, 1, 1),(2, 1, 2),(3, 1, 1),(4, 1, 2),(5, 1, 1),(6, 1, 2),(7, 1, 1),(8, 1, 2),(9, 1, 1),(10, 1, 2),(11, 1, 1),(12, 1, 2),(13, 1, 1),(14, 1, 2),(15, 1, 1),(16, 1, 2),(17, 1, 1),(18, 1, 2),(19, 1, 1),(20, 2, 2),(21, 2, 1),(22, 2, 2),(23, 2, 1),(24, 2, 2),(25, 2, 1)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT a FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"Projection_7 1.00 root test.t.a",
-		"└─TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
+		"Projection_7 1.00 root Column#1",
+		"└─TopN_8 1.00 root Column#1:asc, offset:0, count:1",
 		"  └─IndexReader_17 1.00 root index:TopN_16",
-		"    └─TopN_16 1.00 cop test.t.a:asc, offset:0, count:1",
-		"      └─Selection_15 6.00 cop gt(test.t.c, 0)",
+		"    └─TopN_16 1.00 cop Column#1:asc, offset:0, count:1",
+		"      └─Selection_15 6.00 cop gt(Column#3, 0)",
 		"        └─IndexScan_14 6.00 cop table:t, index:b, d, a, c, range:[2,2], keep order:false",
 	))
 }

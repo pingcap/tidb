@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -366,35 +365,6 @@ type Deallocate struct {
 	Name string
 }
 
-// Show represents a show plan.
-// TODO: make as a logical data source or table dual.
-type Show struct {
-	physicalSchemaProducer
-
-	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName      string
-	Table       *ast.TableName  // Used for showing columns.
-	Column      *ast.ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr
-	Flag        int                  // Some flag parsed from sql, such as FULL.
-	User        *auth.UserIdentity   // Used for show grants.
-	Roles       []*auth.RoleIdentity // Used for show grants.
-	Full        bool
-	IfNotExists bool // Used for `show create database if not exists`
-
-	GlobalScope bool // Used by show variables
-
-	names types.NameSlice
-}
-
-func (p *Show) OutputNames() types.NameSlice {
-	return p.names
-}
-
-func (p *Show) SetOutputNames(names types.NameSlice) {
-	p.names = names
-}
-
 // Set represents a plan for set stmt.
 type Set struct {
 	baseSchemaProducer
@@ -661,6 +631,17 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 	case *PhysicalIndexLookUpReader:
 		e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, false)
 		e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
+	case *PhysicalIndexMergeReader:
+		for i := 0; i < len(copPlan.partialPlans); i++ {
+			if copPlan.tablePlan == nil && i == len(copPlan.partialPlans)-1 {
+				e.explainPlanInRowFormat(copPlan.partialPlans[i], "cop", childIndent, true)
+			} else {
+				e.explainPlanInRowFormat(copPlan.partialPlans[i], "cop", childIndent, false)
+			}
+		}
+		if copPlan.tablePlan != nil {
+			e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
+		}
 	}
 }
 
@@ -675,13 +656,21 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
+		var analyzeInfo string
 		if runtimeStatsColl.ExistsCopStats(explainID) {
-			row = append(row, runtimeStatsColl.GetCopStats(explainID).String())
+			analyzeInfo = runtimeStatsColl.GetCopStats(explainID).String()
 		} else if runtimeStatsColl.ExistsRootStats(explainID) {
-			row = append(row, runtimeStatsColl.GetRootStats(explainID).String())
+			analyzeInfo = runtimeStatsColl.GetRootStats(explainID).String()
 		} else {
-			row = append(row, "time:0ns, loops:0, rows:0")
+			analyzeInfo = "time:0ns, loops:0, rows:0"
 		}
+		switch p.(type) {
+		case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
+			if s := runtimeStatsColl.GetReaderStats(explainID); s != nil && len(s.String()) > 0 {
+				analyzeInfo += ", " + s.String()
+			}
+		}
+		row = append(row, analyzeInfo)
 
 		tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
 		if tracker != nil {

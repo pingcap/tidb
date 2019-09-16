@@ -38,7 +38,13 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
 		return fp, fp.OutputNames(), nil
+		if !isPointGetWithoutDoubleRead(sctx, fp) {
+			sctx.PrepareTxnFuture(ctx)
+		}
+		return fp, fp.OutputNames(), nil
 	}
+
+	sctx.PrepareTxnFuture(ctx)
 
 	var oriHint *bindinfo.HintsSet
 	if stmtNode, ok := node.(ast.StmtNode); ok {
@@ -63,7 +69,9 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
-	builder := plannercore.NewPlanBuilder(sctx, is)
+	hintProcessor := &plannercore.BlockHintProcessor{Ctx: sctx}
+	node.Accept(hintProcessor)
+	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, nil, err
@@ -204,6 +212,18 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, stmtN
 		}
 		globalHandle.AddDropInvalidBindTask(dropBindRecord)
 	}
+}
+
+// isPointGetWithoutDoubleRead returns true when meets following conditions:
+//  1. ctx is auto commit tagged.
+//  2. plan is point get by pk.
+func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false
+	}
+
+	v, ok := p.(*plannercore.PointGetPlan)
+	return ok && v.IndexInfo == nil
 }
 
 func init() {

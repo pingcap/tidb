@@ -226,7 +226,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 						defaultValueMap := s.aggDefaultValueMap(agg)
 						// We should use it directly, rather than building a projection.
 						if len(defaultValueMap) > 0 {
-							proj := LogicalProjection{}.Init(agg.ctx)
+							proj := LogicalProjection{}.Init(agg.ctx, agg.blockOffset)
 							proj.SetSchema(apply.schema)
 							proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
 							for i, val := range defaultValueMap {
@@ -243,6 +243,12 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 					apply.corCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
 				}
 			}
+		} else if sort, ok := innerPlan.(*LogicalSort); ok {
+			// Since we only pull up Selection, Projection, Aggregation, MaxOneRow,
+			// the top level Sort has no effect on the subquery's result.
+			innerPlan = sort.children[0]
+			apply.SetChildren(outerPlan, innerPlan)
+			return s.optimize(ctx, p)
 		}
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))

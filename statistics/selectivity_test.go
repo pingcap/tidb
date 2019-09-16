@@ -432,7 +432,7 @@ func (s *testStatsSuite) TestPrimaryKeySelectivity(c *C) {
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	testKit.MustQuery(`explain select * from t where a > "t"`).Check(testkit.Rows(
 		"TableReader_7 3333.33 root data:Selection_6",
-		"└─Selection_6 3333.33 cop gt(test.t.a, \"t\")",
+		"└─Selection_6 3333.33 cop gt(Column#1, \"t\")",
 		"  └─TableScan_5 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 
 	testKit.MustExec("drop table t")
@@ -514,17 +514,17 @@ func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {
 	c.Assert(h.LoadNeededHistograms(), IsNil)
 	testKit.MustQuery(`explain select * from t where a is null`).Check(testkit.Rows(
 		"TableReader_7 1.00 root data:Selection_6",
-		"└─Selection_6 1.00 cop isnull(test.t.a)",
+		"└─Selection_6 1.00 cop isnull(Column#1)",
 		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery(`explain select * from t where a is not null`).Check(testkit.Rows(
 		"TableReader_7 4.00 root data:Selection_6",
-		"└─Selection_6 4.00 cop not(isnull(test.t.a))",
+		"└─Selection_6 4.00 cop not(isnull(Column#1))",
 		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery(`explain select * from t where a is null or a > 3`).Check(testkit.Rows(
 		"TableReader_7 2.00 root data:Selection_6",
-		"└─Selection_6 2.00 cop or(isnull(test.t.a), gt(test.t.a, 3))",
+		"└─Selection_6 2.00 cop or(isnull(Column#1), gt(Column#1, 3))",
 		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery(`explain select * from t`).Check(testkit.Rows(
@@ -533,7 +533,7 @@ func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {
 	))
 	testKit.MustQuery(`explain select * from t where a < 4`).Check(testkit.Rows(
 		"TableReader_7 3.00 root data:Selection_6",
-		"└─Selection_6 3.00 cop lt(test.t.a, 4)",
+		"└─Selection_6 3.00 cop lt(Column#1, 4)",
 		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 }

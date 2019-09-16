@@ -145,6 +145,43 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	}, nil
 }
 
+func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, ttl uint64) (uint64, error) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdTxnHeartBeat, &pb.TxnHeartBeatRequest{
+		PrimaryLock:   primary,
+		StartVersion:  startTS,
+		AdviseLockTtl: ttl,
+	})
+	for {
+		loc, err := store.GetRegionCache().LocateKey(bo, primary)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		resp, err := store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if regionErr != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			continue
+		}
+		if resp.Resp == nil {
+			return 0, errors.Trace(ErrBodyMissing)
+		}
+		cmdResp := resp.Resp.(*pb.TxnHeartBeatResponse)
+		if keyErr := cmdResp.GetError(); keyErr != nil {
+			return 0, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, primary, keyErr.Abort)
+		}
+		return cmdResp.GetLockTtl(), nil
+	}
+}
+
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	var (
 		keys    [][]byte
@@ -168,6 +205,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
+			if tablecodec.IsUntouchedIndexKValue(k, v) {
+				return nil
+			}
 			op := pb.Op_Put
 			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
 				op = pb.Op_Insert
@@ -331,7 +371,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if len(keys) == 0 {
 		return nil
 	}
-	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys)
+	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -948,7 +988,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 				zap.Uint64("txnStartTS", c.startTS))
 			return errors.Trace(err)
 		}
-		logutil.Logger(ctx).Debug("2PC succeed with error",
+		logutil.Logger(ctx).Debug("got some exceptions, but 2PC was still successful",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
 	}
@@ -1062,6 +1102,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 			batchExe.tokenWaitDuration += time.Since(waitStart)
 			batch := batch1
 			go func() {
+				defer batchExe.rateLimiter.putToken()
 				var singleBatchBackoffer *Backoffer
 				if batchExe.action == actionCommit {
 					// Because the secondary batches of the commit actions are implemented to be
