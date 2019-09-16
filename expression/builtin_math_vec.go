@@ -63,7 +63,7 @@ func (b *builtinSqrtSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 func (b *builtinSqrtSig) vectorized() bool {
 	return true
 }
-			
+
 func (b *builtinAbsDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 		return err
