@@ -518,7 +518,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	flag.Parse()
 	var testFunc map[string]bool
 	testFunc = make(map[string]bool)
-	argList := flag.Args() // flag.Args() 返回 -args 后面的所有参数，以切片表示，每个元素代表一个参数
+	argList := flag.Args()
 	testAll := true
 	for _, arg := range argList {
 		testFunc[arg] = true
@@ -661,7 +661,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	flag.Parse()
 	var testFunc map[string]bool
 	testFunc = make(map[string]bool)
-	argList := flag.Args() // flag.Args() 返回 -args 后面的所有参数，以切片表示，每个元素代表一个参数
+	argList := flag.Args()
 	testAll := true
 	for _, arg := range argList {
 		testFunc[arg] = true
