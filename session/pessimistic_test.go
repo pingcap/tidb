@@ -374,4 +374,21 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	tk2.MustExec("commit")
 	_, err := tk.Exec("commit")
 	c.Check(err, NotNil)
+
+	// Update snapshotTS after a conflict, invalidate snapshot cache.
+	tk.MustExec("truncate table conflict")
+	tk.MustExec("insert into conflict values (1, 2)")
+	tk.MustExec("begin pessimistic")
+	// This SQL use BatchGet and cache data in the txn snapshot.
+	// It can be changed to other SQLs that use BatchGet.
+	tk.MustExec("insert ignore into conflict values (1, 2)")
+
+	tk2.MustExec("update conflict set c = c - 1")
+
+	// Make the txn update its forUpdateTS.
+	tk.MustQuery("select * from conflict where id = 1 for update").Check(testkit.Rows("1 1"))
+	// Cover a bug that the txn snapshot doesn't invalidate cache after ts change.
+	tk.MustExec("insert into conflict values (1, 999) on duplicate key update c = c + 2")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from conflict").Check(testkit.Rows("1 3"))
 }
