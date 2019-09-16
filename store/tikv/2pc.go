@@ -146,8 +146,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		connID:        connID,
 		regionTxnSize: map[uint64]int{},
 		ttlManager: ttlManager{
-			ch:  make(chan struct{}),
-			ttl: defaultLockTTL,
+			ch: make(chan struct{}),
 		},
 	}, nil
 }
