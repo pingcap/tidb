@@ -1536,19 +1536,19 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 		warning string
 	}{
 		{
-			sql:     "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
+			sql:     "select /*+ TIDB_INLJ(t1), USE_INDEX(t1), USE_INDEX(t2), USE_INDEX(t3) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
 			best:    "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t1.a)}(test.t3.a,test.t2.a)->Projection",
 			warning: "",
 		},
 		{
-			sql:     "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
+			sql:     "select /*+ TIDB_INLJ(t1), USE_INDEX(t1), USE_INDEX(t2) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)",
 			warning: "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable",
 		},
 		{
 			sql:     "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
 			best:    "IndexJoin{IndexReader(Index(t2.b)[[NULL,+inf]])->IndexReader(Index(t2.b_c)[[NULL,+inf]]->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t1.b)->Projection",
-			warning: "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t2) */ is inapplicable",
+			warning: "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
 		},
 	}
 	ctx := context.Background()
@@ -1595,46 +1595,46 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		// without Aggregation hints
 		{
 			sql:  "select count(*) from t t1, t t2 where t1.a = t2.b",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
+			best: "LeftHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
 		},
 		{
 			sql:  "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->HashAgg",
+			best: "LeftHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection}(test.t1.a,mul(test.t2.a, 2))->HashAgg",
 		},
 		// with Aggregation hints
 		{
-			sql:  "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
+			sql:  "select /*+ HASH_AGG(), USE_INDEX(t1), USE_INDEX(t2) */ count(*) from t t1, t t2 where t1.a = t2.b",
 			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->HashAgg",
 		},
 		{
-			sql:  "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
+			sql:  "select /*+ STREAM_AGG(), USE_INDEX(t1), USE_INDEX(t2) */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
 			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t1.a,mul(test.t2.a, 2))->Sort->StreamAgg",
 		},
 		// test conflict warning
 		{
-			sql:     "select /*+ HASH_AGG() STREAM_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
+			sql:     "select /*+ HASH_AGG(), STREAM_AGG(), USE_INDEX(t1), USE_INDEX(t2) */ count(*) from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
 			warning: "[planner:1815]Optimizer aggregation hints are conflicted",
 		},
 		// additional test
 		{
-			sql:  "select /*+ STREAM_AGG() */ distinct a from t",
+			sql:  "select /*+ STREAM_AGG(), USE_INDEX(t) */ distinct a from t",
 			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
 		},
 		{
-			sql:  "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
+			sql:  "select /*+ HASH_AGG(), USE_INDEX(t1) */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
 			best: "LeftHashJoin{TableReader(Table(t)->Sel([if(isnull(test.t1.a), <nil>, 1)]))->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(agg_col_cnt, 0)])}->Projection->Projection",
 		},
 		{
-			sql:  "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
+			sql:  "select /*+ hash_agg(), USE_INDEX(t1) */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
 			best: "LeftHashJoin{TableReader(Table(t)->Sel([if(isnull(test.t1.a), <nil>, 1)]))->TableReader(Table(t))->Projection->HashAgg->Sel([ne(agg_col_cnt, 0)])}->Projection->Projection",
 		},
 		{
-			sql:  "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)",
+			sql:  "select /*+ hash_agg(), USE_INDEX(t1) */ t1.a from t t1 where t1.a = all(select t2.b from t t2)",
 			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Projection->HashAgg}->Projection->Projection",
 		},
 		{
-			sql:         "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
+			sql:         "select /*+ STREAM_AGG(), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
 			best:        "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(test.t2.b,test.t1.b)->HashAgg",
 			warning:     "[planner:1815]Optimizer Hint STREAM_AGG is inapplicable",
 			aggPushDown: true,
@@ -1795,40 +1795,40 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	}{
 		// simple case
 		{
-			sql:     "select /*+ INDEX(t, c_d_e) */ * from t",
+			sql:     "select /*+ USE_INDEX(t, c_d_e) */ * from t",
 			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
 			hasWarn: false,
 		},
 		{
-			sql:     "select /*+ INDEX(t, c_d_e) */ * from t t1",
+			sql:     "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
 			best:    "TableReader(Table(t))",
 			hasWarn: false,
 		},
 		{
-			sql:     "select /*+ INDEX(t1, c_d_e) */ * from t t1",
+			sql:     "select /*+ USE_INDEX(t1, c_d_e) */ * from t t1",
 			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
 			hasWarn: false,
 		},
 		{
-			sql:     "select /*+ INDEX(t1, c_d_e), INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+			sql:     "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
 			best:    "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
 			hasWarn: false,
 		},
 		// test multiple indexes
 		{
-			sql:     "select /*+ INDEX(t, c_d_e, f, g) */ * from t order by f",
+			sql:     "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
 			best:    "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
 			hasWarn: false,
 		},
 		// use TablePath when the hint only contains table.
 		{
-			sql:     "select /*+ INDEX(t) */ f from t where f > 10",
+			sql:     "select /*+ USE_INDEX(t) */ f from t where f > 10",
 			best:    "TableReader(Table(t)->Sel([gt(test.t.f, 10)]))",
 			hasWarn: false,
 		},
 		// there will be a warning instead of error when index not exist
 		{
-			sql:     "select /*+ INDEX(t, no_such_index) */ * from t",
+			sql:     "select /*+ USE_INDEX(t, no_such_index) */ * from t",
 			best:    "TableReader(Table(t))",
 			hasWarn: true,
 		},
@@ -1889,19 +1889,19 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		},
 		{
 			sql:  "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "IndexJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
+			plan: "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
 		},
 		{
 			sql:  "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "IndexJoin{TableReader(Table(t))->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
+			plan: "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
 		},
 		{
 			sql:  "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
-			plan: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(test.t1.a, test.t2.a)])->StreamAgg)->StreamAgg->Sel([not(isnull(count(*)))])}->HashAgg",
+			plan: "Apply{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([gt(test.t1.a, test.t2.a)])->StreamAgg)->StreamAgg->Sel([not(isnull(count(*)))])}->HashAgg",
 		},
 		{
 			sql:  "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
-			plan: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(test.t1.a, test.t2.a)])->HashAgg)->HashAgg->Sel([not(isnull(count(*)))])}->StreamAgg",
+			plan: "Apply{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([gt(test.t1.a, test.t2.a)])->HashAgg)->HashAgg->Sel([not(isnull(count(*)))])}->StreamAgg",
 		},
 		{
 			sql:  "select /*+ HASH_AGG(@sel_2) */ a, (select count(*) from t t1 where t1.b > t.a) from t where b > (select b from t t2 where t2.b = t.a limit 1)",
