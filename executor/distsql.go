@@ -522,7 +522,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	}
 	if e.runtimeStats != nil {
 		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		rootStats.SetConcurrencyNum(int64(lookupConcurrencyLimit))
+		rootStats.SetConcurrencyNum("IndexLookupConcurrency:" + strconv.Itoa(lookupConcurrencyLimit))
 	}
 }
 
