@@ -248,7 +248,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 	for task != nil {
 		select {
 		case chk := <-task.results:
-			req.Append(chk, 0, chk.NumRows())
+			req.SwapColumns(chk)
 			return nil
 		case err := <-task.doneErr:
 			if err != nil {
@@ -552,7 +552,6 @@ func (imw *innerMergeWorker) fetchNextInnerRows(ctx context.Context, task *lookU
 		if err != nil || task.innerResult == nil || task.innerResult.NumRows() == 0 {
 			return
 		}
-		curRow = task.innerIter.Current()
 	}
 
 	var cmpRes int
