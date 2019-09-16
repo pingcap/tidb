@@ -178,7 +178,7 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, true)
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.Ctx.GetSessionVars().PrevStmt = a.stmt.OriginText()
 	a.stmt.logAudit()
 	a.stmt.SummaryStmt()
@@ -709,7 +709,7 @@ func FormatSQL(sql string, sessVars *variable.SessionVars) string {
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
-func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, isSelect bool) {
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
 	if level > zapcore.WarnLevel {
@@ -748,19 +748,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, isSelect bool) {
 		ExecDetail:  execDetail,
 		MemMax:      memMax,
 		Succ:        succ,
+		Plan:        getPlanTree(a.Plan),
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = FormatSQL(sessVars.PrevStmt, sessVars)
-	}
-	if isSelect && atomic.LoadUint32(&cfg.Log.SlowLogPlan) == 1 {
-		if p, ok := a.Plan.(plannercore.PhysicalPlan); ok {
-			planTree, err := plannercore.EncodePlan(p)
-			if err == nil {
-				slowItems.Plan = planTree
-			} else {
-				logutil.BgLogger().Error("encode plan tree error", zap.Error(err))
-			}
-		}
 	}
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
@@ -789,6 +780,37 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, isSelect bool) {
 			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
+}
+
+// getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+func getPlanTree(p plannercore.Plan) string {
+	cfg := config.GetGlobalConfig()
+	if atomic.LoadUint32(&cfg.Log.SlowLogPlan) == 1 {
+		var selectPlan plannercore.PhysicalPlan
+		if physicalPlan, ok := p.(plannercore.PhysicalPlan); ok {
+			selectPlan = physicalPlan
+		} else {
+			switch x := p.(type) {
+			case *plannercore.Delete:
+				selectPlan = x.SelectPlan
+			case *plannercore.Update:
+				selectPlan = x.SelectPlan
+			case *plannercore.Insert:
+				if x.SelectPlan != nil {
+					selectPlan = x.SelectPlan
+				}
+			}
+		}
+		if selectPlan != nil {
+			planTree, err := plannercore.EncodePlan(selectPlan)
+			if err == nil {
+				return planTree
+			} else {
+				logutil.BgLogger().Error("encode plan tree error", zap.Error(err))
+			}
+		}
+	}
+	return ""
 }
 
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
