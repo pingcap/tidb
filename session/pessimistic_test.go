@@ -44,8 +44,8 @@ type testPessimisticSuite struct {
 
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	// Set it to 15s for testing lock resolve.
-	tikv.PessimisticLockTTL = 15000
+	// Set it to 300ms for testing lock resolve.
+	tikv.PessimisticLockTTL = 300
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.MustNewMVCCStore()

@@ -614,7 +614,9 @@ func (tm *ttlManager) close() {
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 	bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
-	ticker := time.NewTicker(3 * time.Second)
+	// PessimisticLockTTL is 15s in conf, so the ticker is 5s.
+	// In the test, PessimisticLockTTL is set to 300ms, then ticker is 100ms.
+	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 3)
 	defer ticker.Stop()
 	for {
 		select {
