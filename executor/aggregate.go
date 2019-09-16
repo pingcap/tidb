@@ -217,7 +217,7 @@ func (e *HashAggExec) Close() error {
 	if e.runtimeStats != nil {
 		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
 		rootStats.SetConcurrencyNum("HashAggPartialConcurrency:" + strconv.Itoa(len(e.partialWorkers)) +
-			",HashAggFinalConcurrency:" + strconv.Itoa(len(e.finalWorkers)))
+			", HashAggFinalConcurrency:" + strconv.Itoa(len(e.finalWorkers)))
 	}
 	return e.baseExecutor.Close()
 }
