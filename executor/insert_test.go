@@ -287,20 +287,6 @@ func (s *testSuite3) TestAllowInvalidDates(c *C) {
 	runWithMode("ALLOW_INVALID_DATES")
 }
 
-func (s *testSuite3) TestPartitionInsertOnDuplicate(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t1 (a int,b int,primary key(a,b)) partition by range(a) (partition p0 values less than (100),partition p1 values less than (1000))`)
-	tk.MustExec(`insert into t1 set a=1, b=1`)
-	tk.MustExec(`insert into t1 set a=1,b=1 on duplicate key update a=1,b=1`)
-	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1 1"))
-
-	tk.MustExec(`create table t2 (a int,b int,primary key(a,b)) partition by hash(a) partitions 4`)
-	tk.MustExec(`insert into t2 set a=1,b=1;`)
-	tk.MustExec(`insert into t2 set a=1,b=1 on duplicate key update a=1,b=1`)
-	tk.MustQuery(`select * from t2`).Check(testkit.Rows("1 1"))
-}
-
 func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -560,4 +546,30 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 		tk.MustQuery(tt.query).Check(tt.result)
 	}
 
+}
+
+func (s *testSuite3) TestPartitionInsertOnDuplicate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int,b int,primary key(a,b)) partition by range(a) (partition p0 values less than (100),partition p1 values less than (1000))`)
+	tk.MustExec(`insert into t1 set a=1, b=1`)
+	tk.MustExec(`insert into t1 set a=1,b=1 on duplicate key update a=1,b=1`)
+	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`create table t2 (a int,b int,primary key(a,b)) partition by hash(a) partitions 4`)
+	tk.MustExec(`insert into t2 set a=1,b=1;`)
+	tk.MustExec(`insert into t2 set a=1,b=1 on duplicate key update a=1,b=1`)
+	tk.MustQuery(`select * from t2`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`CREATE TABLE t3 (a int, b int, c int, d int, e int,
+  PRIMARY KEY (a,b),
+  UNIQUE KEY (b,c,d)
+) PARTITION BY RANGE ( b ) (
+  PARTITION p0 VALUES LESS THAN (4),
+  PARTITION p1 VALUES LESS THAN (7),
+  PARTITION p2 VALUES LESS THAN (11)
+)`)
+	tk.MustExec("insert into t3 values (1,2,3,4,5)")
+	tk.MustExec("insert into t3 values (1,2,3,4,5),(6,2,3,4,6) on duplicate key update e = e + values(e)")
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1 2 3 4 16"))
 }
