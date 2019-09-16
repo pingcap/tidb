@@ -328,24 +328,24 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 	tk.MustExec("create table t2(id int)")
 
 	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(test.t1.id, test.t2.id)]",
+		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(Column#1, Column#3)]",
 		"├─TableReader_12 9990.00 root data:Selection_11",
-		"│ └─Selection_11 9990.00 cop not(isnull(test.t1.id))",
+		"│ └─Selection_11 9990.00 cop not(isnull(Column#1))",
 		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_15 9990.00 root data:Selection_14",
-		"  └─Selection_14 9990.00 cop not(isnull(test.t2.id))",
+		"  └─Selection_14 9990.00 cop not(isnull(Column#3))",
 		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
-		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
+		"├─Sort_11 9990.00 root Column#1:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
 		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"└─Sort_15 9990.00 root Column#3:asc",
 		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
 		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
@@ -353,14 +353,14 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 
 	metrics.BindUsageCounter.Reset()
 	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
-		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
+		"├─Sort_11 9990.00 root Column#1:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
 		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"└─Sort_15 9990.00 root Column#3:asc",
 		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
 		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	pb := &dto.Metric{}
@@ -370,12 +370,12 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 
 	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(test.t1.id, test.t2.id)]",
+		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(Column#1, Column#3)]",
 		"├─TableReader_12 9990.00 root data:Selection_11",
-		"│ └─Selection_11 9990.00 cop not(isnull(test.t1.id))",
+		"│ └─Selection_11 9990.00 cop not(isnull(Column#1))",
 		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_15 9990.00 root data:Selection_14",
-		"  └─Selection_14 9990.00 cop not(isnull(test.t2.id))",
+		"  └─Selection_14 9990.00 cop not(isnull(Column#3))",
 		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
@@ -390,38 +390,38 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("create table t2(id int)")
 
 	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(test.t1.id, test.t2.id)]",
+		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(Column#1, Column#3)]",
 		"├─TableReader_12 9990.00 root data:Selection_11",
-		"│ └─Selection_11 9990.00 cop not(isnull(test.t1.id))",
+		"│ └─Selection_11 9990.00 cop not(isnull(Column#1))",
 		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_15 9990.00 root data:Selection_14",
-		"  └─Selection_14 9990.00 cop not(isnull(test.t2.id))",
+		"  └─Selection_14 9990.00 cop not(isnull(Column#3))",
 		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
-		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
+		"├─Sort_11 9990.00 root Column#1:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
 		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"└─Sort_15 9990.00 root Column#3:asc",
 		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
 		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
 	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
-		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
+		"├─Sort_11 9990.00 root Column#1:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
 		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"└─Sort_15 9990.00 root Column#3:asc",
 		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
 		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
@@ -465,4 +465,24 @@ func (s *testSuite) TestErrorBind(c *C) {
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
+}
+
+func (s *testSuite) TestPreparedStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec(`prepare stmt1 from 'select * from t'`)
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+
+	tk.MustExec("create binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx")
+
+	tk.MustExec("drop binding for select * from t")
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
 }

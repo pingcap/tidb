@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -60,6 +61,15 @@ const (
 	PriorityLow
 	PriorityHigh
 )
+
+// UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
+// This is used in the situation of the index key/value was unchanged when do update.
+// Usage:
+// 1. For non-unique index: normally, the index value is '0'.
+// Change the value to '1' indicate the index key/value is no need to commit.
+// 2. For unique index: normally, the index value is the record handle ID, 8 bytes.
+// Append UnCommitIndexKVFlag to the value indicate the index key/value is no need to commit.
+const UnCommitIndexKVFlag byte = '1'
 
 // IsoLevel is the transaction's isolation level.
 type IsoLevel int
@@ -255,6 +265,8 @@ type ResultSubset interface {
 	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
+	// RespTime returns the response time for the request.
+	RespTime() time.Duration
 }
 
 // Response represents the response returned from KV layer.
@@ -332,7 +344,7 @@ type Iterator interface {
 
 // SplitableStore is the kv store which supports split regions.
 type SplitableStore interface {
-	SplitRegion(splitKey Key, scatter bool) (regionID uint64, err error)
+	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
 	WaitScatterRegionFinish(regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }

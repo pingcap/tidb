@@ -163,7 +163,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 		stmt, err := s.ParseOneStmt(sql1, "", "")
 		c.Check(err, IsNil)
 		is := tk.Se.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
-		builder := core.NewPlanBuilder(tk.Se, is)
+		builder := core.NewPlanBuilder(tk.Se, is, &core.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Check(err, IsNil)
 		execPlan, ok := p.(*core.Execute)
@@ -172,7 +172,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 		err = execPlan.OptimizePreparedPlan(ctx, tk.Se, is)
 		c.Check(err, IsNil)
 		planStr[i] = core.ToString(execPlan.Plan)
-		c.Check(planStr[i], Matches, expectedPattern, Commentf("for %s", sql1))
+		c.Check(planStr[i], Matches, expectedPattern, Commentf("for %dth %s", i, sql1))
 		pb := &dto.Metric{}
 		counter.Write(pb)
 		cnt[i] = pb.GetCounter().GetValue()

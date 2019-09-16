@@ -40,6 +40,9 @@ var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, e
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
+	// Vectorized returns if this expression supports vectorized evaluation.
+	Vectorized() bool
+
 	// VecEvalInt evaluates this expression in a vectorized manner.
 	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
 
@@ -105,6 +108,7 @@ type Expression interface {
 	IsCorrelated() bool
 
 	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
+	// A constant item can be eval() when build a plan.
 	// An expression is constant item if it:
 	// refers no tables.
 	// refers no subqueries that refers any tables.
@@ -141,6 +145,13 @@ func (e CNFExprs) Clone() CNFExprs {
 	for _, expr := range e {
 		cnf = append(cnf, expr.Clone())
 	}
+	return cnf
+}
+
+// Shallow makes a shallow copy of itself.
+func (e CNFExprs) Shallow() CNFExprs {
+	cnf := make(CNFExprs, 0, len(e))
+	cnf = append(cnf, e...)
 	return cnf
 }
 
