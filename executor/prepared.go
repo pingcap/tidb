@@ -199,7 +199,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 
-	preparedObj := &plannercore.PrepareObject{
+	preparedObj := &plannercore.CachedPrepareStmt{
 		PreparedAst: prepared,
 		VisitInfos:  destBuilder.GetVisitInfo(),
 	}
@@ -267,9 +267,9 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
 	preparedPointer := vars.PreparedStmts[id]
-	preparedObj, ok := preparedPointer.(*plannercore.PrepareObject)
+	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 	if !ok {
-		return errors.Errorf("invalid PrepareObject type")
+		return errors.Errorf("invalid CachedPrepareStmt type")
 	}
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
@@ -307,9 +307,9 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID
 		outputNames: execPlan.OutputNames(),
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.PrepareObject)
+		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 		if !ok {
-			return nil, errors.Errorf("invalid PrepareObject type")
+			return nil, errors.Errorf("invalid CachedPrepareStmt type")
 		}
 		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
 		sctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
@@ -326,9 +326,9 @@ func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 		}
 	}
 	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.PrepareObject)
+		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 		if !ok {
-			return nil, errors.Errorf("invalid PrepareObject type")
+			return nil, errors.Errorf("invalid CachedPrepareStmt type")
 		}
 		return preparedObj.PreparedAst.Stmt, nil
 	}

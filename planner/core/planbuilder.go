@@ -79,12 +79,6 @@ type aggHintInfo struct {
 	preferAggToCop bool
 }
 
-// PrepareObject store prepared ast from PrepareExec and other related fields
-type PrepareObject struct {
-	PreparedAst *ast.Prepared
-	VisitInfos  []visitInfo
-}
-
 func tableNames2HintTableInfo(hintTables []ast.HintTable, p *BlockHintProcessor, nodeType nodeType, currentOffset int) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil

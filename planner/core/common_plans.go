@@ -194,9 +194,9 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if !ok {
 		return errors.Trace(ErrStmtNotFound)
 	}
-	preparedObj, ok := preparedPointer.(*PrepareObject)
+	preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
 	if !ok {
-		return errors.Errorf("invalid PrepareObject type")
+		return errors.Errorf("invalid CachedPrepareStmt type")
 	}
 	prepared := preparedObj.PreparedAst
 	vars.StmtCtx.StmtType = prepared.StmtType
@@ -249,7 +249,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 }
 
 func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
-	preparedObj *PrepareObject, is infoschema.InfoSchema) error {
+	preparedObj *CachedPrepareStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, preparedObj.VisitInfos); err != nil {
 			return err
@@ -259,7 +259,7 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
-func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedObj *PrepareObject) error {
+func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedObj *CachedPrepareStmt) error {
 	var cacheKey kvcache.Key
 	prepared := preparedObj.PreparedAst
 	sessionVars := sctx.GetSessionVars()

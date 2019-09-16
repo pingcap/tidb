@@ -626,7 +626,7 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	sv := cc.ctx.GetSessionVars()
 	if preparedPointer, ok := sv.PreparedStmts[stmtID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.PrepareObject)
+		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 		if ok {
 			preparedAst := preparedObj.PreparedAst
 			return preparedAst.Stmt.Text() + sv.GetExecuteArgumentsInfo()
