@@ -252,36 +252,36 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		d, j := types.Datum{}, 0
 		for i := range sel {
 			if buf.IsNull(i) {
-				d.SetValue(nil)
-			} else {
-				switch eType {
-				case types.ETInt:
-					if hasUnsignedFlag {
-						d.SetUint64(buf.GetUint64(i))
-					} else {
-						d.SetInt64(buf.GetInt64(i))
-					}
-				case types.ETReal:
-					d.SetFloat64(buf.GetFloat64(i))
-				case types.ETDuration:
-					d.SetMysqlDuration(buf.GetDuration(i, 0))
-				case types.ETDatetime, types.ETTimestamp:
-					d.SetMysqlTime(buf.GetTime(i))
-				case types.ETString:
-					d.SetString(buf.GetString(i))
-				case types.ETJson:
-					d.SetMysqlJSON(buf.GetJSON(i))
-				case types.ETDecimal:
-					d.SetMysqlDecimal(buf.GetDecimal(i))
-				}
-			}
-
-			if d.IsNull() {
-				if !isEQCondFromIn { // same as EvalBool
+				if !isEQCondFromIn {
+					selected[sel[i]] = false
+					nulls[sel[i]] = false
 					continue
 				}
 				nulls[sel[i]] = true
+				sel[j] = sel[i]
+				j++
 				continue
+			}
+
+			switch eType {
+			case types.ETInt:
+				if hasUnsignedFlag {
+					d.SetUint64(buf.GetUint64(i))
+				} else {
+					d.SetInt64(buf.GetInt64(i))
+				}
+			case types.ETReal:
+				d.SetFloat64(buf.GetFloat64(i))
+			case types.ETDuration:
+				d.SetMysqlDuration(buf.GetDuration(i, 0))
+			case types.ETDatetime, types.ETTimestamp:
+				d.SetMysqlTime(buf.GetTime(i))
+			case types.ETString:
+				d.SetString(buf.GetString(i))
+			case types.ETJson:
+				d.SetMysqlJSON(buf.GetJSON(i))
+			case types.ETDecimal:
+				d.SetMysqlDecimal(buf.GetDecimal(i))
 			}
 
 			b, err := d.ToBool(ctx.GetSessionVars().StmtCtx)
