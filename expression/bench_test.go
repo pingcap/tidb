@@ -518,6 +518,7 @@ var vecTestFuncSig = flag.String("vec_test_func_sig", "",
 // testVectorizedBuiltinFunc is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
+	flag.Parse()
 	TestFuncName := *vecTestFuncSig
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
@@ -653,6 +654,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
 
+	flag.Parse()
 	TestFuncName := *vecTestFuncSig
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
