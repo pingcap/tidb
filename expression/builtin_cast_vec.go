@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -36,5 +37,41 @@ func (b *builtinCastIntAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinCastIntAsIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCastIntAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeFloat64(n, false)
+
+	i64s := buf.Int64s()
+	rs := result.Float64s()
+
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			continue
+		}
+		if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+			rs[i] = float64(i64s[i])
+		} else if b.inUnion && i64s[i] < 0 {
+			rs[i] = 0
+		} else {
+			// recall that, int to float is different from uint to float
+			rs[i] = float64(uint64(i64s[i]))
+		}
+	}
+	return nil
+}
+
+func (b *builtinCastIntAsRealSig) vectorized() bool {
 	return true
 }
