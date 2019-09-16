@@ -595,7 +595,6 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 type ttlManager struct {
 	// 0 uninitialized, 1 running, 2 closed
 	initialized uint32
-	ttl         uint64
 	ch          chan struct{}
 }
 
