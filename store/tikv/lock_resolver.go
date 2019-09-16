@@ -305,17 +305,31 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 			return
 		}
 
-		cleanRegions, exists := cleanTxns[l.TxnID]
-		if !exists {
-			cleanRegions = make(map[RegionVerID]struct{})
-			cleanTxns[l.TxnID] = cleanRegions
-		}
+		if status.ttl == 0 {
+			// If the lock is committed or rollbacked, resolve lock.
+			cleanRegions, exists := cleanTxns[l.TxnID]
+			if !exists {
+				cleanRegions = make(map[RegionVerID]struct{})
+				cleanTxns[l.TxnID] = cleanRegions
+			}
 
-		err = lr.resolveLock(bo, l, status, cleanRegions)
-		if err != nil {
-			msBeforeTxnExpired = 0
-			err = errors.Trace(err)
-			return
+			err = lr.resolveLock(bo, l, status, cleanRegions)
+			if err != nil {
+				msBeforeTxnExpired = 0
+				err = errors.Trace(err)
+				return
+			}
+		} else {
+			// If the lock is valid, the txn may be a pessimistic transaction.
+			msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, status.ttl)
+			if msBeforeLockExpired <= 0 {
+				// The txn is a pessimistic transaction, and it's primary lock will expire soon, but
+				// TxnHeartBeat could update the TTL, so we should not clean up the lock.
+				continue
+			}
+			if msBeforeTxnExpired == 0 || msBeforeLockExpired < msBeforeTxnExpired {
+				msBeforeTxnExpired = msBeforeLockExpired
+			}
 		}
 	}
 	return
@@ -339,9 +353,14 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	tikvLockResolverCountWithQueryTxnStatus.Inc()
 
 	var status TxnStatus
+	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
+	if err != nil {
+		return status, err
+	}
 	req := tikvrpc.NewRequest(tikvrpc.CmdCleanup, &kvrpcpb.CleanupRequest{
 		Key:          primary,
 		StartVersion: txnID,
+		CurrentTs:    currentTS,
 	})
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
@@ -368,6 +387,12 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		}
 		cmdResp := resp.Resp.(*kvrpcpb.CleanupResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
+			// If the TTL of the primary lock is not outdated, the proto returns a ErrLocked contains the TTL.
+			if lockInfo := keyErr.GetLocked(); lockInfo != nil {
+				status.ttl = lockInfo.LockTtl
+				status.commitTS = 0
+				return status, nil
+			}
 			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
 			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
 			return status, err

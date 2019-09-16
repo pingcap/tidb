@@ -926,7 +926,8 @@ func getTxnCommitInfo(iter *Iterator, expectKey []byte, startTS uint64) (mvccVal
 }
 
 // Cleanup implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
+// Cleanup API is depreciated, use CheckTxnStatus instead.
+func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 	mvcc.mu.Lock()
 	defer func() {
 		mvcc.mu.Unlock()
@@ -934,7 +935,69 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
 	}()
 
 	batch := &leveldb.Batch{}
-	err := rollbackKey(mvcc.db, batch, key, startTS)
+	startKey := mvccEncode(key, lockVer)
+	iter := newIterator(mvcc.db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	if iter.Valid() {
+		dec := lockDecoder{
+			expectKey: key,
+		}
+		ok, err := dec.Decode(iter)
+		if err != nil {
+			return err
+		}
+		// If current transaction's lock exist.
+		if ok && dec.lock.startTS == startTS {
+
+			// If the lock has already outdated, clean up it.
+			if uint64(oracle.ExtractPhysical(dec.lock.startTS))+dec.lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
+				if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
+					return err
+				}
+				if err = mvcc.db.Write(batch, nil); err != nil {
+					return err
+				}
+				return nil
+			}
+
+			// Otherwise, return a locked error to with the TTL information.
+			return dec.lock.lockErr(key)
+		}
+
+		// If current transaction's lock not exist.
+		// If commit info of current transaction exist.
+		c, ok, err := getTxnCommitInfo(iter, key, startTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
+			// If current transaction is already committed.
+			if c.valueType != typeRollback {
+				return ErrAlreadyCommitted(c.commitTS)
+			}
+			// If current transaction is already rollback.
+			return nil
+		}
+	}
+
+	// If current transaction is not prewritted before.
+	value := mvccValue{
+		valueType: typeRollback,
+		startTS:   startTS,
+		commitTS:  startTS,
+	}
+	writeKey := mvccEncode(key, startTS)
+	writeValue, err := value.MarshalBinary()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	batch.Put(writeKey, writeValue)
+	return nil
+
+	err = rollbackKey(mvcc.db, batch, key, startTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1079,6 +1142,7 @@ func (mvcc *MVCCLevelDB) TxnHeartBeat(key []byte, startTS uint64, adviseTTL uint
 			return lock.ttl, nil
 		}
 	}
+
 	return 0, errors.New("lock doesn't exist")
 }
 
