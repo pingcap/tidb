@@ -250,7 +250,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
-			matched, isNull, err := e.joiner.tryToMatch(outerRow, e.innerIter, req)
+			matched, isNull, err := e.joiner.tryToMatchInners(outerRow, e.innerIter, req)
 			if err != nil {
 				return err
 			}
@@ -359,8 +359,6 @@ func (ow *outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst
 // buildTask builds a lookUpJoinTask and read outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
-	newFirstChunk(ow.executor)
-
 	task := &lookUpJoinTask{
 		doneCh:            make(chan error, 1),
 		outerResult:       newFirstChunk(ow.executor),
@@ -590,6 +588,11 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
 		err := Next(ctx, innerExec, iw.executorChk)
 		if err != nil {
 			return err
@@ -648,5 +651,5 @@ func (e *IndexLookUpJoin) Close() error {
 	}
 	e.workerWg.Wait()
 	e.memTracker = nil
-	return e.children[0].Close()
+	return e.baseExecutor.Close()
 }
