@@ -79,3 +79,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/foreyes/parser v0.0.0-20190916051548-0cb835cf3e45
