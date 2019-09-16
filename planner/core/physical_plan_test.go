@@ -1835,10 +1835,10 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	}
 	ctx := context.Background()
 	for i, test := range tests {
-		comment := Commentf("case:%v sql:%s", i, test)
+		comment := Commentf("case:%v sql:%s", i, test.sql)
 		se.GetSessionVars().StmtCtx.SetWarnings(nil)
 
-		stmt, err := s.ParseOneStmt(test, "", "")
+		stmt, err := s.ParseOneStmt(test.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		p, err := planner.Optimize(ctx, se, stmt, s.is)
