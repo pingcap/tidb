@@ -37,7 +37,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 
 	marshal, err := col.MarshalJSON()
 	c.Assert(err, IsNil)
-	c.Assert(marshal, DeepEquals, []byte{0x22, 0x22})
+	c.Assert(marshal, DeepEquals, []byte{0x22, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x22})
 
 	intDatum := types.NewIntDatum(1)
 	corCol := &CorrelatedColumn{Column: *col, Data: &intDatum}
@@ -142,24 +142,24 @@ func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
 func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 	defer testleak.AfterTest(c)()
 
-	col0 := &Column{ColName: model.NewCIStr("col0"), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	col1 := &Column{ColName: model.NewCIStr("col1"), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col0 := &Column{UniqueID: 0, ID: 0, ColName: model.NewCIStr("col0"), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col1 := &Column{UniqueID: 1, ID: 1, ColName: model.NewCIStr("col1"), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("col0")}, &model.IndexColumn{Name: model.NewCIStr("col1")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 
 	cols := []*Column{col0}
-	resCols, lengths := IndexInfo2Cols(cols, indexInfo)
+	resCols, lengths := IndexInfo2PrefixCols(cols, indexInfo)
 	c.Assert(len(resCols), Equals, 1)
 	c.Assert(len(lengths), Equals, 1)
 	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
 
 	cols = []*Column{col1}
-	resCols, lengths = IndexInfo2Cols(cols, indexInfo)
+	resCols, lengths = IndexInfo2PrefixCols(cols, indexInfo)
 	c.Assert(len(resCols), Equals, 0)
 	c.Assert(len(lengths), Equals, 0)
 
 	cols = []*Column{col0, col1}
-	resCols, lengths = IndexInfo2Cols(cols, indexInfo)
+	resCols, lengths = IndexInfo2PrefixCols(cols, indexInfo)
 	c.Assert(len(resCols), Equals, 2)
 	c.Assert(len(lengths), Equals, 2)
 	c.Assert(resCols[0].Equal(nil, col0), IsTrue)

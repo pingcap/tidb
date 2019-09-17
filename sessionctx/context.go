@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tipb/go-binlog"
@@ -81,7 +80,7 @@ type Context interface {
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
 	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
-	StmtAddDirtyTableOP(op int, physicalID int64, handle int64, row []types.Datum)
+	StmtAddDirtyTableOP(op int, physicalID int64, handle int64)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.

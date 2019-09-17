@@ -204,11 +204,31 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	if err != nil {
 		return 0, err
 	}
+
+	ctx := opt.Ctx
+	if opt.Untouched {
+		txn, err1 := sctx.Txn(true)
+		if err1 != nil {
+			return 0, err1
+		}
+		// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
+		// should not overwrite the key with un-commit flag.
+		// So if the key exists, just do nothing and return.
+		_, err = txn.GetMemBuffer().Get(ctx, key)
+		if err == nil {
+			return 0, nil
+		}
+	}
+
 	// save the key buffer to reuse.
 	writeBufs.IndexKeyBuf = key
 	if !distinct {
 		// non-unique index doesn't need store value, write a '0' to reduce space
-		err = rm.Set(key, []byte{'0'})
+		value := []byte{'0'}
+		if opt.Untouched {
+			value[0] = kv.UnCommitIndexKVFlag
+		}
+		err = rm.Set(key, value)
 		if ss != nil {
 			ss.SetAssertion(key, kv.None)
 		}
@@ -216,14 +236,17 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	}
 
 	if skipCheck {
-		err = rm.Set(key, EncodeHandle(h))
+		value := EncodeHandle(h)
+		if opt.Untouched {
+			value = append(value, kv.UnCommitIndexKVFlag)
+		}
+		err = rm.Set(key, value)
 		if ss != nil {
 			ss.SetAssertion(key, kv.None)
 		}
 		return 0, err
 	}
 
-	ctx := opt.Ctx
 	if ctx != nil {
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("index.Create", opentracing.ChildOf(span.Context()))
@@ -236,8 +259,15 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 
 	var value []byte
 	value, err = rm.Get(ctx, key)
-	if kv.IsErrNotFound(err) {
-		err = rm.Set(key, EncodeHandle(h))
+	// If (opt.Untouched && err == nil) is true, means the key is exists and exists in TiKV, not in txn mem-buffer,
+	// then should also write the untouched index key/value to mem-buffer to make sure the data
+	// is consistent with the index in txn mem-buffer.
+	if kv.IsErrNotFound(err) || (opt.Untouched && err == nil) {
+		v := EncodeHandle(h)
+		if opt.Untouched {
+			v = append(v, kv.UnCommitIndexKVFlag)
+		}
+		err = rm.Set(key, v)
 		if ss != nil {
 			ss.SetAssertion(key, kv.NotExist)
 		}

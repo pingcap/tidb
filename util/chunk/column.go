@@ -374,8 +374,8 @@ func (c *Column) ResizeDecimal(n int, isNull bool) {
 	c.resize(n, sizeMyDecimal, isNull)
 }
 
-// ResizeDuration resizes the column so that it contains n duration elements.
-func (c *Column) ResizeDuration(n int, isNull bool) {
+// ResizeGoDuration resizes the column so that it contains n duration elements.
+func (c *Column) ResizeGoDuration(n int, isNull bool) {
 	c.resize(n, sizeGoDuration, isNull)
 }
 
@@ -612,12 +612,17 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 
 	if c.isFixed() {
 		elemLen := len(c.elemBuf)
+		dst.elemBuf = make([]byte, elemLen)
 		for _, i := range sel {
 			dst.appendNullBitmap(!c.IsNull(i))
 			dst.data = append(dst.data, c.data[i*elemLen:i*elemLen+elemLen]...)
 			dst.length++
 		}
 	} else {
+		dst.elemBuf = nil
+		if len(dst.offsets) == 0 {
+			dst.offsets = append(dst.offsets, 0)
+		}
 		for _, i := range sel {
 			dst.appendNullBitmap(!c.IsNull(i))
 			start, end := c.offsets[i], c.offsets[i+1]
@@ -627,4 +632,18 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 		}
 	}
 	return dst
+}
+
+// MergeNulls merges these columns' null bitmaps.
+// For a row, if any column of it is null, the result is null.
+// It works like: if col1.IsNull || col2.IsNull || col3.IsNull.
+// The user should ensure that all these columns have the same length, and
+// data stored in these columns are fixed-length type.
+func (c *Column) MergeNulls(cols ...*Column) {
+	for _, col := range cols {
+		for i := range c.nullBitmap {
+			// bit 0 is null, 1 is not null, so do AND operations here.
+			c.nullBitmap[i] &= col.nullBitmap[i]
+		}
+	}
 }

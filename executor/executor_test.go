@@ -144,15 +144,7 @@ func (s *baseTestSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-func enablePessimisticTxn(enable bool) {
-	newConf := config.NewConfig()
-	newConf.PessimisticTxn.Enable = enable
-	config.StoreGlobalConfig(newConf)
-}
-
 func (s *testSuiteP1) TestPessimisticSelectForUpdate(c *C) {
-	defer func() { enablePessimisticTxn(false) }()
-	enablePessimisticTxn(true)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -512,8 +504,9 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
-		err1 = ld.CheckAndInsertOneBatch(context.Background())
+		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 		c.Assert(err1, IsNil)
+		ld.SetMaxRowsInBatch(20000)
 		if tt.restData == nil {
 			c.Assert(data, HasLen, 0,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
@@ -4379,6 +4372,16 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	}()
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+
+	// Test insert from select oom panic.
+	tk.MustExec("drop table if exists t,t1")
+	tk.MustExec("create table t (a bigint);")
+	tk.MustExec("create table t1 (a bigint);")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
+	tk.MustExec("set @@tidb_mem_quota_query=200;")
+	_, err = tk.Exec("insert into t select a from t1 order by a desc;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 }
