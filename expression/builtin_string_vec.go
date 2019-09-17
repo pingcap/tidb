@@ -136,8 +136,8 @@ func (b *builtinStringIsNullSig) vectorized() bool {
 	return true
 }
 
-// evalString evals a REVERSE(str).
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
+// vecEvalString evals a REVERSE(str).
+// See https://dev.mysql.com/doc/refman/8.0/en/string-functions.html#function_reverse
 func (b *builtinReverseSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
