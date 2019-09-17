@@ -323,17 +323,20 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 
 // calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
 func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
+	logutil.BgLogger().Info("YUSP", zap.Time("safePoint", safePoint))
 	kvs, err := w.store.GetSafePointKV().GetWithPrefix(domain.ServerMinStartTSPath)
 	if err != nil {
+		logutil.BgLogger().Info("failed to get all minStartTS", zap.Error(err))
 		return safePoint
 	}
 	var globalMinStartTS uint64 = math.MaxUint64
 	for _, v := range kvs {
 		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 8)
 		if err != nil {
+			logutil.BgLogger().Info("failed to parse minStartTS", zap.Error(err))
 			return safePoint
 		}
-		if minStartTS != 0 && minStartTS < globalMinStartTS {
+		if minStartTS < globalMinStartTS {
 			globalMinStartTS = minStartTS
 		}
 	}
@@ -345,9 +348,11 @@ func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
 	maxTxnTimeUse := time.Duration(tikv.MaxTxnTimeUse)*time.Millisecond + 10*time.Second
 	// If the transaction is not too old, we could use it as the new safe point.
 	if diff < maxTxnTimeUse && globalMinStartTime.Before(safePoint) {
+		logutil.BgLogger().Info("YUSP", zap.Time("globalMinStartTime", globalMinStartTime))
 		return globalMinStartTime
 	}
 
+	logutil.BgLogger().Info("YUSP diff", zap.Time("safePoint", safePoint), zap.Duration("diff", diff))
 	return safePoint
 }
 
