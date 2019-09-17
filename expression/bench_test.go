@@ -888,3 +888,73 @@ func BenchmarkVecEvalBool(b *testing.B) {
 		combFunc(numCols)
 	}
 }
+
+func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
+	ctx := mock.NewContext()
+	for numCols := 1; numCols <= 10; numCols++ {
+		for round := 0; round < 64; round++ {
+			exprs, input := genVecEvalBool(numCols, nil)
+			it := chunk.NewIterator4Chunk(input)
+			selected, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it, nil, nil)
+			c.Assert(err, IsNil)
+			selected2, nulls2, err2 := VectorizedFilterConsiderNull2(ctx, exprs, it, nil, nil)
+			c.Assert(err2, IsNil)
+			length := it.Len()
+			for i := 0; i < length; i++ {
+				c.Assert(nulls2[i], Equals, nulls[i])
+				c.Assert(selected2[i], Equals, selected[i])
+			}
+		}
+	}
+}
+
+func BenchmarkVectorizedFilterConsiderNull(b *testing.B) {
+	ctx := mock.NewContext()
+	selected := make([]bool, 0, 1024)
+	nulls := make([]bool, 0, 1024)
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	for numCols := 1; numCols <= 3; numCols++ {
+		typeCombination := make([]types.EvalType, numCols)
+		var combFunc func(nCols int)
+		combFunc = func(nCols int) {
+			if nCols == 0 {
+				name := ""
+				for _, t := range typeCombination {
+					for i := range eTypes {
+						if t == eTypes[i] {
+							name += tNames[t] + "/"
+						}
+					}
+				}
+				exprs, input := genVecEvalBool(numCols, typeCombination)
+				it := chunk.NewIterator4Chunk(input)
+				b.Run("Vec-"+name, func(b *testing.B) {
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						_, _, err := VectorizedFilterConsiderNull2(ctx, exprs, it, selected, nulls)
+						if err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+				b.Run("Row-"+name, func(b *testing.B) {
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						_, _, err := VectorizedFilterConsiderNull(ctx, exprs, it, selected, nulls)
+						if err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+				return
+			}
+			for _, eType := range eTypes {
+				typeCombination[nCols-1] = eType
+				combFunc(nCols - 1)
+			}
+		}
+
+		combFunc(numCols)
+	}
+}
