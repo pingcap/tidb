@@ -76,9 +76,10 @@ func BuildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
 	builder := &PlanBuilder{
-		ctx:       sctx,
-		is:        is,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
+		ctx:           sctx,
+		is:            is,
+		colMapper:     make(map[*ast.ColumnNameExpr]int),
+		hintProcessor: &BlockHintProcessor{},
 	}
 	p, err := builder.Build(ctx, node)
 	if err != nil {

@@ -381,10 +381,10 @@
     ]
   },
   {
-    "name": "TestIndexJoinHint",
+    "name": "TestJoinHints",
     "cases": [
-      "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
-      "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
+      "select /*+ TIDB_INLJ(t1), USE_INDEX(t1), USE_INDEX(t2), USE_INDEX(t3) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
+      "select /*+ TIDB_INLJ(t1), USE_INDEX(t1), USE_INDEX(t2) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
       "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;"
     ]
   },

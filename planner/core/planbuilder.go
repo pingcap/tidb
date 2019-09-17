@@ -56,6 +56,8 @@ type tableHintInfo struct {
 	indexNestedLoopJoinTables []hintTableInfo
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
+	indexHintList             []indexHintInfo
+	aggHints                  aggHintInfo
 }
 
 type hintTableInfo struct {
@@ -63,15 +65,25 @@ type hintTableInfo struct {
 	matched bool
 }
 
-func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
-	if len(tableNames) == 0 {
+type indexHintInfo struct {
+	tblName   model.CIStr
+	indexHint *ast.IndexHint
+}
+
+type aggHintInfo struct {
+	preferAggType  uint
+	preferAggToCop bool
+}
+
+func tableNames2HintTableInfo(hintTables []ast.HintTable) []hintTableInfo {
+	if len(hintTables) == 0 {
 		return nil
 	}
-	hintTables := make([]hintTableInfo, 0, len(tableNames))
-	for _, tableName := range tableNames {
-		hintTables = append(hintTables, hintTableInfo{name: tableName})
+	hintTableInfos := make([]hintTableInfo, len(hintTables))
+	for i, hintTable := range hintTables {
+		hintTableInfos[i] = hintTableInfo{name: hintTable.TableName}
 	}
-	return hintTables
+	return hintTableInfos
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
@@ -200,6 +212,8 @@ type PlanBuilder struct {
 	inStraightJoin bool
 
 	windowSpecs map[string]*ast.WindowSpec
+
+	hintProcessor *BlockHintProcessor
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -233,11 +247,12 @@ func (b *PlanBuilder) GetOptFlag() uint64 {
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PlanBuilder {
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *BlockHintProcessor) *PlanBuilder {
 	return &PlanBuilder{
-		ctx:       sctx,
-		is:        is,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
+		ctx:           sctx,
+		is:            is,
+		colMapper:     make(map[*ast.ColumnNameExpr]int),
+		hintProcessor: processor,
 	}
 }
 
@@ -470,7 +485,7 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo) ([]*accessPath, error) {
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, tblName model.CIStr) ([]*accessPath, error) {
 	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
 	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
 	for _, index := range tblInfo.Indices {
@@ -482,7 +497,18 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 	hasScanHint, hasUseOrForce := false, false
 	available := make([]*accessPath, 0, len(publicPaths))
 	ignored := make([]*accessPath, 0, len(publicPaths))
-	for _, hint := range indexHints {
+
+	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
+	indexHintsLen := len(indexHints)
+	if hints := b.TableHints(); hints != nil {
+		for _, hint := range hints.indexHintList {
+			if hint.tblName == tblName {
+				indexHints = append(indexHints, hint.indexHint)
+			}
+		}
+	}
+
+	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
 		}
@@ -502,7 +528,13 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
-				return nil, ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
+				err := ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
+				// if hint is from comment-style sql hints, we should throw a warning instead of error.
+				if i < indexHintsLen {
+					return nil, err
+				}
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				continue
 			}
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
@@ -799,7 +831,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	}.Init(b.ctx)
 	is.stats = property.NewSimpleStats(0)
 	// It's double read case.
-	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table}.Init(b.ctx)
+	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx)
 	ts.SetSchema(tblSchema)
 	if tbl.Meta().GetPartitionInfo() != nil {
 		pid := tbl.(table.PhysicalTable).GetPhysicalID()

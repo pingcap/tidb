@@ -118,7 +118,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 }
 
 func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
-	joins := make([]PhysicalPlan, 0, len(p.leftProperties))
+	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	for _, lhsChildProperty := range p.leftProperties {
 		offsets := getMaxSortPrefix(lhsChildProperty, p.LeftJoinKeys)
@@ -159,10 +159,10 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 			joins = append(joins, mergeJoin)
 		}
 	}
-	// If TiDB_SMJ hint is existed && no join keys in children property,
-	// it should to enforce merge join.
-	if len(joins) == 0 && (p.preferJoinType&preferMergeJoin) > 0 {
-		return p.getEnforcedMergeJoin(prop)
+	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
+	// because we can't trust lhsChildProperty completely.
+	if (p.preferJoinType & preferMergeJoin) > 0 {
+		joins = append(joins, p.getEnforcedMergeJoin(prop)...)
 	}
 
 	return joins
@@ -569,6 +569,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
 			Table:           is.Table,
+			TableAsName:     ds.TableAsName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx)
@@ -971,9 +972,11 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	defer func() {
 		if !forced && hasIndexJoinHint {
 			// Construct warning message prefix.
-			errMsg := "Optimizer Hint TIDB_INLJ is inapplicable"
+			errMsg := "Optimizer Hint INL_JOIN or TIDB_INLJ is inapplicable"
 			if p.hintInfo != nil {
-				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(TiDBIndexNestedLoopJoin, p.hintInfo.indexNestedLoopJoinTables))
+				errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
+					restore2JoinHint(HintINLJ, p.hintInfo.indexNestedLoopJoinTables),
+					restore2JoinHint(TiDBIndexNestedLoopJoin, p.hintInfo.indexNestedLoopJoinTables))
 			}
 
 			// Append inapplicable reason.
@@ -1178,11 +1181,50 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
+func (la *LogicalAggregation) canPushToCop() bool {
+	// At present, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
+	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
+	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
+
+	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
+	_, ok := la.children[0].(*DataSource)
+	return ok
+}
+
+func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+	_, desc := prop.AllSameOrder()
+	enforcedAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
+	childProp := &property.PhysicalProperty{
+		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
+		Enforced:    true,
+		Items:       property.ItemsFromCols(la.groupByCols, desc),
+	}
+
+	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !la.aggHints.preferAggToCop {
+		taskTypes = append(taskTypes, property.RootTaskType)
+	}
+	for _, taskTp := range taskTypes {
+		copiedChildProperty := new(property.PhysicalProperty)
+		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+		copiedChildProperty.TaskTp = taskTp
+
+		agg := basePhysicalAgg{
+			GroupByItems: la.GroupByItems,
+			AggFuncs:     la.AggFuncs,
+		}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
+		agg.SetSchema(la.schema.Clone())
+		enforcedAggs = append(enforcedAggs, agg)
+	}
+	return enforcedAggs
+}
+
 func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	all, desc := prop.AllSameOrder()
-	if len(la.possibleProperties) == 0 || !all {
+	if !all {
 		return nil
 	}
+
 	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.Mode == aggregation.FinalMode {
 			return nil
@@ -1193,7 +1235,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
-	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
+	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1)+len(wholeTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 	}
@@ -1211,7 +1253,11 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
-		for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType} {
+		taskTypes := []property.TaskType{property.CopSingleReadTaskType}
+		if !la.aggHints.preferAggToCop {
+			taskTypes = append(taskTypes, property.RootTaskType)
+		}
+		for _, taskTp := range taskTypes {
 			copiedChildProperty := new(property.PhysicalProperty)
 			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 			copiedChildProperty.TaskTp = taskTp
@@ -1224,6 +1270,11 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			streamAggs = append(streamAggs, agg)
 		}
 	}
+	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
+	// because we can't trust possibleChildProperty completely.
+	if (la.aggHints.preferAggType & preferStreamAgg) > 0 {
+		streamAggs = append(streamAggs, la.getEnforcedStreamAggs(prop)...)
+	}
 	return streamAggs
 }
 
@@ -1232,7 +1283,11 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		return nil
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
-	for _, taskTp := range wholeTaskTypes {
+	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !la.aggHints.preferAggToCop {
+		taskTypes = append(taskTypes, property.RootTaskType)
+	}
+	for _, taskTp := range taskTypes {
 		agg := basePhysicalAgg{
 			GroupByItems: la.GroupByItems,
 			AggFuncs:     la.AggFuncs,
@@ -1244,9 +1299,44 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	aggs := make([]PhysicalPlan, 0, len(la.possibleProperties)+1)
-	aggs = append(aggs, la.getHashAggs(prop)...)
-	aggs = append(aggs, la.getStreamAggs(prop)...)
+	if la.aggHints.preferAggToCop {
+		if !la.canPushToCop() {
+			errMsg := "Optimizer Hint AGG_TO_COP is inapplicable"
+			warning := ErrInternal.GenWithStack(errMsg)
+			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			la.aggHints.preferAggToCop = false
+		}
+	}
+
+	preferHash := (la.aggHints.preferAggType & preferHashAgg) > 0
+	preferStream := (la.aggHints.preferAggType & preferStreamAgg) > 0
+	if preferHash && preferStream {
+		errMsg := "Optimizer aggregation hints are conflicted"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		la.aggHints.preferAggType = 0
+		preferHash, preferStream = false, false
+	}
+
+	hashAggs := la.getHashAggs(prop)
+	if hashAggs != nil && preferHash {
+		return hashAggs
+	}
+
+	streamAggs := la.getStreamAggs(prop)
+	if streamAggs != nil && preferStream {
+		return streamAggs
+	}
+
+	if streamAggs == nil && preferStream {
+		errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
+
+	aggs := make([]PhysicalPlan, 0, len(hashAggs)+len(streamAggs))
+	aggs = append(aggs, hashAggs...)
+	aggs = append(aggs, streamAggs...)
 	return aggs
 }
 

@@ -126,7 +126,7 @@ Projection_13	1.00	root	test.gad.id, test.dd.id, test.gad.aid, test.gad.cm, test
       └─IndexLookUp_33	3.33	root	
         ├─IndexScan_30	3333.33	cop	table:gad, index:t, range:(1478143908,+inf], keep order:false, stats:pseudo
         └─Selection_32	3.33	cop	eq(test.gad.pt, "android"), not(isnull(test.gad.ip))
-          └─TableScan_31	3333.33	cop	table:st, keep order:false, stats:pseudo
+          └─TableScan_31	3333.33	cop	table:gad, keep order:false, stats:pseudo
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	count	task	operator info
 Projection_10	0.00	root	test.gad.id, test.sdk.id, test.gad.aid, test.gad.cm, test.sdk.dic, test.sdk.ip, test.sdk.t, test.gad.p1, test.gad.p2, test.gad.p3, test.gad.p4, test.gad.p5, test.gad.p6_md5, test.gad.p7_md5, test.gad.ext
@@ -135,11 +135,11 @@ Projection_10	0.00	root	test.gad.id, test.sdk.id, test.gad.aid, test.gad.cm, tes
     ├─IndexLookUp_27	0.00	root	
     │ ├─IndexScan_24	3333.33	cop	table:gad, index:t, range:(1477971479,+inf], keep order:false, stats:pseudo
     │ └─Selection_26	0.00	cop	eq(test.gad.bm, 0), eq(test.gad.dit, "mac"), eq(test.gad.pt, "ios"), not(isnull(test.gad.dic))
-    │   └─TableScan_25	3333.33	cop	table:st, keep order:false, stats:pseudo
+    │   └─TableScan_25	3333.33	cop	table:gad, keep order:false, stats:pseudo
     └─IndexLookUp_17	0.00	root	
       ├─IndexScan_14	10.00	cop	table:sdk, index:aid, dic, range: decided by [eq(test.sdk.aid, test.gad.aid)], keep order:false, stats:pseudo
       └─Selection_16	0.00	cop	eq(test.sdk.bm, 0), eq(test.sdk.pt, "ios"), gt(test.sdk.t, 1477971479), not(isnull(test.sdk.mac)), not(isnull(test.sdk.t))
-        └─TableScan_15	10.00	cop	table:dd, keep order:false, stats:pseudo
+        └─TableScan_15	10.00	cop	table:sdk, keep order:false, stats:pseudo
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	count	task	operator info
 Projection_5	1.00	root	test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, 3_col_0, 3_col_1
@@ -250,12 +250,12 @@ Sort_10	1.00	root	test.d.left_value:asc
       │ ├─IndexLookUp_45	0.01	root	
       │ │ ├─IndexScan_42	10.00	cop	table:d, index:ctx, range:[1,1], keep order:false, stats:pseudo
       │ │ └─Selection_44	0.01	cop	eq(test.d.status, 1000)
-      │ │   └─TableScan_43	10.00	cop	table:org_department, keep order:false, stats:pseudo
+      │ │   └─TableScan_43	10.00	cop	table:d, keep order:false, stats:pseudo
       │ └─IndexLookUp_28	0.01	root	
       │   ├─Selection_26	9.99	cop	not(isnull(test.p.department_id))
       │   │ └─IndexScan_24	10.00	cop	table:p, index:department_id, range: decided by [eq(test.p.department_id, test.d.id)], keep order:false, stats:pseudo
       │   └─Selection_27	0.01	cop	eq(test.p.status, 1000)
-      │     └─TableScan_25	9.99	cop	table:org_position, keep order:false, stats:pseudo
+      │     └─TableScan_25	9.99	cop	table:p, keep order:false, stats:pseudo
       └─TableReader_55	9.99	root	data:Selection_54
         └─Selection_54	9.99	cop	eq(test.ep.status, 1000), not(isnull(test.ep.position_id))
           └─TableScan_53	10000.00	cop	table:ep, range:[-inf,+inf], keep order:false, stats:pseudo
