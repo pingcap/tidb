@@ -275,13 +275,14 @@ func parseIndex(table *table, stmt *ast.CreateIndexStmt) error {
 	if table.name != stmt.Table.Name.L {
 		return errors.Errorf("mismatch table name for create index - %s : %s", table.name, stmt.Table.Name.L)
 	}
-
 	for _, indexCol := range stmt.IndexColNames {
 		name := indexCol.Column.Name.L
-		if stmt.Unique {
+		if stmt.KeyType == ast.IndexKeyTypeUnique {
 			table.uniqIndices[name] = table.findCol(table.columns, name)
-		} else {
+		} else if stmt.KeyType == ast.IndexKeyTypeNone {
 			table.indices[name] = table.findCol(table.columns, name)
+		} else {
+			return errors.Errorf("unsupported index type on column %s.%s", table.name, name)
 		}
 	}
 

@@ -545,7 +545,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	c.Assert(err, IsNil)
 	stmt, _ := session.Compile(context.TODO(), tk.Se, stmtNode)
 	executor.ResetContextOfStmt(tk.Se, stmtNode)
-	history.Add(0, stmt, tk.Se.GetSessionVars().StmtCtx)
+	history.Add(stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
 	txn, err := tk.Se.Txn(false)
@@ -559,6 +559,7 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	tk.MustExec("create table history (a int)")
 	tk.MustExec("insert history values (1), (2), (3)")
 	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustQuery("select * from history")
 	history := session.GetHistory(tk.Se)
 	c.Assert(history.Count(), Equals, 0)
@@ -570,6 +571,76 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	tk.MustQuery("select * from history")
 	history = session.GetHistory(tk.Se)
 	c.Assert(history.Count(), Equals, 0)
+}
+
+func (s *testSessionSuite) TestNoHistoryWhenDisableRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("set @@autocommit = 0")
+
+	// retry_limit = 0 will not add history.
+	tk.MustExec("set @@tidb_retry_limit = 0")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
+
+	// Disable auto_retry will add history for auto committed only
+	tk.MustExec("set @@autocommit = 1")
+	tk.MustExec("set @@tidb_retry_limit = 10")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `1*return(true)->return(false)`), IsNil)
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
+	tk.MustExec("commit")
+
+	// Enable auto_retry will add history for both.
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `1*return(true)->return(false)`), IsNil)
+	tk.MustExec("insert history values (1)")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 2)
+	tk.MustExec("commit")
+}
+
+func (s *testSessionSuite) TestNoRetryForCurrentTxn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("insert history values (1)")
+
+	// Firstly, disable retry.
+	tk.MustExec("set tidb_disable_txn_auto_retry = 1")
+	tk.MustExec("begin")
+	tk.MustExec("update history set a = 2")
+	// Enable retry now.
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+
+	tk1.MustExec("update history set a = 3")
+	c.Assert(tk.ExecToErr("commit"), NotNil)
+}
+
+func (s *testSessionSuite) TestRetryForCurrentTxn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("insert history values (1)")
+
+	// Firstly, enable retry.
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin")
+	tk.MustExec("update history set a = 2")
+	// Disable retry now.
+	tk.MustExec("set tidb_disable_txn_auto_retry = 1")
+
+	tk1.MustExec("update history set a = 3")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from history").Check(testkit.Rows("2"))
 }
 
 // TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
@@ -613,7 +684,7 @@ func (s *testSessionSuite) TestDatabase(c *C) {
 
 func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	r, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(tk.Se, "select 1;")
+	r, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select 1;")
 	c.Assert(err, IsNil)
 	c.Assert(len(r), Equals, 1)
 }
@@ -842,8 +913,11 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	tk.MustExec("insert into autoid values();")
 	tk.MustExec("insert into autoid values();")
 	tk.MustQuery("select * from autoid").Check(testkit.Rows("9223372036854775808", "9223372036854775810", "9223372036854775812"))
-	tk.MustExec("insert into autoid values(18446744073709551614);")
-	_, err := tk.Exec("insert into autoid values()")
+	// In TiDB : _tidb_rowid will also consume the autoID when the auto_increment column is not the primary key.
+	// Using the MaxUint64 and MaxInt64 as the autoID upper limit like MySQL will cause _tidb_rowid allocation fail here.
+	_, err := tk.Exec("insert into autoid values(18446744073709551614)")
+	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
+	_, err = tk.Exec("insert into autoid values()")
 	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
 	// FixMe: MySQL works fine with the this sql.
 	_, err = tk.Exec("insert into autoid values(18446744073709551615)")
@@ -857,35 +931,38 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
 	_, err = tk.Exec("update autoid set auto_inc_id = 8000")
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("1", "5000"))
 	tk.MustExec("update autoid set auto_inc_id = 9000 where auto_inc_id=1")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("9000", "5000"))
 	tk.MustExec("insert into autoid values()")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000", "9001"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("9000", "5000", "9001"))
 
 	// Corner cases for signed bigint auto_increment Columns.
 	tk.MustExec("drop table if exists autoid")
 	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
-	tk.MustExec("insert into autoid values(9223372036854775806);")
-	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
+	// In TiDB : _tidb_rowid will also consume the autoID when the auto_increment column is not the primary key.
+	// Using the MaxUint64 and MaxInt64 as autoID upper limit like MySQL will cause insert fail if the values is
+	// 9223372036854775806. Because _tidb_rowid will be allocated 9223372036854775807 at same time.
+	tk.MustExec("insert into autoid values(9223372036854775805);")
+	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid use index()").Check(testkit.Rows("9223372036854775805 9223372036854775806"))
 	_, err = tk.Exec("insert into autoid values();")
 	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
-	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
-	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid use index(auto_inc_id)").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
+	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid use index()").Check(testkit.Rows("9223372036854775805 9223372036854775806"))
+	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid use index(auto_inc_id)").Check(testkit.Rows("9223372036854775805 9223372036854775806"))
 
 	tk.MustExec("drop table if exists autoid")
 	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
 	tk.MustExec("insert into autoid values()")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("1"))
 	tk.MustExec("insert into autoid values(5000)")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("1", "5000"))
 	_, err = tk.Exec("update autoid set auto_inc_id = 8000")
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("1", "5000"))
 	tk.MustExec("update autoid set auto_inc_id = 9000 where auto_inc_id=1")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("9000", "5000"))
 	tk.MustExec("insert into autoid values()")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000", "9001"))
+	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("9000", "5000", "9001"))
 }
 
 func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
@@ -990,12 +1067,13 @@ func (s *testSessionSuite) TestBinaryReadOnly(c *C) {
 	id2, _, _, err := tk.Se.PrepareStmt("insert into t values (?)")
 	c.Assert(err, IsNil)
 	tk.MustExec("set autocommit = 0")
-	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id, 1)
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id, []types.Datum{types.NewDatum(1)})
 	c.Assert(err, IsNil)
 	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
 	tk.MustExec("insert into t values (1)")
 	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
-	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id2, 2)
+	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id2, []types.Datum{types.NewDatum(2)})
 	c.Assert(err, IsNil)
 	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 2)
 	tk.MustExec("commit")
@@ -1011,7 +1089,7 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	tk.MustExec(`set @a=1`)
-	_, err = tk.Se.ExecutePreparedStmt(ctx, id, "1")
+	_, err = tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum("1")})
 	c.Assert(err, IsNil)
 	err = tk.Se.DropPreparedStmt(id)
 	c.Assert(err, IsNil)
@@ -1032,10 +1110,10 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk.MustExec("insert multiexec values (1, 1), (2, 2)")
 	id, _, _, err = tk.Se.PrepareStmt("select a from multiexec where b = ? order by b")
 	c.Assert(err, IsNil)
-	rs, err := tk.Se.ExecutePreparedStmt(ctx, id, 1)
+	rs, err := tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(1)})
 	c.Assert(err, IsNil)
 	rs.Close()
-	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, 2)
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(2)})
 	rs.Close()
 	c.Assert(err, IsNil)
 }
@@ -1512,12 +1590,12 @@ func (s *testSessionSuite) TestUnique(c *C) {
 	c.Assert(err, NotNil)
 	// Check error type and error message
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
 	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'val'")
+	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'val'")
 
 	// Test for https://github.com/pingcap/tidb/issues/463
 	tk.MustExec("drop table test;")
@@ -2177,6 +2255,7 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 	defer func() {
 		config.GetGlobalConfig().Performance.StmtCountLimit = saved
 	}()
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin")
 	tk.MustExec("insert into stmt_count_limit values (1)")
 	tk.MustExec("insert into stmt_count_limit values (2)")
@@ -2195,6 +2274,7 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 func (s *testSessionSuite) TestBatchCommit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_batch_commit = 1")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("create table t (id int)")
 	saved := config.GetGlobalConfig().Performance
 	config.GetGlobalConfig().Performance.StmtCountLimit = 3
@@ -2345,7 +2425,7 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 	tk.MustExec("insert kvvars values (1, 1)")
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("set @@tidb_backoff_lock_fast = 1")
-	tk2.MustExec("set @@tidb_back_off_weight = 100")
+	tk2.MustExec("set @@tidb_backoff_weight = 100")
 	backoffVal := new(int64)
 	backOffWeightVal := new(int32)
 	tk2.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {
@@ -2440,7 +2520,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	// session 1 starts a transaction early.
 	// execute a select statement to clear retry history.
 	tk1.MustExec("select 1")
-	tk1.Se.NewTxn(context.Background())
+	tk1.Se.PrepareTxnCtx(context.Background())
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
 	// AutoCommit update will retry, so it would not fail.
@@ -2721,4 +2801,66 @@ func (s *testSessionSuite) TestLoadClientInteractive(c *C) {
 	tk.Se.SetConnectionID(id)
 	tk.Se.GetSessionVars().ClientCapability = tk.Se.GetSessionVars().ClientCapability | mysql.ClientInteractive
 	tk.MustQuery("select @@wait_timeout").Check(testkit.Rows("28800"))
+}
+
+func (s *testSessionSuite) TestReplicaRead(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+	tk.MustExec("set @@tidb_replica_read = 'follower';")
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	tk.MustExec("set @@tidb_replica_read = 'leader';")
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+}
+
+func (s *testSessionSuite) TestStmtHints(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	// Test MEMORY_QUOTA hint
+	tk.MustExec("select /*+ MEMORY_QUOTA(1 MB) */ 1;")
+	val := int64(1) * 1024 * 1024
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+	tk.MustExec("select /*+ MEMORY_QUOTA(1 GB) */ 1;")
+	val = int64(1) * 1024 * 1024 * 1024
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+	tk.MustExec("select /*+ MEMORY_QUOTA(1 GB), MEMORY_QUOTA(1 MB) */ 1;")
+	val = int64(1) * 1024 * 1024
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+	tk.MustExec("select /*+ MEMORY_QUOTA(0 GB) */ 1;")
+	val = int64(0)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+
+	// Test NO_INDEX_MERGE hint
+	tk.Se.GetSessionVars().SetEnableIndexMerge(true)
+	tk.MustExec("select /*+ NO_INDEX_MERGE() */ 1;")
+	c.Assert(tk.Se.GetSessionVars().GetEnableIndexMerge(), IsFalse)
+	tk.MustExec("select /*+ NO_INDEX_MERGE(), NO_INDEX_MERGE() */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().GetEnableIndexMerge(), IsFalse)
+
+	// Test USE_TOJA hint
+	tk.Se.GetSessionVars().SetAllowInSubqToJoinAndAgg(true)
+	tk.MustExec("select /*+ USE_TOJA(false) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().GetAllowInSubqToJoinAndAgg(), IsFalse)
+	tk.Se.GetSessionVars().SetAllowInSubqToJoinAndAgg(false)
+	tk.MustExec("select /*+ USE_TOJA(true) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().GetAllowInSubqToJoinAndAgg(), IsTrue)
+	tk.MustExec("select /*+ USE_TOJA(false), USE_TOJA(true) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().GetAllowInSubqToJoinAndAgg(), IsTrue)
+
+	// Test READ_CONSISTENT_REPLICA hint
+	tk.Se.GetSessionVars().SetReplicaRead(kv.ReplicaReadLeader)
+	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA() */ 1;")
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA(), READ_CONSISTENT_REPLICA() */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 }

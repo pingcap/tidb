@@ -26,11 +26,10 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 var _ sessionctx.Context = (*Context)(nil)
@@ -213,7 +212,7 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 }
 
 // StmtAddDirtyTableOP implements the sessionctx.Context interface.
-func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
+func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
 }
 
 // AddTableLock implements the sessionctx.Context interface.
@@ -247,6 +246,10 @@ func (c *Context) HasLockedTables() bool {
 	return false
 }
 
+// PrepareTxnFuture implements the sessionctx.Context interface.
+func (c *Context) PrepareTxnFuture(ctx context.Context) {
+}
+
 // Close implements the sessionctx.Context interface.
 func (c *Context) Close() {
 }
@@ -264,6 +267,9 @@ func NewContext() *Context {
 	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
+		panic(err)
+	}
 	return sctx
 }
 

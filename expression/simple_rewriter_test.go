@@ -150,4 +150,24 @@ func (s *testEvaluatorSuite) TestSimpleRewriter(c *C) {
 	c.Assert(err, IsNil)
 	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
 	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "trim(leading 'z' from 'zxyz')", sch)
+	c.Assert(err, IsNil)
+	str, _, _ := exprs[0].EvalString(ctx, chunk.Row{})
+	c.Assert(str, Equals, "xyz")
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "get_format(datetime, 'ISO')", sch)
+	c.Assert(err, IsNil)
+	str, _, _ = exprs[0].EvalString(ctx, chunk.Row{})
+	c.Assert(str, Equals, "%Y-%m-%d %H:%i:%s")
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "extract(day_minute from '2184-07-03 18:42:18.895059')", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(31842))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "unix_timestamp('2008-05-01 00:00:00')", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1209571200))
 }

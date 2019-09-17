@@ -72,7 +72,6 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 
 	// Run this test here because parallel would affect the result of it.
 	runTestStmtCount(c)
-	defaultLoadDataBatchCnt = 3
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
@@ -544,9 +543,39 @@ func (ts *TidbTestSuite) TestFieldList(c *C) {
 
 	// c_decimal decimal(6, 3)
 	c.Assert(colInfos[5].Decimal, Equals, uint8(3))
+
+	// for issue#10513
+	tooLongColumnAsName := "COALESCE(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)"
+	columnAsName := tooLongColumnAsName[:tmysql.MaxAliasIdentifierLen]
+
+	rs, err := qctx.Execute(ctx, "select "+tooLongColumnAsName)
+	c.Assert(err, IsNil)
+	cols := rs[0].Columns()
+	c.Assert(cols[0].OrgName, Equals, tooLongColumnAsName)
+	c.Assert(cols[0].Name, Equals, columnAsName)
+
+	rs, err = qctx.Execute(ctx, "select c_bit as '"+tooLongColumnAsName+"' from t")
+	c.Assert(err, IsNil)
+	cols = rs[0].Columns()
+	c.Assert(cols[0].OrgName, Equals, "c_bit")
+	c.Assert(cols[0].Name, Equals, columnAsName)
 }
 
 func (ts *TidbTestSuite) TestSumAvg(c *C) {
 	c.Parallel()
 	runTestSumAvg(c)
+}
+
+func (ts *TidbTestSuite) TestNullFlag(c *C) {
+	// issue #9689
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	rs, err := qctx.Execute(ctx, "select 1")
+	c.Assert(err, IsNil)
+	cols := rs[0].Columns()
+	c.Assert(len(cols), Equals, 1)
+	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
 }

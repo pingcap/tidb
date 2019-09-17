@@ -89,6 +89,8 @@ type innerCtx struct {
 	readerBuilder *dataReaderBuilder
 	rowTypes      []*types.FieldType
 	keyCols       []int
+	colLens       []int
+	hasPrefixCol  bool
 }
 
 type lookUpJoinTask struct {
@@ -248,7 +250,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
-			matched, isNull, err := e.joiner.tryToMatch(outerRow, e.innerIter, req)
+			matched, isNull, err := e.joiner.tryToMatchInners(outerRow, e.innerIter, req)
 			if err != nil {
 				return err
 			}
@@ -293,9 +295,6 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 		return nil, nil
 	}
 
-	if e.task != nil {
-		e.task.memTracker.Detach()
-	}
 	e.task = task
 	return task, nil
 }
@@ -360,8 +359,6 @@ func (ow *outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst
 // buildTask builds a lookUpJoinTask and read outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
-	newFirstChunk(ow.executor)
-
 	task := &lookUpJoinTask{
 		doneCh:            make(chan error, 1),
 		outerResult:       newFirstChunk(ow.executor),
@@ -490,6 +487,16 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 		}
 		// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
 		task.encodedLookUpKeys.AppendBytes(0, keyBuf)
+		if iw.hasPrefixCol {
+			for i := range iw.outerCtx.keyCols {
+				// If it's a prefix column. Try to fix it.
+				if iw.colLens[i] != types.UnspecifiedLength {
+					ranger.CutDatumByPrefixLen(&dLookUpKey[i], iw.colLens[i], iw.rowTypes[iw.keyCols[i]])
+				}
+			}
+			// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
+			// So we don't need to do it here.
+		}
 		lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: task.outerResult.GetRow(i)})
 	}
 
@@ -581,6 +588,11 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
 		err := Next(ctx, innerExec, iw.executorChk)
 		if err != nil {
 			return err
@@ -638,7 +650,6 @@ func (e *IndexLookUpJoin) Close() error {
 		e.cancelFunc()
 	}
 	e.workerWg.Wait()
-	e.memTracker.Detach()
 	e.memTracker = nil
-	return e.children[0].Close()
+	return e.baseExecutor.Close()
 }

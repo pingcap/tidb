@@ -200,7 +200,6 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
-	e.memTracker.Detach()
 	e.childrenResults = nil
 	e.memTracker = nil
 
@@ -323,7 +322,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			continue
 		}
 
-		matched, isNull, err := e.joiner.tryToMatch(e.outerTable.row, e.innerIter4Row, chk)
+		matched, isNull, err := e.joiner.tryToMatchInners(e.outerTable.row, e.innerIter4Row, chk)
 		if err != nil {
 			return false, err
 		}

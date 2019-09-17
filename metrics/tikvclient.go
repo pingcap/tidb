@@ -58,14 +58,14 @@ var (
 			Help:      "Counter of backoff.",
 		}, []string{LblType})
 
-	TiKVBackoffHistogram = prometheus.NewHistogram(
+	TiKVBackoffHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "backoff_seconds",
 			Help:      "total backoff seconds of a single backoffer.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 524s
-		})
+		}, []string{LblType})
 
 	TiKVSendReqHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -74,7 +74,7 @@ var (
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of sending request duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 524s
-		}, []string{LblType, "store"})
+		}, []string{LblType, LblStore})
 
 	TiKVCoprocessorHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -180,13 +180,13 @@ var (
 		})
 
 	// TiKVPendingBatchRequests indicates the number of requests pending in the batch channel.
-	TiKVPendingBatchRequests = prometheus.NewGauge(
+	TiKVPendingBatchRequests = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "pending_batch_requests",
 			Help:      "Pending batch requests",
-		})
+		}, []string{"store"})
 
 	TiKVBatchWaitDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -223,4 +223,12 @@ var (
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 20),
 			Help:    "duration to push sub tasks to range task workers",
 		}, []string{LblType})
+	TiKVTokenWaitDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_executor_token_wait_duration",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1ns ~ 1s
+			Help:      "tidb txn token wait duration to process batches",
+		})
 )

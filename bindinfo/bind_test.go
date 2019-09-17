@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestT(t *testing.T) {
@@ -75,6 +76,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 		session.SetSchemaLease(0)
 		session.DisableStats4Test()
 	}
+	bindinfo.Lease = 0
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
@@ -133,6 +135,11 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(bindData.Collation, Equals, "utf8mb4_bin")
 	c.Check(bindData.CreateTime, NotNil)
 	c.Check(bindData.UpdateTime, NotNil)
+
+	// Test fields with quotes or slashes.
+	sql = `CREATE GLOBAL BINDING FOR  select * from t where a BETWEEN "a" and "b" USING select * from t use index(idx) where a BETWEEN "a\nb\rc\td\0e" and "x"`
+	tk.MustExec(sql)
+	tk.MustExec(`DROP global binding for select * from t use index(idx) where a BETWEEN "a\nb\rc\td\0e" and "x"`)
 }
 
 func (s *testSuite) TestGlobalBinding(c *C) {
@@ -145,12 +152,20 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	tk.MustExec("create table t1(i int, s varchar(20))")
 	tk.MustExec("create index index_t on t(i,s)")
 
+	metrics.BindTotalGauge.Reset()
+	metrics.BindMemoryUsage.Reset()
+
 	_, err := tk.Exec("create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	c.Assert(err, IsNil, Commentf("err %v", err))
 
-	time.Sleep(time.Second * 1)
 	_, err = tk.Exec("create global binding for select * from t where i>99 using select * from t use index(index_t) where i>99")
 	c.Assert(err, IsNil)
+
+	pb := &dto.Metric{}
+	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
+	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
 
 	sql, hash := parser.NormalizeDigest("select * from t where i > ?")
 
@@ -202,6 +217,12 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	bindData = s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 	c.Check(bindData, IsNil)
 
+	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
+	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+	// From newly created global bind handle.
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
+
 	bindHandle = bindinfo.NewBindHandle(tk.Se)
 	err = bindHandle.Update(true)
 	c.Check(err, IsNil)
@@ -234,12 +255,20 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	tk.MustExec("create table t1(i int, s varchar(20))")
 	tk.MustExec("create index index_t on t(i,s)")
 
+	metrics.BindTotalGauge.Reset()
+	metrics.BindMemoryUsage.Reset()
+
 	_, err := tk.Exec("create session binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	c.Assert(err, IsNil, Commentf("err %v", err))
 
-	time.Sleep(time.Second * 1)
 	_, err = tk.Exec("create session binding for select * from t where i>99 using select * from t use index(index_t) where i>99")
 	c.Assert(err, IsNil)
+
+	pb := &dto.Metric{}
+	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
+	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
 
 	handle := tk.Se.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindData := handle.GetBindRecord("select * from t where i > ?", "test")
@@ -282,6 +311,11 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
 	c.Check(bindData.Status, Equals, "deleted")
+
+	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
+	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
 }
 
 func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
@@ -294,50 +328,54 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 	tk.MustExec("create table t2(id int)")
 
 	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(test.t1.id, test.t2.id)]",
+		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(Column#1, Column#3)]",
 		"├─TableReader_12 9990.00 root data:Selection_11",
-		"│ └─Selection_11 9990.00 cop not(isnull(test.t1.id))",
+		"│ └─Selection_11 9990.00 cop not(isnull(Column#1))",
 		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_15 9990.00 root data:Selection_14",
-		"  └─Selection_14 9990.00 cop not(isnull(test.t2.id))",
+		"  └─Selection_14 9990.00 cop not(isnull(Column#3))",
 		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
-		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
+		"├─Sort_11 9990.00 root Column#1:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
 		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"└─Sort_15 9990.00 root Column#3:asc",
 		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
 		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
+	metrics.BindUsageCounter.Reset()
 	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
-		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
+		"├─Sort_11 9990.00 root Column#1:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
 		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"└─Sort_15 9990.00 root Column#3:asc",
 		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
 		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
+	pb := &dto.Metric{}
+	metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Write(pb)
+	c.Assert(pb.GetCounter().GetValue(), Equals, float64(1))
 
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 
 	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(test.t1.id, test.t2.id)]",
+		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(Column#1, Column#3)]",
 		"├─TableReader_12 9990.00 root data:Selection_11",
-		"│ └─Selection_11 9990.00 cop not(isnull(test.t1.id))",
+		"│ └─Selection_11 9990.00 cop not(isnull(Column#1))",
 		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_15 9990.00 root data:Selection_14",
-		"  └─Selection_14 9990.00 cop not(isnull(test.t2.id))",
+		"  └─Selection_14 9990.00 cop not(isnull(Column#3))",
 		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
@@ -352,38 +390,38 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("create table t2(id int)")
 
 	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(test.t1.id, test.t2.id)]",
+		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(Column#1, Column#3)]",
 		"├─TableReader_12 9990.00 root data:Selection_11",
-		"│ └─Selection_11 9990.00 cop not(isnull(test.t1.id))",
+		"│ └─Selection_11 9990.00 cop not(isnull(Column#1))",
 		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_15 9990.00 root data:Selection_14",
-		"  └─Selection_14 9990.00 cop not(isnull(test.t2.id))",
+		"  └─Selection_14 9990.00 cop not(isnull(Column#3))",
 		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
-		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
+		"├─Sort_11 9990.00 root Column#1:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
 		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"└─Sort_15 9990.00 root Column#3:asc",
 		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
 		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
 	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
-		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
+		"├─Sort_11 9990.00 root Column#1:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
 		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"└─Sort_15 9990.00 root Column#3:asc",
 		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
 		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
@@ -427,4 +465,24 @@ func (s *testSuite) TestErrorBind(c *C) {
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
+}
+
+func (s *testSuite) TestPreparedStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec(`prepare stmt1 from 'select * from t'`)
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+
+	tk.MustExec("create binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx")
+
+	tk.MustExec("drop binding for select * from t")
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
 }

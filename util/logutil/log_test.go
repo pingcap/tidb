@@ -41,6 +41,8 @@ const (
 	zapLogWithKeyValPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ (\+|-)\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] \[ctxKey=.*\] (\[.*=.*\]).*\n`
 )
 
+var PrettyPrint = prettyPrint
+
 func Test(t *testing.T) {
 	TestingT(t)
 }
@@ -232,6 +234,8 @@ func (s *testLogSuite) testZapLogger(ctx context.Context, c *C, fileName, patter
 			break
 		}
 		c.Assert(str, Matches, pattern)
+		c.Assert(strings.Contains(str, "stack"), IsFalse)
+		c.Assert(strings.Contains(str, "errorVerbose"), IsFalse)
 	}
 	c.Assert(err, Equals, io.EOF)
 }

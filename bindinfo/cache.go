@@ -14,7 +14,9 @@
 package bindinfo
 
 import (
-	"github.com/pingcap/parser/ast"
+	"unsafe"
+
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -31,7 +33,8 @@ const (
 // BindMeta stores the basic bind info and bindSql astNode.
 type BindMeta struct {
 	*BindRecord
-	Ast ast.StmtNode //ast will be used to do query sql bind check
+	// HintSet stores the set of hints of binding sql.
+	*HintsSet
 }
 
 // cache is a k-v map, key is original sql, value is a slice of BindMeta.
@@ -62,5 +65,21 @@ func newBindRecord(row chunk.Row) *BindRecord {
 		UpdateTime:  row.GetTime(5),
 		Charset:     row.GetString(6),
 		Collation:   row.GetString(7),
+	}
+}
+
+// size calculates the memory size of a bind meta.
+func (m *BindRecord) size() float64 {
+	res := len(m.OriginalSQL) + len(m.BindSQL) + len(m.Db) + len(m.Status) + 2*int(unsafe.Sizeof(m.CreateTime)) + len(m.Charset) + len(m.Collation)
+	return float64(res)
+}
+
+func (m *BindRecord) updateMetrics(scope string, inc bool) {
+	if inc {
+		metrics.BindMemoryUsage.WithLabelValues(scope, m.Status).Add(float64(m.size()))
+		metrics.BindTotalGauge.WithLabelValues(scope, m.Status).Inc()
+	} else {
+		metrics.BindMemoryUsage.WithLabelValues(scope, m.Status).Sub(float64(m.size()))
+		metrics.BindTotalGauge.WithLabelValues(scope, m.Status).Dec()
 	}
 }

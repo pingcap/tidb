@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -40,10 +41,14 @@ type Plan interface {
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
-	context() sessionctx.Context
+	SCtx() sessionctx.Context
 
 	// property.StatsInfo will return the property.StatsInfo for this plan.
 	statsInfo() *property.StatsInfo
+
+	// OutputNames returns the outputting names of each column.
+	OutputNames() []*types.FieldName
+	SelectBlockOffset() int
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
@@ -52,7 +57,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	}
 	tsk = finishCopTask(ctx, tsk)
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Items: p.Items, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.Items {
 		sort.ByItems = append(sort.ByItems, &ByItems{col.Col, col.Desc})
 	}
@@ -113,6 +118,9 @@ type LogicalPlan interface {
 
 	// SetChildren sets the children for the plan.
 	SetChildren(...LogicalPlan)
+
+	// SetChild sets the ith child for the plan.
+	SetChild(i int, child LogicalPlan)
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -140,6 +148,9 @@ type PhysicalPlan interface {
 
 	// SetChildren sets the children for the plan.
 	SetChildren(...PhysicalPlan)
+
+	// SetChild sets the ith child for the plan.
+	SetChild(i int, child PhysicalPlan)
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 	ResolveIndices() error
@@ -197,27 +208,28 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 }
 
-func newBasePlan(ctx sessionctx.Context, tp string) basePlan {
+func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
 	ctx.GetSessionVars().PlanID++
 	id := ctx.GetSessionVars().PlanID
 	return basePlan{
-		tp:  tp,
-		id:  id,
-		ctx: ctx,
+		tp:          tp,
+		id:          id,
+		ctx:         ctx,
+		blockOffset: offset,
 	}
 }
 
-func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan) baseLogicalPlan {
+func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, offset int) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:  make(map[string]task),
-		basePlan: newBasePlan(ctx, tp),
+		basePlan: newBasePlan(ctx, tp, offset),
 		self:     self,
 	}
 }
 
-func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan) basePhysicalPlan {
+func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
-		basePlan: newBasePlan(ctx, tp),
+		basePlan: newBasePlan(ctx, tp, offset),
 		self:     self,
 	}
 }
@@ -241,10 +253,16 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) erro
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	tp    string
-	id    int
-	ctx   sessionctx.Context
-	stats *property.StatsInfo
+	tp          string
+	id          int
+	ctx         sessionctx.Context
+	stats       *property.StatsInfo
+	blockOffset int
+}
+
+// OutputNames returns the outputting names of each column.
+func (p *basePlan) OutputNames() []*types.FieldName {
+	return nil
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
@@ -264,6 +282,10 @@ func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
+}
+
+func (p *basePlan) SelectBlockOffset() int {
+	return p.blockOffset
 }
 
 // Schema implements Plan Schema interface.
@@ -296,7 +318,18 @@ func (p *basePhysicalPlan) SetChildren(children ...PhysicalPlan) {
 	p.children = children
 }
 
-func (p *basePlan) context() sessionctx.Context {
+// SetChild implements LogicalPlan SetChild interface.
+func (p *baseLogicalPlan) SetChild(i int, child LogicalPlan) {
+	p.children[i] = child
+}
+
+// SetChild implements PhysicalPlan SetChild interface.
+func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
+	p.children[i] = child
+}
+
+// Context implements Plan Context interface.
+func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
 }
 

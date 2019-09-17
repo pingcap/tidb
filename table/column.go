@@ -18,6 +18,8 @@
 package table
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -255,6 +257,13 @@ func NewColDesc(col *Column) *ColDesc {
 	var defaultValue interface{}
 	if !mysql.HasNoDefaultValueFlag(col.Flag) {
 		defaultValue = col.GetDefaultValue()
+		if defaultValStr, ok := defaultValue.(string); ok {
+			if (col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) &&
+				strings.ToUpper(defaultValStr) == strings.ToUpper(ast.CurrentTimestamp) &&
+				col.Decimal > 0 {
+				defaultValue = fmt.Sprintf("%s(%d)", defaultValStr, col.Decimal)
+			}
+		}
 	}
 
 	extra := ""
@@ -263,7 +272,7 @@ func NewColDesc(col *Column) *ColDesc {
 	} else if mysql.HasOnUpdateNowFlag(col.Flag) {
 		//in order to match the rules of mysql 8.0.16 version
 		//see https://github.com/pingcap/tidb/issues/10337
-		extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP"
+		extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP" + OptionalFsp(&col.FieldType)
 	} else if col.IsGenerated() {
 		if col.GeneratedStored {
 			extra = "STORED GENERATED"
@@ -390,7 +399,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 			defer func() { sc.TimeZone = originalTZ }()
 		}
 	}
-	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
+	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, int8(col.Decimal))
 	if err != nil {
 		return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
 			col.Name, err)
@@ -423,9 +432,6 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		// Auto increment column doesn't has default value and we should not return error.
 		return GetZeroValue(col), nil
-	}
-	if col.IsGenerated() {
-		return types.Datum{}, nil
 	}
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
@@ -484,4 +490,13 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetMysqlJSON(json.CreateBinary(nil))
 	}
 	return d
+}
+
+// OptionalFsp convert a FieldType.Decimal to string.
+func OptionalFsp(fieldType *types.FieldType) string {
+	fsp := fieldType.Decimal
+	if fsp == 0 {
+		return ""
+	}
+	return "(" + strconv.Itoa(fsp) + ")"
 }

@@ -82,18 +82,25 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
+	snapshotTS := e.startTS
+	if e.lock {
+		snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	}
 	var err error
-	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
+	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
 	if err != nil {
 		return err
 	}
+	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
 	if e.idxInfo != nil {
-		idxKey, err1 := e.encodeIndexKey()
+		idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
 		}
 
-		handleVal, err1 := e.get(idxKey)
+		handleVal, err1 := e.get(ctx, idxKey)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
 		}
@@ -121,7 +128,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
-	val, err := e.get(key)
+	val, err := e.get(ctx, key)
 	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
 	}
@@ -136,42 +143,17 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	return e.decodeRowValToChunk(val, req)
+	return decodeRowValToChunk(e.base(), e.tblInfo, e.handle, val, req)
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
 	if e.lock {
-		txn, err := e.ctx.Txn(true)
-		if err != nil {
-			return err
-		}
-		return txn.LockKeys(ctx, e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS(), kv.Key(key))
+		return doLockKeys(ctx, e.ctx, key)
 	}
 	return nil
 }
 
-func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	for i := range e.idxVals {
-		colInfo := e.tblInfo.Columns[e.idxInfo.Columns[i].Offset]
-		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
-			e.idxVals[i], err = ranger.HandlePadCharToFullLength(sc, &colInfo.FieldType, e.idxVals[i])
-		} else {
-			e.idxVals[i], err = table.CastValue(e.ctx, e.idxVals[i], colInfo)
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	encodedIdxVals, err := codec.EncodeKey(sc, nil, e.idxVals...)
-	if err != nil {
-		return nil, err
-	}
-	return tablecodec.EncodeIndexSeekKey(e.tblInfo.ID, e.idxInfo.ID, encodedIdxVals), nil
-}
-
-func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
+func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return nil, err
@@ -179,7 +161,7 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = txn.GetMemBuffer().Get(key)
+		val, err = txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
@@ -188,63 +170,67 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 		}
 		// fallthrough to snapshot get.
 	}
-	return e.snapshot.Get(key)
+	return e.snapshot.Get(ctx, key)
 }
 
-func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {
-	//  One column could be filled for multi-times in the schema. e.g. select b, b, c, c from t where a = 1.
-	// We need to set the positions in the schema for the same column.
-	colID2DecodedPos := make(map[int64]int, e.schema.Len())
-	decodedPos2SchemaPos := make([][]int, 0, e.schema.Len())
-	for schemaPos, col := range e.schema.Columns {
-		if decodedPos, ok := colID2DecodedPos[col.ID]; !ok {
-			colID2DecodedPos[col.ID] = len(colID2DecodedPos)
-			decodedPos2SchemaPos = append(decodedPos2SchemaPos, []int{schemaPos})
+func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
+	sc := e.ctx.GetSessionVars().StmtCtx
+	for i := range idxVals {
+		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
+		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
+			idxVals[i], err = ranger.HandlePadCharToFullLength(sc, &colInfo.FieldType, idxVals[i])
 		} else {
-			decodedPos2SchemaPos[decodedPos] = append(decodedPos2SchemaPos[decodedPos], schemaPos)
+			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo)
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
-	decodedVals, err := tablecodec.CutRowNew(rowVal, colID2DecodedPos)
+
+	encodedIdxVals, err := codec.EncodeKey(sc, nil, idxVals...)
+	if err != nil {
+		return nil, err
+	}
+	return tablecodec.EncodeIndexSeekKey(tblInfo.ID, idxInfo.ID, encodedIdxVals), nil
+}
+
+func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk) error {
+	colID2CutPos := make(map[int64]int, e.schema.Len())
+	for _, col := range e.schema.Columns {
+		if _, ok := colID2CutPos[col.ID]; !ok {
+			colID2CutPos[col.ID] = len(colID2CutPos)
+		}
+	}
+	cutVals, err := tablecodec.CutRowNew(rowVal, colID2CutPos)
 	if err != nil {
 		return err
 	}
-	if decodedVals == nil {
-		decodedVals = make([][]byte, len(colID2DecodedPos))
+	if cutVals == nil {
+		cutVals = make([][]byte, len(colID2CutPos))
 	}
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
-	for id, decodedPos := range colID2DecodedPos {
-		schemaPoses := decodedPos2SchemaPos[decodedPos]
-		firstPos := schemaPoses[0]
-		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(e.schema.Columns[firstPos].RetType.Flag) {
-			chk.AppendInt64(firstPos, e.handle)
-			// Fill other positions.
-			for i := 1; i < len(schemaPoses); i++ {
-				chk.MakeRef(firstPos, schemaPoses[i])
-			}
+	for i, col := range e.schema.Columns {
+		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+			chk.AppendInt64(i, handle)
 			continue
 		}
-		// ExtraHandleID is added when building plan, we can make sure that there's only one column's ID is this.
-		if id == model.ExtraHandleID {
-			chk.AppendInt64(firstPos, e.handle)
+		if col.ID == model.ExtraHandleID {
+			chk.AppendInt64(i, handle)
 			continue
 		}
-		if len(decodedVals[decodedPos]) == 0 {
-			// This branch only entered for updating and deleting. It won't have one column in multiple positions.
-			colInfo := getColInfoByID(e.tblInfo, id)
+		cutPos := colID2CutPos[col.ID]
+		if len(cutVals[cutPos]) == 0 {
+			colInfo := getColInfoByID(tblInfo, col.ID)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
 				return err1
 			}
-			chk.AppendDatum(firstPos, &d)
+			chk.AppendDatum(i, &d)
 			continue
 		}
-		_, err = decoder.DecodeOne(decodedVals[decodedPos], firstPos, e.schema.Columns[firstPos].RetType)
+		_, err = decoder.DecodeOne(cutVals[cutPos], i, col.RetType)
 		if err != nil {
 			return err
-		}
-		// Fill other positions.
-		for i := 1; i < len(schemaPoses); i++ {
-			chk.MakeRef(firstPos, schemaPoses[i])
 		}
 	}
 	return nil

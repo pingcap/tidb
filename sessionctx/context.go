@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tipb/go-binlog"
@@ -81,7 +80,7 @@ type Context interface {
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
 	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
-	StmtAddDirtyTableOP(op int, physicalID int64, handle int64, row []types.Datum)
+	StmtAddDirtyTableOP(op int, physicalID int64, handle int64)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.
@@ -98,6 +97,8 @@ type Context interface {
 	ReleaseAllTableLocks()
 	// HasLockedTables uses to check whether this session locked any tables.
 	HasLockedTables() bool
+	// PrepareTxnFuture uses to prepare txn by future.
+	PrepareTxnFuture(ctx context.Context)
 }
 
 type basicCtxType int
@@ -124,8 +125,10 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
+type connIDCtxKeyType struct{}
+
 // ConnID is the key in context.
-const ConnID kv.ContextKey = "conn ID"
+var ConnID = connIDCtxKeyType{}
 
 // SetCommitCtx sets the variables for context before commit a transaction.
 func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {

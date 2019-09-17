@@ -27,6 +27,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
@@ -36,7 +37,9 @@ import (
 const (
 	MaxLogFileSize    = 4096 // MB
 	MinPessimisticTTL = time.Second * 15
-	MaxPessimisticTTL = time.Second * 60
+	MaxPessimisticTTL = time.Second * 120
+	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
+	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Valid config maps
@@ -90,7 +93,10 @@ type Config struct {
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
 	// EnableTableLock indicate whether enable table lock.
 	// TODO: remove this after table lock features stable.
-	EnableTableLock bool `toml:"enable-table-lock" json:"enable-table-lock"`
+	EnableTableLock     bool        `toml:"enable-table-lock" json:"enable-table-lock"`
+	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
+	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
+	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 }
 
 // Log is the log section of config.
@@ -101,6 +107,9 @@ type Log struct {
 	Format string `toml:"format" json:"format"`
 	// Disable automatic timestamps in output.
 	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
+	// DisableErrorStack stops annotating logs with the full stack error
+	// message.
+	DisableErrorStack bool `toml:"disable-error-stack" json:"disable-error-stack"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
@@ -170,11 +179,11 @@ func (s *Security) ToTLSConfig() (*tls.Config, error) {
 
 // Status is the status section of the config.
 type Status struct {
-	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	StatusHost      string `toml:"status-host" json:"status-host"`
-	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
+	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
+	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
 }
 
@@ -182,16 +191,17 @@ type Status struct {
 type Performance struct {
 	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
 	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
-	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
-	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
+	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
+	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -217,9 +227,9 @@ type PreparedPlanCache struct {
 // OpenTracing is the opentracing section of the config.
 type OpenTracing struct {
 	Enable     bool                `toml:"enable" json:"enable"`
+	RPCMetrics bool                `toml:"rpc-metrics" json:"rpc-metrics"`
 	Sampler    OpenTracingSampler  `toml:"sampler" json:"sampler"`
 	Reporter   OpenTracingReporter `toml:"reporter" json:"reporter"`
-	RPCMetrics bool                `toml:"rpc-metrics" json:"rpc-metrics"`
 }
 
 // OpenTracingSampler is the config for opentracing sampler.
@@ -280,11 +290,11 @@ type TiKVClient struct {
 
 // Binlog is the config for binlog.
 type Binlog struct {
-	Enable       bool   `toml:"enable" json:"enable"`
-	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
+	Enable bool `toml:"enable" json:"enable"`
 	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
-	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
+	IgnoreError  bool   `toml:"ignore-error" json:"ignore-error"`
+	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
 	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 	// The strategy for sending binlog to pump, value can be "range" or "hash" now.
@@ -301,12 +311,18 @@ type Plugin struct {
 type PessimisticTxn struct {
 	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
 	Enable bool `toml:"enable" json:"enable"`
-	// Starts a pessimistic transaction by default when Enable is true.
-	Default bool `toml:"default" json:"default"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
 	// The pessimistic lock ttl.
 	TTL string `toml:"ttl" json:"ttl"`
+}
+
+// StmtSummary is the config for statement summary.
+type StmtSummary struct {
+	// The maximum number of statements kept in memory.
+	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
+	// The maximum length of displayed normalized SQL and sample SQL.
+	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
 }
 
 var defaultConf = Config{
@@ -326,8 +342,10 @@ var defaultConf = Config{
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
+	DelayCleanTableLock:          0,
+	SplitRegionMaxNum:            1000,
 	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  true,
+		Enabled:  false,
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
@@ -338,6 +356,7 @@ var defaultConf = Config{
 		SlowQueryFile:      "tidb-slow.log",
 		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
+		DisableErrorStack:  true,
 		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
 	},
 	Status: Status{
@@ -359,6 +378,7 @@ var defaultConf = Config{
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
 		BindInfoLease:       "3s",
+		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -395,10 +415,13 @@ var defaultConf = Config{
 		Strategy:     "range",
 	},
 	PessimisticTxn: PessimisticTxn{
-		Enable:        false,
-		Default:       false,
+		Enable:        true,
 		MaxRetryCount: 256,
-		TTL:           "30s",
+		TTL:           "40s",
+	},
+	StmtSummary: StmtSummary{
+		MaxStmtCount: 100,
+		MaxSQLLength: 4096,
 	},
 }
 
@@ -433,6 +456,11 @@ func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...st
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
 	return globalConf.Load().(*Config)
+}
+
+// StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
+func StoreGlobalConfig(config *Config) {
+	globalConf.Store(config)
 }
 
 // ReloadGlobalConfig reloads global configuration for this server.
@@ -582,13 +610,18 @@ func hasRootPrivilege() bool {
 }
 
 // TableLockEnabled uses to check whether enabled the table lock feature.
-var TableLockEnabled = func() bool {
+func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
+}
+
+// TableLockDelayClean uses to get the time of delay clean table lock.
+var TableLockDelayClean = func() uint64 {
+	return GetGlobalConfig().DelayCleanTableLock
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp)
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = l.DisableErrorStack })
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.

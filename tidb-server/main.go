@@ -20,6 +20,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/signal"
+	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -90,6 +92,7 @@ const (
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
+	nmAffinityCPU                = "affinity-cpus"
 )
 
 var (
@@ -112,6 +115,7 @@ var (
 	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 	pluginDir        = flag.String(nmPluginDir, "/data/deploy/plugin", "the folder that hold plugin")
 	pluginLoad       = flag.String(nmPluginLoad, "", "wait load plugin name(separated by comma)")
+	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -157,6 +161,7 @@ func main() {
 		os.Exit(0)
 	}
 	setGlobalVars()
+	setCPUAffinity()
 	setupLog()
 	// If configStrict had been specified, and there had been an error, the server would already
 	// have exited by now. If configWarning is not an empty string, write it to the log now that
@@ -173,15 +178,43 @@ func main() {
 	signal.SetupSignalHandler(serverShutdown)
 	runServer()
 	cleanup()
-	exit()
+	syncLog()
 }
 
 func exit() {
+	syncLog()
+	os.Exit(0)
+}
+
+func syncLog() {
 	if err := log.Sync(); err != nil {
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
 		os.Exit(1)
 	}
-	os.Exit(0)
+}
+
+func setCPUAffinity() {
+	if affinityCPU == nil || len(*affinityCPU) == 0 {
+		return
+	}
+	var cpu []int
+	for _, af := range strings.Split(*affinityCPU, ",") {
+		af = strings.TrimSpace(af)
+		if len(af) > 0 {
+			c, err := strconv.Atoi(af)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "wrong affinity cpu config: %s", *affinityCPU)
+				exit()
+			}
+			cpu = append(cpu, c)
+		}
+	}
+	err := linux.SetAffinity(cpu)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "set cpu affinity failure: %v", err)
+		exit()
+	}
+	runtime.GOMAXPROCS(len(cpu))
 }
 
 func registerStores() {
@@ -316,6 +349,12 @@ func loadConfig() string {
 			return err.Error()
 		}
 		terror.MustNil(err)
+	} else {
+		// configCheck should have the config file specified.
+		if *configCheck {
+			fmt.Fprintln(os.Stderr, "config check failed", errors.New("no config file specified for config-check"))
+			os.Exit(1)
+		}
 	}
 	return ""
 }
@@ -323,7 +362,7 @@ func loadConfig() string {
 // hotReloadConfigItems lists all config items which support hot-reload.
 var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
 	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
-	"OOMAction", "MemQuotaQuery"}
+	"OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength"}
 
 func reloadConfig(nc, c *config.Config) {
 	// Just a part of config items need to be reload explicitly.
@@ -331,9 +370,6 @@ func reloadConfig(nc, c *config.Config) {
 	// like config.GetGlobalConfig().OOMAction.
 	// These config items will become available naturally after the global config pointer
 	// is updated in function ReloadGlobalConfig.
-	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
-		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
-	}
 	if nc.Performance.MaxMemory != c.Performance.MaxMemory {
 		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.MaxMemory)
 	}
@@ -460,6 +496,7 @@ func setGlobalVars() {
 	}
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
+	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
 
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
@@ -517,6 +554,7 @@ func createServer() {
 	// Both domain and storage have started, so we have to clean them before exiting.
 	terror.MustNil(err, closeDomainAndStorage)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
+	dom.InfoSyncer().SetSessionManager(svr)
 }
 
 func serverShutdown(isgraceful bool) {

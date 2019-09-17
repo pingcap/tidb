@@ -40,7 +40,7 @@ type testImplSuite struct {
 
 func (s *testImplSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockTable()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	s.sctx = plannercore.MockContext()
 	s.Parser = parser.New()
 }
@@ -50,7 +50,7 @@ func (s *testImplSuite) TearDownSuite(c *C) {
 }
 
 func (s *testImplSuite) TestBaseImplementation(c *C) {
-	p := plannercore.PhysicalLimit{}.Init(s.sctx, nil, nil)
+	p := plannercore.PhysicalLimit{}.Init(s.sctx, nil, 0, nil)
 	impl := &baseImpl{plan: p}
 	c.Assert(impl.GetPlan(), Equals, p)
 

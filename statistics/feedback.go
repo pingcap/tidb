@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/spaolacci/murmur3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -121,11 +120,11 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 		if isIndex {
 			var err error
 			// As we do not know the origin length, just use a custom value here.
-			lowVal, err = codec.DecodeRange(low.GetBytes(), 4)
+			lowVal, _, err = codec.DecodeRange(low.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			highVal, err = codec.DecodeRange(high.GetBytes(), 4)
+			highVal, _, err = codec.DecodeRange(high.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -314,15 +313,21 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		if skip {
 			continue
 		}
-		idx, _ := h.Bounds.LowerBound(0, fb.Lower)
+		idx := h.Bounds.UpperBound(0, fb.Lower)
 		bktIdx := 0
 		// The last bucket also stores the feedback that falls outside the upper bound.
-		if idx >= h.Bounds.NumRows()-2 {
+		if idx >= h.Bounds.NumRows()-1 {
 			bktIdx = h.Len() - 1
+		} else if h.Len() == 1 {
+			bktIdx = 0
 		} else {
-			bktIdx = idx / 2
+			if idx == 0 {
+				bktIdx = 0
+			} else {
+				bktIdx = (idx - 1) / 2
+			}
 			// Make sure that this feedback lies within the bucket.
-			if chunk.Compare(h.Bounds.GetRow(2*bktIdx+1), 0, fb.Upper) < 0 {
+			if chunk.Compare(h.Bounds.GetRow(2*(bktIdx+1)), 0, fb.Upper) < 0 {
 				continue
 			}
 		}
@@ -687,8 +692,11 @@ func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 type queryFeedback struct {
 	IntRanges []int64
 	// HashValues is the murmur hash values for each index point.
+	// Note that index points will be stored in `IndexPoints`, we keep it here only for compatibility.
 	HashValues  []uint64
 	IndexRanges [][]byte
+	// IndexPoints stores the value of each equal condition.
+	IndexPoints [][]byte
 	// Counts is the number of scan keys in each range. It first stores the count for `IntRanges`, `IndexRanges` or `ColumnRanges`.
 	// After that, it stores the Ranges for `HashValues`.
 	Counts       []int64
@@ -721,8 +729,7 @@ func encodeIndexFeedback(q *QueryFeedback) *queryFeedback {
 	var pointCounts []int64
 	for _, fb := range q.Feedback {
 		if bytes.Compare(kv.Key(fb.Lower.GetBytes()).PrefixNext(), fb.Upper.GetBytes()) >= 0 {
-			h1, h2 := murmur3.Sum128(fb.Lower.GetBytes())
-			pb.HashValues = append(pb.HashValues, h1, h2)
+			pb.IndexPoints = append(pb.IndexPoints, fb.Lower.GetBytes())
 			pointCounts = append(pointCounts, fb.Count)
 		} else {
 			pb.IndexRanges = append(pb.IndexRanges, fb.Lower.GetBytes(), fb.Upper.GetBytes())
@@ -782,9 +789,18 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
 	if c != nil {
 		// decode the index point feedback, just set value count in CM Sketch
 		start := len(pb.IndexRanges) / 2
-		for i := 0; i < len(pb.HashValues); i += 2 {
-			// TODO: update using raw bytes instead of hash values.
-			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint64(pb.Counts[start+i/2]))
+		if len(pb.HashValues) > 0 {
+			// It needs raw values to update the top n, so just skip it here.
+			if len(c.topN) > 0 {
+				return
+			}
+			for i := 0; i < len(pb.HashValues); i += 2 {
+				c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint64(pb.Counts[start+i/2]))
+			}
+			return
+		}
+		for i := 0; i < len(pb.IndexPoints); i++ {
+			c.updateValueBytes(pb.IndexPoints[i], uint64(pb.Counts[start+i]))
 		}
 	}
 }
@@ -821,7 +837,7 @@ func ConvertDatumsType(vals []types.Datum, ft *types.FieldType, loc *time.Locati
 }
 
 func decodeColumnBounds(data []byte, ft *types.FieldType) ([]types.Datum, error) {
-	vals, err := codec.DecodeRange(data, 1)
+	vals, _, err := codec.DecodeRange(data, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -854,7 +870,7 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, ft *types.FieldTy
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 {
+	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 || len(pb.IndexPoints) > 0 {
 		decodeFeedbackForIndex(q, pb, c)
 	} else if len(pb.IntRanges) > 0 {
 		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.Flag))

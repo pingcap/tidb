@@ -17,19 +17,24 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -38,65 +43,74 @@ import (
 type SplitIndexRegionExec struct {
 	baseExecutor
 
-	tableInfo  *model.TableInfo
-	indexInfo  *model.IndexInfo
-	lower      []types.Datum
-	upper      []types.Datum
-	num        int
-	valueLists [][]types.Datum
+	tableInfo    *model.TableInfo
+	indexInfo    *model.IndexInfo
+	lower        []types.Datum
+	upper        []types.Datum
+	num          int
+	valueLists   [][]types.Datum
+	splitIdxKeys [][]byte
+
+	done bool
+	splitRegionResult
 }
 
-type splitableStore interface {
-	SplitRegionAndScatter(splitKey kv.Key) (uint64, error)
-	WaitScatterRegionFinish(regionID uint64) error
+type splitRegionResult struct {
+	splitRegions     int
+	finishScatterNum int
+}
+
+// Open implements the Executor Open interface.
+func (e *SplitIndexRegionExec) Open(ctx context.Context) (err error) {
+	e.splitIdxKeys, err = e.getSplitIdxKeys()
+	return err
 }
 
 // Next implements the Executor Next interface.
-func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	store := e.ctx.GetStore()
-	s, ok := store.(splitableStore)
-	if !ok {
+func (e *SplitIndexRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
 		return nil
 	}
-	splitIdxKeys, err := e.getSplitIdxKeys()
-	if err != nil {
+	e.done = true
+	if err := e.splitIndexRegion(ctx); err != nil {
 		return err
 	}
 
+	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
+	return nil
+}
+
+// checkScatterRegionFinishBackOff is the back off time that used to check if a region has finished scattering before split region timeout.
+const checkScatterRegionFinishBackOff = 50
+
+// splitIndexRegion is used to split index regions.
+func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
+	store := e.ctx.GetStore()
+	s, ok := store.(kv.SplitableStore)
+	if !ok {
+		return nil
+	}
+
+	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	regionIDs := make([]uint64, 0, len(splitIdxKeys))
-	for _, idxKey := range splitIdxKeys {
-		regionID, err := s.SplitRegionAndScatter(idxKey)
-		if err != nil {
-			logutil.BgLogger().Warn("split table index region failed",
-				zap.String("table", e.tableInfo.Name.L),
-				zap.String("index", e.indexInfo.Name.L),
-				zap.Error(err))
-			continue
-		}
-		regionIDs = append(regionIDs, regionID)
-
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("wait split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
-		}
+	regionIDs, err := s.SplitRegions(context.Background(), e.splitIdxKeys, true)
+	if err != nil {
+		logutil.BgLogger().Warn("split table index region failed",
+			zap.String("table", e.tableInfo.Name.L),
+			zap.String("index", e.indexInfo.Name.L),
+			zap.Error(err))
 	}
+	e.splitRegions = len(regionIDs)
+	if e.splitRegions == 0 {
+		return nil
+	}
+
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
-	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID)
-		if err != nil {
-			logutil.BgLogger().Warn("wait scatter region failed",
-				zap.Uint64("regionID", regionID),
-				zap.String("table", e.tableInfo.Name.L),
-				zap.String("index", e.indexInfo.Name.L),
-				zap.Error(err))
-		}
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("wait split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
-		}
-	}
+	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
 	return nil
 }
 
@@ -110,6 +124,16 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 	// Split in the start of the index key.
 	startIdxKey := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, e.indexInfo.ID)
 	idxKeys = append(idxKeys, startIdxKey)
+
+	// Split in the end for the other index key.
+	for _, idx := range e.tableInfo.Indices {
+		if idx.ID <= e.indexInfo.ID {
+			continue
+		}
+		endIdxKey := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, idx.ID)
+		idxKeys = append(idxKeys, endIdxKey)
+		break
+	}
 
 	index := tables.NewIndex(e.tableInfo.ID, e.tableInfo, e.indexInfo)
 	// Split index regions by user specified value lists.
@@ -226,67 +250,105 @@ type SplitTableRegionExec struct {
 	upper      types.Datum
 	num        int
 	valueLists [][]types.Datum
+	splitKeys  [][]byte
+
+	done bool
+	splitRegionResult
+}
+
+// Open implements the Executor Open interface.
+func (e *SplitTableRegionExec) Open(ctx context.Context) (err error) {
+	e.splitKeys, err = e.getSplitTableKeys()
+	return err
 }
 
 // Next implements the Executor Next interface.
-func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *SplitTableRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+	if err := e.splitTableRegion(ctx); err != nil {
+		return err
+	}
+	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
+	return nil
+}
+
+func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
-	s, ok := store.(splitableStore)
+	s, ok := store.(kv.SplitableStore)
 	if !ok {
 		return nil
 	}
 
+	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 
-	splitKeys, err := e.getSplitTableKeys()
+	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitKeys, true)
 	if err != nil {
-		return err
+		logutil.BgLogger().Warn("split table region failed",
+			zap.String("table", e.tableInfo.Name.L),
+			zap.Error(err))
 	}
-	regionIDs := make([]uint64, 0, len(splitKeys))
-	for _, key := range splitKeys {
-		regionID, err := s.SplitRegionAndScatter(key)
-		if err != nil {
-			logutil.BgLogger().Warn("split table region failed",
-				zap.String("table", e.tableInfo.Name.L),
-				zap.Error(err))
-			continue
-		}
-		regionIDs = append(regionIDs, regionID)
-
-		failpoint.Inject("mockSplitRegionTimeout", func(val failpoint.Value) {
-			if val.(bool) {
-				time.Sleep(time.Second * 1)
-			}
-		})
-
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
-		}
+	e.splitRegions = len(regionIDs)
+	if e.splitRegions == 0 {
+		return nil
 	}
+
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
+
+	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, "")
+	return nil
+}
+
+func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Context, startTime time.Time, store kv.SplitableStore, regionIDs []uint64, tableName, indexName string) int {
+	remainMillisecond := 0
+	finishScatterNum := 0
 	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID)
-		if err != nil {
-			logutil.BgLogger().Warn("wait scatter region failed",
-				zap.Uint64("regionID", regionID),
-				zap.String("table", e.tableInfo.Name.L),
-				zap.Error(err))
+		if isCtxDone(ctxWithTimeout) {
+			// Do not break here for checking remain regions scatter finished with a very short backoff time.
+			// Consider this situation -  Regions 1, 2, and 3 are to be split.
+			// Region 1 times out before scattering finishes, while Region 2 and Region 3 have finished scattering.
+			// In this case, we should return 2 Regions, instead of 0, have finished scattering.
+			remainMillisecond = checkScatterRegionFinishBackOff
+		} else {
+			remainMillisecond = int((sctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
 		}
 
-		failpoint.Inject("mockScatterRegionTimeout", func(val failpoint.Value) {
-			if val.(bool) {
-				time.Sleep(time.Second * 1)
+		err := store.WaitScatterRegionFinish(regionID, remainMillisecond)
+		if err == nil {
+			finishScatterNum++
+		} else {
+			if len(indexName) == 0 {
+				logutil.BgLogger().Warn("wait scatter region failed",
+					zap.Uint64("regionID", regionID),
+					zap.String("table", tableName),
+					zap.Error(err))
+			} else {
+				logutil.BgLogger().Warn("wait scatter region failed",
+					zap.Uint64("regionID", regionID),
+					zap.String("table", tableName),
+					zap.String("index", indexName),
+					zap.Error(err))
 			}
-		})
-
-		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("wait split region scatter timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
 		}
 	}
-	return nil
+	return finishScatterNum
+}
+
+func appendSplitRegionResultToChunk(chk *chunk.Chunk, totalRegions, finishScatterNum int) {
+	chk.AppendInt64(0, int64(totalRegions))
+	if finishScatterNum > 0 && totalRegions > 0 {
+		chk.AppendFloat64(1, float64(finishScatterNum)/float64(totalRegions))
+	} else {
+		chk.AppendFloat64(1, float64(0))
+	}
 }
 
 func isCtxDone(ctx context.Context) bool {
@@ -344,6 +406,10 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 		return nil, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
 	}
 
+	// Split a separate region for index.
+	if len(e.tableInfo.Indices) > 0 {
+		keys = append(keys, recordPrefix)
+	}
 	recordID := lowerValue
 	for i := 1; i < e.num; i++ {
 		recordID += int64(step)
@@ -351,4 +417,204 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+// RegionMeta contains a region's peer detail
+type regionMeta struct {
+	region          *metapb.Region
+	leaderID        uint64
+	storeID         uint64 // storeID is the store ID of the leader region.
+	start           string
+	end             string
+	scattering      bool
+	writtenBytes    int64
+	readBytes       int64
+	approximateSize int64
+	approximateKeys int64
+}
+
+func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore tikv.Storage, s kv.SplitableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+	if uniqueRegionMap == nil {
+		uniqueRegionMap = make(map[uint64]struct{})
+	}
+	// for record
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalTableID)
+	regionCache := tikvStore.GetRegionCache()
+	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackoffer(context.Background(), 20000), startKey, endKey)
+	if err != nil {
+		return nil, err
+	}
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
+	recordRegions, err := getRegionMeta(tikvStore, recordRegionMetas, uniqueRegionMap, tablePrefix, recordPrefix, nil, physicalTableID, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	regions := recordRegions
+	// for indices
+	for _, index := range tableInfo.Indices {
+		if index.State != model.StatePublic {
+			continue
+		}
+		startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalTableID, index.ID)
+		regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackoffer(context.Background(), 20000), startKey, endKey)
+		if err != nil {
+			return nil, err
+		}
+		indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, index.ID)
+		indexRegions, err := getRegionMeta(tikvStore, regionMetas, uniqueRegionMap, tablePrefix, recordPrefix, indexPrefix, physicalTableID, index.ID)
+		if err != nil {
+			return nil, err
+		}
+		regions = append(regions, indexRegions...)
+	}
+	err = checkRegionsStatus(s, regions)
+	if err != nil {
+		return nil, err
+	}
+	return regions, nil
+}
+
+func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore tikv.Storage, s kv.SplitableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+	if uniqueRegionMap == nil {
+		uniqueRegionMap = make(map[uint64]struct{})
+	}
+
+	startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalTableID, indexInfo.ID)
+	regionCache := tikvStore.GetRegionCache()
+	regions, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackoffer(context.Background(), 20000), startKey, endKey)
+	if err != nil {
+		return nil, err
+	}
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
+	indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, indexInfo.ID)
+	indexRegions, err := getRegionMeta(tikvStore, regions, uniqueRegionMap, tablePrefix, recordPrefix, indexPrefix, physicalTableID, indexInfo.ID)
+	if err != nil {
+		return nil, err
+	}
+	err = checkRegionsStatus(s, indexRegions)
+	if err != nil {
+		return nil, err
+	}
+	return indexRegions, nil
+}
+
+func checkRegionsStatus(store kv.SplitableStore, regions []regionMeta) error {
+	for i := range regions {
+		scattering, err := store.CheckRegionInScattering(regions[i].region.Id)
+		if err != nil {
+			return err
+		}
+		regions[i].scattering = scattering
+	}
+	return nil
+}
+
+func decodeRegionsKey(regions []regionMeta, tablePrefix, recordPrefix, indexPrefix []byte, physicalTableID, indexID int64) {
+	d := &regionKeyDecoder{
+		physicalTableID: physicalTableID,
+		tablePrefix:     tablePrefix,
+		recordPrefix:    recordPrefix,
+		indexPrefix:     indexPrefix,
+		indexID:         indexID,
+	}
+	for i := range regions {
+		regions[i].start = d.decodeRegionKey(regions[i].region.StartKey)
+		regions[i].end = d.decodeRegionKey(regions[i].region.EndKey)
+	}
+}
+
+type regionKeyDecoder struct {
+	physicalTableID int64
+	tablePrefix     []byte
+	recordPrefix    []byte
+	indexPrefix     []byte
+	indexID         int64
+}
+
+func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
+	if len(d.indexPrefix) > 0 && bytes.HasPrefix(key, d.indexPrefix) {
+		return fmt.Sprintf("t_%d_i_%d_%x", d.physicalTableID, d.indexID, key[len(d.indexPrefix):])
+	} else if len(d.recordPrefix) > 0 && bytes.HasPrefix(key, d.recordPrefix) {
+		if len(d.recordPrefix) == len(key) {
+			return fmt.Sprintf("t_%d_r", d.physicalTableID)
+		}
+		_, handle, err := codec.DecodeInt(key[len(d.recordPrefix):])
+		if err == nil {
+			return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, handle)
+		}
+	}
+	if len(d.tablePrefix) > 0 && bytes.HasPrefix(key, d.tablePrefix) {
+		key = key[len(d.tablePrefix):]
+		// Has index prefix.
+		if !bytes.HasPrefix(key, []byte("_i")) {
+			return fmt.Sprintf("t_%d_%x", d.physicalTableID, key)
+		}
+		key = key[2:]
+		// try to decode index ID.
+		if _, indexID, err := codec.DecodeInt(key); err == nil {
+			return fmt.Sprintf("t_%d_i_%d_%x", d.physicalTableID, indexID, key[8:])
+		}
+		return fmt.Sprintf("t_%d_i__%x", d.physicalTableID, key)
+	}
+	// Has table prefix.
+	if bytes.HasPrefix(key, []byte("t")) {
+		key = key[1:]
+		// try to decode table ID.
+		if _, tableID, err := codec.DecodeInt(key); err == nil {
+			return fmt.Sprintf("t_%d_%x", tableID, key[8:])
+		}
+		return fmt.Sprintf("t_%x", key)
+	}
+	return fmt.Sprintf("%x", key)
+}
+
+func getRegionMeta(tikvStore tikv.Storage, regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct{}, tablePrefix, recordPrefix, indexPrefix []byte, physicalTableID, indexID int64) ([]regionMeta, error) {
+	regions := make([]regionMeta, 0, len(regionMetas))
+	for _, r := range regionMetas {
+		if _, ok := uniqueRegionMap[r.GetID()]; ok {
+			continue
+		}
+		uniqueRegionMap[r.GetID()] = struct{}{}
+		regions = append(regions, regionMeta{
+			region:   r.GetMeta(),
+			leaderID: r.GetLeaderID(),
+			storeID:  r.GetLeaderStoreID(),
+		})
+	}
+	regions, err := getRegionInfo(tikvStore, regions)
+	if err != nil {
+		return regions, err
+	}
+	decodeRegionsKey(regions, tablePrefix, recordPrefix, indexPrefix, physicalTableID, indexID)
+	return regions, nil
+}
+
+func getRegionInfo(store tikv.Storage, regions []regionMeta) ([]regionMeta, error) {
+	// check pd server exists.
+	etcd, ok := store.(tikv.EtcdBackend)
+	if !ok {
+		return regions, nil
+	}
+	pdHosts := etcd.EtcdAddrs()
+	if len(pdHosts) == 0 {
+		return regions, nil
+	}
+	tikvHelper := &helper.Helper{
+		Store:       store,
+		RegionCache: store.GetRegionCache(),
+	}
+	for i := range regions {
+		regionInfo, err := tikvHelper.GetRegionInfoByID(regions[i].region.Id)
+		if err != nil {
+			return nil, err
+		}
+		regions[i].writtenBytes = regionInfo.WrittenBytes
+		regions[i].readBytes = regionInfo.ReadBytes
+		regions[i].approximateSize = regionInfo.ApproximateSize
+		regions[i].approximateKeys = regionInfo.ApproximateKeys
+	}
+	return regions, nil
 }

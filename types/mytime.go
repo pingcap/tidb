@@ -16,19 +16,27 @@ package types
 import (
 	gotime "time"
 
+	"fmt"
 	"github.com/pingcap/errors"
 )
 
 // MysqlTime is the internal struct type for Time.
+// The order of the attributes is refined to reduce the memory overhead
+// considering memory alignment.
 type MysqlTime struct {
-	year  uint16 // year <= 9999
-	month uint8  // month <= 12
-	day   uint8  // day <= 31
-	// When it's type is Time, HH:MM:SS may be 839:59:59, so use int to avoid overflow.
-	hour        int   // hour <= 23
-	minute      uint8 // minute <= 59
-	second      uint8 // second <= 59
+	// When it's type is Time, HH:MM:SS may be 839:59:59, so use uint32 to avoid overflow.
+	hour        uint32 // hour <= 23
 	microsecond uint32
+	year        uint16 // year <= 9999
+	month       uint8  // month <= 12
+	day         uint8  // day <= 31
+	minute      uint8  // minute <= 59
+	second      uint8  // second <= 59
+}
+
+// String implements fmt.Stringer.
+func (t MysqlTime) String() string {
+	return fmt.Sprintf("{%d %d %d %d %d %d %d}", t.year, t.month, t.day, t.hour, t.minute, t.second, t.microsecond)
 }
 
 // Year returns the year value.
@@ -70,8 +78,9 @@ func (t MysqlTime) Microsecond() int {
 func (t MysqlTime) Weekday() gotime.Weekday {
 	// TODO: Consider time_zone variable.
 	t1, err := t.GoTime(gotime.Local)
+	// allow invalid dates
 	if err != nil {
-		return 0
+		return t1.Weekday()
 	}
 	return t1.Weekday()
 }
@@ -172,7 +181,7 @@ func AddDate(year, month, day int64, ot gotime.Time) (nt gotime.Time) {
 }
 
 func calcTimeFromSec(to *MysqlTime, seconds, microseconds int) {
-	to.hour = seconds / 3600
+	to.hour = uint32(seconds / 3600)
 	seconds = seconds % 3600
 	to.minute = uint8(seconds / 60)
 	to.second = uint8(seconds % 60)

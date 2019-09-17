@@ -25,13 +25,16 @@ type columnEvaluator struct {
 // run evaluates "Column" expressions.
 // NOTE: It should be called after all the other expressions are evaluated
 //	     since it will change the content of the input Chunk.
-func (e *columnEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chunk) {
+func (e *columnEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chunk) error {
 	for inputIdx, outputIdxes := range e.inputIdxToOutputIdxes {
-		output.SwapColumn(outputIdxes[0], input, inputIdx)
+		if err := output.SwapColumn(outputIdxes[0], input, inputIdx); err != nil {
+			return err
+		}
 		for i, length := 1, len(outputIdxes); i < length; i++ {
 			output.MakeRef(outputIdxes[0], outputIdxes[i])
 		}
 	}
+	return nil
 }
 
 type defaultEvaluator struct {
@@ -44,6 +47,13 @@ func (e *defaultEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chun
 	iter := chunk.NewIterator4Chunk(input)
 	if e.vectorizable {
 		for i := range e.outputIdxes {
+			if ctx.GetSessionVars().EnableVectorizedExpression && e.exprs[i].Vectorized() {
+				if err := evalOneVec(ctx, e.exprs[i], input, output, e.outputIdxes[i]); err != nil {
+					return err
+				}
+				continue
+			}
+
 			err := evalOneColumn(ctx, e.exprs[i], iter, output, e.outputIdxes[i])
 			if err != nil {
 				return err
@@ -117,7 +127,7 @@ func (e *EvaluatorSuite) Run(ctx sessionctx.Context, input, output *chunk.Chunk)
 	}
 
 	if e.columnEvaluator != nil {
-		e.columnEvaluator.run(ctx, input, output)
+		return e.columnEvaluator.run(ctx, input, output)
 	}
 	return nil
 }

@@ -14,6 +14,7 @@
 package tablecodec
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 	"time"
@@ -209,14 +210,13 @@ func DecodeRowKey(key kv.Key) (int64, error) {
 }
 
 // EncodeValue encodes a go value to bytes.
-func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) {
+func EncodeValue(sc *stmtctx.StatementContext, b []byte, raw types.Datum) ([]byte, error) {
 	var v types.Datum
 	err := flatten(sc, raw, &v)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	b, err := codec.EncodeValue(sc, nil, v)
-	return b, errors.Trace(err)
+	return codec.EncodeValue(sc, b, v)
 }
 
 // EncodeRow encode row data and column ids into a slice of byte.
@@ -236,12 +236,12 @@ func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, 
 		values[2*i].SetInt64(id)
 		err := flatten(sc, c, &values[2*i+1])
 		if err != nil {
-			return nil, errors.Trace(err)
+			return valBuf, errors.Trace(err)
 		}
 	}
 	if len(values) == 0 {
 		// We could not set nil value into kv.
-		return []byte{codec.NilFlag}, nil
+		return append(valBuf, codec.NilFlag), nil
 	}
 	return codec.EncodeValue(sc, valBuf, values...)
 }
@@ -426,7 +426,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
 		t.Type = ft.Tp
-		t.Fsp = ft.Decimal
+		t.Fsp = int8(ft.Decimal)
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
@@ -442,7 +442,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration: //duration should read fsp from column meta data
-		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: ft.Decimal}
+		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: int8(ft.Decimal)}
 		datum.SetValue(dur)
 		return datum, nil
 	case mysql.TypeEnum:
@@ -517,6 +517,77 @@ func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err erro
 	return
 }
 
+// PrimaryKeyStatus is the primary key column status.
+type PrimaryKeyStatus int
+
+const (
+	// PrimaryKeyNotExists means no need to decode primary key column value when DecodeIndexKV.
+	PrimaryKeyNotExists PrimaryKeyStatus = iota
+	// PrimaryKeyIsSigned means decode primary key column value as int64 when DecodeIndexKV.
+	PrimaryKeyIsSigned
+	// PrimaryKeyIsUnsigned means decode primary key column value as uint64 when DecodeIndexKV.
+	PrimaryKeyIsUnsigned
+)
+
+// DecodeIndexKV uses to decode index key values.
+func DecodeIndexKV(key, value []byte, colsLen int, pkStatus PrimaryKeyStatus) ([][]byte, error) {
+	values, b, err := CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		if pkStatus != PrimaryKeyNotExists {
+			values = append(values, b)
+		}
+	} else if pkStatus != PrimaryKeyNotExists {
+		handle, err := DecodeIndexValueAsHandle(value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var handleDatum types.Datum
+		if pkStatus == PrimaryKeyIsUnsigned {
+			handleDatum = types.NewUintDatum(uint64(handle))
+		} else {
+			handleDatum = types.NewIntDatum(handle)
+		}
+		handleBytes := make([]byte, 0, 8)
+		handleBytes, err = codec.EncodeValue(nil, handleBytes, handleDatum)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		values = append(values, handleBytes)
+	}
+	return values, nil
+}
+
+// DecodeIndexHandle uses to decode the handle from index key/value.
+func DecodeIndexHandle(key, value []byte, colsLen int, pkTp *types.FieldType) (int64, error) {
+	_, b, err := CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		d, err := DecodeColumnValue(b, pkTp, nil)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return d.GetInt64(), nil
+
+	} else if len(value) >= 8 {
+		return DecodeIndexValueAsHandle(value)
+	}
+	// Should never execute to here.
+	return 0, errors.Errorf("no handle in index key: %v, value: %v", key, value)
+}
+
+// DecodeIndexValueAsHandle uses to decode index value as handle id.
+func DecodeIndexValueAsHandle(data []byte) (int64, error) {
+	var h int64
+	buf := bytes.NewBuffer(data)
+	err := binary.Read(buf, binary.BigEndian, &h)
+	return h, errors.Trace(err)
+}
+
 // EncodeTableIndexPrefix encodes index prefix with tableID and idxID.
 func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
 	key := make([]byte, 0, prefixLen)
@@ -570,6 +641,14 @@ func GenTableRecordPrefix(tableID int64) kv.Key {
 func GenTableIndexPrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(tablePrefix)+8+len(indexPrefixSep))
 	return appendTableIndexPrefix(buf, tableID)
+}
+
+// IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
+// since the untouched index key/value is no need to commit.
+func IsUntouchedIndexKValue(k, v []byte) bool {
+	vLen := len(v)
+	return (len(k) > 11 && k[0] == 't' && k[10] == 'i') &&
+		((vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag)
 }
 
 // GenTablePrefix composes table record and index prefix: "t[tableID]".

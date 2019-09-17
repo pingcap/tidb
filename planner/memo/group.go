@@ -17,6 +17,7 @@ import (
 	"container/list"
 	"fmt"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 )
 
@@ -35,13 +36,15 @@ type Group struct {
 	Prop    *property.LogicalProperty
 }
 
-// NewGroup creates a new Group.
-func NewGroup(e *GroupExpr) *Group {
+// NewGroupWithSchema creates a new Group with given schema.
+func NewGroupWithSchema(e *GroupExpr, s *expression.Schema) *Group {
+	prop := &property.LogicalProperty{Schema: s}
 	g := &Group{
 		Equivalents:  list.New(),
 		Fingerprints: make(map[string]*list.Element),
 		FirstExpr:    make(map[Operand]*list.Element),
 		ImplMap:      make(map[string]Implementation),
+		Prop:         prop,
 	}
 	g.Insert(e)
 	return g
@@ -57,7 +60,7 @@ func (g *Group) FingerPrint() string {
 
 // Insert a nonexistent Group expression.
 func (g *Group) Insert(e *GroupExpr) bool {
-	if g.Exists(e) {
+	if e == nil || g.Exists(e) {
 		return false
 	}
 
@@ -71,6 +74,7 @@ func (g *Group) Insert(e *GroupExpr) bool {
 		g.FirstExpr[operand] = newEquiv
 	}
 	g.Fingerprints[e.FingerPrint()] = newEquiv
+	e.Group = g
 	return true
 }
 
@@ -84,6 +88,7 @@ func (g *Group) Delete(e *GroupExpr) {
 
 	g.Equivalents.Remove(equiv)
 	delete(g.Fingerprints, fingerprint)
+	e.Group = nil
 
 	operand := GetOperand(equiv.Value.(*GroupExpr).ExprNode)
 	if g.FirstExpr[operand] != equiv {

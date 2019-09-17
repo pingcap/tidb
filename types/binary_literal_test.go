@@ -272,3 +272,13 @@ func (s *testBinaryLiteralSuite) TestCompare(c *C) {
 		c.Assert(t.a.Compare(t.b), Equals, t.cmp)
 	}
 }
+
+func (s *testBinaryLiteralSuite) TestToString(c *C) {
+	h, _ := NewHexLiteral("x'3A3B'")
+	str := h.ToString()
+	c.Assert(str, Equals, ":;")
+
+	b, _ := NewBitLiteral("b'00101011'")
+	str = b.ToString()
+	c.Assert(str, Equals, "+")
+}

@@ -26,8 +26,10 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/testleak"
@@ -38,7 +40,7 @@ type ConnTestSuite struct {
 	store kv.Storage
 }
 
-var _ = Suite(ConnTestSuite{})
+var _ = Suite(&ConnTestSuite{})
 
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
@@ -240,7 +242,7 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 			out: []byte{
 				0xc, 0x0, 0x0, 0x3, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x18,
 				0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x1, 0x31, 0xc, 0x3f,
-				0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x80, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x5, 0xfe,
+				0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x5, 0xfe,
 			},
 		},
 		{
@@ -249,7 +251,7 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 			err: nil,
 			out: []byte{
 				0x1, 0x0, 0x0, 0x6, 0x1, 0x18, 0x0, 0x0, 0x7, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
-				0x1, 0x31, 0x1, 0x31, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x80, 0x0, 0x0, 0x0,
+				0x1, 0x31, 0x1, 0x31, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0,
 				0x0, 0x1, 0x0, 0x0, 0x8, 0xfe,
 			},
 		},
@@ -420,7 +422,7 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	c.Assert(err, IsNil)
 
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
 	c.Assert(err, IsNil)
@@ -429,7 +431,33 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	c.Assert(err, IsNil)
 
 	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
+}
+
+type mockTiDBCtx struct {
+	TiDBContext
+	rs  []ResultSet
+	err error
+}
+
+func (c *mockTiDBCtx) Execute(ctx context.Context, sql string) ([]ResultSet, error) {
+	return c.rs, c.err
+}
+
+func (c *mockTiDBCtx) GetSessionVars() *variable.SessionVars {
+	return &variable.SessionVars{}
+}
+
+func (ts *ConnTestSuite) TestShutDown(c *C) {
+	cc := &clientConn{}
+
+	// mock delay response
+	cc.ctx = &mockTiDBCtx{rs: []ResultSet{&tidbResultSet{}}, err: nil}
+	// set killed flag
+	cc.status = connStatusShutdown
+	// assert ErrQueryInterrupted
+	err := cc.handleQuery(context.Background(), "dummy")
+	c.Assert(err, Equals, executor.ErrQueryInterrupted)
 }

@@ -320,8 +320,12 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_BitNegSig:
 		f = &builtinBitNegSig{base}
 
-	case tipb.ScalarFuncSig_UnaryNot:
-		f = &builtinUnaryNotSig{base}
+	case tipb.ScalarFuncSig_UnaryNotReal:
+		f = &builtinUnaryNotRealSig{base}
+	case tipb.ScalarFuncSig_UnaryNotDecimal:
+		f = &builtinUnaryNotDecimalSig{base}
+	case tipb.ScalarFuncSig_UnaryNotInt:
+		f = &builtinUnaryNotIntSig{base}
 	case tipb.ScalarFuncSig_UnaryMinusInt:
 		f = &builtinUnaryMinusIntSig{base}
 	case tipb.ScalarFuncSig_UnaryMinusReal:
@@ -422,6 +426,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinJSONArraySig{base}
 	case tipb.ScalarFuncSig_JsonArrayAppendSig:
 		f = &builtinJSONArrayAppendSig{base}
+	case tipb.ScalarFuncSig_JsonArrayInsertSig:
+		f = &builtinJSONArrayInsertSig{base}
 	case tipb.ScalarFuncSig_JsonObjectSig:
 		f = &builtinJSONObjectSig{base}
 	case tipb.ScalarFuncSig_JsonExtractSig:
@@ -552,7 +558,7 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 	}
 	var t types.Time
 	t.Type = ft.Tp
-	t.Fsp = ft.Decimal
+	t.Fsp = int8(ft.Decimal)
 	err = t.FromPackedUint(v)
 	if err != nil {
 		return nil, err

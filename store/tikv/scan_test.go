@@ -91,17 +91,17 @@ func (s *testScanSuite) TestScan(c *C) {
 		c.Assert(err, IsNil)
 
 		if rowNum > 123 {
-			err = s.store.SplitRegion(encodeKey(s.prefix, s08d("key", 123)))
+			_, err = s.store.SplitRegions(context.Background(), [][]byte{encodeKey(s.prefix, s08d("key", 123))}, false)
 			c.Assert(err, IsNil)
 		}
 
 		if rowNum > 456 {
-			err = s.store.SplitRegion(encodeKey(s.prefix, s08d("key", 456)))
+			_, err = s.store.SplitRegions(context.Background(), [][]byte{encodeKey(s.prefix, s08d("key", 456))}, false)
 			c.Assert(err, IsNil)
 		}
 
 		txn2 := s.beginTxn(c)
-		val, err := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
+		val, err := txn2.Get(context.TODO(), encodeKey(s.prefix, s08d("key", 0)))
 		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, valueBytes(0))
 		// Test scan without upperBound

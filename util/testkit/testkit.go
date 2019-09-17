@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build !codes
+
 package testkit
 
 import (
@@ -24,9 +26,11 @@ import (
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -147,7 +151,11 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtID, args...)
+	params := make([]types.Datum, len(args))
+	for i := 0; i < len(params); i++ {
+		params[i] = types.NewDatum(args[i])
+	}
+	rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -192,6 +200,20 @@ func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
 	return tk.MustQuery(sql, args...)
 }
 
+// MustTableDual checks whether the plan for the sql is TableDual.
+func (tk *TestKit) MustTableDual(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	hasTableDual := false
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], "TableDual") {
+			hasTableDual = true
+			break
+		}
+	}
+	tk.c.Assert(hasTableDual, check.IsTrue)
+	return tk.MustQuery(sql, args...)
+}
+
 // MustPointGet checks whether the plan for the sql is Point_Get.
 func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
@@ -230,45 +252,26 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 	return err
 }
 
+// MustGetErrCode executes a sql statement and assert it's error code.
+func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
+	_, err := tk.Exec(sql)
+	tk.c.Assert(err, check.NotNil)
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T'", originErr))
+	sqlErr := tErr.ToSQLError()
+	tk.c.Assert(int(sqlErr.Code), check.Equals, errCode, check.Commentf("Assertion failed, origin err:\n  %v", sqlErr))
+}
+
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
 // It is used to check results of execute statement in binary mode.
 func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
 	return tk.ResultSetToResultWithCtx(context.Background(), rs, comment)
 }
 
-// ResultSetToStringSlice changes the RecordSet to [][]string.
-func ResultSetToStringSlice(ctx context.Context, s session.Session, rs sqlexec.RecordSet) ([][]string, error) {
-	rows, err := session.GetRows4Test(ctx, s, rs)
-	if err != nil {
-		return nil, err
-	}
-	err = rs.Close()
-	if err != nil {
-		return nil, err
-	}
-	sRows := make([][]string, len(rows))
-	for i := range rows {
-		row := rows[i]
-		iRow := make([]string, row.Len())
-		for j := 0; j < row.Len(); j++ {
-			if row.IsNull(j) {
-				iRow[j] = "<nil>"
-			} else {
-				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
-				iRow[j], err = d.ToString()
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-		sRows[i] = iRow
-	}
-	return sRows, nil
-}
-
 // ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
 func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
-	sRows, err := ResultSetToStringSlice(ctx, tk.Se, rs)
+	sRows, err := session.ResultSetToStringSlice(ctx, tk.Se, rs)
 	tk.c.Check(err, check.IsNil, comment)
 	return &Result{rows: sRows, c: tk.c, comment: comment}
 }

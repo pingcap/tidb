@@ -24,8 +24,8 @@ import (
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -65,11 +65,10 @@ func NewCMSketch(d, w int32) *CMSketch {
 // topNHelper wraps some variables used when building cmsketch with top n.
 type topNHelper struct {
 	sampleSize    uint64
-	counter       map[hack.MutableString]uint64
-	sorted        []uint64
+	sorted        []dataCnt
 	onlyOnceItems uint64
 	sumTopN       uint64
-	lastVal       uint64
+	actualNumTop  uint32
 }
 
 func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
@@ -77,20 +76,16 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 	for i := range sample {
 		counter[hack.String(sample[i])]++
 	}
-	sorted, onlyOnceItems := make([]uint64, 0, len(counter)), uint64(0)
-	for _, cnt := range counter {
-		sorted = append(sorted, cnt)
+	sorted, onlyOnceItems := make([]dataCnt, 0, len(counter)), uint64(0)
+	for key, cnt := range counter {
+		sorted = append(sorted, dataCnt{hack.Slice(string(key)), cnt})
 		if cnt == 1 {
 			onlyOnceItems++
 		}
 	}
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i] > sorted[j]
-	})
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
 
 	var (
-		// last is the last element in top N index should occurres atleast `last` times.
-		last      uint64
 		sumTopN   uint64
 		sampleNDV = uint32(len(sorted))
 	)
@@ -99,15 +94,18 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 	// frequency of the n-th element are added to the TopN statistics. We chose
 	// 2/3 as an empirical value because the average cardinality estimation
 	// error is relatively small compared with 1/2.
-	for i := uint32(0); i < sampleNDV && i < numTop*2; i++ {
-		if i >= numTop && sorted[i]*3 < sorted[numTop-1]*2 && last != sorted[i] {
+	var actualNumTop uint32
+	for ; actualNumTop < sampleNDV && actualNumTop < numTop*2; actualNumTop++ {
+		if actualNumTop >= numTop && sorted[actualNumTop].cnt*3 < sorted[numTop-1].cnt*2 {
 			break
 		}
-		last = sorted[i]
-		sumTopN += sorted[i]
+		if sorted[actualNumTop].cnt == 1 {
+			break
+		}
+		sumTopN += sorted[actualNumTop].cnt
 	}
 
-	return &topNHelper{uint64(len(sample)), counter, sorted, onlyOnceItems, sumTopN, last}
+	return &topNHelper{uint64(len(sample)), sorted, onlyOnceItems, sumTopN, actualNumTop}
 }
 
 // NewCMSketchWithTopN returns a new CM sketch with TopN elements, the estimate NDV and the scale ratio.
@@ -127,22 +125,23 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64, default
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	if enableTopN {
 		c.topN = make(map[uint64][]*TopNMeta)
+		for i := uint32(0); i < helper.actualNumTop; i++ {
+			data, cnt := helper.sorted[i].data, helper.sorted[i].cnt
+			h1, h2 := murmur3.Sum128(data)
+			c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, cnt * scaleRatio})
+		}
+		helper.sorted = helper.sorted[helper.actualNumTop:]
 	}
 	c.defaultValue = defaultVal
-	for counterKey, cnt := range helper.counter {
-		data := hack.Slice(string(counterKey))
+	for i := range helper.sorted {
+		data, cnt := helper.sorted[i].data, helper.sorted[i].cnt
 		// If the value only occurred once in the sample, we assumes that there is no difference with
 		// value that does not occurred in the sample.
 		rowCount := defaultVal
 		if cnt > 1 {
 			rowCount = cnt * scaleRatio
 		}
-		if enableTopN && cnt >= helper.lastVal {
-			h1, h2 := murmur3.Sum128(data)
-			c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, rowCount})
-		} else {
-			c.insertBytesByCount(data, rowCount)
-		}
+		c.insertBytesByCount(data, rowCount)
 	}
 	return
 }
@@ -244,8 +243,16 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
 	}
 }
 
+func (c *CMSketch) subValue(h1, h2 uint64, count uint64) {
+	c.count -= count
+	for i := range c.table {
+		j := (h1 + h2*uint64(i)) % uint64(c.width)
+		c.table[i][j] = c.table[i][j] - uint32(count)
+	}
+}
+
 func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (uint64, error) {
-	bytes, err := codec.EncodeValue(sc, nil, val)
+	bytes, err := tablecodec.EncodeValue(sc, nil, val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -287,7 +294,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	return uint64(res)
 }
 
-func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*TopNMeta, numTop uint32) {
+func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*TopNMeta, numTop uint32, usingMax bool) {
 	counter := make(map[hack.MutableString]uint64)
 	for _, metas := range lTopN {
 		for _, meta := range metas {
@@ -296,7 +303,11 @@ func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*T
 	}
 	for _, metas := range rTopN {
 		for _, meta := range metas {
-			counter[hack.String(meta.Data)] += meta.Count
+			if usingMax {
+				counter[hack.String(meta.Data)] = mathutil.MaxUint64(counter[hack.String(meta.Data)], meta.Count)
+			} else {
+				counter[hack.String(meta.Data)] += meta.Count
+			}
 		}
 	}
 	sorted := make([]uint64, len(counter))
@@ -326,7 +337,7 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch, numTopN uint32) error {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
 	if c.topN != nil || rc.topN != nil {
-		c.mergeTopN(c.topN, rc.topN, numTopN)
+		c.mergeTopN(c.topN, rc.topN, numTopN, false)
 	}
 	c.count += rc.count
 	for i := range c.table {
@@ -345,12 +356,12 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch, numTopN uint32) error {
 //   (3): For values that appears both in `c` and `rc`, if they do not appear partially in `c` and `rc`, for example,
 //        if `v` appears 5 times in the table, it can appears 5 times in `c` and 3 times in `rc`, then `max` also gives the correct answer.
 // So in fact, if we can know the number of appearances of each value in the first place, it is better to use `max` to construct the CM sketch rather than `sum`.
-func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch) error {
+func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, numTopN uint32) error {
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
 	if c.topN != nil || rc.topN != nil {
-		return errors.New("CMSketch with Top-N does not support merge")
+		c.mergeTopN(c.topN, rc.topN, numTopN, true)
 	}
 	for i := range c.table {
 		c.count = 0
@@ -393,10 +404,10 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 			c.count = c.count + uint64(counter)
 		}
 	}
+	c.defaultValue = protoSketch.DefaultValue
 	if len(protoSketch.TopN) == 0 {
 		return c
 	}
-	c.defaultValue = protoSketch.DefaultValue
 	c.topN = make(map[uint64][]*TopNMeta)
 	for _, e := range protoSketch.TopN {
 		h1, h2 := murmur3.Sum128(e.Data)
@@ -439,7 +450,7 @@ func decodeCMSketch(data []byte, topN []*TopNMeta) (*CMSketch, error) {
 // LoadCMSketchWithTopN loads the CM sketch with topN from storage.
 func LoadCMSketchWithTopN(exec sqlexec.RestrictedSQLExecutor, tableID, isIndex, histID int64, cms []byte) (*CMSketch, error) {
 	sql := fmt.Sprintf("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, histID)
-	topNRows, _, err := exec.ExecRestrictedSQL(nil, sql)
+	topNRows, _, err := exec.ExecRestrictedSQL(sql)
 	if err != nil {
 		return nil, err
 	}
@@ -450,9 +461,15 @@ func LoadCMSketchWithTopN(exec sqlexec.RestrictedSQLExecutor, tableID, isIndex, 
 	return decodeCMSketch(cms, topN)
 }
 
-// TotalCount returns the count, it is only used for test.
+// TotalCount returns the total count in the sketch, it is only used for test.
 func (c *CMSketch) TotalCount() uint64 {
-	return c.count
+	res := c.count
+	for _, metas := range c.topN {
+		for _, meta := range metas {
+			res += meta.Count
+		}
+	}
+	return res
 }
 
 // Equal tests if two CM Sketch equal, it is only used for test.

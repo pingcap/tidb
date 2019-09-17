@@ -29,7 +29,8 @@ import (
 	5. Update the `NewSessionVars` function to set the field to its default value.
 	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
 	7. If it is a global variable, add it in `session.loadCommonGlobalVarsSQL`.
-	8. Use this variable to control the behavior in code.
+	8. Update ValidateSetSystemVar if the variable's value need to be validated.
+	9. Use this variable to control the behavior in code.
 */
 
 // TiDB system variable names that only in session scope.
@@ -141,6 +142,12 @@ const (
 
 	// TiDBLowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
 	TiDBLowResolutionTSO = "tidb_low_resolution_tso"
+
+	// TiDBReplicaRead is used for reading data from replicas, followers for example.
+	TiDBReplicaRead = "tidb_replica_read"
+
+	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
+	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -225,11 +232,11 @@ const (
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 
-	// tidb_back_off_weight is used to control the max back off time in TiDB.
+	// tidb_backoff_weight is used to control the max back off time in TiDB.
 	// The default maximum back off time is a small value.
 	// BackOffWeight could multiply it to let the user adjust the maximum time for retrying.
 	// Only positive integers can be accepted, which means that the maximum back off time can only grow.
-	TiDBBackOffWeight = "tidb_back_off_weight"
+	TiDBBackOffWeight = "tidb_backoff_weight"
 
 	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
@@ -243,6 +250,9 @@ const (
 	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
+
+	// tidb_scatter_region will scatter the regions for DDLs when it is ON.
+	TiDBScatterRegion = "tidb_scatter_region"
 
 	// TiDBWaitSplitRegionFinish defines the split region behaviour is sync or async.
 	TiDBWaitSplitRegionFinish = "tidb_wait_split_region_finish"
@@ -265,6 +275,9 @@ const (
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
 
+	// tidb_enable_vectorized_expression is used to control whether to enable the vectorized expression evaluation.
+	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
+
 	// TIDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
@@ -277,6 +290,15 @@ const (
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
+
+	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
+	TiDBEnableIndexMerge = "tidb_enable_index_merge"
+
+	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
+	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
+
+	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
+	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 )
 
 // Default TiDB system variable values.
@@ -324,21 +346,26 @@ const (
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBTxnMode                     = ""
-	DefTiDBDDLReorgWorkerCount         = 16
-	DefTiDBDDLReorgBatchSize           = 1024
+	DefTiDBDDLReorgWorkerCount         = 4
+	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
+	DefEnableVectorizedExpression      = true
 	DefTiDBOptJoinReorderThreshold     = 0
 	DefTiDBDDLSlowOprThreshold         = 300
 	DefTiDBUseFastAnalyze              = false
 	DefTiDBSkipIsolationLevelCheck     = false
 	DefTiDBExpensiveQueryTimeThreshold = 60 // 60s
+	DefTiDBScatterRegion               = false
 	DefTiDBWaitSplitRegionFinish       = true
 	DefWaitSplitRegionTimeout          = 300 // 300s
+	DefTiDBEnableNoopFuncs             = false
+	DefTiDBAllowRemoveAutoInc          = false
+	DefTiDBEnableStmtSummary           = false
 )
 
 // Process global variables.
@@ -358,4 +385,5 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
+	EnableStmtSummary              int32  = BoolToInt32(DefTiDBEnableStmtSummary)
 )

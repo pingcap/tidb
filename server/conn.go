@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -138,7 +139,6 @@ type clientConn struct {
 	server       *Server           // a reference of server instance.
 	capability   uint32            // client capability affects the way server handles client request.
 	connectionID uint32            // atomically allocated by a global variable, unique in process scope.
-	collation    uint8             // collation used by client, may be different from the collation used by database.
 	user         string            // user of the client.
 	dbname       string            // default database name.
 	salt         []byte            // random bytes used for authentication.
@@ -146,10 +146,11 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
-	status       int32             // dispatching/reading/shutdown/waitshutdown
 	peerHost     string            // peer host
 	peerPort     string            // peer port
+	status       int32             // dispatching/reading/shutdown/waitshutdown
 	lastCode     uint16            // last error code
+	collation    uint8             // collation used by client, may be different from the collation used by database.
 }
 
 func (cc *clientConn) String() string {
@@ -279,7 +280,7 @@ func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 	}
 	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		logutil.Logger(ctx).Warn("get sysval wait_timeout error, use default value", zap.Error(err))
+		logutil.Logger(ctx).Warn("get sysval wait_timeout failed, use default value", zap.Error(err))
 		// if get waitTimeout error, use default value
 		return variable.DefWaitTimeout
 	}
@@ -631,11 +632,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 					logutil.Logger(ctx).Info("read packet timeout, close this connection",
 						zap.Duration("idle", idleTime),
 						zap.Uint64("waitTimeout", waitTimeout),
+						zap.Error(err),
 					)
 				} else {
 					errStack := errors.ErrorStack(err)
 					if !strings.Contains(errStack, "use of closed network connection") {
-						logutil.Logger(ctx).Error("read packet failed, close this connection", zap.Error(err))
+						logutil.Logger(ctx).Warn("read packet failed, close this connection",
+							zap.Error(errors.SuspendStack(err)))
 					}
 				}
 			}
@@ -663,8 +666,9 @@ func (cc *clientConn) Run(ctx context.Context) {
 				}
 				return
 			}
-			logutil.Logger(ctx).Warn("dispatch error",
+			logutil.Logger(ctx).Warn("command dispatched failed",
 				zap.String("connInfo", cc.String()),
+				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("sql", queryStrForLog(string(data[1:]))),
 				zap.String("err", errStrForLog(err)),
 			)
@@ -945,6 +949,10 @@ func (cc *clientConn) flush() error {
 
 func (cc *clientConn) writeOK() error {
 	msg := cc.ctx.LastMessage()
+	return cc.writeOkWith(msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount())
+}
+
+func (cc *clientConn) writeOkWith(msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16) error {
 	enclen := 0
 	if len(msg) > 0 {
 		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
@@ -952,11 +960,11 @@ func (cc *clientConn) writeOK() error {
 
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
 	data = append(data, mysql.OKHeader)
-	data = dumpLengthEncodedInt(data, cc.ctx.AffectedRows())
-	data = dumpLengthEncodedInt(data, cc.ctx.LastInsertID())
+	data = dumpLengthEncodedInt(data, affectedRows)
+	data = dumpLengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dumpUint16(data, cc.ctx.Status())
-		data = dumpUint16(data, cc.ctx.WarningCount())
+		data = dumpUint16(data, status)
+		data = dumpUint16(data, warnCnt)
 	}
 	if enclen > 0 {
 		// although MySQL manual says the info message is string<EOF>(https://dev.mysql.com/doc/internals/en/packet-OK_Packet.html),
@@ -1036,30 +1044,86 @@ func (cc *clientConn) writeReq(filePath string) error {
 	return cc.flush()
 }
 
-var defaultLoadDataBatchCnt uint64 = 20000
-
-func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
+func insertDataWithCommit(ctx context.Context, prevData,
+	curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
 	var reachLimit bool
 	for {
-		prevData, reachLimit, err = loadDataInfo.InsertData(prevData, curData)
+		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
 		if err != nil {
 			return nil, err
 		}
 		if !reachLimit {
 			break
 		}
-		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
-			return nil, err
-		}
-		// Make sure that there are no retries when committing.
-		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
-			return nil, err
+		// push into commit task queue
+		err = loadDataInfo.EnqOneTask(ctx)
+		if err != nil {
+			return prevData, err
 		}
 		curData = prevData
 		prevData = nil
 	}
 	return prevData, nil
+}
+
+// processStream process input stream from network
+func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.LoadDataInfo) {
+	var err error
+	var shouldBreak bool
+	var prevData, curData []byte
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(ctx).Error("process routine panicked",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+		}
+		if err != nil || r != nil {
+			loadDataInfo.ForceQuit()
+		} else {
+			loadDataInfo.CloseTaskQueue()
+		}
+	}()
+	for {
+		curData, err = cc.readPacket()
+		if err != nil {
+			if terror.ErrorNotEqual(err, io.EOF) {
+				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
+				break
+			}
+		}
+		if len(curData) == 0 {
+			shouldBreak = true
+			if len(prevData) == 0 {
+				break
+			}
+		}
+		select {
+		case <-loadDataInfo.QuitCh:
+			err = errors.New("processStream forced to quit")
+		default:
+		}
+		if err != nil {
+			break
+		}
+		// prepare batch and enqueue task
+		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
+		if err != nil {
+			break
+		}
+		if shouldBreak {
+			break
+		}
+	}
+	if err != nil {
+		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+	} else {
+		err = loadDataInfo.EnqOneTask(ctx)
+		if err != nil {
+			logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+		}
+	}
 }
 
 // handleLoadData does the additional work after processing the 'load data' query.
@@ -1078,43 +1142,17 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return err
 	}
 
-	var shouldBreak bool
-	var prevData, curData []byte
-	// TODO: Make the loadDataRowCnt settable.
-	loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
+	loadDataInfo.InitQueues()
+	loadDataInfo.SetMaxRowsInBatch(uint64(loadDataInfo.Ctx.GetSessionVars().DMLBatchSize))
+	loadDataInfo.StartStopWatcher()
 	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return err
 	}
-	for {
-		curData, err = cc.readPacket()
-		if err != nil {
-			if terror.ErrorNotEqual(err, io.EOF) {
-				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
-				break
-			}
-		}
-		if len(curData) == 0 {
-			shouldBreak = true
-			if len(prevData) == 0 {
-				break
-			}
-		}
-		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
-		if err != nil {
-			break
-		}
-		if shouldBreak {
-			break
-		}
-	}
+	// processStream process input data, enqueue commit task
+	go processStream(ctx, cc, loadDataInfo)
+	err = loadDataInfo.CommitWork(ctx)
 	loadDataInfo.SetMessage()
-
-	if err != nil {
-		loadDataInfo.Ctx.StmtRollback()
-	} else {
-		err = loadDataInfo.Ctx.StmtCommit()
-	}
 
 	var txn kv.Transaction
 	var err1 error
@@ -1176,9 +1214,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 	status := atomic.LoadInt32(&cc.status)
-	if status == connStatusShutdown || status == connStatusWaitShutdown {
+	if rs != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
 		killConn(cc)
-		return errors.New("killed by another connection")
+		return executor.ErrQueryInterrupted
 	}
 	if rs != nil {
 		if len(rs) == 1 {
@@ -1396,12 +1434,27 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 }
 
 func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {
-	for _, rs := range rss {
-		if err := cc.writeResultset(ctx, rs, binary, mysql.ServerMoreResultsExists, 0); err != nil {
+	for i, rs := range rss {
+		lastRs := i == len(rss)-1
+		if r, ok := rs.(*tidbResultSet).recordSet.(sqlexec.MultiQueryNoDelayResult); ok {
+			status := r.Status()
+			if !lastRs {
+				status |= mysql.ServerMoreResultsExists
+			}
+			if err := cc.writeOkWith(r.LastMessage(), r.AffectedRows(), r.LastInsertID(), status, r.WarnCount()); err != nil {
+				return err
+			}
+			continue
+		}
+		status := uint16(0)
+		if !lastRs {
+			status |= mysql.ServerMoreResultsExists
+		}
+		if err := cc.writeResultset(ctx, rs, binary, status, 0); err != nil {
 			return err
 		}
 	}
-	return cc.writeOK()
+	return nil
 }
 
 func (cc *clientConn) setConn(conn net.Conn) {
@@ -1442,7 +1495,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	cc.dbname = string(hack.String(dbName))
 	err := cc.ctx.Close()
 	if err != nil {
-		logutil.Logger(ctx).Debug("close old context error", zap.Error(err))
+		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 	}
 	err = cc.openSessionAndDoAuth(pass)
 	if err != nil {
@@ -1457,7 +1510,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			connInfo := cc.ctx.GetSessionVars().ConnectionInfo
-			err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: connInfo.Host}, plugin.ChangeUser, connInfo)
+			err = authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
 			if err != nil {
 				return err
 			}

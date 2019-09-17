@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -45,7 +44,8 @@ type testPessimisticSuite struct {
 
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	config.GetGlobalConfig().PessimisticTxn.Enable = true
+	// Set it to 300ms for testing lock resolve.
+	tikv.PessimisticLockTTL = 300
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.MustNewMVCCStore()
@@ -53,19 +53,18 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithMVCCStore(s.mvccStore),
 	)
-	tikv.PessimisticLockTTL = uint64(config.MinPessimisticTTL / time.Millisecond)
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
+	s.dom.GetGlobalVarsCache().Disable()
 	c.Assert(err, IsNil)
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	config.GetGlobalConfig().PessimisticTxn.Enable = false
 	testleak.AfterTest(c)()
 }
 
@@ -120,30 +119,19 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 	tests := []struct {
 		beginStmt     string
 		txnMode       string
-		configDefault bool
 		isPessimistic bool
 	}{
-		{"pessimistic", "pessimistic", false, true},
-		{"pessimistic", "pessimistic", true, true},
-		{"pessimistic", "optimistic", false, true},
-		{"pessimistic", "optimistic", true, true},
-		{"pessimistic", "", false, true},
-		{"pessimistic", "", true, true},
-		{"optimistic", "pessimistic", false, false},
-		{"optimistic", "pessimistic", true, false},
-		{"optimistic", "optimistic", false, false},
-		{"optimistic", "optimistic", true, false},
-		{"optimistic", "", false, false},
-		{"optimistic", "", true, false},
-		{"", "pessimistic", false, true},
-		{"", "pessimistic", true, true},
-		{"", "optimistic", false, false},
-		{"", "optimistic", true, false},
-		{"", "", false, false},
-		{"", "", true, true},
+		{"pessimistic", "pessimistic", true},
+		{"pessimistic", "optimistic", true},
+		{"pessimistic", "", true},
+		{"optimistic", "pessimistic", false},
+		{"optimistic", "optimistic", false},
+		{"optimistic", "", false},
+		{"", "pessimistic", true},
+		{"", "optimistic", false},
+		{"", "", false},
 	}
 	for _, tt := range tests {
-		config.GetGlobalConfig().PessimisticTxn.Default = tt.configDefault
 		tk.MustExec(fmt.Sprintf("set @@tidb_txn_mode = '%s'", tt.txnMode))
 		tk.MustExec("begin " + tt.beginStmt)
 		c.Check(tk.Se.GetSessionVars().TxnCtx.IsPessimistic, Equals, tt.isPessimistic)
@@ -154,24 +142,30 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 	tk.MustExec("create table if not exists txn_mode (a int)")
 	tests2 := []struct {
 		txnMode       string
-		configDefault bool
 		isPessimistic bool
 	}{
-		{"pessimistic", false, true},
-		{"pessimistic", true, true},
-		{"optimistic", false, false},
-		{"optimistic", true, false},
-		{"", false, false},
-		{"", true, true},
+		{"pessimistic", true},
+		{"optimistic", false},
+		{"", false},
 	}
 	for _, tt := range tests2 {
-		config.GetGlobalConfig().PessimisticTxn.Default = tt.configDefault
 		tk.MustExec(fmt.Sprintf("set @@tidb_txn_mode = '%s'", tt.txnMode))
 		tk.MustExec("rollback")
 		tk.MustExec("insert txn_mode values (1)")
 		c.Check(tk.Se.GetSessionVars().TxnCtx.IsPessimistic, Equals, tt.isPessimistic)
 		tk.MustExec("rollback")
 	}
+	tk.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustQuery("select @@tidb_txn_mode").Check(testkit.Rows("pessimistic"))
+	tk1.MustExec("set @@autocommit = 0")
+	tk1.MustExec("insert txn_mode values (2)")
+	c.Check(tk1.Se.GetSessionVars().TxnCtx.IsPessimistic, IsTrue)
+	tk1.MustExec("set @@tidb_txn_mode = ''")
+	tk1.MustExec("rollback")
+	tk1.MustExec("insert txn_mode values (2)")
+	c.Check(tk1.Se.GetSessionVars().TxnCtx.IsPessimistic, IsFalse)
+	tk1.MustExec("rollback")
 }
 
 func (s *testPessimisticSuite) TestDeadlock(c *C) {
@@ -321,4 +315,80 @@ func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
 	tk.MustExec("insert point values (4, 4, 4)")
 	tk.MustExec("commit")
 	syncCh <- struct{}{}
+}
+
+func (s *testPessimisticSuite) TestBankTransfer(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists accounts")
+	tk.MustExec("create table accounts (id int primary key, c int)")
+	tk.MustExec("insert accounts values (1, 100), (2, 100), (3, 100)")
+	syncCh := make(chan struct{})
+
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from accounts where id = 1 for update").Check(testkit.Rows("1 100"))
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("select * from accounts where id = 2 for update")
+		<-syncCh
+		tk2.MustExec("select * from accounts where id = 3 for update")
+		tk2.MustExec("update accounts set c = 50 where id = 2")
+		tk2.MustExec("update accounts set c = 150 where id = 3")
+		tk2.MustExec("commit")
+		<-syncCh
+	}()
+	syncCh <- struct{}{}
+	tk.MustQuery("select * from accounts where id = 2 for update").Check(testkit.Rows("2 50"))
+	tk.MustExec("update accounts set c = 50 where id = 1")
+	tk.MustExec("update accounts set c = 100 where id = 2")
+	tk.MustExec("commit")
+	syncCh <- struct{}{}
+	tk.MustQuery("select sum(c) from accounts").Check(testkit.Rows("300"))
+}
+
+func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists conflict")
+	tk.MustExec("create table conflict (id int primary key, c int)")
+	tk.MustExec("insert conflict values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from conflict where id = 1 for update")
+	syncCh := make(chan struct{})
+	go func() {
+		tk2.MustExec("update conflict set c = 3 where id = 1")
+		<-syncCh
+	}()
+	time.Sleep(time.Millisecond * 10)
+	tk.MustExec("update conflict set c = 2 where id = 1")
+	tk.MustExec("commit")
+	syncCh <- struct{}{}
+	tk.MustQuery("select c from conflict where id = 1").Check(testkit.Rows("3"))
+
+	// Check outdated pessimistic lock is resolved.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update conflict set c = 4 where id = 1")
+	time.Sleep(300 * time.Millisecond)
+	tk2.MustExec("begin optimistic")
+	tk2.MustExec("update conflict set c = 5 where id = 1")
+	tk2.MustExec("commit")
+	_, err := tk.Exec("commit")
+	c.Check(err, NotNil)
+
+	// Update snapshotTS after a conflict, invalidate snapshot cache.
+	tk.MustExec("truncate table conflict")
+	tk.MustExec("insert into conflict values (1, 2)")
+	tk.MustExec("begin pessimistic")
+	// This SQL use BatchGet and cache data in the txn snapshot.
+	// It can be changed to other SQLs that use BatchGet.
+	tk.MustExec("insert ignore into conflict values (1, 2)")
+
+	tk2.MustExec("update conflict set c = c - 1")
+
+	// Make the txn update its forUpdateTS.
+	tk.MustQuery("select * from conflict where id = 1 for update").Check(testkit.Rows("1 1"))
+	// Cover a bug that the txn snapshot doesn't invalidate cache after ts change.
+	tk.MustExec("insert into conflict values (1, 999) on duplicate key update c = c + 2")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from conflict").Check(testkit.Rows("1 3"))
 }

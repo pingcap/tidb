@@ -100,6 +100,7 @@ func (l *List) AppendRow(row Row) RowPtr {
 func (l *List) Add(chk *Chunk) {
 	// FixMe: we should avoid add a Chunk that chk.NumRows() > list.maxChunkSize.
 	if chk.NumRows() == 0 {
+		// TODO: return error here.
 		panic("chunk appended to List should have at least 1 row")
 	}
 	if chkIdx := len(l.chunks) - 1; l.consumedIdx != chkIdx {
@@ -145,13 +146,13 @@ func (l *List) Reset() {
 	l.consumedIdx = -1
 }
 
-// PreAlloc4Row pre-allocates the storage memory for a Row.
-// NOTE:
+// preAlloc4Row pre-allocates the storage memory for a Row.
+// NOTE: only used in test
 // 1. The List must be empty or holds no useful data.
 // 2. The schema of the Row must be the same with the List.
 // 3. This API is paired with the `Insert()` function, which inserts all the
 //    rows data into the List after the pre-allocation.
-func (l *List) PreAlloc4Row(row Row) (ptr RowPtr) {
+func (l *List) preAlloc4Row(row Row) (ptr RowPtr) {
 	chkIdx := len(l.chunks) - 1
 	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() {
 		newChk := l.allocChunk()
@@ -163,7 +164,7 @@ func (l *List) PreAlloc4Row(row Row) (ptr RowPtr) {
 		chkIdx++
 	}
 	chk := l.chunks[chkIdx]
-	rowIdx := chk.PreAlloc(row)
+	rowIdx := chk.preAlloc(row)
 	l.length++
 	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
 }
@@ -172,7 +173,7 @@ func (l *List) PreAlloc4Row(row Row) (ptr RowPtr) {
 // Note: Insert will cover the origin data, it should be called after
 // PreAlloc.
 func (l *List) Insert(ptr RowPtr, row Row) {
-	l.chunks[ptr.ChkIdx].Insert(int(ptr.RowIdx), row)
+	l.chunks[ptr.ChkIdx].insert(int(ptr.RowIdx), row)
 }
 
 // ListWalkFunc is used to walk the list.

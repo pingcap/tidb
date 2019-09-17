@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -42,7 +43,8 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(s.sctx, stringutil.StringerStr("testSuite.createSelectNormal")).
+		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"),
+			s.sctx.GetSessionVars().MemQuotaDistSQL)).
 		Build()
 	c.Assert(err, IsNil)
 
@@ -71,7 +73,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 			idx := i
 			planIDFuncs = append(planIDFuncs, stringutil.StringerStr(planIDs[idx]))
 		}
-		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDFuncs)
+		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDFuncs, stringutil.StringerStr("root_0"))
 	}
 
 	c.Assert(err, IsNil)
@@ -401,6 +403,9 @@ func (r *mockResultSubset) GetExecDetails() *execdetails.ExecDetails {
 
 // MemSize implements kv.ResultSubset interface.
 func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }
+
+// RespTime implements kv.ResultSubset interface.
+func (r *mockResultSubset) RespTime() time.Duration { return 0 }
 
 func populateBuffer() []byte {
 	numCols := 4

@@ -1,5 +1,5 @@
 <!--
-Thank you for contributing to TiDB! Please read TiDB's [CONTRIBUTING](https://github.com/pingcap/tidb/blob/master/CONTRIBUTING.md) document **BEFORE** filing this PR.
+Thank you for contributing to TiDB! Please read TiDB's [CONTRIBUTING](https://github.com/pingcap/community/blob/master/CONTRIBUTING.md) document **BEFORE** filing this PR.
 -->
 
 ### What problem does this PR solve? <!--add issue link with summary if exists-->
@@ -35,4 +35,7 @@ Related changes
  - Need to cherry-pick to the release branch
  - Need to update the documentation
  - Need to update the `tidb-ansible` repository
- - Need to be included in the release note
+
+Release note
+
+ - Write release note for bug-fix or new feature.

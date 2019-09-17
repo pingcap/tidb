@@ -40,11 +40,11 @@ const (
 // DelRangeTask is for run delete-range command in gc_worker.
 type DelRangeTask struct {
 	JobID, ElementID int64
-	StartKey, EndKey []byte
+	StartKey, EndKey kv.Key
 }
 
 // Range returns the range [start, end) to delete.
-func (t DelRangeTask) Range() ([]byte, []byte) {
+func (t DelRangeTask) Range() (kv.Key, kv.Key) {
 	return t.StartKey, t.EndKey
 }
 
@@ -158,7 +158,7 @@ func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 			nameList += fmt.Sprintf("'%s'", name)
 		}
 		sql := fmt.Sprintf(loadGlobalVarsSQL, nameList)
-		rows, _, err := sctx.ExecRestrictedSQL(ctx, sql)
+		rows, _, err := sctx.ExecRestrictedSQL(sql)
 		if err != nil {
 			return errors.Trace(err)
 		}

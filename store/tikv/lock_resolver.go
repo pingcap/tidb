@@ -103,14 +103,17 @@ func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolve
 	return s.lockResolver, nil
 }
 
-// TxnStatus represents a txn's final status. It should be Commit or Rollback.
-type TxnStatus uint64
+// TxnStatus represents a txn's final status. It should be Lock or Commit or Rollback.
+type TxnStatus struct {
+	ttl      uint64
+	commitTS uint64
+}
 
 // IsCommitted returns true if the txn's final status is Commit.
-func (s TxnStatus) IsCommitted() bool { return s > 0 }
+func (s TxnStatus) IsCommitted() bool { return s.ttl == 0 && s.commitTS > 0 }
 
 // CommitTS returns the txn's commitTS. It is valid iff `IsCommitted` is true.
-func (s TxnStatus) CommitTS() uint64 { return uint64(s) }
+func (s TxnStatus) CommitTS() uint64 { return uint64(s.commitTS) }
 
 // By default, locks after 3000ms is considered unusual (the client created the
 // lock might be dead). Other client may cleanup this kind of lock.
@@ -206,7 +209,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		txnInfos[l.TxnID] = uint64(status)
+		txnInfos[l.TxnID] = uint64(status.commitTS)
 	}
 	logutil.BgLogger().Info("BatchResolveLocks: lookup txn status",
 		zap.Duration("cost time", time.Since(startTime)),
@@ -220,12 +223,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		})
 	}
 
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdResolveLock,
-		ResolveLock: &kvrpcpb.ResolveLockRequest{
-			TxnInfos: listTxnInfos,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, &kvrpcpb.ResolveLockRequest{TxnInfos: listTxnInfos})
 	startTime = time.Now()
 	resp, err := lr.store.SendReq(bo, req, loc, readTimeoutShort)
 	if err != nil {
@@ -245,10 +243,10 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, nil
 	}
 
-	cmdResp := resp.ResolveLock
-	if cmdResp == nil {
+	if resp.Resp == nil {
 		return false, errors.Trace(ErrBodyMissing)
 	}
+	cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
 	if keyErr := cmdResp.GetError(); keyErr != nil {
 		return false, errors.Errorf("unexpected resolve err: %s", keyErr)
 	}
@@ -341,13 +339,10 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	tikvLockResolverCountWithQueryTxnStatus.Inc()
 
 	var status TxnStatus
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdCleanup,
-		Cleanup: &kvrpcpb.CleanupRequest{
-			Key:          primary,
-			StartVersion: txnID,
-		},
-	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdCleanup, &kvrpcpb.CleanupRequest{
+		Key:          primary,
+		StartVersion: txnID,
+	})
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
 		if err != nil {
@@ -368,17 +363,17 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			}
 			continue
 		}
-		cmdResp := resp.Cleanup
-		if cmdResp == nil {
+		if resp.Resp == nil {
 			return status, errors.Trace(ErrBodyMissing)
 		}
+		cmdResp := resp.Resp.(*kvrpcpb.CleanupResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
 			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
 			return status, err
 		}
 		if cmdResp.CommitVersion != 0 {
-			status = TxnStatus(cmdResp.GetCommitVersion())
+			status = TxnStatus{0, cmdResp.GetCommitVersion()}
 			tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()
 		} else {
 			tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
@@ -399,21 +394,19 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		if _, ok := cleanRegions[loc.Region]; ok {
 			return nil
 		}
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdResolveLock,
-			ResolveLock: &kvrpcpb.ResolveLockRequest{
-				StartVersion: l.TxnID,
-			},
+		lreq := &kvrpcpb.ResolveLockRequest{
+			StartVersion: l.TxnID,
 		}
 		if status.IsCommitted() {
-			req.ResolveLock.CommitVersion = status.CommitTS()
+			lreq.CommitVersion = status.CommitTS()
 		}
 		if l.TxnSize < bigTxnThreshold {
 			// Only resolve specified keys when it is a small transaction,
 			// prevent from scanning the whole region in this case.
 			tikvLockResolverCountWithResolveLockLite.Inc()
-			req.ResolveLock.Keys = [][]byte{l.Key}
+			lreq.Keys = [][]byte{l.Key}
 		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
@@ -429,10 +422,10 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			}
 			continue
 		}
-		cmdResp := resp.ResolveLock
-		if cmdResp == nil {
+		if resp.Resp == nil {
 			return errors.Trace(ErrBodyMissing)
 		}
+		cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)
 			logutil.BgLogger().Error("resolveLock error", zap.Error(err))
