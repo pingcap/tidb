@@ -328,32 +328,30 @@ func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
 		logutil.BgLogger().Warn("get all minStartTS failed", zap.Error(err))
 		return safePoint
 	}
-	var globalMinStartTS uint64 = math.MaxUint64
+
+	globalMinStartTime := time.Unix(0, oracle.ExtractPhysical(math.MaxUint64)*1e6)
+	maxTxnTimeUse := time.Duration(tikv.MaxTxnTimeUse)*time.Millisecond + 10*time.Second
+
 	for _, v := range kvs {
 		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 64)
 		if err != nil {
 			logutil.BgLogger().Warn("parse minStartTS failed", zap.Error(err))
 			continue
 		}
-		if minStartTS != 0 && minStartTS < globalMinStartTS {
-			globalMinStartTS = minStartTS
+		minStartTime := time.Unix(0, oracle.ExtractPhysical(minStartTS)*1e6)
+		if safePoint.Sub(minStartTime) < maxTxnTimeUse && minStartTime.Before(globalMinStartTime) {
+			globalMinStartTime = minStartTime
 		}
 	}
-	physical := oracle.ExtractPhysical(globalMinStartTS)
-	sec, nsec := physical/1e3, (physical%1e3)*1e6
-	globalMinStartTime := time.Unix(sec, nsec)
 
-	diff := safePoint.Sub(globalMinStartTime)
-	maxTxnTimeUse := time.Duration(tikv.MaxTxnTimeUse)*time.Millisecond + 10*time.Second
 	logutil.BgLogger().Debug("calSafePointByMinStartTS",
 		zap.Time("safePoint", safePoint),
-		zap.Time("globalMinStartTime", globalMinStartTime),
-		zap.Duration("diff", diff))
+		zap.Time("globalMinStartTime", globalMinStartTime))
+
 	// If the transaction is not too old, we could use it as the new safe point.
-	if diff < maxTxnTimeUse && globalMinStartTime.Before(safePoint) {
+	if globalMinStartTime.Before(safePoint) {
 		return globalMinStartTime
 	}
-
 	return safePoint
 }
 
