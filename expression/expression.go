@@ -16,6 +16,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -206,6 +207,126 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 		return false, true, nil
 	}
 	return true, false, nil
+}
+
+var (
+	selPool = sync.Pool{
+		New: func() interface{} {
+			return make([]int, 1024)
+		},
+	}
+)
+
+// VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
+func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
+	n := input.NumRows()
+	selected = selected[:0]
+	nulls = nulls[:0]
+	for i := 0; i < n; i++ {
+		selected = append(selected, false)
+		nulls = append(nulls, false)
+	}
+
+	sel := selPool.Get().([]int)
+	defer selPool.Put(sel)
+	sel = sel[:0]
+	for i := 0; i < n; i++ {
+		sel = append(sel, i)
+	}
+	defer input.SetSel(input.Sel())
+	input.SetSel(sel)
+
+	for _, expr := range exprList {
+		eType := expr.GetType().EvalType()
+		buf, err := globalColumnAllocator.get(eType, n)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if err := vecEval(ctx, expr, input, buf); err != nil {
+			return nil, nil, err
+		}
+
+		isEQCondFromIn := IsEQCondFromIn(expr)
+		hasUnsignedFlag := mysql.HasUnsignedFlag(expr.GetType().Flag)
+		d, j := types.Datum{}, 0
+		for i := range sel {
+			if buf.IsNull(i) {
+				if !isEQCondFromIn {
+					nulls[sel[i]] = false
+					continue
+				}
+				// In this case, we set this row to null and let it pass this filter.
+				// The null flag may be set to false later by other expressions in some cases.
+				nulls[sel[i]] = true
+				sel[j] = sel[i]
+				j++
+				continue
+			}
+
+			switch eType {
+			case types.ETInt:
+				if hasUnsignedFlag {
+					d.SetUint64(buf.GetUint64(i))
+				} else {
+					d.SetInt64(buf.GetInt64(i))
+				}
+			case types.ETReal:
+				d.SetFloat64(buf.GetFloat64(i))
+			case types.ETDuration:
+				d.SetMysqlDuration(buf.GetDuration(i, 0))
+			case types.ETDatetime, types.ETTimestamp:
+				d.SetMysqlTime(buf.GetTime(i))
+			case types.ETString:
+				d.SetString(buf.GetString(i))
+			case types.ETJson:
+				d.SetMysqlJSON(buf.GetJSON(i))
+			case types.ETDecimal:
+				d.SetMysqlDecimal(buf.GetDecimal(i))
+			}
+
+			b, err := d.ToBool(ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				return nil, nil, err
+			}
+			if b == 0 {
+				continue
+			}
+			sel[j] = sel[i] // this row passes this filter
+			j++
+		}
+		sel = sel[:j]
+		input.SetSel(sel)
+		globalColumnAllocator.put(buf)
+	}
+
+	for _, i := range sel {
+		if !nulls[i] {
+			selected[i] = true
+		}
+	}
+
+	return selected, nulls, nil
+}
+
+func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+	switch expr.GetType().EvalType() {
+	case types.ETInt:
+		err = expr.VecEvalInt(ctx, input, result)
+	case types.ETReal:
+		err = expr.VecEvalReal(ctx, input, result)
+	case types.ETDuration:
+		err = expr.VecEvalDuration(ctx, input, result)
+	case types.ETDatetime, types.ETTimestamp:
+		err = expr.VecEvalTime(ctx, input, result)
+	case types.ETString:
+		err = expr.VecEvalString(ctx, input, result)
+	case types.ETJson:
+		err = expr.VecEvalJSON(ctx, input, result)
+	case types.ETDecimal:
+		err = expr.VecEvalDecimal(ctx, input, result)
+	}
+	return
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.

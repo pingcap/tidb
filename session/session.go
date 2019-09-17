@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -1169,10 +1170,72 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
+// CachedPlanExec short path currently ONLY for cached "point select plan" execution
+func (s *session) CachedPlanExec(ctx context.Context,
+	stmtID uint32, prepared *ast.Prepared, args []types.Datum) (sqlexec.RecordSet, error) {
+	// compile ExecStmt
+	is := executor.GetInfoSchema(s)
+	execAst := &ast.ExecuteStmt{ExecID: stmtID}
+	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
+		return nil, err
+	}
+	execAst.BinaryArgs = args
+	execPlan, err := planner.OptimizeExecStmt(ctx, s, execAst, is)
+	if err != nil {
+		return nil, err
+	}
+	stmt := &executor.ExecStmt{
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    prepared.Stmt,
+		Ctx:         s,
+		OutputNames: execPlan.OutputNames(),
+	}
+	s.GetSessionVars().DurationCompile = time.Since(s.sessionVars.StartTime)
+	stmt.Text = prepared.Stmt.Text()
+	s.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
+	logQuery(stmt.OriginText(), s.sessionVars)
+
+	// run ExecStmt
+	rs, err := stmt.GetPointRecord(ctx, is)
+	s.txn.changeToInvalid()
+	return rs, err
+}
+
+// IsCachedExecOk check if we can execute using plan cached in prepared structure
+// Be careful for the short path, current precondition is ths cached plan satisfying
+// IsPointGetWithPKOrUniqueKeyByAutoCommit
+func (s *session) IsCachedExecOk(ctx context.Context, prepared *ast.Prepared) (bool, error) {
+	if prepared.CachedPlan == nil {
+		return false, nil
+	}
+	// check auto commit
+	if !s.GetSessionVars().IsAutocommit() {
+		return false, nil
+	}
+	// maybe we'd better check cached plan type here, current
+	// only point select will be cached, see "getPhysicalPlan" func
+	return true, nil
+}
+
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
-	s.PrepareTxnCtx(ctx)
+	var err error
 	s.sessionVars.StartTime = time.Now()
+	prepared, ok := s.sessionVars.PreparedStmts[stmtID]
+	if !ok {
+		err = plannercore.ErrStmtNotFound
+		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
+		return nil, err
+	}
+	ok, err = s.IsCachedExecOk(ctx, prepared)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return s.CachedPlanExec(ctx, stmtID, prepared, args)
+	}
+	s.PrepareTxnCtx(ctx)
 	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
@@ -1212,7 +1275,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
-		if s.sessionVars.ReplicaRead.IsFollowerRead() {
+		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
 	}
@@ -1275,7 +1338,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	txn.SetCap(s.getMembufCap())
 	txn.SetVars(s.sessionVars.KVVars)
-	if s.GetSessionVars().ReplicaRead.IsFollowerRead() {
+	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	s.txn.changeInvalidToValid(txn)
@@ -1720,6 +1783,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
+	variable.TiDBEnableStmtSummary,
 }
 
 var (

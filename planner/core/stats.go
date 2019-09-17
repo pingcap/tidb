@@ -142,7 +142,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 	ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
-			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds)
+			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
 			if err != nil {
 				return nil, err
 			}
@@ -154,7 +154,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 			}
 			continue
 		}
-		noIntervalRanges, err := ds.deriveIndexPathStats(path, ds.pushedDownConds)
+		noIntervalRanges, err := ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
 		if err != nil {
 			return nil, err
 		}
@@ -166,7 +166,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		}
 	}
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
-	if len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1 && ds.ctx.GetSessionVars().EnableIndexMerge {
+	if len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1 && ds.ctx.GetSessionVars().GetEnableIndexMerge() {
 		needConsiderIndexMerge := true
 		for i := 1; i < len(ds.possibleAccessPaths); i++ {
 			if len(ds.possibleAccessPaths[i].accessConds) != 0 {
@@ -238,7 +238,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 		path := &accessPath{}
 		if ds.possibleAccessPaths[i].isTablePath {
 			path.isTablePath = true
-			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions)
+			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions, true)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
@@ -251,7 +251,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			}
 		} else {
 			path.index = ds.possibleAccessPaths[i].index
-			noIntervalRanges, err := ds.deriveIndexPathStats(path, conditions)
+			noIntervalRanges, err := ds.deriveIndexPathStats(path, conditions, true)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
