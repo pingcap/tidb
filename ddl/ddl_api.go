@@ -3301,17 +3301,19 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 	}
 
 	for i, key := range keys {
+		// Check add foreign key to generated columns
+		// For more detail, see https://dev.mysql.com/doc/refman/8.0/en/innodb-foreign-key-constraints.html#innodb-foreign-key-generated-columns
 		for _, col := range cols {
 			if col.Name.L != key.Column.Name.L {
 				continue
 			}
 			if col.IsGenerated() {
-				// Check add foreign key to virtual generated columns
+				// Check foreign key on virtual generated columns
 				if !col.GeneratedStored {
 					return nil, infoschema.ErrCannotAddForeign
 				}
 
-				// Check disallowed refer option on stored generated columns
+				// Check wrong reference options of foreign key on stored generated columns
 				switch refer.OnUpdate.ReferOpt {
 				case ast.ReferOptionCascade:
 					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE CASCADE")
@@ -3328,7 +3330,7 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 				}
 				continue
 			}
-			// Check add foreign key to base column of a stored generated columns
+			// Check wrong reference options of foreign key on base columns of stored generated columns
 			if _, ok := baseCols[col.Name.L]; ok {
 				switch refer.OnUpdate.ReferOpt {
 				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
