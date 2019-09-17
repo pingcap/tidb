@@ -2983,32 +2983,29 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);")
 	tk.MustExec("INSERT INTO t SELECT 1<<63, 1<<63;")
+
+	// https://dev.mysql.com/doc/refman/8.0/en/sql-mode.html#sql-mode-strict
+	// For statements such as SELECT that do not change data, invalid values generate a warning in strict mode, not an error.
 	rs, err := tk.Exec("SELECT a+b FROM t;")
-	tk.Se.GetSessionVars().StmtCtx.OverflowAsWarning = false
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
 	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(Column#1 + Column#2)'")
+	c.Assert(rows, NotNil)
+	c.Assert(err, IsNil)
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-3 as signed) + cast(2 as unsigned);")
-	tk.Se.GetSessionVars().StmtCtx.OverflowAsWarning = false
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-3 + 2)'")
+	c.Assert(rows, NotNil)
+	c.Assert(err, IsNil)
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(2 as unsigned) + cast(-3 as signed);")
-	tk.Se.GetSessionVars().StmtCtx.OverflowAsWarning = false
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(2 + -3)'")
+	c.Assert(rows, NotNil)
+	c.Assert(err, IsNil)
 	c.Assert(rs.Close(), IsNil)
 
 	// for minus
