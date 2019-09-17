@@ -96,6 +96,10 @@ errcheck:tools/bin/errcheck
 	@echo "errcheck"
 	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
+gogenerate:
+	@echo "go generate ./..."
+	./tools/check/check-gogenerate.sh
+
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES)
@@ -117,7 +121,7 @@ clean:
 	rm -rf *.out
 	rm -rf parser
 
-test: checklist checkdep gotest explaintest
+test: checklist checkdep gotest explaintest gogenerate
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server

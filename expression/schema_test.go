@@ -52,9 +52,9 @@ func (s *testEvalSuite) generateSchema(colCount int, dbName, tblName string) *Sc
 
 func (s *testEvalSuite) TestSchemaString(c *C) {
 	schema := s.generateSchema(5, "T", "B")
-	c.Assert(schema.String(), Equals, "Column: [t.b.c0,t.b.c1,b.c2,c3,c4] Unique key: []")
+	c.Assert(schema.String(), Equals, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: []")
 	generateKeys4Schema(schema)
-	c.Assert(schema.String(), Equals, "Column: [t.b.c0,t.b.c1,b.c2,c3,c4] Unique key: [[t.b.c0],[t.b.c1],[b.c2],[c3]]")
+	c.Assert(schema.String(), Equals, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: [[Column#1],[Column#2],[Column#3],[Column#4]]")
 }
 
 func (s *testEvalSuite) TestSchemaRetrieveColumn(c *C) {
