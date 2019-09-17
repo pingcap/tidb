@@ -17,7 +17,6 @@ import (
 	"context"
 	"hash"
 	"hash/fnv"
-	"strconv"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -190,10 +189,6 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
-	if e.runtimeStats != nil {
-		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		rootStats.SetConcurrencyNum("IndexLookupJoinConcurrency:" + strconv.Itoa(len(e.joiners)))
-	}
 	return e.baseExecutor.Close()
 }
 

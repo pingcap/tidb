@@ -520,10 +520,6 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			e.tblWorkerWg.Done()
 		}()
 	}
-	if e.runtimeStats != nil {
-		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		rootStats.SetConcurrencyNum("IndexLookupConcurrency:" + strconv.Itoa(lookupConcurrencyLimit))
-	}
 }
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {

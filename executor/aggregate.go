@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"strconv"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -213,11 +212,6 @@ func (e *HashAggExec) Close() error {
 		}
 	}
 	for range e.finalOutputCh {
-	}
-	if e.runtimeStats != nil {
-		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		rootStats.SetConcurrencyNum("HashAggPartialConcurrency:" + strconv.Itoa(len(e.partialWorkers)) +
-			", HashAggFinalConcurrency:" + strconv.Itoa(len(e.finalWorkers)))
 	}
 	return e.baseExecutor.Close()
 }

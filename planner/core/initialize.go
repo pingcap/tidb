@@ -357,7 +357,8 @@ func (base basePhysicalAgg) Init(ctx sessionctx.Context, stats *property.StatsIn
 }
 
 func (base basePhysicalAgg) initForHash(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashAgg {
-	p := &PhysicalHashAgg{base}
+	p := &PhysicalHashAgg{base, ctx.GetSessionVars().HashAggPartialConcurrency,
+		ctx.GetSessionVars().HashAggFinalConcurrency}
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeHashAgg, p, offset)
 	p.childrenReqProps = props
 	p.stats = stats

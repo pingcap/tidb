@@ -161,7 +161,7 @@ func (p *PhysicalSelection) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
-	return fmt.Sprint("ProjectionConcurrency:%d, ", p.ProjectionConcurrency) +
+	return fmt.Sprintf("ProjectionConcurrency:%d, ", p.ProjectionConcurrency) +
 		string(expression.ExplainExpressionList(p.Exprs))
 }
 
@@ -213,7 +213,7 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalHashAgg) ExplainInfo() string {
 	return p.basePhysicalAgg.ExplainInfo() + fmt.Sprintf(
-		"HashAggPartialConcurrency:%d, HashAggFinalConcurrency:%d",
+		", HashAggPartialConcurrency:%d, HashAggFinalConcurrency:%d",
 		p.HashAggPartialConcurrency, p.HashAggFinalConcurrency)
 }
 

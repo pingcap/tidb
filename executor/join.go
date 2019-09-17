@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -121,10 +120,6 @@ func (e *HashJoinExec) Close() error {
 		e.joinChkResourceCh = nil
 	}
 	e.memTracker = nil
-	if e.runtimeStats != nil {
-		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		rootStats.SetConcurrencyNum("HashJoinConcurrency:" + strconv.Itoa(int(e.concurrency)))
-	}
 
 	err := e.baseExecutor.Close()
 	return err

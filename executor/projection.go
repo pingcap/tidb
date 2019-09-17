@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -256,10 +255,6 @@ func (e *ProjectionExec) Close() error {
 		for range e.outputCh {
 		}
 		e.outputCh = nil
-	}
-	if e.runtimeStats != nil {
-		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		rootStats.SetConcurrencyNum("ProjectionConcurrency:" + strconv.Itoa(int(e.numWorkers)))
 	}
 	return e.baseExecutor.Close()
 }
