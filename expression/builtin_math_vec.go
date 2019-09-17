@@ -88,3 +88,25 @@ func (b *builtinAbsDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Colu
 func (b *builtinAbsDecSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinRoundDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	d64s := result.Decimals()
+	buf := new(types.MyDecimal)
+	for i := 0; i < len(d64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if err := d64s[i].Round(buf, 0, types.ModeHalfEven); err != nil {
+			return err
+		}
+		d64s[i] = *buf
+	}
+	return nil
+}
+
+func (b *builtinRoundDecSig) vectorized() bool {
+	return true
+}
