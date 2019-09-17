@@ -1385,7 +1385,7 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, error) {
 	p := LogicalShow{
-		baseShowContent: baseShowContent{
+		ShowContents: ShowContents{
 			Tp:          show.Tp,
 			DBName:      show.DBName,
 			Table:       show.Table,

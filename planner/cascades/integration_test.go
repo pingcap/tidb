@@ -65,7 +65,7 @@ func (s *testIntegrationSuite) TestPKIsHandleRangeScan(c *C) {
 	tk.MustExec("insert into t values(1,2),(3,4)")
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
 	tk.MustQuery("explain select b from t where a > 1").Check(testkit.Rows(
-		"Projection_8 3333.33 root test.t.b",
+		"Projection_8 3333.33 root Column#2",
 		"└─TableReader_9 3333.33 root data:TableScan_10",
 		"  └─TableScan_10 3333.33 cop table:t, range:(1,+inf], keep order:false, stats:pseudo",
 	))
@@ -73,9 +73,20 @@ func (s *testIntegrationSuite) TestPKIsHandleRangeScan(c *C) {
 		"4",
 	))
 	tk.MustQuery("explain select b from t where a > 1 and a < 3").Check(testkit.Rows(
-		"Projection_8 2.00 root test.t.b",
+		"Projection_8 2.00 root Column#2",
 		"└─TableReader_9 2.00 root data:TableScan_10",
 		"  └─TableScan_10 2.00 cop table:t, range:(1,3), keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select b from t where a > 1 and a < 3").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestBasicShow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("set session tidb_enable_cascades_planner = 1")
+	tk.MustQuery("desc t").Check(testkit.Rows(
+		"a int(11) NO PRI <nil> ",
+		"b int(11) YES  <nil> ",
+	))
 }
