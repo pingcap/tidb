@@ -60,8 +60,7 @@ type stmtSummaryByDigestMap struct {
 		// enabled indicates whether statement summary is enabled in current server.
 		sessionEnabled string
 		// setInSession indicates whether statement summary has been set in any session.
-		globalEnabled  string
-		defaultEnabled bool
+		globalEnabled string
 	}
 }
 
@@ -231,13 +230,6 @@ func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 	return rows
 }
 
-// SetDefaultEnabled sets the enabling status by default.
-func (ssMap *stmtSummaryByDigestMap) SetDefaultEnabled(defaultEnabled bool) {
-	ssMap.enabledWrapper.Lock()
-	ssMap.enabledWrapper.defaultEnabled = defaultEnabled
-	ssMap.enabledWrapper.Unlock()
-}
-
 // SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
 func (ssMap *stmtSummaryByDigestMap) SetEnabled(enable string, inSession bool) {
 	enable = ssMap.normalizeEnableValue(enable)
@@ -291,15 +283,9 @@ func (ssMap *stmtSummaryByDigestMap) normalizeEnableValue(enable string) string 
 }
 
 // isEnabled converts a string value to bool.
+// 1 indicates true, 0 or '' indicates false.
 func (ssMap *stmtSummaryByDigestMap) isEnabled(enable string) bool {
-	switch enable {
-	case "1":
-		return true
-	case "0":
-		return false
-	default:
-		return ssMap.enabledWrapper.defaultEnabled
-	}
+	return enable == "1"
 }
 
 // isSet judges whether the variable is set.

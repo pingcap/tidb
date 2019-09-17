@@ -365,7 +365,6 @@ const (
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
-	DefTiDBEnableStmtSummary           = false
 )
 
 // Process global variables.
