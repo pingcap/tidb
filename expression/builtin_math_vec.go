@@ -110,38 +110,29 @@ func (b *builtinAsinSig) vectorized() bool {
 
 func (b *builtinAtan2ArgsSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETReal, n)
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	buf, err := b.bufAllocator.get(types.ETReal, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
 
-	buf1, err := b.bufAllocator.get(types.ETReal, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	result.ResizeFloat64(n, false)
-
-	arg0 := buf0.Float64s()
-	arg1 := buf1.Float64s()
 	f64s := result.Float64s()
+	arg := buf.Float64s()
 
-	result.MergeNulls(buf0)
-	result.MergeNulls(buf1)
+	result.MergeNulls(buf)
 
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		f64s[i] = math.Atan2(arg0[i], arg1[i])
+		f64s[i] = math.Atan2(f64s[i], arg[i])
 	}
 	return nil
 }
