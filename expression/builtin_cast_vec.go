@@ -31,11 +31,11 @@ func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result
 	}
 
 	result.ResizeGoDuration(n, false)
+	result.MergeNulls(buf)
 	i64s := buf.Int64s()
 	ds := result.GoDurations()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		dur, err := types.NumberToDuration(i64s[i], int8(b.tp.Decimal))
