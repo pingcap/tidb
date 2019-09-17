@@ -555,7 +555,7 @@ func ScanSnapshotTableRecord(sessCtx sessionctx.Context, store kv.Storage, ver k
 		return nil, 0, errors.Trace(err)
 	}
 
-	if sessCtx.GetSessionVars().ReplicaRead.IsFollowerRead() {
+	if sessCtx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snap.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 
