@@ -2999,6 +2999,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(rows, NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(rs.Close(), IsNil)
+	tk.MustQuery("Show warnings;").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '(Column#1 + Column#2)'"))
 	rs, err = tk.Exec("select cast(-3 as signed) + cast(2 as unsigned);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
@@ -3006,6 +3007,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(rows, NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(rs.Close(), IsNil)
+	tk.MustQuery("Show warnings;").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '(-3 + 2)'"))
 	rs, err = tk.Exec("select cast(2 as unsigned) + cast(-3 as signed);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
@@ -3013,6 +3015,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(rows, NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(rs.Close(), IsNil)
+	tk.MustQuery("Show warnings;").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '(2 + -3)'"))
 
 	// for minus
 	tk.MustExec("DROP TABLE IF EXISTS t;")
