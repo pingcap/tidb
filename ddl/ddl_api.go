@@ -1072,21 +1072,12 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 					return nil, infoschema.ErrCannotAddForeign
 				}
 			}
-			var fk model.FKInfo
-			fk.Name = model.NewCIStr(constr.Name)
-			fk.RefTable = constr.Refer.Table.Name
+			fk, err := buildFKInfo(model.NewCIStr(constr.Name), constr.Keys, constr.Refer, cols)
+			if err != nil {
+				return nil, err
+			}
 			fk.State = model.StatePublic
-			for _, key := range constr.Keys {
-				if table.FindCol(cols, key.Column.Name.O) == nil {
-					return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
-				}
-				fk.Cols = append(fk.Cols, key.Column.Name)
-			}
-			for _, key := range constr.Refer.IndexColNames {
-				fk.RefCols = append(fk.RefCols, key.Column.Name)
-			}
-			fk.OnDelete = int(constr.Refer.OnDelete.ReferOpt)
-			fk.OnUpdate = int(constr.Refer.OnUpdate.ReferOpt)
+
 			if len(fk.Cols) != len(fk.RefCols) {
 				return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(tbInfo.Name.O)
 			}
@@ -1094,7 +1085,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 				// TODO: In MySQL, this case will report a parse error.
 				return nil, infoschema.ErrCannotAddForeign
 			}
-			tbInfo.ForeignKeys = append(tbInfo.ForeignKeys, &fk)
+			tbInfo.ForeignKeys = append(tbInfo.ForeignKeys, fk)
 			continue
 		}
 		if constr.Tp == ast.ConstraintPrimaryKey {
@@ -3333,7 +3324,6 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 	fkInfo.OnUpdate = int(refer.OnUpdate.ReferOpt)
 
 	return &fkInfo, nil
-
 }
 
 func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) error {

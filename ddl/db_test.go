@@ -1885,7 +1885,6 @@ func (s *testDBSuite2) TestFKOnGeneratedColumns(c *C) {
 	s.tk.MustExec("alter table t3 add foreign key (a) references t1(b);")
 	s.tk.MustExec("drop table t1, t2, t3;")
 
-	c.Skip("implement")
 	// rejected FK options
 	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update set null);", tmysql.ErrWrongFKOptionForGeneratedColumn)
 	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update cascade);", tmysql.ErrWrongFKOptionForGeneratedColumn)
@@ -1900,6 +1899,7 @@ func (s *testDBSuite2) TestFKOnGeneratedColumns(c *C) {
 	//s.tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on delete set default;", tmysql.ErrWrongFKOptionForGeneratedColumn)
 	//s.tk.MustExec("drop table t1;")
 
+	c.Skip("implement")
 	// allowed FK options
 	s.tk.MustExec("create table t1 (a int primary key, b char(5));")
 	s.tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on update restrict);")
