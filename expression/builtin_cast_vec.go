@@ -53,7 +53,7 @@ func (b *builtinCastIntAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(buf)
-	
+
 	i64s := buf.Int64s()
 	rs := result.Float64s()
 
