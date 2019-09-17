@@ -2741,14 +2741,20 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("9223372036854775808"))
 	result = tk.MustQuery("select cast(9223372036854775807 as unsigned) + cast(1 as signed);")
 	result.Check(testkit.Rows("9223372036854775808"))
+	// https://dev.mysql.com/doc/refman/8.0/en/sql-mode.html#sql-mode-strict
+	// For statements such as SELECT that do not change data, invalid values generate a warning in strict mode, not an error.
 	err = tk.QueryToErr("select cast(9223372036854775807 as signed) + cast(9223372036854775809 as unsigned);")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	tk.MustQuery("Show warnings;").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '(9223372036854775807 + 9223372036854775809)'"))
 	err = tk.QueryToErr("select cast(9223372036854775809 as unsigned) + cast(9223372036854775807 as signed);")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	tk.MustQuery("Show warnings;").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '(9223372036854775809 + 9223372036854775807)'"))
 	err = tk.QueryToErr("select cast(-9223372036854775807 as signed) + cast(9223372036854775806 as unsigned);")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	tk.MustQuery("Show warnings;").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '(-9223372036854775807 + 9223372036854775806)'"))
 	err = tk.QueryToErr("select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	tk.MustQuery("Show warnings;").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '(9223372036854775806 + -9223372036854775807)'"))
 }
 
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
