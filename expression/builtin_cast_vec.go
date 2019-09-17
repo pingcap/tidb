@@ -30,7 +30,7 @@ func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result
 		return err
 	}
 
-	result.ResizeDuration(n, false)
+	result.ResizeGoDuration(n, false)
 	i64s := buf.Int64s()
 	ds := result.GoDurations()
 	for i := 0; i < n; i++ {
