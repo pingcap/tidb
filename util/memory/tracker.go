@@ -62,6 +62,12 @@ func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 	}
 }
 
+// CheckBytesLimit check whether the bytes limit of the tracker is equal to a value.
+// Only used in test.
+func (t *Tracker) CheckBytesLimit(val int64) bool {
+	return t.bytesLimit == val
+}
+
 // SetBytesLimit sets the bytes limit for this tracker.
 // "bytesLimit <= 0" means no limit.
 func (t *Tracker) SetBytesLimit(bytesLimit int64) {
