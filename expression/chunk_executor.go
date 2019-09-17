@@ -360,8 +360,21 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 		filterResult       int64
 		bVal, isNullResult bool
 		err                error
+		vecFilters         []Expression
+		nonVecFilters      []Expression
 	)
+
 	for _, filter := range filters {
+		if filter.Vectorized() {
+			vecFilters = append(vecFilters, filter)
+		} else {
+			nonVecFilters = append(nonVecFilters, filter)
+		}
+	}
+
+	selected, isNull, err = VecEvalBool(ctx, vecFilters, iterator.GetChunk(), selected, isNull)
+
+	for _, filter := range nonVecFilters {
 		isIntType := true
 		if filter.GetType().EvalType() != types.ETInt {
 			isIntType = false

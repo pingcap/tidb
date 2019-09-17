@@ -154,6 +154,10 @@ func (it *Iterator4Chunk) Len() int {
 	return it.chk.NumRows()
 }
 
+func (it *Iterator4Chunk) GetChunk() *Chunk {
+	return it.chk
+}
+
 // NewIterator4List returns a Iterator for List.
 func NewIterator4List(li *List) Iterator {
 	return &iterator4List{li: li}
