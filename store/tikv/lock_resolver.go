@@ -266,9 +266,10 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 //    commit status.
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
-func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnExpired int64, err error) {
+func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (int64, error) {
+	var msBeforeTxnExpired txnExpireTime
 	if len(locks) == 0 {
-		return
+		return msBeforeTxnExpired.value(), nil
 	}
 
 	tikvLockResolverCountWithResolve.Inc()
@@ -277,35 +278,22 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 	for _, l := range locks {
 		msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL)
 		if msBeforeLockExpired <= 0 {
-			tikvLockResolverCountWithExpired.Inc()
 			expiredSecondaryLocks = append(expiredSecondaryLocks, l)
-		} else {
-			if msBeforeTxnExpired == 0 || msBeforeLockExpired < msBeforeTxnExpired {
-				msBeforeTxnExpired = msBeforeLockExpired
-			}
-			tikvLockResolverCountWithNotExpired.Inc()
 		}
 	}
-	if len(expiredSecondaryLocks) == 0 {
-		if msBeforeTxnExpired > 0 {
-			tikvLockResolverCountWithWaitExpired.Inc()
-		}
-		return
-	}
-
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
 	for _, l := range expiredSecondaryLocks {
 		var status TxnStatus
-		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary)
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary)
 		if err != nil {
-			msBeforeTxnExpired = 0
 			err = errors.Trace(err)
-			return
+			return msBeforeTxnExpired.value(), err
 		}
 
 		if status.ttl == 0 {
+			tikvLockResolverCountWithExpired.Inc()
 			// If the lock is committed or rollbacked, resolve lock.
 			cleanRegions, exists := cleanTxns[l.TxnID]
 			if !exists {
@@ -315,31 +303,48 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 
 			err = lr.resolveLock(bo, l, status, cleanRegions)
 			if err != nil {
-				msBeforeTxnExpired = 0
 				err = errors.Trace(err)
-				return
+				return msBeforeTxnExpired.value(), err
 			}
 		} else {
+			tikvLockResolverCountWithNotExpired.Inc()
 			// If the lock is valid, the txn may be a pessimistic transaction.
 			// Update the txn expire time.
 			msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, status.ttl)
-			msBeforeTxnExpired = updateExpireTime(msBeforeTxnExpired, msBeforeLockExpired)
+			msBeforeTxnExpired.update(msBeforeLockExpired)
 		}
 	}
-	return
+
+	if msBeforeTxnExpired.value() > 0 {
+		tikvLockResolverCountWithWaitExpired.Inc()
+	}
+	return msBeforeTxnExpired.value(), nil
+}
+
+type txnExpireTime struct {
+	initialized bool
+	txnExpire   int64
 }
 
 // updateExpireTime compares the current value of the transaction expire time with the lock expire time to get a new value.
 // The expire time of a transaction is set to the smallest one between all its lock expire time.
 // The return value is always >= 0
-func updateExpireTime(txnExpire, lockExpire int64) int64 {
+func (t *txnExpireTime) update(lockExpire int64) {
+	t.initialized = true
 	if lockExpire <= 0 {
+		return
+	}
+	if lockExpire < t.txnExpire {
+		t.txnExpire = lockExpire
+	}
+	return
+}
+
+func (t *txnExpireTime) value() int64 {
+	if !t.initialized {
 		return 0
 	}
-	if lockExpire < txnExpire {
-		return lockExpire
-	}
-	return txnExpire
+	return t.txnExpire
 }
 
 // GetTxnStatus queries tikv-server for a txn's status (commit/rollback).
