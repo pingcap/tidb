@@ -784,8 +784,11 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 	buffer.WriteString(fmt.Sprintf("label = \"%s\"\n", taskTp))
 
 	if len(p.Children()) == 0 {
-		buffer.WriteString(fmt.Sprintf("\"%s\"\n}\n", p.ExplainID()))
-		return
+		if taskTp == "cop" {
+			buffer.WriteString(fmt.Sprintf("\"%s\"\n}\n", p.ExplainID()))
+			return
+		}
+		buffer.WriteString(fmt.Sprintf("\"%s\"\n", p.ExplainID()))
 	}
 
 	var copTasks []PhysicalPlan
@@ -805,6 +808,15 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.tablePlan)
 			copTasks = append(copTasks, copPlan.indexPlan)
+		case *PhysicalIndexMergeReader:
+			for i := 0; i < len(copPlan.partialPlans); i++ {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
+				copTasks = append(copTasks, copPlan.partialPlans[i])
+			}
+			if copPlan.tablePlan != nil {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
+				copTasks = append(copTasks, copPlan.tablePlan)
+			}
 		}
 		for _, child := range curPlan.Children() {
 			buffer.WriteString(fmt.Sprintf("\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID()))
