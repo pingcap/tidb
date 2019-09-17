@@ -2984,6 +2984,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec("CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);")
 	tk.MustExec("INSERT INTO t SELECT 1<<63, 1<<63;")
 	rs, err := tk.Exec("SELECT a+b FROM t;")
+	tk.Se.GetSessionVars().StmtCtx.OverflowAsWarning = false
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
 	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
@@ -2992,6 +2993,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(Column#1 + Column#2)'")
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-3 as signed) + cast(2 as unsigned);")
+	tk.Se.GetSessionVars().StmtCtx.OverflowAsWarning = false
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
@@ -3000,6 +3002,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-3 + 2)'")
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(2 as unsigned) + cast(-3 as signed);")
+	tk.Se.GetSessionVars().StmtCtx.OverflowAsWarning = false
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
