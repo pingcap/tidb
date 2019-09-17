@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
 	pd "github.com/pingcap/pd/client"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -343,7 +342,7 @@ func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
 	globalMinStartTime := time.Unix(sec, nsec)
 
 	diff := safePoint.Sub(globalMinStartTime)
-	maxTxnTimeUse := time.Duration(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse+10) * time.Second
+	maxTxnTimeUse := time.Duration(tikv.MaxTxnTimeUse)*time.Millisecond + 10*time.Second
 	// If the transaction is not too old, we could use it as the new safe point.
 	if diff < maxTxnTimeUse && globalMinStartTime.Before(safePoint) {
 		return globalMinStartTime
