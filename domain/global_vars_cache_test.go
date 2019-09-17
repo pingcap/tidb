@@ -14,7 +14,6 @@
 package domain
 
 import (
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
