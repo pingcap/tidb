@@ -384,7 +384,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 	}
 
 	if tikvCnt == len(regionStore.stores) {
-		return nil, errors.Errorf("None of TiFlash store found.")
+		return nil, errors.Errorf("Can not find the TiFlash store address, region version id:%v", id)
 	}
 	return nil, nil
 }
