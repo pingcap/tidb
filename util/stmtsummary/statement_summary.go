@@ -241,10 +241,14 @@ func (ssMap *stmtSummaryByDigestMap) SetDefaultEnabled(defaultEnabled bool) {
 // SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
 func (ssMap *stmtSummaryByDigestMap) SetEnabled(enable string, inSession bool) {
 	ssMap.enabledWrapper.Lock()
-	var needClear bool
+	needClear := false
 	if inSession {
 		ssMap.enabledWrapper.sessionEnabled = enable
-		needClear = !ssMap.isEnabled(enable)
+		if ssMap.isSet(enable) {
+			needClear = !ssMap.isEnabled(enable)
+		} else {
+			needClear = !ssMap.isEnabled(ssMap.enabledWrapper.globalEnabled)
+		}
 	} else {
 		ssMap.enabledWrapper.globalEnabled = enable
 		if !ssMap.isSet(ssMap.enabledWrapper.sessionEnabled) {
