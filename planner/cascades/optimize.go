@@ -204,11 +204,11 @@ func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.
 	return impl.GetPlan(), nil
 }
 
-// implGroup finds the best Implementation which the required physical property
-// for a Group. The best Implementation should has the lowest cost among all
-// the applicable Implementations.
+// implGroup finds the best Implementation which satisfies the required
+// physical property for a Group. The best Implementation should have the
+// lowest cost among all the applicable Implementations.
 //
-// g:			the Group to be implementated.
+// g:			the Group to be implemented.
 // reqPhysProp: the required physical property.
 // costLimit:   the maximum cost of all the Implementations.
 func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit float64) (memo.Implementation, error) {
