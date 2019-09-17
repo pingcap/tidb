@@ -374,8 +374,8 @@ func (c *Column) ResizeDecimal(n int, isNull bool) {
 	c.resize(n, sizeMyDecimal, isNull)
 }
 
-// ResizeDuration resizes the column so that it contains n duration elements.
-func (c *Column) ResizeDuration(n int, isNull bool) {
+// ResizeGoDuration resizes the column so that it contains n duration elements.
+func (c *Column) ResizeGoDuration(n int, isNull bool) {
 	c.resize(n, sizeGoDuration, isNull)
 }
 
@@ -612,12 +612,17 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 
 	if c.isFixed() {
 		elemLen := len(c.elemBuf)
+		dst.elemBuf = make([]byte, elemLen)
 		for _, i := range sel {
 			dst.appendNullBitmap(!c.IsNull(i))
 			dst.data = append(dst.data, c.data[i*elemLen:i*elemLen+elemLen]...)
 			dst.length++
 		}
 	} else {
+		dst.elemBuf = nil
+		if len(dst.offsets) == 0 {
+			dst.offsets = append(dst.offsets, 0)
+		}
 		for _, i := range sel {
 			dst.appendNullBitmap(!c.IsNull(i))
 			start, end := c.offsets[i], c.offsets[i+1]

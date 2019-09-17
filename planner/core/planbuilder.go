@@ -60,7 +60,7 @@ type tableHintInfo struct {
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
 	indexHintList             []indexHintInfo
-	preferAggType             uint
+	aggHints                  aggHintInfo
 }
 
 type hintTableInfo struct {
@@ -72,6 +72,11 @@ type hintTableInfo struct {
 type indexHintInfo struct {
 	tblName   model.CIStr
 	indexHint *ast.IndexHint
+}
+
+type aggHintInfo struct {
+	preferAggType  uint
+	preferAggToCop bool
 }
 
 func tableNames2HintTableInfo(hintTables []ast.HintTable, p *BlockHintProcessor, nodeType nodeType, currentOffset int) []hintTableInfo {
