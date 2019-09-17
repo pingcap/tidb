@@ -188,7 +188,7 @@ func (is *InfoSyncer) ReportMinStartTS() {
 	pl := is.manager.ShowProcessList()
 	var minStartTS uint64 = math.MaxUint64
 	for _, info := range pl {
-		if info.CurTxnStartTS < minStartTS {
+		if info.CurTxnStartTS != 0 && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
 		}
 	}

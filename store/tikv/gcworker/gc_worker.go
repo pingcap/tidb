@@ -336,7 +336,7 @@ func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
 			logutil.BgLogger().Warn("parse minStartTS failed", zap.Error(err))
 			continue
 		}
-		if minStartTS < globalMinStartTS {
+		if minStartTS != 0 && minStartTS < globalMinStartTS {
 			globalMinStartTS = minStartTS
 		}
 	}
