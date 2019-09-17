@@ -949,7 +949,7 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 		if err != nil {
 			return err
 		}
-		// If current transaction's lock exist.
+		// If current transaction's lock exists.
 		if ok && dec.lock.startTS == startTS {
 
 			// If the lock has already outdated, clean up it.
@@ -960,22 +960,22 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 				return mvcc.db.Write(batch, nil)
 			}
 
-			// Otherwise, return a locked error to with the TTL information.
+			// Otherwise, return a locked error with the TTL information.
 			return dec.lock.lockErr(key)
 		}
 
-		// If current transaction's lock not exist.
-		// If commit info of current transaction exist.
+		// If current transaction's lock does not exist.
+		// If the commit information of the current transaction exist.
 		c, ok, err := getTxnCommitInfo(iter, key, startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if ok {
-			// If current transaction is already committed.
+			// If the current transaction has already committed.
 			if c.valueType != typeRollback {
 				return ErrAlreadyCommitted(c.commitTS)
 			}
-			// If current transaction is already rollback.
+			// If the current transaction has already rollbacked.
 			return nil
 		}
 	}
@@ -1133,7 +1133,6 @@ func (mvcc *MVCCLevelDB) TxnHeartBeat(key []byte, startTS uint64, adviseTTL uint
 			return lock.ttl, nil
 		}
 	}
-
 	return 0, errors.New("lock doesn't exist")
 }
 

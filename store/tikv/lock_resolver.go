@@ -325,7 +325,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 			if msBeforeLockExpired <= 0 {
 				// The txn is a pessimistic transaction, and it's primary lock will expire soon, but
 				// TxnHeartBeat could update the TTL, so we should not clean up the lock.
-				continue
+				break
 			}
 			if msBeforeTxnExpired == 0 || msBeforeLockExpired < msBeforeTxnExpired {
 				msBeforeTxnExpired = msBeforeLockExpired
