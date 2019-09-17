@@ -26,3 +26,13 @@ type ProjectionImpl struct {
 func NewProjectionImpl(proj *plannercore.PhysicalProjection) *ProjectionImpl {
 	return &ProjectionImpl{baseImpl{plan: proj}}
 }
+
+// ShowImpl is the Implementation of PhysicalShow.
+type ShowImpl struct {
+	baseImpl
+}
+
+// NewShowImpl creates a new ShowImpl.
+func NewShowImpl(show *plannercore.PhysicalShow) *ShowImpl {
+	return &ShowImpl{baseImpl: baseImpl{plan: show}}
+}
