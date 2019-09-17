@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/tidb/types"
@@ -175,6 +176,27 @@ func (b *builtinCosSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 
 func (b *builtinCosSig) vectorized() bool {
 	return true
+}
+
+func (b *builtinExpSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		exp := math.Exp(f64s[i])
+		if math.IsInf(exp, 0) || math.IsNaN(exp) {
+			s := fmt.Sprintf("exp(%s)", b.args[0].String())
+			if err := types.ErrOverflow.GenWithStackByArgs("DOUBLE", s); err != nil {
+				return err
+			}
+		}
+		f64s[i] = exp
+	}
+	return nil
 }
 
 func (b *builtinAbsDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
