@@ -154,6 +154,7 @@ func (it *Iterator4Chunk) Len() int {
 	return it.chk.NumRows()
 }
 
+// GetChunk returns the chunk stored in the Iterator4Chunk
 func (it *Iterator4Chunk) GetChunk() *Chunk {
 	return it.chk
 }
