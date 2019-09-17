@@ -45,7 +45,7 @@ type mockLogicalJoin struct {
 }
 
 func (mj mockLogicalJoin) init(ctx sessionctx.Context) *mockLogicalJoin {
-	mj.baseLogicalPlan = newBaseLogicalPlan(ctx, "MockLogicalJoin", &mj)
+	mj.baseLogicalPlan = newBaseLogicalPlan(ctx, "MockLogicalJoin", &mj, 0)
 	return &mj
 }
 
@@ -146,7 +146,7 @@ func (s *testJoinReorderDPSuite) makeStatsMapForTPCHQ5() {
 }
 
 func (s *testJoinReorderDPSuite) newDataSource(name string, count int) LogicalPlan {
-	ds := DataSource{}.Init(s.ctx)
+	ds := DataSource{}.Init(s.ctx, 0)
 	tan := model.NewCIStr(name)
 	ds.TableAsName = &tan
 	ds.schema = expression.NewSchema()
