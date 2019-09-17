@@ -249,9 +249,10 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) error {
 	if prepared.CachedPlan != nil {
-		// expression rewrite will transfer paramMarker in select.where into Constant Expression
-		// but point get execution dose not need to evaluate where condition,
-		// so prepared.UseCache here false is ok, only for point plan
+		// Rewriting the expression in the select.where condition  will convert its
+		// type from "paramMarker" to "Constant".When Point Select queries are executed,
+		// the expression in the where condition will not be evaluated,
+		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
 		err := e.rebuildRange(plan)
 		if err != nil {
