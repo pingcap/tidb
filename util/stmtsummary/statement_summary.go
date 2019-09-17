@@ -235,23 +235,22 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabled(enable string, inSession bool) {
 	enable = ssMap.normalizeEnableValue(enable)
 
 	ssMap.enabledWrapper.Lock()
-	needClear := false
 	if inSession {
 		ssMap.enabledWrapper.sessionEnabled = enable
-		if ssMap.isSet(enable) {
-			needClear = !ssMap.isEnabled(enable)
-		} else {
-			needClear = !ssMap.isEnabled(ssMap.enabledWrapper.globalEnabled)
-		}
 	} else {
 		ssMap.enabledWrapper.globalEnabled = enable
-		if !ssMap.isSet(ssMap.enabledWrapper.sessionEnabled) {
-			needClear = !ssMap.isEnabled(enable)
-		}
 	}
+	sessionEnabled := ssMap.enabledWrapper.sessionEnabled
+	globalEnabled := ssMap.enabledWrapper.globalEnabled
 	ssMap.enabledWrapper.Unlock()
 
 	// Clear all summaries once statement summary is disabled.
+	var needClear bool
+	if ssMap.isSet(sessionEnabled) {
+		needClear = !ssMap.isEnabled(sessionEnabled)
+	} else {
+		needClear = !ssMap.isEnabled(globalEnabled)
+	}
 	if needClear {
 		ssMap.Clear()
 	}
