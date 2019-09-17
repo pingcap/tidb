@@ -739,8 +739,8 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 			Ctx:          b.ctx,
 		},
 	}
-
 	var defaultLoadDataBatchCnt uint64 = 20000 // TODO this will be changed to variable in another pr
+	loadDataExec.loadDataInfo.InitQueues()
 	loadDataExec.loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
 
 	return loadDataExec
@@ -2106,7 +2106,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	}
 	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 	e.resultHandler = &tableResultHandler{}
-	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans))
+	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 	if err != nil {
 		return nil, err
 	}
