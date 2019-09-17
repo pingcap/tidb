@@ -347,6 +347,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 
 	regionStore := cachedRegion.getStore()
 
+	tikvCnt := 0
 	for i, store := range regionStore.stores {
 		addr, err := c.getStoreAddr(bo, cachedRegion, store, i)
 		if err != nil {
@@ -360,6 +361,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			store.reResolve(c)
 		}
 		if store.storeType != TiFlash {
+			tikvCnt++
 			continue
 		}
 		peer, storeIdx := cachedRegion.meta.Peers[i], i
@@ -381,6 +383,9 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 		}, nil
 	}
 
+	if tikvCnt == len(regionStore.stores) {
+		return nil, errors.Errorf("None of TiFlash store found.")
+	}
 	return nil, nil
 }
 
