@@ -64,6 +64,28 @@ func (b *builtinSqrtSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinAcosSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if f64s[i] < -1 || f64s[i] > 1 {
+			result.SetNull(i, true)
+		} else {
+			f64s[i] = math.Acos(f64s[i])
+		}
+	}
+	return nil
+}
+
+func (b *builtinAcosSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinAbsDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 		return err
@@ -86,5 +108,27 @@ func (b *builtinAbsDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinAbsDecSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinRoundDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	d64s := result.Decimals()
+	buf := new(types.MyDecimal)
+	for i := 0; i < len(d64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if err := d64s[i].Round(buf, 0, types.ModeHalfEven); err != nil {
+			return err
+		}
+		d64s[i] = *buf
+	}
+	return nil
+}
+
+func (b *builtinRoundDecSig) vectorized() bool {
 	return true
 }

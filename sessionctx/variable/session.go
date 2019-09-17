@@ -287,9 +287,6 @@ type SessionVars struct {
 	// This variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
 
-	// AllowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
-	AllowInSubqToJoinAndAgg bool
-
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -341,9 +338,6 @@ type SessionVars struct {
 
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
-
-	// EnableIndexMerge enables the generation of IndexMergePath.
-	EnableIndexMerge bool
 
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
@@ -403,9 +397,6 @@ type SessionVars struct {
 	// use noop funcs or not
 	EnableNoopFuncs bool
 
-	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
-	ReplicaRead kv.ReplicaReadType
-
 	// StartTime is the start time of the last query.
 	StartTime time.Time
 
@@ -420,6 +411,17 @@ type SessionVars struct {
 
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
+
+	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
+
+	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
+	allowInSubqToJoinAndAgg bool
+
+	// EnableIndexMerge enables the generation of IndexMergePath.
+	enableIndexMerge bool
+
+	// replicaRead is used for reading data from replicas, only follower is supported at this time.
+	replicaRead kv.ReplicaReadType
 }
 
 // ConnectionInfo present connection used by audit.
@@ -462,7 +464,7 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:            kv.PriorityLow,
-		AllowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
+		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		EnableRadixJoin:             false,
@@ -473,9 +475,9 @@ func NewSessionVars() *SessionVars {
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
-		EnableIndexMerge:            false,
+		enableIndexMerge:            false,
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
-		ReplicaRead:                 kv.ReplicaReadLeader,
+		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 	}
 	vars.Concurrency = Concurrency{
@@ -514,6 +516,45 @@ func NewSessionVars() *SessionVars {
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
+}
+
+// GetAllowInSubqToJoinAndAgg get AllowInSubqToJoinAndAgg from sql hints and SessionVars.allowInSubqToJoinAndAgg.
+func (s *SessionVars) GetAllowInSubqToJoinAndAgg() bool {
+	if s.StmtCtx.HasAllowInSubqToJoinAndAggHint {
+		return s.StmtCtx.AllowInSubqToJoinAndAgg
+	}
+	return s.allowInSubqToJoinAndAgg
+}
+
+// SetAllowInSubqToJoinAndAgg set SessionVars.allowInSubqToJoinAndAgg.
+func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
+	s.allowInSubqToJoinAndAgg = val
+}
+
+// GetEnableIndexMerge get EnableIndexMerge from sql hints and SessionVars.enableIndexMerge.
+func (s *SessionVars) GetEnableIndexMerge() bool {
+	if s.StmtCtx.HasEnableIndexMergeHint {
+		return s.StmtCtx.EnableIndexMerge
+	}
+	return s.enableIndexMerge
+}
+
+// SetEnableIndexMerge set SessionVars.enableIndexMerge.
+func (s *SessionVars) SetEnableIndexMerge(val bool) {
+	s.enableIndexMerge = val
+}
+
+// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
+func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
+	if s.StmtCtx.HasReplicaReadHint {
+		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
+	}
+	return s.replicaRead
+}
+
+// SetReplicaRead set SessionVars.replicaRead.
+func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
+	s.replicaRead = val
 }
 
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
@@ -742,7 +783,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptWriteRowID:
 		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqToJoinAndAgg:
-		s.AllowInSubqToJoinAndAgg = TiDBOptOn(val)
+		s.SetAllowInSubqToJoinAndAgg(TiDBOptOn(val))
 	case TiDBOptCorrelationThreshold:
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 	case TiDBOptCorrelationExpFactor:
@@ -852,14 +893,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:
-		s.EnableIndexMerge = TiDBOptOn(val)
+		s.SetEnableIndexMerge(TiDBOptOn(val))
 	case TiDBEnableNoopFuncs:
 		s.EnableNoopFuncs = TiDBOptOn(val)
 	case TiDBReplicaRead:
 		if strings.EqualFold(val, "follower") {
-			s.ReplicaRead = kv.ReplicaReadFollower
+			s.SetReplicaRead(kv.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
-			s.ReplicaRead = kv.ReplicaReadLeader
+			s.SetReplicaRead(kv.ReplicaReadLeader)
 		}
 	case TiDBAllowRemoveAutoInc:
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
