@@ -135,3 +135,33 @@ func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 func (b *builtinStringIsNullSig) vectorized() bool {
 	return true
 }
+
+// evalString evals a REVERSE(str).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
+func (b *builtinReverseSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		reversed := reverseRunes([]rune(str))
+		result.AppendString(string(reversed))
+	}
+	return nil
+}
+
+func (b *builtinReverseSig) vectorized() bool {
+	return true
+}
