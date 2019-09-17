@@ -997,33 +997,14 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, fo
 	}
 }
 
-func checkAddFKOnGeneratedColumn(constr *ast.Constraint, colDefs []*ast.ColumnDef) error {
-	// foreign key constraint cannot reference a virtual generated column.
-	for _, key := range constr.Keys {
-		for _, colDef := range colDefs {
-			for _, option := range colDef.Options {
-				if option.Tp == ast.ColumnOptionGenerated && !option.Stored && colDef.Name.Name.L == key.Column.Name.L {
-					return infoschema.ErrCannotAddForeign
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func checkConstraintNames(constraints []*ast.Constraint, colDefs []*ast.ColumnDef) error {
+func checkConstraintNames(constraints []*ast.Constraint) error {
 	constrNames := map[string]bool{}
 	fkNames := map[string]bool{}
 
 	// Check not empty constraint name whether is duplicated.
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
-			// Check add foreign key to generated columns
-			err := checkAddFKOnGeneratedColumn(constr, colDefs)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = checkDuplicateConstraint(fkNames, constr.Name, true)
+			err := checkDuplicateConstraint(fkNames, constr.Name, true)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1284,7 +1265,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		return nil, errors.Trace(err)
 	}
 
-	err = checkConstraintNames(newConstraints, colDefs)
+	err = checkConstraintNames(newConstraints)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3308,7 +3289,57 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 	fkInfo.RefTable = refer.Table.Name
 
 	fkInfo.Cols = make([]model.CIStr, len(keys))
+
+	// all base columns of stored generated columns
+	baseCols := make(map[string]struct{})
+	for _, col := range cols {
+		if col.IsGenerated() && col.GeneratedStored {
+			for name := range col.Dependences {
+				baseCols[name] = struct{}{}
+			}
+		}
+	}
+
 	for i, key := range keys {
+		for _, col := range cols {
+			if col.Name.L != key.Column.Name.L {
+				continue
+			}
+			if col.IsGenerated() {
+				// Check add foreign key to virtual generated columns
+				if !col.GeneratedStored {
+					return nil, infoschema.ErrCannotAddForeign
+				}
+
+				// Check disallowed refer option on stored generated columns
+				switch refer.OnUpdate.ReferOpt {
+				case ast.ReferOptionCascade:
+					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE CASCADE")
+				case ast.ReferOptionSetNull:
+					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE SET NULL")
+				case ast.ReferOptionSetDefault:
+					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE SET DEFAULT")
+				}
+				switch refer.OnDelete.ReferOpt {
+				case ast.ReferOptionSetNull:
+					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON DELETE SET NULL")
+				case ast.ReferOptionSetDefault:
+					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON DELETE SET DEFAULT")
+				}
+				continue
+			}
+			// Check add foreign key to base column of a stored generated columns
+			if _, ok := baseCols[col.Name.L]; ok {
+				switch refer.OnUpdate.ReferOpt {
+				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+					return nil, infoschema.ErrCannotAddForeign
+				}
+				switch refer.OnDelete.ReferOpt {
+				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+					return nil, infoschema.ErrCannotAddForeign
+				}
+			}
+		}
 		if table.FindCol(cols, key.Column.Name.O) == nil {
 			return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
 		}
@@ -3341,13 +3372,6 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
-	}
-	for _, name := range fkInfo.Cols {
-		for _, col := range t.Cols() {
-			if col.IsGenerated() && !col.GeneratedStored && col.Name.L == name.L {
-				return errors.Trace(infoschema.ErrCannotAddForeign)
-			}
-		}
 	}
 
 	job := &model.Job{

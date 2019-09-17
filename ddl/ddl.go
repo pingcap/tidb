@@ -113,6 +113,8 @@ var (
 	errOnlyOnRangeListPartition = terror.ClassDDL.New(codeOnlyOnRangeListPartition, mysql.MySQLErrName[mysql.ErrOnlyOnRangeListPartition])
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
+	// errWrongFKOptionForGeneratedColumn is for wrong foreign key reference option on generated columns.
+	errWrongFKOptionForGeneratedColumn = terror.ClassDDL.New(codeWrongFKOptionForGeneratedColumn, mysql.MySQLErrName[mysql.ErrWrongFKOptionForGeneratedColumn])
 	// errUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
 	errUnsupportedOnGeneratedColumn = terror.ClassDDL.New(codeUnsupportedOnGeneratedColumn, mysql.MySQLErrName[mysql.ErrUnsupportedOnGeneratedColumn])
 	// errGeneratedColumnNonPrior forbids to refer generated column non prior to it.
@@ -127,13 +129,13 @@ var (
 	// ErrInvalidDefaultValue returns for invalid default value for columns.
 	ErrInvalidDefaultValue = terror.ClassDDL.New(codeInvalidDefaultValue, mysql.MySQLErrName[mysql.ErrInvalidDefault])
 	// ErrGeneratedColumnRefAutoInc forbids to refer generated columns to auto-increment columns .
-	ErrGeneratedColumnRefAutoInc = terror.ClassDDL.New(codeErrGeneratedColumnRefAutoInc, mysql.MySQLErrName[mysql.ErrGeneratedColumnRefAutoInc])
+	ErrGeneratedColumnRefAutoInc = terror.ClassDDL.New(codeGeneratedColumnRefAutoInc, mysql.MySQLErrName[mysql.ErrGeneratedColumnRefAutoInc])
 	// ErrUnsupportedAddPartition returns for does not support add partitions.
 	ErrUnsupportedAddPartition = terror.ClassDDL.New(codeUnsupportedAddPartition, "unsupported add partitions")
 	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
 	ErrUnsupportedCoalescePartition = terror.ClassDDL.New(codeUnsupportedCoalescePartition, "unsupported coalesce partitions")
 	// ErrGeneratedColumnFunctionIsNotAllowed returns for unsupported functions for generated columns.
-	ErrGeneratedColumnFunctionIsNotAllowed = terror.ClassDDL.New(codeErrGeneratedColumnFunctionIsNotAllowed, "Expression of generated column '%s' contains a disallowed function.")
+	ErrGeneratedColumnFunctionIsNotAllowed = terror.ClassDDL.New(codeGeneratedColumnFunctionIsNotAllowed, "Expression of generated column '%s' contains a disallowed function.")
 	// ErrUnsupportedPartitionByRangeColumns returns for does unsupported partition by range columns.
 	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(codeUnsupportedPartitionByRangeColumns,
 		"unsupported partition by range columns")
@@ -706,9 +708,14 @@ const (
 	codeInvalidOnUpdate                        = 1294
 	codeErrWrongObject                         = terror.ErrCode(mysql.ErrWrongObject)
 	codeViewWrongList                          = 1353
-	codeUnsupportedOnGeneratedColumn           = 3106
-	codeGeneratedColumnNonPrior                = 3107
-	codeDependentByGeneratedColumn             = 3108
+	codeGeneratedColumnFunctionIsNotAllowed    = terror.ErrCode(mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	codeUnsupportedAlterInplaceOnVirtualColumn = terror.ErrCode(mysql.ErrUnsupportedAlterInplaceOnVirtualColumn)
+	codeWrongFKOptionForGeneratedColumn        = terror.ErrCode(mysql.ErrWrongFKOptionForGeneratedColumn)
+	codeBadGeneratedColumn                     = terror.ErrCode(mysql.ErrBadGeneratedColumn)
+	codeUnsupportedOnGeneratedColumn           = terror.ErrCode(mysql.ErrUnsupportedOnGeneratedColumn)
+	codeGeneratedColumnNonPrior                = terror.ErrCode(mysql.ErrGeneratedColumnNonPrior)
+	codeDependentByGeneratedColumn             = terror.ErrCode(mysql.ErrDependentByGeneratedColumn)
+	codeGeneratedColumnRefAutoInc              = terror.ErrCode(mysql.ErrGeneratedColumnRefAutoInc)
 	codeJSONUsedAsKey                          = 3152
 	codeWrongNameForIndex                      = terror.ErrCode(mysql.ErrWrongNameForIndex)
 	codeErrTooLongIndexComment                 = terror.ErrCode(mysql.ErrTooLongIndexComment)
@@ -738,8 +745,6 @@ const (
 	codeErrTableCantHandleFt                   = terror.ErrCode(mysql.ErrTableCantHandleFt)
 	codeCoalesceOnlyOnHashPartition            = terror.ErrCode(mysql.ErrCoalesceOnlyOnHashPartition)
 	codeUnknownPartition                       = terror.ErrCode(mysql.ErrUnknownPartition)
-	codeErrGeneratedColumnFunctionIsNotAllowed = terror.ErrCode(mysql.ErrGeneratedColumnFunctionIsNotAllowed)
-	codeErrGeneratedColumnRefAutoInc           = terror.ErrCode(mysql.ErrGeneratedColumnRefAutoInc)
 	codeNotSupportedAlterOperation             = terror.ErrCode(mysql.ErrAlterOperationNotSupportedReason)
 	codeFieldNotFoundPart                      = terror.ErrCode(mysql.ErrFieldNotFoundPart)
 	codePartitionColumnList                    = terror.ErrCode(mysql.ErrPartitionColumnList)
@@ -772,6 +777,7 @@ func init() {
 		codeErrorOnRename:                          mysql.ErrErrorOnRename,
 		codeBadField:                               mysql.ErrBadField,
 		codeInvalidUseOfNull:                       mysql.ErrInvalidUseOfNull,
+		codeWrongFKOptionForGeneratedColumn:        mysql.ErrWrongFKOptionForGeneratedColumn,
 		codeUnsupportedOnGeneratedColumn:           mysql.ErrUnsupportedOnGeneratedColumn,
 		codeGeneratedColumnNonPrior:                mysql.ErrGeneratedColumnNonPrior,
 		codeDependentByGeneratedColumn:             mysql.ErrDependentByGeneratedColumn,
@@ -813,7 +819,7 @@ func init() {
 		codeFieldNotFoundPart:                      mysql.ErrFieldNotFoundPart,
 		codePartitionColumnList:                    mysql.ErrPartitionColumnList,
 		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
-		codeErrGeneratedColumnRefAutoInc:           mysql.ErrGeneratedColumnRefAutoInc,
+		codeGeneratedColumnRefAutoInc:              mysql.ErrGeneratedColumnRefAutoInc,
 		codePartitionRequiresValues:                mysql.ErrPartitionRequiresValues,
 		codePartitionWrongNoPart:                   mysql.ErrPartitionWrongNoPart,
 		codePartitionWrongNoSubpart:                mysql.ErrPartitionWrongNoSubpart,
