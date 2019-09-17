@@ -273,12 +273,12 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 
 	tikvLockResolverCountWithResolve.Inc()
 
-	var expiredLocks []*Lock
+	var expiredSecondaryLocks []*Lock
 	for _, l := range locks {
 		msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL)
 		if msBeforeLockExpired <= 0 {
 			tikvLockResolverCountWithExpired.Inc()
-			expiredLocks = append(expiredLocks, l)
+			expiredSecondaryLocks = append(expiredSecondaryLocks, l)
 		} else {
 			if msBeforeTxnExpired == 0 || msBeforeLockExpired < msBeforeTxnExpired {
 				msBeforeTxnExpired = msBeforeLockExpired
@@ -286,7 +286,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 			tikvLockResolverCountWithNotExpired.Inc()
 		}
 	}
-	if len(expiredLocks) == 0 {
+	if len(expiredSecondaryLocks) == 0 {
 		if msBeforeTxnExpired > 0 {
 			tikvLockResolverCountWithWaitExpired.Inc()
 		}
@@ -296,7 +296,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
-	for _, l := range expiredLocks {
+	for _, l := range expiredSecondaryLocks {
 		var status TxnStatus
 		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary)
 		if err != nil {
@@ -321,18 +321,25 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 			}
 		} else {
 			// If the lock is valid, the txn may be a pessimistic transaction.
+			// Update the txn expire time.
 			msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, status.ttl)
-			if msBeforeLockExpired <= 0 {
-				// The txn is a pessimistic transaction, and it's primary lock will expire soon, but
-				// TxnHeartBeat could update the TTL, so we should not clean up the lock.
-				continue
-			}
-			if msBeforeTxnExpired == 0 || msBeforeLockExpired < msBeforeTxnExpired {
-				msBeforeTxnExpired = msBeforeLockExpired
-			}
+			msBeforeTxnExpired = updateExpireTime(msBeforeTxnExpired, msBeforeLockExpired)
 		}
 	}
 	return
+}
+
+// updateExpireTime compares the current value of the transaction expire time with the lock expire time to get a new value.
+// The expire time of a transaction is set to the smallest one between all its lock expire time.
+// The return value is always >= 0
+func updateExpireTime(txnExpire, lockExpire int64) int64 {
+	if lockExpire <= 0 {
+		return 0
+	}
+	if lockExpire < txnExpire {
+		return lockExpire
+	}
+	return txnExpire
 }
 
 // GetTxnStatus queries tikv-server for a txn's status (commit/rollback).
