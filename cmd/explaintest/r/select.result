@@ -470,7 +470,7 @@ HashLeftJoin_10	7984.01	root	semi join, inner:TableReader_16, equal:[eq(test.t1.
 └─TableReader_16	9980.01	root	data:Selection_15
   └─Selection_15	9980.01	cop	not(isnull(test.t2.a)), not(isnull(test.t2.b))
     └─TableScan_14	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
- drop table t;
+drop table t;
 CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
 i int(10) unsigned DEFAULT NULL,
 x int(10) unsigned DEFAULT 0,
@@ -478,8 +478,8 @@ PRIMARY KEY (`id`)
 );
 explain select row_number() over( partition by i ) - x as rnk from t;
 id	count	task	operator info
-Projection_8	10000.00	root	minus(4_window_3, test.t.x)
-└─Window_9	10000.00	root	row_number() over(partition by test.t.i)
-  └─Sort_12	10000.00	root	test.t.i:asc
-    └─TableReader_11	10000.00	root	data:TableScan_10
-      └─TableScan_10	10000.00	cop	table:t, range:[0,+inf], keep order:false, stats:pseudo
+Projection_7	10000.00	root	minus(4_window_3, test.t.x)
+└─Window_8	10000.00	root	row_number() over(partition by test.t.i)
+  └─Sort_11	10000.00	root	test.t.i:asc
+    └─TableReader_10	10000.00	root	data:TableScan_9
+      └─TableScan_9	10000.00	cop	table:t, range:[0,+inf], keep order:false, stats:pseudo
