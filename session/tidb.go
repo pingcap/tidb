@@ -160,7 +160,8 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 	return stmt, err
 }
 
-func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
+func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars,
+	meetsErr error, sql sqlexec.Statement) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
 			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
@@ -173,7 +174,13 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 	}
 
 	if !sessVars.InTxn() {
-		return se.CommitTxn(ctx)
+		if err := se.CommitTxn(ctx); err != nil {
+			if _, ok := sql.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+				err = errors.Annotatef(err, "previous statement: %s", se.GetSessionVars().PrevStmt)
+			}
+			return err
+		}
+		return nil
 	}
 
 	return checkStmtLimit(ctx, sctx, se)
@@ -219,7 +226,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		if rs == nil {
 			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil)
 			s.(*executor.ExecStmt).SummaryStmt()
-			sessVars.PrevStmt = s.OriginText()
+			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), sessVars)
 		}
 	}()
 
@@ -248,7 +255,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			logutil.BgLogger().Error("get txn failed", zap.Error(err1))
 		}
 	}
-	err = finishStmt(ctx, sctx, se, sessVars, err)
+	err = finishStmt(ctx, sctx, se, sessVars, err, s)
 
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
