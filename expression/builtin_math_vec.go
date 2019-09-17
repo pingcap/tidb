@@ -64,6 +64,50 @@ func (b *builtinSqrtSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinAcosSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if f64s[i] < -1 || f64s[i] > 1 {
+			result.SetNull(i, true)
+		} else {
+			f64s[i] = math.Acos(f64s[i])
+		}
+	}
+	return nil
+}
+
+func (b *builtinAcosSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinAsinSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if f64s[i] < -1 || f64s[i] > 1 {
+			result.SetNull(i, true)
+		} else {
+			f64s[i] = math.Asin(f64s[i])
+		}
+	}
+	return nil
+}
+
+func (b *builtinAsinSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinAbsDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 		return err
