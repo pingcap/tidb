@@ -32,6 +32,7 @@ import (
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
@@ -323,7 +324,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 
 // calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
 func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
-	kvs, err := w.store.GetSafePointKV().GetWithPrefix("/tidb/server/minstartts")
+	kvs, err := w.store.GetSafePointKV().GetWithPrefix(domain.ServerMinStartTSPath)
 	if err != nil {
 		return safePoint
 	}
