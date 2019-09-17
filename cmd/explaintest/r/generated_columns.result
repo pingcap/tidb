@@ -8,7 +8,7 @@ KEY (city)
 );
 EXPLAIN SELECT name, id FROM person WHERE city = 'Beijing';
 id	count	task	operator info
-Projection_4	10.00	root	Column#2, Column#1
+Projection_4	10.00	root	Column#2, Column#1, ProjectionConcurrency:4
 └─IndexLookUp_10	10.00	root	
   ├─IndexScan_8	10.00	cop	table:person, index:city, range:["Beijing","Beijing"], keep order:false, stats:pseudo
   └─TableScan_9	10.00	cop	table:person, keep order:false, stats:pseudo
@@ -71,7 +71,7 @@ VALUES ('{"a": 1}', '{"1": "1"}');
 ANALYZE TABLE sgc1, sgc2;
 EXPLAIN SELECT /*+ TIDB_INLJ(sgc1, sgc2) */ * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	count	task	operator info
-IndexJoin_23	5.00	root	inner join, inner:IndexLookUp_22, outer key:Column#8, inner key:Column#3
+IndexJoin_23	5.00	root	inner join, inner:IndexLookUp_22, outer key:Column#8, inner key:Column#3, IndexLookupJoinConcurrency:4
 ├─IndexLookUp_22	5.00	root	
 │ ├─Selection_21	5.00	cop	not(isnull(Column#3))
 │ │ └─IndexScan_19	5.00	cop	table:sgc1, index:a, range: decided by [eq(Column#3, Column#8)], keep order:false
@@ -81,8 +81,8 @@ IndexJoin_23	5.00	root	inner join, inner:IndexLookUp_22, outer key:Column#8, inn
     └─TableScan_30	1.00	cop	table:sgc2, range:[-inf,+inf], keep order:false
 EXPLAIN SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	count	task	operator info
-Projection_6	5.00	root	Column#1, Column#2, Column#3, Column#4, Column#6, Column#7, Column#8, Column#9
-└─HashRightJoin_32	5.00	root	inner join, inner:TableReader_51, equal:[eq(Column#8, Column#3)]
+Projection_6	5.00	root	Column#1, Column#2, Column#3, Column#4, Column#6, Column#7, Column#8, Column#9, ProjectionConcurrency:4
+└─HashRightJoin_32	5.00	root	inner join, inner:TableReader_51, equal:[eq(Column#8, Column#3)], HashJoinConcurrency:1
   ├─TableReader_51	1.00	root	data:Selection_50
   │ └─Selection_50	1.00	cop	not(isnull(Column#8))
   │   └─TableScan_49	1.00	cop	table:sgc2, range:[-inf,+inf], keep order:false
