@@ -504,8 +504,9 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
-		err1 = ld.CheckAndInsertOneBatch(context.Background())
+		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 		c.Assert(err1, IsNil)
+		ld.SetMaxRowsInBatch(20000)
 		if tt.restData == nil {
 			c.Assert(data, HasLen, 0,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
@@ -2068,7 +2069,7 @@ func (s *testSuiteP1) TestIsPointGet(c *C) {
 		c.Check(err, IsNil)
 		p, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
-		ret, err := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, result)
 	}
@@ -2155,6 +2156,11 @@ func (s *testSuite4) TestSplitRegionTimeout(c *C) {
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout"), IsNil)
+
+	// Test scatter regions timeout.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
+	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
 }
 
 func (s *testSuiteP1) TestRow(c *C) {
@@ -4084,7 +4090,7 @@ func (s *testSuiteP1) TestSplitRegion(c *C) {
 
 	// Test for split table region.
 	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
-	// Check the ower value is more than the upper value.
+	// Check the lower value is more than the upper value.
 	_, err = tk.Exec(`split table t between (2) and (1) regions 10`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split table `t` region lower value 2 should less than the upper value 1")
@@ -4538,4 +4544,121 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)
+}
+
+func (s *testSuiteP1) TestPointGetPreparedPlanText(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("drop database if exists ps_text")
+	defer tk1.MustExec("drop database if exists ps_text")
+	tk1.MustExec("create database ps_text")
+	tk1.MustExec("use ps_text")
+
+	tk1.MustExec(`create table t (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("insert into t values (2, 2, 2)")
+	tk1.MustExec("insert into t values (3, 3, 3)")
+
+	tk1.MustExec(`prepare pk1 from "select * from t where a = ? "`)
+	tk1.MustExec(`prepare pk2 from "select * from t where ? = a "`)
+
+	tk1.MustExec("set @p0 = 0")
+	tk1.MustExec("set @p1 = 1")
+	tk1.MustExec("set @p2 = 2")
+	tk1.MustExec("set @p3 = 3")
+	tk1.MustExec("set @p4 = 4")
+
+	// first time plan generated
+	tk1.MustQuery("execute pk1 using @p0").Check(nil)
+	// using the generated plan but with different params
+	tk1.MustQuery("execute pk1 using @p1").Check(testkit.Rows("1 1 1"))
+	tk1.MustQuery("execute pk1 using @p2").Check(testkit.Rows("2 2 2"))
+	tk1.MustQuery("execute pk2 using @p3").Check(testkit.Rows("3 3 3"))
+	tk1.MustQuery("execute pk2 using @p0").Check(nil)
+	tk1.MustQuery("execute pk2 using @p1").Check(testkit.Rows("1 1 1"))
+	tk1.MustQuery("execute pk2 using @p2").Check(testkit.Rows("2 2 2"))
+	tk1.MustQuery("execute pk2 using @p3").Check(testkit.Rows("3 3 3"))
+
+	// unique index
+	tk1.MustExec(`prepare pu1 from "select * from t where b = ? "`)
+	tk1.MustQuery("execute pu1 using @p1").Check(testkit.Rows("1 1 1"))
+	tk1.MustQuery("execute pu1 using @p2").Check(testkit.Rows("2 2 2"))
+	tk1.MustQuery("execute pu1 using @p3").Check(testkit.Rows("3 3 3"))
+	tk1.MustQuery("execute pu1 using @p0").Check(nil)
+
+	// test schema changed, cached plan should be invalidated
+	tk1.MustExec("alter table t add column col4 int default 10 after c")
+	tk1.MustQuery("execute pk1 using @p0").Check(nil)
+	tk1.MustQuery("execute pk1 using @p1").Check(testkit.Rows("1 1 1 10"))
+	tk1.MustQuery("execute pk1 using @p2").Check(testkit.Rows("2 2 2 10"))
+	tk1.MustQuery("execute pk2 using @p3").Check(testkit.Rows("3 3 3 10"))
+
+	tk1.MustExec("alter table t drop index k_b")
+	tk1.MustQuery("execute pu1 using @p1").Check(testkit.Rows("1 1 1 10"))
+	tk1.MustQuery("execute pu1 using @p2").Check(testkit.Rows("2 2 2 10"))
+	tk1.MustQuery("execute pu1 using @p3").Check(testkit.Rows("3 3 3 10"))
+	tk1.MustQuery("execute pu1 using @p0").Check(nil)
+
+	tk1.MustExec(`insert into t values(4, 3, 3, 11)`)
+	tk1.MustQuery("execute pu1 using @p1").Check(testkit.Rows("1 1 1 10"))
+	tk1.MustQuery("execute pu1 using @p2").Check(testkit.Rows("2 2 2 10"))
+	tk1.MustQuery("execute pu1 using @p3").Check(testkit.Rows("3 3 3 10", "4 3 3 11"))
+	tk1.MustQuery("execute pu1 using @p0").Check(nil)
+
+	tk1.MustExec("delete from t where a = 4")
+	tk1.MustExec("alter table t add index k_b(b)")
+	tk1.MustQuery("execute pu1 using @p1").Check(testkit.Rows("1 1 1 10"))
+	tk1.MustQuery("execute pu1 using @p2").Check(testkit.Rows("2 2 2 10"))
+	tk1.MustQuery("execute pu1 using @p3").Check(testkit.Rows("3 3 3 10"))
+	tk1.MustQuery("execute pu1 using @p0").Check(nil)
+}
+
+func (s *testSuiteP1) TestPointGetPreparedPlanWithCommitMode(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("drop database if exists ps_text")
+	defer tk1.MustExec("drop database if exists ps_text")
+	tk1.MustExec("create database ps_text")
+	tk1.MustExec("use ps_text")
+
+	tk1.MustExec(`create table t (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("insert into t values (2, 2, 2)")
+	tk1.MustExec("insert into t values (3, 3, 3)")
+
+	tk1.MustExec(`prepare pk1 from "select * from t where a = ? "`)
+	tk1.MustExec(`prepare pk2 from "select * from t where ? = a "`)
+
+	tk1.MustExec("set @p0 = 0")
+	tk1.MustExec("set @p1 = 1")
+	tk1.MustExec("set @p2 = 2")
+	tk1.MustExec("set @p3 = 3")
+	tk1.MustExec("set @p4 = 4")
+
+	// first time plan generated
+	tk1.MustQuery("execute pk1 using @p0").Check(nil)
+
+	// next start a non autocommit txn
+	tk1.MustExec("set autocommit = 0")
+	tk1.MustExec("begin")
+	// try to exec using point get plan(this plan should not go short path)
+	tk1.MustQuery("execute pk1 using @p1").Check(testkit.Rows("1 1 1"))
+
+	// update rows
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use ps_text")
+	tk2.MustExec("update t set c = c + 10 where c = 1")
+
+	// try to point get again
+	tk1.MustQuery("execute pk1 using @p1").Check(testkit.Rows("1 1 1"))
+	// try to update in session 1
+	tk1.MustExec("update t set c = c + 10 where c = 1")
+	_, err := tk1.Exec("commit")
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+
+	// verify
+	tk1.MustQuery("execute pk1 using @p1").Check(testkit.Rows("1 1 11"))
+	tk2.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1 11"))
 }

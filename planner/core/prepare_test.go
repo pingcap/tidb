@@ -172,7 +172,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 		err = execPlan.OptimizePreparedPlan(ctx, tk.Se, is)
 		c.Check(err, IsNil)
 		planStr[i] = core.ToString(execPlan.Plan)
-		c.Check(planStr[i], Matches, expectedPattern, Commentf("for %s", sql1))
+		c.Check(planStr[i], Matches, expectedPattern, Commentf("for %dth %s", i, sql1))
 		pb := &dto.Metric{}
 		counter.Write(pb)
 		cnt[i] = pb.GetCounter().GetValue()
