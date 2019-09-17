@@ -159,6 +159,24 @@ func (b *builtinAtan2ArgsSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinCosSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Cos(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinCosSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinAbsDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 		return err
