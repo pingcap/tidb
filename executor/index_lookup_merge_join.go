@@ -494,16 +494,6 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 		}
 	}()
 
-	if task.innerResult == nil || task.innerResult.NumRows() == 0 {
-		for outerRow := task.outerIter.Begin(); outerRow != task.outerIter.End(); outerRow = task.outerIter.Next() {
-			imw.joiner.onMissMatch(false, outerRow, chk)
-			if imw.checkChunkIsFull(ctx, task, &chk) {
-				return nil
-			}
-		}
-		return
-	}
-
 	initCmpResult := 1
 	if imw.innerMergeCtx.desc {
 		initCmpResult = -1
