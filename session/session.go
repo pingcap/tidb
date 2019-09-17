@@ -1177,7 +1177,8 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 
 // CachedPlanExec short path currently ONLY for cached "point select plan" execution
 func (s *session) CachedPlanExec(ctx context.Context,
-	stmtID uint32, prepared *ast.Prepared, args []types.Datum) (sqlexec.RecordSet, error) {
+	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
+	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
 	is := executor.GetInfoSchema(s)
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
@@ -1210,7 +1211,8 @@ func (s *session) CachedPlanExec(ctx context.Context,
 // IsCachedExecOk check if we can execute using plan cached in prepared structure
 // Be careful for the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
-func (s *session) IsCachedExecOk(ctx context.Context, prepared *ast.Prepared) (bool, error) {
+func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt) (bool, error) {
+	prepared := preparedStmt.PreparedAst
 	if prepared.CachedPlan == nil {
 		return false, nil
 	}
@@ -1227,18 +1229,22 @@ func (s *session) IsCachedExecOk(ctx context.Context, prepared *ast.Prepared) (b
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
 	var err error
 	s.sessionVars.StartTime = time.Now()
-	prepared, ok := s.sessionVars.PreparedStmts[stmtID]
+	preparedPointer, ok := s.sessionVars.PreparedStmts[stmtID]
 	if !ok {
 		err = plannercore.ErrStmtNotFound
 		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
-	ok, err = s.IsCachedExecOk(ctx, prepared)
+	preparedStmt, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	if !ok {
+		return nil, errors.Errorf("invalid CachedPrepareStmt type")
+	}
+	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
 	if err != nil {
 		return nil, err
 	}
 	if ok {
-		return s.CachedPlanExec(ctx, stmtID, prepared, args)
+		return s.CachedPlanExec(ctx, stmtID, preparedStmt, args)
 	}
 	s.PrepareTxnCtx(ctx)
 	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)

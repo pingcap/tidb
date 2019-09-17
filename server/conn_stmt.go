@@ -625,12 +625,14 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 
 func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	sv := cc.ctx.GetSessionVars()
-	if preparedPointer, ok := sv.PreparedStmts[stmtID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-		if ok {
-			preparedAst := preparedObj.PreparedAst
-			return preparedAst.Stmt.Text() + sv.GetExecuteArgumentsInfo()
-		}
+	preparedPointer, ok := sv.PreparedStmts[stmtID]
+	if !ok {
+		return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
 	}
-	return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	if !ok {
+		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+	}
+	preparedAst := preparedObj.PreparedAst
+	return preparedAst.Stmt.Text() + sv.GetExecuteArgumentsInfo()
 }
