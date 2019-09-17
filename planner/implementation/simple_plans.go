@@ -32,7 +32,7 @@ type ShowImpl struct {
 	baseImpl
 }
 
-// NewTableScanImpl creates a new table scan Implementation.
+// NewShowImpl creates a new ShowImpl.
 func NewShowImpl(show *plannercore.PhysicalShow) *ShowImpl {
 	return &ShowImpl{baseImpl: baseImpl{plan: show}}
 }
