@@ -288,6 +288,12 @@ func (g *randLenStrGener) gen() interface{} {
 	return string(buf)
 }
 
+type randDurInt struct{}
+
+func (g *randDurInt) gen() interface{} {
+	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
+}
+
 type vecExprBenchCase struct {
 	retEvalType   types.EvalType
 	childrenTypes []types.EvalType
