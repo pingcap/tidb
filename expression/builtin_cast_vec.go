@@ -52,7 +52,8 @@ func (b *builtinCastIntAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 	}
 
 	result.ResizeFloat64(n, false)
-
+	result.mergeNulls(buf)
+	
 	i64s := buf.Int64s()
 	rs := result.Float64s()
 
@@ -60,8 +61,7 @@ func (b *builtinCastIntAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 	hasUnsignedFlag1 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		if !hasUnsignedFlag0 && !hasUnsignedFlag1 {
