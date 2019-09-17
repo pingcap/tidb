@@ -373,6 +373,9 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 	}
 
 	selected, isNull, err = VecEvalBool(ctx, vecFilters, iterator.GetChunk(), selected, isNull)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	for _, filter := range nonVecFilters {
 		isIntType := true
