@@ -29,8 +29,8 @@ type ImplementationRule interface {
 	OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error)
 }
 
-// GetImplementationRules gets the all the candidate implementation rules based
-// on the logical plan node.
+// GetImplementationRules gets all the candidate implementation rules for the
+// logical plan node.
 func GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
 	operand := memo.GetOperand(node)
 	return implementationMap[operand]
@@ -48,6 +48,9 @@ var implementationMap = map[memo.Operand][]ImplementationRule{
 	},
 	memo.OperandTableGather: {
 		&ImplTableGather{},
+	},
+	memo.OperandShow: {
+		&ImplShow{},
 	},
 }
 
@@ -136,4 +139,28 @@ func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	}
 	tblCols, tblColHists := logicalScan.Source.TblCols, logicalScan.Source.TblColHists
 	return impl.NewTableScanImpl(ts, tblCols, tblColHists), nil
+}
+
+// ImplShow is the implementation rule which implements LogicalShow to
+// PhysicalShow.
+type ImplShow struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplShow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplShow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicProp := expr.Group.Prop
+	show := expr.ExprNode.(*plannercore.LogicalShow)
+
+	// TODO(zz-jason): unifying LogicalShow and PhysicalShow to a single
+	// struct. So that we don't need to create a new PhysicalShow object, which
+	// can help us to reduce the gc presure of golang runtime and improve the
+	// overall performance.
+	showPhys := plannercore.PhysicalShow{ShowContents: show.ShowContents}.Init(show.SCtx())
+	showPhys.SetSchema(logicProp.Schema)
+	return impl.NewShowImpl(showPhys), nil
 }
