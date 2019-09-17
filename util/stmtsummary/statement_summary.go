@@ -16,12 +16,10 @@ package stmtsummary
 import (
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -55,6 +53,15 @@ type stmtSummaryByDigestMap struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	sync.Mutex
 	summaryMap *kvcache.SimpleLRUCache
+
+	// enabledWrapper encapsulates variables needed to judge whether statement summary is enabled.
+	enabledWrapper struct {
+		sync.RWMutex
+		// enabled indicates whether statement summary is enabled in current server.
+		enabled bool
+		// setInSession indicates whether statement summary has been set in any session.
+		setInSession bool
+	}
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -97,9 +104,12 @@ type StmtExecInfo struct {
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
-	return &stmtSummaryByDigestMap{
+	ssMap := &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 	}
+	// enabledWrapper.enabled will be initialized in package variable.
+	ssMap.enabledWrapper.setInSession = false
+	return ssMap
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo
@@ -164,7 +174,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 
 	ssMap.Lock()
 	// Check again. Statements could be added before disabling the flag and after Clear()
-	if atomic.LoadInt32(&variable.EnableStmtSummary) == 0 {
+	if !ssMap.Enabled() {
 		ssMap.Unlock()
 		return
 	}
@@ -188,7 +198,7 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.Unlock()
 }
 
-// Convert statement summary to Datum
+// ToDatum converts statement summary to Datum
 func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
@@ -219,12 +229,31 @@ func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 	return rows
 }
 
-// OnEnableStmtSummaryModified is triggered once EnableStmtSummary is modified.
-func OnEnableStmtSummaryModified(newValue string) {
-	if variable.TiDBOptOn(newValue) {
-		atomic.StoreInt32(&variable.EnableStmtSummary, 1)
-	} else {
-		atomic.StoreInt32(&variable.EnableStmtSummary, 0)
-		StmtSummaryByDigestMap.Clear()
+// SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
+func (ssMap *stmtSummaryByDigestMap) SetEnabled(enable bool, inSession bool) {
+	ssMap.enabledWrapper.Lock()
+
+	if inSession {
+		ssMap.enabledWrapper.setInSession = true
+	} else if ssMap.enabledWrapper.setInSession {
+		ssMap.enabledWrapper.Unlock()
+		// If it has been set in session scope, global settings will be ignored.
+		return
 	}
+
+	ssMap.enabledWrapper.enabled = enable
+	ssMap.enabledWrapper.Unlock()
+
+	// Clear all summaries once statement summary is disabled.
+	if !enable {
+		ssMap.Clear()
+	}
+}
+
+// Enabled returns whether statement summary is enabled.
+func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
+	ssMap.enabledWrapper.RLock()
+	enabled := ssMap.enabledWrapper.enabled
+	ssMap.enabledWrapper.RUnlock()
+	return enabled
 }

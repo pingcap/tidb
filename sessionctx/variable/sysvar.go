@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -107,6 +108,8 @@ func init() {
 		CodeMaxPreparedStmtCountReached: mysql.ErrMaxPreparedStmtCountReached,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
+
+	stmtsummary.StmtSummaryByDigestMap.SetEnabled(DefTiDBEnableStmtSummary, false)
 }
 
 // BoolToIntStr converts bool to int string, for example "0" or "1".
@@ -715,7 +718,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBEnableNoopFuncs, BoolToIntStr(DefTiDBEnableNoopFuncs)},
 	{ScopeSession, TiDBReplicaRead, "leader"},
 	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
-	{ScopeGlobal, TiDBEnableStmtSummary, BoolToIntStr(DefTiDBEnableStmtSummary)},
+	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, BoolToIntStr(DefTiDBEnableStmtSummary)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

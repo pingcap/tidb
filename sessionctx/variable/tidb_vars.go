@@ -385,5 +385,4 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
-	EnableStmtSummary              int32  = BoolToInt32(DefTiDBEnableStmtSummary)
 )
