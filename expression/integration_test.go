@@ -4131,6 +4131,13 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
 	result.Check(testkit.Rows("tableID=411, indexID=1, indexValues=015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7"))
+
+	// Test invalid record/index key.
+	result = tk.MustQuery("select tidb_decode_key( '7480000000000000FF2E5F728000000011FFE1A3000000000000' )")
+	result.Check(testkit.Rows("7480000000000000FF2E5F728000000011FFE1A3000000000000"))
+	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(warns, HasLen, 1)
+	c.Assert(warns[0].Err.Error(), Equals, "the key is a invalid record/index key")
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
