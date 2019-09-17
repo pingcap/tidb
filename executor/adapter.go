@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -67,8 +68,8 @@ type recordSet struct {
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
 		// The else branch will be removed after we totally remove the *Name from expression.Column.
-		if len(a.stmt.outputNames) > 0 {
-			a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.outputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
+		if len(a.stmt.OutputNames) > 0 {
+			a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 		} else {
 			a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
 		}
@@ -178,8 +179,10 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
-	a.stmt.Ctx.GetSessionVars().PrevStmt = a.stmt.OriginText()
+	sessVars := a.stmt.Ctx.GetSessionVars()
+	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), sessVars)
 	a.stmt.logAudit()
+	a.stmt.SummaryStmt()
 	return err
 }
 
@@ -204,7 +207,38 @@ type ExecStmt struct {
 	isSelectForUpdate bool
 	retryCount        uint
 
-	outputNames []*types.FieldName
+	// OutputNames will be set if using cached plan
+	OutputNames []*types.FieldName
+}
+
+// GetPointRecord short path for point exec directly from plan, keep only necessary steps
+func (a *ExecStmt) GetPointRecord(ctx context.Context, is infoschema.InfoSchema) (*recordSet, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("ExecStmt.GetPointRecord", opentracing.ChildOf(span.Context()))
+		span1.LogKV("sql", a.OriginText())
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	startTs := uint64(math.MaxUint64)
+	err := a.Ctx.InitTxnWithStartTS(startTs)
+	if err != nil {
+		return nil, err
+	}
+	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
+	b := newExecutorBuilder(a.Ctx, is)
+	exec := b.build(a.Plan)
+	if b.err != nil {
+		return nil, b.err
+	}
+	if err = exec.Open(ctx); err != nil {
+		terror.Call(exec.Close)
+		return nil, err
+	}
+	return &recordSet{
+		executor:   exec,
+		stmt:       a,
+		txnStartTS: startTs,
+	}, nil
 }
 
 // OriginText returns original statement as a string.
@@ -249,7 +283,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	a.outputNames = p.OutputNames()
+	a.OutputNames = p.OutputNames()
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
 }
@@ -620,7 +654,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		useMaxTS, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if err != nil {
 			return nil, err
 		}
@@ -662,7 +696,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.outputNames = executorExec.outputNames
+		a.OutputNames = executorExec.outputNames
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		if executorExec.lowerPriority {
@@ -748,7 +782,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		Succ:        succ,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
-		slowItems.PrevStmt = FormatSQL(sessVars.PrevStmt, sessVars)
+		slowItems.PrevStmt = sessVars.PrevStmt
 	}
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
@@ -779,46 +813,23 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 }
 
-// IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
-//  1. ctx is auto commit tagged
-//  2. txn is not valid
-//  3. plan is point get by pk, or point get by unique index (no double read)
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) (bool, error) {
-	// check auto commit
-	if !ctx.GetSessionVars().IsAutocommit() {
-		return false, nil
+// SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
+func (a *ExecStmt) SummaryStmt() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.InRestrictedSQL || atomic.LoadInt32(&variable.EnableStmtSummary) == 0 {
+		return
 	}
-
-	// check txn
-	txn, err := ctx.Txn(false)
-	if err != nil {
-		return false, err
-	}
-	if txn.Valid() {
-		return false, nil
-	}
-
-	// check plan
-	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
-		if len(proj.Children()) != 1 {
-			return false, nil
-		}
-		p = proj.Children()[0]
-	}
-
-	switch v := p.(type) {
-	case *plannercore.PhysicalIndexReader:
-		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
-	case *plannercore.PhysicalTableReader:
-		tableScan := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
-	case *plannercore.PointGetPlan:
-		// If the PointGetPlan needs to read data using unique index (double read), we
-		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
-		// and the data and index would be inconsistent!
-		return v.IndexInfo == nil, nil
-	default:
-		return false, nil
-	}
+	stmtCtx := sessVars.StmtCtx
+	normalizedSQL, digest := stmtCtx.SQLDigest()
+	costTime := time.Since(sessVars.StartTime)
+	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
+		SchemaName:    sessVars.CurrentDB,
+		OriginalSQL:   a.Text,
+		NormalizedSQL: normalizedSQL,
+		Digest:        digest,
+		TotalLatency:  uint64(costTime.Nanoseconds()),
+		AffectedRows:  stmtCtx.AffectedRows(),
+		SentRows:      0,
+		StartTime:     sessVars.StartTime,
+	})
 }
