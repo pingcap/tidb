@@ -58,9 +58,10 @@ type stmtSummaryByDigestMap struct {
 	enabledWrapper struct {
 		sync.RWMutex
 		// enabled indicates whether statement summary is enabled in current server.
-		enabled bool
+		sessionEnabled string
 		// setInSession indicates whether statement summary has been set in any session.
-		setInSession bool
+		globalEnabled  string
+		defaultEnabled bool
 	}
 }
 
@@ -107,8 +108,9 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	ssMap := &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 	}
-	// enabledWrapper.enabled will be initialized in package variable.
-	ssMap.enabledWrapper.setInSession = false
+	// enabledWrapper.defaultEnabled will be initialized in package variable.
+	ssMap.enabledWrapper.sessionEnabled = ""
+	ssMap.enabledWrapper.globalEnabled = ""
 	return ssMap
 }
 
@@ -229,23 +231,30 @@ func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 	return rows
 }
 
-// SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
-func (ssMap *stmtSummaryByDigestMap) SetEnabled(enable bool, inSession bool) {
+// SetDefaultEnabled sets the enabling status by default.
+func (ssMap *stmtSummaryByDigestMap) SetDefaultEnabled(defaultEnabled bool) {
 	ssMap.enabledWrapper.Lock()
+	ssMap.enabledWrapper.defaultEnabled = defaultEnabled
+	ssMap.enabledWrapper.Unlock()
+}
 
+// SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
+func (ssMap *stmtSummaryByDigestMap) SetEnabled(enable string, inSession bool) {
+	ssMap.enabledWrapper.Lock()
+	var needClear bool
 	if inSession {
-		ssMap.enabledWrapper.setInSession = true
-	} else if ssMap.enabledWrapper.setInSession {
-		ssMap.enabledWrapper.Unlock()
-		// If it has been set in session scope, global settings will be ignored.
-		return
+		ssMap.enabledWrapper.sessionEnabled = enable
+		needClear = !ssMap.isEnabled(enable)
+	} else {
+		ssMap.enabledWrapper.globalEnabled = enable
+		if !ssMap.isSet(ssMap.enabledWrapper.sessionEnabled) {
+			needClear = !ssMap.isEnabled(enable)
+		}
 	}
-
-	ssMap.enabledWrapper.enabled = enable
 	ssMap.enabledWrapper.Unlock()
 
 	// Clear all summaries once statement summary is disabled.
-	if !enable {
+	if needClear {
 		ssMap.Clear()
 	}
 }
@@ -253,7 +262,29 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabled(enable bool, inSession bool) {
 // Enabled returns whether statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
 	ssMap.enabledWrapper.RLock()
-	enabled := ssMap.enabledWrapper.enabled
+	var enabled bool
+	if ssMap.isSet(ssMap.enabledWrapper.sessionEnabled) {
+		enabled = ssMap.isEnabled(ssMap.enabledWrapper.sessionEnabled)
+	} else {
+		enabled = ssMap.isEnabled(ssMap.enabledWrapper.globalEnabled)
+	}
 	ssMap.enabledWrapper.RUnlock()
 	return enabled
+}
+
+// isEnabled converts a string value to bool.
+func (ssMap *stmtSummaryByDigestMap) isEnabled(enable string) bool {
+	switch {
+	case strings.EqualFold(enable, "ON") || enable == "1":
+		return true
+	case strings.EqualFold(enable, "OFF") || enable == "0":
+		return false
+	default:
+		return ssMap.enabledWrapper.defaultEnabled
+	}
+}
+
+// isSet judges whether the variable is set.
+func (ssMap *stmtSummaryByDigestMap) isSet(enable string) bool {
+	return enable != ""
 }

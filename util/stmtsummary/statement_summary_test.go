@@ -34,7 +34,7 @@ type testStmtSummarySuite struct {
 
 func (s *testStmtSummarySuite) SetUpSuite(c *C) {
 	s.ssMap = newStmtSummaryByDigestMap()
-	s.ssMap.SetEnabled(true, false)
+	s.ssMap.SetEnabled("1", false)
 }
 
 func TestT(t *testing.T) {
@@ -320,7 +320,7 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	s.ssMap.Clear()
 	// Set false in global scope, it should work.
-	s.ssMap.SetEnabled(false, false)
+	s.ssMap.SetEnabled("0", false)
 
 	stmtExecInfo1 := &StmtExecInfo{
 		SchemaName:    "schema_name",
@@ -338,20 +338,20 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	c.Assert(len(datums), Equals, 0)
 
 	// Set true in session scope, it will overwrite global scope.
-	s.ssMap.SetEnabled(true, true)
+	s.ssMap.SetEnabled("1", true)
 
 	s.ssMap.AddStatement(stmtExecInfo1)
 	datums = s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, 1)
 
 	// Set false in global scope, it shouldn't work.
-	s.ssMap.SetEnabled(false, false)
+	s.ssMap.SetEnabled("0", false)
 
 	stmtExecInfo2 := &StmtExecInfo{
 		SchemaName:    "schema_name",
 		OriginalSQL:   "original_sql2",
-		NormalizedSQL: "normalized_sql",
-		Digest:        "digest",
+		NormalizedSQL: "normalized_sql2",
+		Digest:        "digest2",
 		TotalLatency:  50000,
 		AffectedRows:  500,
 		SentRows:      500,
@@ -359,5 +359,20 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	}
 	s.ssMap.AddStatement(stmtExecInfo2)
 	datums = s.ssMap.ToDatum()
-	c.Assert(len(datums), Equals, 1)
+	c.Assert(len(datums), Equals, 2)
+
+	// Unset in session scope
+	s.ssMap.SetEnabled("", true)
+	s.ssMap.AddStatement(stmtExecInfo2)
+	datums = s.ssMap.ToDatum()
+	c.Assert(len(datums), Equals, 0)
+
+	// Unset in global scope
+	s.ssMap.SetEnabled("", false)
+	s.ssMap.AddStatement(stmtExecInfo1)
+	datums = s.ssMap.ToDatum()
+	c.Assert(len(datums), Equals, 0)
+
+	// Set back
+	s.ssMap.SetEnabled("1", false)
 }

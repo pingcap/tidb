@@ -192,7 +192,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	}
 
 	if name == variable.TiDBEnableStmtSummary {
-		stmtsummary.StmtSummaryByDigestMap.SetEnabled(variable.TiDBOptOn(valStr), !v.IsGlobal)
+		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
 	}
 
 	return nil

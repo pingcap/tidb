@@ -145,4 +145,13 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
 	).Check(testkit.Rows("test 2 0 select * from t where a=2"))
+
+	// Unset session variable
+	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+	tk.MustQuery("select * from t where a=2")
+
+	// Statement summary is disabled
+	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest`,
+	).Check(testkit.Rows())
 }

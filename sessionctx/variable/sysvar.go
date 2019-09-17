@@ -109,7 +109,7 @@ func init() {
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 
-	stmtsummary.StmtSummaryByDigestMap.SetEnabled(DefTiDBEnableStmtSummary, false)
+	stmtsummary.StmtSummaryByDigestMap.SetDefaultEnabled(DefTiDBEnableStmtSummary)
 }
 
 // BoolToIntStr converts bool to int string, for example "0" or "1".

@@ -127,7 +127,7 @@ func (gvcSuite *testGVCSuite) TestCheckEnableStmtSummary(c *C) {
 		Collate: charset.CollationBin,
 	}
 
-	stmtsummary.StmtSummaryByDigestMap.SetEnabled(false, false)
+	stmtsummary.StmtSummaryByDigestMap.SetEnabled("0", false)
 	ck := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft1}, 1024)
 	ck.AppendString(0, variable.TiDBEnableStmtSummary)
 	ck.AppendString(1, "1")
