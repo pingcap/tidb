@@ -1848,7 +1848,110 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	s.tk.MustGetErrCode(failSQL, tmysql.ErrCannotAddForeign)
 	failSQL = "create table t5 (a int, b int as (a+1) stored, foreign key (b) references t1(a));"
 	s.tk.MustGetErrCode(failSQL, tmysql.ErrCannotAddForeign)
-	s.tk.MustExec("drop table if exists t1,t2,t3,t4,t5;")
+	s.tk.MustExec("drop table if exists t1,t2,t3;")
+}
+
+func (s *testDBSuite2) TestFKOnGeneratedColumns(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	// test add foreign key to generated column
+
+	// foreign key constraint cannot reference a virtual generated column.
+	s.tk.MustExec("create table t1 (a int primary key);")
+	s.tk.MustGetErrCode("create table t2 (a int, b int as (a+1) virtual, foreign key (b) references t1(a));", tmysql.ErrCannotAddForeign)
+	s.tk.MustExec("create table t2 (a int, b int generated always as (a+1) virtual);")
+	s.tk.MustGetErrCode("alter table t2 add foreign key (b) references t1(a);", tmysql.ErrCannotAddForeign)
+	s.tk.MustExec("drop table t1, t2;")
+
+	// foreign key constraint cannot defined on a virtual generated column.
+	// Note: TiDB do not check ForeignKey already exists or is a generated column, so we should exclude this case.
+	//s.tk.MustExec("create table t1 (a int, b int generated always as (a+1) virtual primary key);")
+	//s.tk.MustExec("create table t2 (a int, foreign key (a) references t1(b));")
+	//s.tk.MustExec("create table t3 (a int);")
+	//s.tk.MustExec("alter table t3 add foreign key (a) references t1(b);")
+	//s.tk.MustExec("drop table t1, t2, t3;")
+
+	// foreign key constraint can reference a stored generated column.
+	s.tk.MustExec("create table t2 (a int primary key);")
+	s.tk.MustExec("create table t1 (a int, b int as (a+1) stored, foreign key (b) references t(a));")
+	s.tk.MustExec("create table t3 (a int, b int generated always as (a+1) stored);")
+	s.tk.MustExec("alter table t3 add foreign key (b) references t2(a);")
+	s.tk.MustExec("drop table t1, t2, t3;")
+
+	// foreign key constraint can defined on a stored generated column.
+	s.tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored primary key);")
+	s.tk.MustExec("create table t2 (a int, foreign key (a) references t1(b));")
+	s.tk.MustExec("create table t3 (a int);")
+	s.tk.MustExec("alter table t3 add foreign key (a) references t1(b);")
+	s.tk.MustExec("drop table t1, t2, t3;")
+
+	c.Skip("implement")
+	// rejected FK options
+	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update set null);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update cascade);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update set default);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on delete set null);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on delete set default);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored);")
+	//s.tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update cascade;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set default;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on delete set null;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on delete set default;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustExec("drop table t1;")
+
+	// allowed FK options
+	s.tk.MustExec("create table t1 (a int primary key, b char(5));")
+	s.tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on update restrict);")
+	s.tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on update no action);")
+	s.tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on delete restrict);")
+	s.tk.MustExec("create table t5 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on delete cascade);")
+	s.tk.MustExec("create table t6 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on delete no action);")
+	s.tk.MustExec("drop table t2,t3,t4,t5,t6;")
+	s.tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored);")
+	s.tk.MustExec("alter table t2 add foreign key (b) references t1(a) on update restrict);")
+	s.tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored);")
+	s.tk.MustExec("alter table t3 add foreign key (b) references t1(a) on update no action);")
+	s.tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored);")
+	s.tk.MustExec("alter table t4 add foreign key (b) references t1(a) on delete restrict);")
+	s.tk.MustExec("create table t5 (a int, b int generated always as (a % 10) stored);")
+	s.tk.MustExec("alter table t5 add foreign key (b) references t1(a) on delete cascade);")
+	s.tk.MustExec("create table t6 (a int, b int generated always as (a % 10) stored);")
+	s.tk.MustExec("alter table t6 add foreign key (b) references t1(a) on delete no action);")
+	s.tk.MustExec("drop table t1,t2,t3,t4,t5,t6;")
+
+	// rejected FK options on the base columns of a stored columns
+	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on update set null);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on update cascade);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on update set default);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on delete set null);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on delete cascade);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on delete set default);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored);")
+	//s.tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on update set null;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on update cascade;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on update set default;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on delete set null;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on delete cascade;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on delete set default;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	//s.tk.MustExec("drop table t1;")
+
+	// allowed FK options on the base columns of a stored columns
+	s.tk.MustExec("create table t1 (a int primary key, b char(5));")
+	s.tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on update restrict);")
+	s.tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on update no action);")
+	s.tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on delete restrict);")
+	s.tk.MustExec("create table t6 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on delete no action);")
+	s.tk.MustExec("drop table t2,t3,t4,t5,t6;")
+	s.tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored);")
+	s.tk.MustExec("alter table t2 add foreign key (a) references t1(a) on update restrict);")
+	s.tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored);")
+	s.tk.MustExec("alter table t3 add foreign key (a) references t1(a) on update no action);")
+	s.tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored);")
+	s.tk.MustExec("alter table t4 add foreign key (a) references t1(a) on delete restrict);")
+	s.tk.MustExec("create table t5 (a int, b int generated always as (a % 10) stored);")
+	s.tk.MustExec("alter table t5 add foreign key (a) references t1(a) on delete no action);")
+	s.tk.MustExec("drop table t1,t2,t3,t4,t5;")
 }
 
 func (s *testDBSuite3) TestTruncateTable(c *C) {

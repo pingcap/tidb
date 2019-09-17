@@ -998,10 +998,11 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, fo
 }
 
 func checkAddFKOnGeneratedColumn(constr *ast.Constraint, colDefs []*ast.ColumnDef) error {
+	// foreign key constraint cannot reference a virtual generated column.
 	for _, key := range constr.Keys {
 		for _, colDef := range colDefs {
 			for _, option := range colDef.Options {
-				if option.Tp == ast.ColumnOptionGenerated && colDef.Name.Name.L == key.Column.Name.L {
+				if option.Tp == ast.ColumnOptionGenerated && !option.Stored && colDef.Name.Name.L == key.Column.Name.L {
 					return infoschema.ErrCannotAddForeign
 				}
 			}
@@ -3350,6 +3351,13 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
+	}
+	for _, name := range fkInfo.Cols {
+		for _, col := range t.Cols() {
+			if col.IsGenerated() && !col.GeneratedStored && col.Name.L == name.L {
+				return errors.Trace(infoschema.ErrCannotAddForeign)
+			}
+		}
 	}
 
 	job := &model.Job{
