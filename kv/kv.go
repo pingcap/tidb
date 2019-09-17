@@ -62,6 +62,15 @@ const (
 	PriorityHigh
 )
 
+// UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
+// This is used in the situation of the index key/value was unchanged when do update.
+// Usage:
+// 1. For non-unique index: normally, the index value is '0'.
+// Change the value to '1' indicate the index key/value is no need to commit.
+// 2. For unique index: normally, the index value is the record handle ID, 8 bytes.
+// Append UnCommitIndexKVFlag to the value indicate the index key/value is no need to commit.
+const UnCommitIndexKVFlag byte = '1'
+
 // IsoLevel is the transaction's isolation level.
 type IsoLevel int
 
