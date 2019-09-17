@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -465,6 +466,16 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 		job.State = model.JobStateCancelled
 		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
+
+	// Double check for drop index on auto_increment column.
+	cols := tblInfo.Columns
+	for _, idxCol := range indexInfo.Columns {
+		if mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) && countOfIndexContainColumn(tblInfo, idxCol.Name.L) < 2 {
+			job.State = model.JobStateCancelled
+			return nil, nil, autoid.ErrWrongAutoKey
+		}
+	}
+
 	return tblInfo, indexInfo, nil
 }
 
