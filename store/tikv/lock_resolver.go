@@ -326,9 +326,6 @@ type txnExpireTime struct {
 	txnExpire   int64
 }
 
-// updateExpireTime compares the current value of the transaction expire time with the lock expire time to get a new value.
-// The expire time of a transaction is set to the smallest one between all its lock expire time.
-// The return value is always >= 0
 func (t *txnExpireTime) update(lockExpire int64) {
 	t.initialized = true
 	if lockExpire <= 0 {
