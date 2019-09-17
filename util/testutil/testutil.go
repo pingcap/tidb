@@ -126,7 +126,6 @@ var record bool
 
 func init() {
 	flag.BoolVar(&record, "record", false, "to generate test result")
-	flag.Parse()
 }
 
 type testCases struct {
