@@ -326,15 +326,15 @@ func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
 	logutil.BgLogger().Info("YUSP", zap.Time("safePoint", safePoint))
 	kvs, err := w.store.GetSafePointKV().GetWithPrefix(domain.ServerMinStartTSPath)
 	if err != nil {
-		logutil.BgLogger().Info("failed to get all minStartTS", zap.Error(err))
+		logutil.BgLogger().Warn("get all minStartTS failed", zap.Error(err))
 		return safePoint
 	}
 	var globalMinStartTS uint64 = math.MaxUint64
 	for _, v := range kvs {
-		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 8)
+		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 64)
 		if err != nil {
-			logutil.BgLogger().Info("failed to parse minStartTS", zap.Error(err))
-			return safePoint
+			logutil.BgLogger().Warn("parse minStartTS failed", zap.Error(err))
+			continue
 		}
 		if minStartTS < globalMinStartTS {
 			globalMinStartTS = minStartTS
