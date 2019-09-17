@@ -420,8 +420,12 @@ func (do *Domain) topNSlowQueryLoop() {
 func (do *Domain) infoSyncerKeeper() {
 	defer do.wg.Done()
 	defer recoverInDomain("infoSyncerKeeper", false)
+	ticker := time.NewTicker(time.Second * time.Duration(InfoSessionTTL) / 2)
+	defer ticker.Stop()
 	for {
 		select {
+		case <-ticker.C:
+			do.info.ReportMinStartTS()
 		case <-do.info.Done():
 			logutil.BgLogger().Info("server info syncer need to restart")
 			if err := do.info.Restart(context.Background()); err != nil {
@@ -547,6 +551,7 @@ func (do *Domain) Close() {
 	}
 	if do.info != nil {
 		do.info.RemoveServerInfo()
+		do.info.RemoveMinStartTS()
 	}
 	close(do.exit)
 	if do.etcdClient != nil {
