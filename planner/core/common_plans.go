@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -227,6 +226,11 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	}
 
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+		// In order to avoid some correctness issues, we have to clear the
+		// cached plan once the schema version is changed.
+		// Cached plan in prepared struct does NOT have a "cache key" with
+		// schema version like prepared plan cache key
+		prepared.CachedPlan = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		err := Preprocess(sctx, prepared.Stmt, is, InPrepare)
@@ -244,30 +248,56 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) error {
+	if prepared.CachedPlan != nil {
+		// Rewriting the expression in the select.where condition  will convert its
+		// type from "paramMarker" to "Constant".When Point Select queries are executed,
+		// the expression in the where condition will not be evaluated,
+		// so you don't need to consider whether prepared.useCache is enabled.
+		plan := prepared.CachedPlan.(Plan)
+		err := e.rebuildRange(plan)
+		if err != nil {
+			return err
+		}
+		if metrics.ResettablePlanCacheCounterFortTest {
+			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+		} else {
+			planCacheCounter.Inc()
+		}
+		e.names = plan.OutputNames()
+		e.Plan = plan
+		return nil
+	}
 	var cacheKey kvcache.Key
-	sessionVars := sctx.GetSessionVars()
-	sessionVars.StmtCtx.UseCache = prepared.UseCache
+	sctx.GetSessionVars().StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
+		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if metrics.ResettablePlanCacheCounterFortTest {
 				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 			} else {
 				planCacheCounter.Inc()
 			}
-			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
-			err := e.rebuildRange(plan)
+			cachedVal := cacheValue.(*PSTMTPlanCacheValue)
+			err := e.rebuildRange(cachedVal.Plan)
 			if err != nil {
 				return err
 			}
-			e.names = cacheValue.(*PSTMTPlanCacheValue).OutPutNames
-			e.Plan = plan
+			e.names = cachedVal.OutPutNames
+			e.Plan = cachedVal.Plan
 			return nil
 		}
 	}
 	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return err
+	}
+	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+	if err != nil {
+		return err
+	}
+	if ok {
+		// just cache point plan now
+		prepared.CachedPlan = p
 	}
 	e.names = p.OutputNames()
 	e.Plan = p
@@ -349,7 +379,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
-	idxCols, colLengths := expression.IndexInfo2Cols(is.schema.Columns, is.Index)
+	idxCols, colLengths := expression.IndexInfo2PrefixCols(is.schema.Columns, is.Index)
 	if len(idxCols) == 0 {
 		return ranger.FullRange(), nil
 	}
@@ -365,24 +395,6 @@ type Deallocate struct {
 	baseSchemaProducer
 
 	Name string
-}
-
-// Show represents a show plan.
-type Show struct {
-	physicalSchemaProducer
-
-	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName      string
-	Table       *ast.TableName  // Used for showing columns.
-	Column      *ast.ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr
-	Flag        int                  // Some flag parsed from sql, such as FULL.
-	User        *auth.UserIdentity   // Used for show grants.
-	Roles       []*auth.RoleIdentity // Used for show grants.
-	Full        bool
-	IfNotExists bool // Used for `show create database if not exists`
-
-	GlobalScope bool // Used by show variables
 }
 
 // Set represents a plan for set stmt.
@@ -641,6 +653,17 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 	case *PhysicalIndexLookUpReader:
 		e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, false)
 		e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
+	case *PhysicalIndexMergeReader:
+		for i := 0; i < len(copPlan.partialPlans); i++ {
+			if copPlan.tablePlan == nil && i == len(copPlan.partialPlans)-1 {
+				e.explainPlanInRowFormat(copPlan.partialPlans[i], "cop", childIndent, true)
+			} else {
+				e.explainPlanInRowFormat(copPlan.partialPlans[i], "cop", childIndent, false)
+			}
+		}
+		if copPlan.tablePlan != nil {
+			e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
+		}
 	}
 }
 
@@ -655,13 +678,21 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
+		var analyzeInfo string
 		if runtimeStatsColl.ExistsCopStats(explainID) {
-			row = append(row, runtimeStatsColl.GetCopStats(explainID).String())
+			analyzeInfo = runtimeStatsColl.GetCopStats(explainID).String()
 		} else if runtimeStatsColl.ExistsRootStats(explainID) {
-			row = append(row, runtimeStatsColl.GetRootStats(explainID).String())
+			analyzeInfo = runtimeStatsColl.GetRootStats(explainID).String()
 		} else {
-			row = append(row, "time:0ns, loops:0, rows:0")
+			analyzeInfo = "time:0ns, loops:0, rows:0"
 		}
+		switch p.(type) {
+		case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
+			if s := runtimeStatsColl.GetReaderStats(explainID); s != nil && len(s.String()) > 0 {
+				analyzeInfo += ", " + s.String()
+			}
+		}
+		row = append(row, analyzeInfo)
 
 		tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
 		if tracker != nil {
@@ -788,5 +819,46 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 
 	for i := range pipelines {
 		buffer.WriteString(pipelines[i])
+	}
+}
+
+// IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
+//  1. ctx is auto commit tagged
+//  2. txn is not valid
+//  3. plan is point get by pk, or point get by unique index (no double read)
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
+	// check auto commit
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false, nil
+	}
+
+	// check txn
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return false, err
+	}
+	if txn.Valid() {
+		return false, nil
+	}
+
+	// check plan
+	if proj, ok := p.(*PhysicalProjection); ok {
+		p = proj.Children()[0]
+	}
+
+	switch v := p.(type) {
+	case *PhysicalIndexReader:
+		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
+	case *PhysicalTableReader:
+		tableScan := v.TablePlans[0].(*PhysicalTableScan)
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
+	case *PointGetPlan:
+		// If the PointGetPlan needs to read data using unique index (double read), we
+		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
+		// and the data and index would be inconsistent!
+		return v.IndexInfo == nil, nil
+	default:
+		return false, nil
 	}
 }

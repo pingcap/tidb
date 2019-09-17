@@ -14,6 +14,7 @@
 package domain
 
 import (
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -95,4 +97,48 @@ func getResultField(colName string, id, offset int) *ast.ResultField {
 		TableAsName: model.NewCIStr("tbl"),
 		DBName:      model.NewCIStr("test"),
 	}
+}
+
+func (gvcSuite *testGVCSuite) TestCheckEnableStmtSummary(c *C) {
+	defer testleak.AfterTest(c)()
+	testleak.BeforeTest()
+
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	ddlLease := 50 * time.Millisecond
+	dom := NewDomain(store, ddlLease, 0, mockFactory)
+	err = dom.Init(ddlLease, sysMockFactory)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+
+	gvc := dom.GetGlobalVarsCache()
+
+	rf := getResultField("c", 1, 0)
+	rf1 := getResultField("c1", 2, 1)
+	ft := &types.FieldType{
+		Tp:      mysql.TypeString,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+	ft1 := &types.FieldType{
+		Tp:      mysql.TypeString,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+
+	atomic.StoreInt32(&variable.EnableStmtSummary, 0)
+	ck := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft1}, 1024)
+	ck.AppendString(0, variable.TiDBEnableStmtSummary)
+	ck.AppendString(1, "1")
+	row := ck.GetRow(0)
+	gvc.Update([]chunk.Row{row}, []*ast.ResultField{rf, rf1})
+	c.Assert(atomic.LoadInt32(&variable.EnableStmtSummary), Equals, int32(1))
+
+	ck = chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft1}, 1024)
+	ck.AppendString(0, variable.TiDBEnableStmtSummary)
+	ck.AppendString(1, "0")
+	row = ck.GetRow(0)
+	gvc.Update([]chunk.Row{row}, []*ast.ResultField{rf, rf1})
+	c.Assert(atomic.LoadInt32(&variable.EnableStmtSummary), Equals, int32(0))
 }
