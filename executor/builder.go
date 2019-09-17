@@ -54,15 +54,16 @@ import (
 )
 
 var (
-	executorCounterMergeJoinExec       = metrics.ExecutorCounter.WithLabelValues("MergeJoinExec")
-	executorCountHashJoinExec          = metrics.ExecutorCounter.WithLabelValues("HashJoinExec")
-	executorCounterHashAggExec         = metrics.ExecutorCounter.WithLabelValues("HashAggExec")
-	executorStreamAggExec              = metrics.ExecutorCounter.WithLabelValues("StreamAggExec")
-	executorCounterSortExec            = metrics.ExecutorCounter.WithLabelValues("SortExec")
-	executorCounterTopNExec            = metrics.ExecutorCounter.WithLabelValues("TopNExec")
-	executorCounterNestedLoopApplyExec = metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec")
-	executorCounterIndexLookUpJoin     = metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin")
-	executorCounterIndexLookUpExecutor = metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor")
+	executorCounterMergeJoinExec            = metrics.ExecutorCounter.WithLabelValues("MergeJoinExec")
+	executorCountHashJoinExec               = metrics.ExecutorCounter.WithLabelValues("HashJoinExec")
+	executorCounterHashAggExec              = metrics.ExecutorCounter.WithLabelValues("HashAggExec")
+	executorStreamAggExec                   = metrics.ExecutorCounter.WithLabelValues("StreamAggExec")
+	executorCounterSortExec                 = metrics.ExecutorCounter.WithLabelValues("SortExec")
+	executorCounterTopNExec                 = metrics.ExecutorCounter.WithLabelValues("TopNExec")
+	executorCounterNestedLoopApplyExec      = metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec")
+	executorCounterIndexLookUpJoin          = metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin")
+	executorCounterIndexLookUpExecutor      = metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor")
+	executorCounterIndexMergeReaderExecutor = metrics.ExecutorCounter.WithLabelValues("IndexMergeReaderExecutor")
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -212,6 +213,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildSQLBindExec(v)
 	case *plannercore.SplitRegion:
 		return b.buildSplitRegion(v)
+	case *plannercore.PhysicalIndexMergeReader:
+		return b.buildIndexMergeReader(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -2255,6 +2258,102 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	return ret
+}
+
+func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
+	partialPlanCount := len(v.PartialPlans)
+	partialReqs := make([]*tipb.DAGRequest, 0, partialPlanCount)
+	partialStreamings := make([]bool, 0, partialPlanCount)
+	indexes := make([]*model.IndexInfo, 0, partialPlanCount)
+	keepOrders := make([]bool, 0, partialPlanCount)
+	descs := make([]bool, 0, partialPlanCount)
+	feedbacks := make([]*statistics.QueryFeedback, 0, partialPlanCount)
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	for i := 0; i < partialPlanCount; i++ {
+		feedback := statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
+		feedback.Invalidate()
+		feedbacks = append(feedbacks, feedback)
+		tempReq, tempStreaming, err := b.constructDAGReq(v.PartialPlans[i])
+		if err != nil {
+			return nil, err
+		}
+		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
+			keepOrders = append(keepOrders, is.KeepOrder)
+			descs = append(descs, is.Desc)
+			tempReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
+			collectIndex := false
+			tempReq.CollectRangeCounts = &collectIndex
+			partialReqs = append(partialReqs, tempReq)
+			partialStreamings = append(partialStreamings, tempStreaming)
+			indexes = append(indexes, is.Index)
+		} else {
+			ts := v.PartialPlans[i][0].(*plannercore.PhysicalTableScan)
+			keepOrders = append(keepOrders, ts.KeepOrder)
+			descs = append(descs, ts.Desc)
+			for i := range ts.Columns {
+				tempReq.OutputOffsets = append(tempReq.OutputOffsets, uint32(i))
+			}
+			collectTable := false
+			tempReq.CollectRangeCounts = &collectTable
+			partialReqs = append(partialReqs, tempReq)
+			partialStreamings = append(partialStreamings, tempStreaming)
+			indexes = append(indexes, nil)
+		}
+	}
+	tableReq, tableStreaming, err := b.constructDAGReq(v.TablePlans)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i := 0; i < v.Schema().Len(); i++ {
+		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
+	}
+	table, _ := b.is.TableByID(ts.Table.ID)
+	startTS, err := b.getStartTS()
+	if err != nil {
+		return nil, err
+	}
+	e := &IndexMergeReaderExecutor{
+		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		dagPBs:            partialReqs,
+		startTS:           startTS,
+		table:             table,
+		indexes:           indexes,
+		keepOrders:        keepOrders,
+		descs:             descs,
+		tableRequest:      tableReq,
+		columns:           ts.Columns,
+		partialStreamings: partialStreamings,
+		tableStreaming:    tableStreaming,
+		partialPlans:      v.PartialPlans,
+		tblPlans:          v.TablePlans,
+		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
+		feedbacks:         feedbacks,
+	}
+	collectTable := false
+	e.tableRequest.CollectRangeCounts = &collectTable
+	return e, nil
+}
+
+func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) *IndexMergeReaderExecutor {
+	ret, err := buildNoRangeIndexMergeReader(b, v)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	ret.ranges = make([][]*ranger.Range, 0, len(v.PartialPlans))
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < len(v.PartialPlans); i++ {
+		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
+			ret.ranges = append(ret.ranges, is.Ranges)
+			sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
+		} else {
+			ret.ranges = append(ret.ranges, v.PartialPlans[i][0].(*plannercore.PhysicalTableScan).Ranges)
+		}
+	}
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	executorCounterIndexMergeReaderExecutor.Inc()
 	return ret
 }
 
