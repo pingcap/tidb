@@ -231,6 +231,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			keys = append(keys, k)
 		}
 		entrySize := len(k) + len(v)
+		logutil.BgLogger("YUSP", zap.String("key", binary2hex))
 		if entrySize > kv.TxnEntrySizeLimit {
 			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
 		}
