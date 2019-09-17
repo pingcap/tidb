@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
 )
 
@@ -224,16 +225,20 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 }
 
 type illegalFunctionChecker struct {
-	found bool
+	hasIllegalFunc bool
+	hasGroupByFunc bool
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch node := inNode.(type) {
 	case *ast.FuncCallExpr:
 		if _, found := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]; found {
-			c.found = true
+			c.hasIllegalFunc = true
 			return inNode, true
 		}
+	case *ast.AggregateFuncExpr:
+		c.hasGroupByFunc = true
+		return inNode, true
 	}
 	return inNode, false
 }
@@ -248,8 +253,11 @@ func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 	}
 	var c illegalFunctionChecker
 	expr.Accept(&c)
-	if c.found {
+	if c.hasIllegalFunc {
 		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(colName)
+	}
+	if c.hasGroupByFunc {
+		return plannercore.ErrInvalidGroupFuncUse
 	}
 	return nil
 }
