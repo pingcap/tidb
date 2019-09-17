@@ -2832,6 +2832,10 @@ func (s *testSessionSuite) TestStmtHints(c *C) {
 	val = int64(1) * 1024 * 1024
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+	tk.MustExec("select /*+ MEMORY_QUOTA(0 GB) */ 1;")
+	val = int64(0)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
 
 	// Test NO_INDEX_MERGE hint
 	tk.Se.GetSessionVars().SetEnableIndexMerge(true)

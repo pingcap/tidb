@@ -1403,13 +1403,17 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warns = append(warns, warn)
 		}
 		hint := memoryQuotaHintList[len(memoryQuotaHintList)-1]
-		// Executor use MemoryQuota < 0 to indicate no memory limit, here use it to handle hint syntax error.
+		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
 		if hint.MemoryQuota < 0 {
-			warn := errors.New("There are some syntax error in MEMORY_QUOTA hint, correct usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
+			warn := errors.New("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
 			warns = append(warns, warn)
 		} else {
 			stmtHints.HasMemQuotaHint = true
 			stmtHints.MemQuotaQuery = hint.MemoryQuota
+			if hint.MemoryQuota == 0 {
+				warn := errors.New("Setting the MEMORY_QUOTA to 0 means no memory limit")
+				warns = append(warns, warn)
+			}
 		}
 	}
 	// Handle USE_TOJA
