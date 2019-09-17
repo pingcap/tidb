@@ -161,8 +161,8 @@ func (p *PhysicalSelection) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
-	return fmt.Sprintf("ProjectionConcurrency:%d, ", p.ProjectionConcurrency) +
-		string(expression.ExplainExpressionList(p.Exprs))
+	return string(expression.ExplainExpressionList(p.Exprs)) +
+		fmt.Sprintf(", ProjectionConcurrency:%d", p.ProjectionConcurrency)
 }
 
 // ExplainInfo implements PhysicalPlan interface.
