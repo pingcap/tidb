@@ -161,7 +161,8 @@ func (p *PhysicalSelection) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
-	return string(expression.ExplainExpressionList(p.Exprs))
+	return fmt.Sprint("ProjectionConcurrency:%d, ", p.ProjectionConcurrency) +
+		string(expression.ExplainExpressionList(p.Exprs))
 }
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -210,6 +211,13 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalHashAgg) ExplainInfo() string {
+	return p.basePhysicalAgg.ExplainInfo() + fmt.Sprintf(
+		"HashAggPartialConcurrency:%d, HashAggFinalConcurrency:%d",
+		p.HashAggPartialConcurrency, p.HashAggFinalConcurrency)
+}
+
+// ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
@@ -232,6 +240,9 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
 			expression.SortedExplainExpressionList(p.OtherConditions))
+	}
+	if p.IndexLookupJoinConcurrency > 0 {
+		fmt.Fprintf(buffer, ", IndexLookupJoinConcurrency:%d", p.IndexLookupJoinConcurrency)
 	}
 	return buffer.String()
 }
@@ -259,6 +270,9 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
 			expression.SortedExplainExpressionList(p.OtherConditions))
+	}
+	if p.Concurrency > 0 {
+		fmt.Fprintf(buffer, ", HashJoinConcurrency:%d", p.Concurrency)
 	}
 	return buffer.String()
 }

@@ -1810,7 +1810,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		return e
 	}
 	idxHash := &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
-	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
+	concurrency := v.IndexLookupJoinConcurrency
 	idxHash.joiners = make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
 		idxHash.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes)

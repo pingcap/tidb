@@ -211,6 +211,8 @@ type PhysicalProjection struct {
 	Exprs                []expression.Expression
 	CalculateNoDelay     bool
 	AvoidColumnEvaluator bool
+	// ProjectionConcurrency is the number of concurrent projection worker.
+	ProjectionConcurrency int64
 }
 
 // PhysicalTopN is the physical operator of topN.
@@ -277,6 +279,8 @@ type PhysicalIndexJoin struct {
 	//      need to be evaluated after we fetch the data of t1.
 	// This struct stores them and evaluate them to ranges.
 	CompareFilters *ColWithCmpFuncManager
+	// IndexLookupJoinConcurrency is the number of concurrent index lookup join inner worker.
+	IndexLookupJoinConcurrency int
 }
 
 // PhysicalIndexMergeJoin represents the plan of index look up merge join.
@@ -391,6 +395,11 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
+
+	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
+	HashAggPartialConcurrency int
+	// HashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
+	HashAggFinalConcurrency int
 }
 
 // PhysicalStreamAgg is stream operator of aggregate.

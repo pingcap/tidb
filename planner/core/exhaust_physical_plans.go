@@ -360,12 +360,13 @@ func (p *LogicalJoin) constructIndexJoin(
 		DefaultValues:   p.DefaultValues,
 	}
 	join := PhysicalIndexJoin{
-		basePhysicalJoin: baseJoin,
-		innerTask:        innerTask,
-		KeyOff2IdxOff:    newKeyOff,
-		Ranges:           ranges,
-		KeepOuterOrder:   len(prop.Items) > 0,
-		CompareFilters:   compareFilters,
+		basePhysicalJoin:           baseJoin,
+		innerTask:                  innerTask,
+		KeyOff2IdxOff:              newKeyOff,
+		Ranges:                     ranges,
+		KeepOuterOrder:             len(prop.Items) > 0,
+		CompareFilters:             compareFilters,
+		IndexLookupJoinConcurrency: p.ctx.GetSessionVars().IndexLookupJoinConcurrency,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.idxColLens
@@ -1170,9 +1171,10 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 		return nil
 	}
 	proj := PhysicalProjection{
-		Exprs:                p.Exprs,
-		CalculateNoDelay:     p.CalculateNoDelay,
-		AvoidColumnEvaluator: p.AvoidColumnEvaluator,
+		Exprs:                 p.Exprs,
+		CalculateNoDelay:      p.CalculateNoDelay,
+		AvoidColumnEvaluator:  p.AvoidColumnEvaluator,
+		ProjectionConcurrency: p.ctx.GetSessionVars().ProjectionConcurrency,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
@@ -1381,9 +1383,14 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		agg := basePhysicalAgg{
 			GroupByItems: la.GroupByItems,
 			AggFuncs:     la.AggFuncs,
+		}
+		hashAgg := PhysicalHashAgg{
+			basePhysicalAgg:           agg,
+			HashAggPartialConcurrency: la.ctx.GetSessionVars().HashAggPartialConcurrency,
+			HashAggFinalConcurrency:   la.ctx.GetSessionVars().HashAggFinalConcurrency,
 		}.initForHash(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
-		agg.SetSchema(la.schema.Clone())
-		hashAggs = append(hashAggs, agg)
+		hashAgg.SetSchema(la.schema.Clone())
+		hashAggs = append(hashAggs, hashAgg)
 	}
 	return hashAggs
 }
