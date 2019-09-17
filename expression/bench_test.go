@@ -528,10 +528,9 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	var testFunc map[string]bool
 	testFunc = make(map[string]bool)
 	argList := flag.Args()
-	testAll := true
+	testAll := len(argList) > 0
 	for _, arg := range argList {
 		testFunc[arg] = true
-		testAll = false
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
@@ -671,10 +670,9 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	var testFunc map[string]bool
 	testFunc = make(map[string]bool)
 	argList := flag.Args()
-	testAll := true
+	testAll := len(argList) > 0
 	for _, arg := range argList {
 		testFunc[arg] = true
-		testAll = false
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
