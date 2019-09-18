@@ -135,3 +135,32 @@ func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 func (b *builtinStringIsNullSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		return nil
+	}
+
+Loop:
+	for i := 0; i < input.NumRows(); i++ {
+		str := result.GetBytes(i)
+		for _, c := range str {
+			if c >= utf8.RuneSelf {
+				continue Loop
+			}
+		}
+		for i := range str {
+			if str[i] >= 'a' && str[i] <= 'z' {
+				str[i] -= 'a' - 'A'
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinUpperSig) vectorized() bool {
+	return true
+}
