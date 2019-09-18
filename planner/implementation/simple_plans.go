@@ -15,9 +15,10 @@ package implementation
 
 import (
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 )
 
-// ProjectionImpl implementation of PhysicalProjection.
+// ProjectionImpl is the implementation of PhysicalProjection.
 type ProjectionImpl struct {
 	baseImpl
 }
@@ -35,4 +36,21 @@ type ShowImpl struct {
 // NewShowImpl creates a new ShowImpl.
 func NewShowImpl(show *plannercore.PhysicalShow) *ShowImpl {
 	return &ShowImpl{baseImpl: baseImpl{plan: show}}
+}
+
+// SelectionImpl is the implementation of PhysicalSelection.
+type SelectionImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (sel *SelectionImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
+	// TODO: When CPUFactor and CopCPUFactor can be set by users, we need to distinguish them.
+	sel.cost = outCount*plannercore.CPUFactor + childCosts[0]
+	return sel.cost
+}
+
+// NewSelectionImpl creates a new SelectionImpl.
+func NewSelectionImpl(sel *plannercore.PhysicalSelection) *SelectionImpl {
+	return &SelectionImpl{baseImpl{plan: sel}}
 }
