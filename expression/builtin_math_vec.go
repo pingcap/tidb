@@ -210,7 +210,6 @@ func (b *builtinCotSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 		if result.IsNull(i) {
 			continue
 		}
-		f64s[i] = f64s[i] * 180 / math.Pi
 		tan := math.Tan(f64s[i])
 		if tan != 0 {
 			cot := 1 / tan
