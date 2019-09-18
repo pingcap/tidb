@@ -392,6 +392,11 @@ func (p PhysicalIndexReader) Init(ctx sessionctx.Context) *PhysicalIndexReader {
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
 		p.schema = is.dataSourceSchema
 	}
+	for _, col := range p.schema.Columns {
+		if col.VirtualExpr != nil {
+			col.UsedByIndex = true
+		}
+	}
 	p.OutputColumns = p.schema.Clone().Columns
 	return &p
 }

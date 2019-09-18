@@ -16,7 +16,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/prometheus/common/log"
 	"math"
 	"math/bits"
 	"reflect"
@@ -2383,10 +2382,25 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				if err != nil {
 					return nil, err
 				}
+				// Because the expression might return different type from
+				// the generated column, we should wrap a CAST on the result.
+				expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 				colExpr.VirtualExpr = expr
-
-				log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", ds.schema.Columns[i].VirtualExpr.String())
+				//log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", ds.schema.Columns[i].VirtualExpr.String())
 			}
+		}
+	}
+
+	// Re-iterate expressions to handle those virtual generated columns that refers to the other generated columns, for
+	// example, given:
+	//  column a, column b as (a * 2), column c as (b + 1)
+	// we'll get:
+	//  column a, column b as (a * 2), column c as ((a * 2) + 1)
+	// A generated column definition can refer to only generated columns occurring earlier in the table definition, so
+	// it's safe to iterate in index-ascending order.
+	for _, col := range ds.schema.Columns {
+		if col.VirtualExpr != nil {
+			col.VirtualExpr = expression.ColumnSubstituteForVirCol(col.VirtualExpr, ds.schema)
 		}
 	}
 

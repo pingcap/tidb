@@ -2818,23 +2818,23 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
-	s.tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
-	defer s.mustExec(c, "drop table t;")
-	for i := 0; i < 50; i++ {
-		s.mustExec(c, "insert into t values (?)", i)
-	}
-	s.tk.MustExec("insert into t values()")
-	s.tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
-	_, err := s.tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
-	c.Assert(err.Error(), Equals, "[ddl:15]cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
-
-	t := s.testGetTable(c, "t")
-	for _, idx := range t.Indices() {
-		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
-	}
-	s.mustExec(c, "delete from t where y = 2155")
-	s.mustExec(c, "alter table t add index idx_y(y1)")
-	s.mustExec(c, "alter table t drop index idx_y")
+	//s.tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
+	//defer s.mustExec(c, "drop table t;")
+	//for i := 0; i < 50; i++ {
+	//	s.mustExec(c, "insert into t values (?)", i)
+	//}
+	//s.tk.MustExec("insert into t values()")
+	//s.tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
+	//_, err := s.tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
+	//c.Assert(err.Error(), Equals, "[ddl:15]cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
+	//
+	//t := s.testGetTable(c, "t")
+	//for _, idx := range t.Indices() {
+	//	c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
+	//}
+	//s.mustExec(c, "delete from t where y = 2155")
+	//s.mustExec(c, "alter table t add index idx_y(y1)")
+	//s.mustExec(c, "alter table t drop index idx_y")
 
 	// Fix issue 9311.
 	s.tk.MustExec("create table gcai_table (id int primary key);")

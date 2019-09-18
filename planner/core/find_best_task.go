@@ -805,7 +805,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
 	}.Init(ds.ctx)
-	ts.SetSchema(ds.schema)
+	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {

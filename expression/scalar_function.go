@@ -16,7 +16,6 @@ package expression
 import (
 	"bytes"
 	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"

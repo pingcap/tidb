@@ -16,10 +16,10 @@ package executor
 import (
 	"context"
 	"fmt"
-
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -157,7 +157,40 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
+	//log.Warnf("dcdsfdsfds ", req.NumCols())
 	// TODO: If e.schema contain virtual column, compute the virtual column and rebuild the chunk
+	virColTypes := make([]*types.FieldType, 0)
+	virColDef := make([]*expression.Column, 0)
+	virColIndex := make([]int, 0)
+	for i, col := range e.schema.Columns {
+		if col.VirtualExpr != nil {
+			virColTypes = append(virColTypes, col.RetType)
+			virColDef = append(virColDef, col)
+			virColIndex = append(virColIndex, i)
+		}
+	}
+	virCols := chunk.NewChunkWithCapacity(virColTypes, req.Capacity())
+	iter := chunk.NewIterator4Chunk(req)
+
+	//log.Warnf("111111111111111", len(e.columns))
+	//log.Warnf("2222222222", virColIndex)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		for i, col := range virColDef {
+			datum, err := col.EvalVirtaulColumn(row)
+			if err != nil {
+				return err
+			}
+			castDatum, err := table.CastValue(e.ctx, datum, e.columns[virColIndex[i]])
+			if err != nil {
+				return err
+			}
+			virCols.AppendDatum(i, &castDatum)
+		}
+	}
+
+	for i := 0; i < virCols.NumCols(); i++ {
+		req.SetCol(virColIndex[i], virCols.Column(i))
+	}
 
 	return nil
 }

@@ -233,6 +233,15 @@ func (p *PhysicalUnionScan) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalTableReader) ResolveIndices() error {
+	for _, col := range p.schema.Columns {
+		if col.VirtualExpr != nil {
+			newExpr, err := col.VirtualExpr.ResolveIndices(p.schema)
+			if err != nil {
+				return err
+			}
+			col.VirtualExpr = newExpr
+		}
+	}
 	return p.tablePlan.ResolveIndices()
 }
 

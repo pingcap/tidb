@@ -207,6 +207,7 @@ type Column struct {
 	// from `[not] in (subq)`.
 	InOperand   bool
 	VirtualExpr Expression
+	UsedByIndex bool
 }
 
 // Equal implements Expression interface.
@@ -461,6 +462,18 @@ func (col *Column) resolveIndices(schema *Schema) error {
 	if col.Index == -1 {
 		return errors.Errorf("Can't find column %s in schema %s", col, schema)
 	}
+	//if col.VirtualExpr != nil && !col.UsedByIndex {
+	//	newVirtualExpr, err := col.VirtualExpr.ResolveIndices(schema)
+	//	if err != nil {
+	//		return err
+	//	}
+	//	col.VirtualExpr = newVirtualExpr
+	//	//scalar := col.VirtualExpr.(*ScalarFunction)
+	//	//log.Warnf("In resolveIndices have virtual expr", scalar.GetArgs()[0].(*Column).Index)
+	//	//log.Warnf("In resolveIndices have virtual expr uniqueID", scalar.GetArgs()[0].(*Column).UniqueID)
+	//	//log.Warnf("In resolveIndices have virtual expr", scalar.GetArgs()[1].(*Column).Index)
+	//	//log.Warnf("In resolveIndices have virtual expr uniqueID", scalar.GetArgs()[1].(*Column).UniqueID)
+	//}
 	return nil
 }
 
@@ -538,6 +551,7 @@ idLoop:
 	return retCols
 }
 
+// EvalVirtaulColumn evals the virtual column
 func (col *Column) EvalVirtaulColumn(row chunk.Row) (types.Datum, error) {
 	return col.VirtualExpr.Eval(row)
 }
