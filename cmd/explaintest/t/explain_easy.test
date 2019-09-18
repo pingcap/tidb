@@ -179,3 +179,27 @@ analyze table t;
 explain select * from t where a = 1;
 explain select * from t where b = "1000-01-01";
 drop table t;
+<<<<<<< HEAD
+=======
+
+create table t(a int);
+insert into t values (1),(2),(2),(2),(9),(9),(9),(10);
+analyze table t with 1 buckets;
+explain select * from t where a >= 3 and a <= 8;
+drop table t;
+
+# https://github.com/pingcap/tidb/issues/10626
+create table t(a int, b int, index idx_ab(a, b));
+explain select a, b from t where a in (1) order by b;
+explain select a, b from t where a = 1 order by b;
+drop table if exists t;
+
+# https://github.com/pingcap/tidb/issues/11903
+create table t(a int, b int);
+explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;
+drop table if exists t;
+
+create table t(a int, b int);
+explain format="dot" select * from t where a < 2;
+drop table if exists t;
+>>>>>>> 96d4b1f... planner: display cop tasks when explain format is "dot" (#12225)
