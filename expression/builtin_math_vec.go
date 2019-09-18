@@ -108,6 +108,93 @@ func (b *builtinAsinSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinAtan1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Atan(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinAtan1ArgSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinAtan2ArgsSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	f64s := result.Float64s()
+	arg := buf.Float64s()
+
+	result.MergeNulls(buf)
+
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Atan2(f64s[i], arg[i])
+	}
+	return nil
+}
+
+func (b *builtinAtan2ArgsSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCosSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Cos(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinCosSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTanSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Tan(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinTanSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinAbsDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 		return err
