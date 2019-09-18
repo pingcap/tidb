@@ -38,13 +38,13 @@ var (
 	_ SelectResult = (*streamResult)(nil)
 )
 
-// DecodeType indicates the encode type.
+// DecodeType indicates the decode type.
 type DecodeType int
 
 const (
-	// DecodeTypeDefault indicates the default encode type.
+	// DecodeTypeDefault indicates the default decode type.
 	DecodeTypeDefault DecodeType = iota
-	// DecodeTypeArrow indicates the arrow encode type.
+	// DecodeTypeArrow indicates the arrow decode type.
 	DecodeTypeArrow
 )
 
