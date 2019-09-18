@@ -58,5 +58,26 @@ color=black
 label = "root"
 "IndexMerge_12"
 }
+subgraph cluster8{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"TableScan_8"
+}
+subgraph cluster9{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"IndexScan_9"
+}
+subgraph cluster11{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"Selection_11" -> "TableScan_10"
+}
+"IndexMerge_12" -> "TableScan_8"
+"IndexMerge_12" -> "IndexScan_9"
+"IndexMerge_12" -> "Selection_11"
 }
 
