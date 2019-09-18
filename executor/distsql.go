@@ -688,17 +688,17 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	handles []int64, retChk *chunk.Chunk, scannedKeys uint64, err error) {
 	handleOffset := chk.NumCols() - 1
 	handles = make([]int64, 0, w.batchSize)
-	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for issurance.
+	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
 		if checkLimit {
-			leftCnt := int(w.PushedLimit.Offset + w.PushedLimit.Count - scannedKeys - count)
-			if leftCnt <= 0 {
+			if w.PushedLimit.Offset+w.PushedLimit.Count <= scannedKeys+count {
 				return handles, nil, scannedKeys, nil
 			}
-			if requiredRows > leftCnt {
-				requiredRows = leftCnt
+			leftCnt := w.PushedLimit.Offset + w.PushedLimit.Count - scannedKeys - count
+			if uint64(requiredRows) > leftCnt {
+				requiredRows = int(leftCnt)
 			}
 		}
 		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
