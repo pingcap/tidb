@@ -700,6 +700,12 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 	}
 	if ok {
 		if dec.lock.startTS != startTS {
+			if isPessimisticLock {
+				// NOTE: A special handling.
+				// When pessimistic txn prewrite meets lock, set the TTL = 0 means
+				// telling TiDB to rollback the transaction **unconditionly**.
+				dec.lock.ttl = 0
+			}
 			return dec.lock.lockErr(mutation.Key)
 		}
 		if dec.lock.op != kvrpcpb.Op_PessimisticLock {
