@@ -466,6 +466,32 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
+	var input []string
+	var output []struct {
+		SQL  string
+		Best string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		comment := Commentf("case:%v sql:%s", i, tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
+		c.Assert(err, IsNil, comment)
+		err = se.NewTxn(context.Background())
+		c.Assert(err, IsNil)
+		// Make txn not read only.
+		txn, err := se.Txn(true)
+		c.Assert(err, IsNil)
+		txn.Set(kv.Key("AAA"), []byte("BBB"))
+		c.Assert(se.StmtCommit(), IsNil)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Best = core.ToString(p)
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Best, Commentf("for %s", tt))
+	}
+
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
@@ -483,31 +509,11 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 	tests := []struct {
 		sql  string
 		best string
-		is   infoschema.InfoSchema
 	}{
-		// Test Index Join + UnionScan + TableScan.
-		{
-			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
-			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(test.t1.a,test.t2.a)",
-			is:   s.is,
-		},
-		// Test Index Join + UnionScan + DoubleRead.
-		{
-			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
-			best: "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(test.t2.c,test.t1.a)",
-			is:   s.is,
-		},
-		// Test Index Join + UnionScan + IndexScan.
-		{
-			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
-			best: "IndexMergeJoin{IndexReader(Index(t.f)[[NULL,+inf]])->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(test.t1.a,test.t2.c)->Projection",
-			is:   s.is,
-		},
 		// Index Join + Union Scan + Union All is not supported now.
 		{
 			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
 			best: "LeftHashJoin{UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}->UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}}(test.t1.a,test.t2.a)",
-			is:   pis,
 		},
 	}
 	for i, tt := range tests {
@@ -521,7 +527,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		c.Assert(err, IsNil)
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
 		c.Assert(se.StmtCommit(), IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, tt.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, pis)
 		c.Assert(err, IsNil, comment)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
@@ -599,7 +605,7 @@ func (s *testPlanSuite) TestSemiJoinToInner(c *C) {
 	c.Assert(err, IsNil)
 	p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 	c.Assert(err, IsNil)
-	c.Assert(core.ToString(p), Equals, "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexMergeJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t3.d,test.t2.g)}->HashAgg")
+	c.Assert(core.ToString(p), Equals, "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t3.d,test.t2.g)}->HashAgg")
 }
 
 func (s *testPlanSuite) TestUnmatchedTableInHint(c *C) {

@@ -1148,5 +1148,22 @@
         "Hints": "USE_INDEX(@`sel_1` `t` ), USE_INDEX(@`sel_3` `t2` ), USE_INDEX(@`sel_2` `t1` ), HASH_AGG(@`sel_2`)"
       }
     ]
+  },
+  {
+    "Name": "TestIndexJoinUnionScan",
+    "Cases": [
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
+        "Best": "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(test.t2.c,test.t1.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexMergeJoin{IndexReader(Index(t.f)[[NULL,+inf]])->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(test.t1.a,test.t2.c)->Projection"
+      }
+    ]
   }
 ]
