@@ -564,7 +564,7 @@ func (s *testSuite) TestRequestBuilder6(c *C) {
 
 func (s *testSuite) TestRequestBuilder7(c *C) {
 	vars := variable.NewSessionVars()
-	vars.ReplicaRead = kv.ReplicaReadFollower
+	vars.SetReplicaRead(kv.ReplicaReadFollower)
 
 	concurrency := 10
 

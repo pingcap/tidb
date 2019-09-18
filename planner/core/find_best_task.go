@@ -104,7 +104,7 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, error
 	if !prop.IsEmpty() {
 		return invalidTask, nil
 	}
-	pShow := PhysicalShow{baseShowContent: p.baseShowContent}.Init(p.ctx)
+	pShow := PhysicalShow{ShowContents: p.ShowContents}.Init(p.ctx)
 	pShow.SetSchema(p.schema)
 	return &rootTask{p: pShow}, nil
 }
