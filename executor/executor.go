@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/meta"
 	"runtime"
 	"strconv"
 	"sync"
@@ -318,10 +319,13 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
 type ShowDDLJobsExec struct {
 	baseExecutor
 
-	cursor    int
-	jobs      []*model.Job
-	jobNumber int64
-	is        infoschema.InfoSchema
+	cursor         int
+	jobs           []*model.Job
+	historyJobIter *meta.LastJobIterator
+	cacheJobs      []*model.Job
+	jobNumber      int
+	is             infoschema.InfoSchema
+	done           bool
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
@@ -396,12 +400,16 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if e.jobNumber == 0 {
 		e.jobNumber = admin.DefNumHistoryJobs
 	}
-	historyJobs, err := admin.GetHistoryDDLJobs(txn, int(e.jobNumber))
+
+	m := meta.NewMeta(txn)
+	historyJobIter, err := m.GetLastNHistoryDDLJobsIterator()
+
+	//historyJobs, err := admin.GetHistoryDDLJobs(txn, int(e.jobNumber))
 	if err != nil {
 		return err
 	}
 	e.jobs = append(e.jobs, jobs...)
-	e.jobs = append(e.jobs, historyJobs...)
+	e.historyJobIter = historyJobIter
 	e.cursor = 0
 	return nil
 }
@@ -409,44 +417,65 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
-	if e.cursor >= len(e.jobs) {
+	if (e.cursor - len(e.jobs)) >= e.jobNumber {
 		return nil
 	}
-	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
-	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		req.AppendInt64(0, e.jobs[i].ID)
-		schemaName := e.jobs[i].SchemaName
-		tableName := ""
-		finishTS := uint64(0)
-		if e.jobs[i].BinlogInfo != nil {
-			finishTS = e.jobs[i].BinlogInfo.FinishedTS
-			if e.jobs[i].BinlogInfo.TableInfo != nil {
-				tableName = e.jobs[i].BinlogInfo.TableInfo.Name.L
-			}
-			if len(schemaName) == 0 && e.jobs[i].BinlogInfo.DBInfo != nil {
-				schemaName = e.jobs[i].BinlogInfo.DBInfo.Name.L
-			}
+	count := 0
+	if e.cursor < len(e.jobs) {
+		numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
+		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+			e.appendJobToChunk(req, e.jobs[i])
 		}
-		// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
-		if len(schemaName) == 0 {
-			schemaName = getSchemaName(e.is, e.jobs[i].SchemaID)
-		}
-		if len(tableName) == 0 {
-			tableName = getTableName(e.is, e.jobs[i].TableID)
-		}
-		req.AppendString(1, schemaName)
-		req.AppendString(2, tableName)
-		req.AppendString(3, e.jobs[i].Type.String())
-		req.AppendString(4, e.jobs[i].SchemaState.String())
-		req.AppendInt64(5, e.jobs[i].SchemaID)
-		req.AppendInt64(6, e.jobs[i].TableID)
-		req.AppendInt64(7, e.jobs[i].RowCount)
-		req.AppendString(8, model.TSConvert2Time(e.jobs[i].StartTS).String())
-		req.AppendString(9, model.TSConvert2Time(finishTS).String())
-		req.AppendString(10, e.jobs[i].State.String())
+		e.cursor += numCurBatch
+		count += numCurBatch
 	}
-	e.cursor += numCurBatch
+	var err error
+	if count < req.Capacity() {
+		num := req.Capacity() - count
+		num = mathutil.Min(num, e.jobNumber)
+		e.cacheJobs, err = e.historyJobIter.GetJobs(num, e.cacheJobs)
+		if err != nil {
+			return err
+		}
+		for _, job := range e.cacheJobs {
+			e.appendJobToChunk(req, job)
+		}
+		e.cursor += len(e.cacheJobs)
+	}
 	return nil
+}
+
+func (e *ShowDDLJobsExec) appendJobToChunk(req *chunk.Chunk, job *model.Job) {
+	req.AppendInt64(0, job.ID)
+	schemaName := job.SchemaName
+	tableName := ""
+	finishTS := uint64(0)
+	if job.BinlogInfo != nil {
+		finishTS = job.BinlogInfo.FinishedTS
+		if job.BinlogInfo.TableInfo != nil {
+			tableName = job.BinlogInfo.TableInfo.Name.L
+		}
+		if len(schemaName) == 0 && job.BinlogInfo.DBInfo != nil {
+			schemaName = job.BinlogInfo.DBInfo.Name.L
+		}
+	}
+	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
+	if len(schemaName) == 0 {
+		schemaName = getSchemaName(e.is, job.SchemaID)
+	}
+	if len(tableName) == 0 {
+		tableName = getTableName(e.is, job.TableID)
+	}
+	req.AppendString(1, schemaName)
+	req.AppendString(2, tableName)
+	req.AppendString(3, job.Type.String())
+	req.AppendString(4, job.SchemaState.String())
+	req.AppendInt64(5, job.SchemaID)
+	req.AppendInt64(6, job.TableID)
+	req.AppendInt64(7, job.RowCount)
+	req.AppendString(8, model.TSConvert2Time(job.StartTS).String())
+	req.AppendString(9, model.TSConvert2Time(finishTS).String())
+	req.AppendString(10, job.State.String())
 }
 
 func getSchemaName(is infoschema.InfoSchema, id int64) string {

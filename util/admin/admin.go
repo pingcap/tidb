@@ -232,11 +232,6 @@ func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	jobsLen := len(jobs)
-	if jobsLen > maxNumJobs {
-		jobs = jobs[:maxNumJobs]
-	}
 	return jobs, nil
 }
 
