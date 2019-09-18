@@ -914,7 +914,7 @@ func BenchmarkVectorizedFilterConsiderNull(b *testing.B) {
 	nulls := make([]bool, 0, 1024)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
-	for numCols := 1; numCols <= 3; numCols++ {
+	for numCols := 1; numCols <= 2; numCols++ {
 		typeCombination := make([]types.EvalType, numCols)
 		var combFunc func(nCols int)
 		combFunc = func(nCols int) {
