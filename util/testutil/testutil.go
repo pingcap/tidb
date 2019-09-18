@@ -172,11 +172,17 @@ func LoadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 }
 
 func loadTestSuiteCases(filePath string) (res []testCases, err error) {
-	jsonFile, err := os.Open(filePath)
+	var jsonFile *os.File
+	jsonFile, err = os.Open(filePath)
 	if err != nil {
 		return res, err
 	}
-	defer jsonFile.Close()
+	defer func() {
+		err1 := jsonFile.Close()
+		if err == nil {
+			err = err1
+		}
+	}()
 	byteValue, err := ioutil.ReadAll(jsonFile)
 	if err != nil {
 		return res, err
@@ -221,8 +227,19 @@ func (t *TestData) OnRecord(updateFunc func()) {
 	}
 }
 
+// ConvertRowsToStrings converts [][]interface{} to []string.
+func (t *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
+	for _, row := range rows {
+		s := fmt.Sprintf("%v", row)
+		// Trim the leftmost `[` and rightmost `]`.
+		s = s[1 : len(s)-1]
+		rs = append(rs, s)
+	}
+	return rs
+}
+
 // GenerateOutputIfNeeded generate the output file.
-func (t *TestData) GenerateOutputIfNeeded() error {
+func (t *TestData) GenerateOutputIfNeeded() (err error) {
 	if !record {
 		return nil
 	}
@@ -242,7 +259,7 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 		rm := json.RawMessage(res)
 		t.output[i].Cases = &rm
 	}
-	err := enc.Encode(t.output)
+	err = enc.Encode(t.output)
 	if err != nil {
 		return err
 	}
@@ -250,7 +267,12 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		err1 := file.Close()
+		if err == nil {
+			err = err1
+		}
+	}()
 	_, err = file.Write(buf.Bytes())
 	return err
 }

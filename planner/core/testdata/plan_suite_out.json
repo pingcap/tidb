@@ -904,5 +904,31 @@
         "Warning": "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t2) */ is inapplicable"
       }
     ]
+  },
+  {
+    "Name": "TestIndexJoinUnionScan",
+    "Cases": [
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
+        "Best": "IndexJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexJoin{TableReader(Table(t))->UnionScan([])->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->UnionScan([])}(test.t1.a,test.t2.c)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(test.t1.a,test.t2.c)->Projection"
+      }
+    ]
+  },
+  {
+    "Name": "TestSemiJoinToInner",
+    "Cases": [
+      {
+        "SQL": "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;",
+        "Best": "Apply{TableReader(Table(t))->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t3.d,test.t2.g)}->StreamAgg"
+      }
+    ]
   }
 ]
