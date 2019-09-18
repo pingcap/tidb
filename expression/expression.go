@@ -249,6 +249,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 				return nil, nil, err
 			}
 
+			i64s := buf.Int64s()
 			for i := range sel {
 				if buf.IsNull(i) {
 					nulls[sel[i]] = true
@@ -256,8 +257,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 					j++
 					continue
 				}
-				b := buf.GetInt64(i)
-				if b == 0 {
+				if i64s[i] == 0 {
 					continue
 				}
 				sel[j] = sel[i] // this row passes this filter

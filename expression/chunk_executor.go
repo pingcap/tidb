@@ -409,16 +409,6 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 // filters, `isNull` indicates whether the result of the filter is null.
 // Filters is executed vectorized by chunk
 func VectorizedFilterConsiderNull2(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
-	selected = selected[:0]
-	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
-		selected = append(selected, true)
-	}
-	if isNull != nil {
-		isNull = isNull[:0]
-		for i, numRows := 0, iterator.Len(); i < numRows; i++ {
-			isNull = append(isNull, false)
-		}
-	}
 	selected, isNull, err := VecEvalBool(ctx, filters, iterator.GetChunk(), selected, isNull)
 	if err != nil {
 		return nil, nil, err
