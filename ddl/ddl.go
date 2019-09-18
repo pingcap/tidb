@@ -176,6 +176,8 @@ var (
 	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
+	// ErrInvalidGroupFuncUse returns for invalid group func use
+	ErrInvalidGroupFuncUse = terror.ClassDDL.New(codeInvalidGroupFuncUse, mysql.MySQLErrName[mysql.ErrInvalidGroupFuncUse])
 	// ErrTableMustHaveColumns returns for missing column when creating a table.
 	ErrTableMustHaveColumns = terror.ClassDDL.New(codeTableMustHaveColumns, mysql.MySQLErrName[mysql.ErrTableMustHaveColumns])
 	// ErrWrongNameForIndex returns for wrong index name.
@@ -698,6 +700,7 @@ const (
 	codeBlobCantHaveDefault                    = 1101
 	codeWrongDBName                            = 1102
 	codeWrongTableName                         = 1103
+	codeInvalidGroupFuncUse                    = terror.ErrCode(mysql.ErrInvalidGroupFuncUse)
 	codeTooManyFields                          = 1117
 	codeInvalidUseOfNull                       = 1138
 	codeWrongColumnName                        = 1166
