@@ -1960,6 +1960,10 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
+		txnMode := vars.TxnMode
+		if txnMode == "" {
+			txnMode = ast.Optimistic
+		}
 		query = executor.QueryReplacer.Replace(query)
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
@@ -1967,6 +1971,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
+			zap.String("txn_mode", txnMode),
 			zap.String("sql", query+vars.GetExecuteArgumentsInfo()))
 	}
 }
