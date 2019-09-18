@@ -231,14 +231,14 @@ func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 }
 
 // SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
-func (ssMap *stmtSummaryByDigestMap) SetEnabled(enable string, inSession bool) {
-	enable = ssMap.normalizeEnableValue(enable)
+func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) {
+	value = ssMap.normalizeEnableValue(value)
 
 	ssMap.enabledWrapper.Lock()
 	if inSession {
-		ssMap.enabledWrapper.sessionEnabled = enable
+		ssMap.enabledWrapper.sessionEnabled = value
 	} else {
-		ssMap.enabledWrapper.globalEnabled = enable
+		ssMap.enabledWrapper.globalEnabled = value
 	}
 	sessionEnabled := ssMap.enabledWrapper.sessionEnabled
 	globalEnabled := ssMap.enabledWrapper.globalEnabled
@@ -270,24 +270,24 @@ func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
 }
 
 // normalizeEnableValue converts 'ON' to '1' and 'OFF' to '0'
-func (ssMap *stmtSummaryByDigestMap) normalizeEnableValue(enable string) string {
+func (ssMap *stmtSummaryByDigestMap) normalizeEnableValue(value string) string {
 	switch {
-	case strings.EqualFold(enable, "ON"):
+	case strings.EqualFold(value, "ON"):
 		return "1"
-	case strings.EqualFold(enable, "OFF"):
+	case strings.EqualFold(value, "OFF"):
 		return "0"
 	default:
-		return enable
+		return value
 	}
 }
 
 // isEnabled converts a string value to bool.
 // 1 indicates true, 0 or '' indicates false.
-func (ssMap *stmtSummaryByDigestMap) isEnabled(enable string) bool {
-	return enable == "1"
+func (ssMap *stmtSummaryByDigestMap) isEnabled(value string) bool {
+	return value == "1"
 }
 
 // isSet judges whether the variable is set.
-func (ssMap *stmtSummaryByDigestMap) isSet(enable string) bool {
-	return enable != ""
+func (ssMap *stmtSummaryByDigestMap) isSet(value string) bool {
+	return value != ""
 }
