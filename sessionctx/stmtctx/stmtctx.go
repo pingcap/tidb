@@ -135,7 +135,8 @@ type StatementContext struct {
 		normalized string
 		digest     string
 	}
-	Tables []TableEntry
+	Tables    []TableEntry
+	PointExec bool // for point update cached execution, Constant expression need to set "paramMarker"
 }
 
 // StmtHints are SessionVars related sql hints.

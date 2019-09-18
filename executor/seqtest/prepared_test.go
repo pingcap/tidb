@@ -537,19 +537,19 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(0))
+			c.Check(hit, Equals, float64(2))
 		}
 		tk.MustExec(`set @a=2,@b=200; execute stmt_update using @b,@a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(1))
+			c.Check(hit, Equals, float64(3))
 		}
 		tk.MustExec(`set @a=3,@b=300; execute stmt_update using @b,@a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(2))
+			c.Check(hit, Equals, float64(4))
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
