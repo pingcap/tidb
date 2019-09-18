@@ -808,6 +808,15 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.tablePlan)
 			copTasks = append(copTasks, copPlan.indexPlan)
+		case *PhysicalIndexMergeReader:
+			for i := 0; i < len(copPlan.partialPlans); i++ {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
+				copTasks = append(copTasks, copPlan.partialPlans[i])
+			}
+			if copPlan.tablePlan != nil {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
+				copTasks = append(copTasks, copPlan.tablePlan)
+			}
 		}
 		for _, child := range curPlan.Children() {
 			fmt.Fprintf(buffer, "\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID())

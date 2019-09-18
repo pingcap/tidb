@@ -201,6 +201,52 @@ func (b *builtinCosSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinCotSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		tan := math.Tan(f64s[i])
+		if tan != 0 {
+			cot := 1 / tan
+			if !math.IsInf(cot, 0) && !math.IsNaN(cot) {
+				f64s[i] = cot
+			}
+			continue
+		}
+		if err := types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("cot(%s)", strconv.FormatFloat(f64s[i], 'f', -1, 64))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *builtinCotSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinSinSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Sin(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinSinSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinTanSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
