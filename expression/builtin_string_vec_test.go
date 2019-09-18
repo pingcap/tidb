@@ -28,6 +28,13 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.Lower: {
 		{types.ETString, []types.EvalType{types.ETString}, nil},
 	},
+	ast.IsNull: {
+		{types.ETInt, []types.EvalType{types.ETString}, []dataGenerator{&randLenStrGener{10, 20}}},
+		{types.ETInt, []types.EvalType{types.ETString}, []dataGenerator{&defaultGener{0.2, types.ETString}}},
+	},
+	ast.Upper: {
+		{types.ETString, []types.EvalType{types.ETString}, nil},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinStringEvalOneVec(c *C) {

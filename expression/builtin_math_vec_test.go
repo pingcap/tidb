@@ -25,6 +25,39 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	ast.Log10: {
 		{types.ETReal, []types.EvalType{types.ETReal}, nil},
 	},
+	ast.Log2: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
+	ast.Sqrt: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
+	ast.Acos: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
+	ast.Asin: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
+	ast.Atan: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
+	ast.Atan2: {
+		{types.ETReal, []types.EvalType{types.ETReal, types.ETReal}, nil},
+	},
+	ast.Cos: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
+	ast.Sin: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
+	ast.Tan: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
+	ast.Abs: {
+		{types.ETDecimal, []types.EvalType{types.ETDecimal}, nil},
+	},
+	ast.Round: {
+		{types.ETDecimal, []types.EvalType{types.ETDecimal}, nil},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinMathEvalOneVec(c *C) {

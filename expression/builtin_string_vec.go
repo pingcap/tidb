@@ -108,3 +108,59 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 func (b *builtinRepeatSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			i64s[i] = 1
+		} else {
+			i64s[i] = 0
+		}
+	}
+	return nil
+}
+
+func (b *builtinStringIsNullSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		return nil
+	}
+
+Loop:
+	for i := 0; i < input.NumRows(); i++ {
+		str := result.GetBytes(i)
+		for _, c := range str {
+			if c >= utf8.RuneSelf {
+				continue Loop
+			}
+		}
+		for i := range str {
+			if str[i] >= 'a' && str[i] <= 'z' {
+				str[i] -= 'a' - 'A'
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinUpperSig) vectorized() bool {
+	return true
+}

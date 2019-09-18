@@ -17,6 +17,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
@@ -218,6 +219,25 @@ func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) boo
 
 	v, ok := p.(*plannercore.PointGetPlan)
 	return ok && v.IndexInfo == nil
+}
+
+// OptimizeExecStmt to optimize prepare statement protocol "execute" statement
+// this is a short path ONLY does things filling prepare related params
+// for point select like plan which does not need extra things
+func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
+	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
+	var err error
+	builder := plannercore.NewPlanBuilder(sctx, is, nil)
+	p, err := builder.Build(ctx, execAst)
+	if err != nil {
+		return nil, err
+	}
+	if execPlan, ok := p.(*plannercore.Execute); ok {
+		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
+		return execPlan.Plan, err
+	}
+	err = errors.Errorf("invalid result plan type, should be Execute")
+	return nil, err
 }
 
 func init() {
