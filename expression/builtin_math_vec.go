@@ -14,11 +14,35 @@
 package expression
 
 import (
+	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
+
+func (b *builtinLog2Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if f64s[i] <= 0 {
+			result.SetNull(i, true)
+		} else {
+			f64s[i] = math.Log2(f64s[i])
+		}
+	}
+	return nil
+}
+
+func (b *builtinLog2Sig) vectorized() bool {
+	return true
+}
 
 func (b *builtinLog10Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
@@ -108,6 +132,139 @@ func (b *builtinAsinSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinAtan1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Atan(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinAtan1ArgSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinAtan2ArgsSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	f64s := result.Float64s()
+	arg := buf.Float64s()
+
+	result.MergeNulls(buf)
+
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Atan2(f64s[i], arg[i])
+	}
+	return nil
+}
+
+func (b *builtinAtan2ArgsSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCosSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Cos(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinCosSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCotSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		tan := math.Tan(f64s[i])
+		if tan != 0 {
+			cot := 1 / tan
+			if !math.IsInf(cot, 0) && !math.IsNaN(cot) {
+				f64s[i] = cot
+			}
+			continue
+		}
+		if err := types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("cot(%s)", strconv.FormatFloat(f64s[i], 'f', -1, 64))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *builtinCotSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinSinSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Sin(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinSinSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTanSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Tan(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinTanSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinAbsDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 		return err
@@ -152,5 +309,41 @@ func (b *builtinRoundDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinRoundDecSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinPowSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	if err := b.args[1].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	x := buf1.Float64s()
+	y := result.Float64s()
+	result.MergeNulls(buf1)
+	f64s := result.Float64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		power := math.Pow(x[i], y[i])
+		if math.IsInf(power, -1) || math.IsInf(power, 1) || math.IsNaN(power) {
+			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x[i], 'f', -1, 64), strconv.FormatFloat(y[i], 'f', -1, 64)))
+		}
+		f64s[i] = power
+	}
+	return nil
+}
+
+func (b *builtinPowSig) vectorized() bool {
 	return true
 }

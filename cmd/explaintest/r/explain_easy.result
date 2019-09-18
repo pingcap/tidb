@@ -725,3 +725,24 @@ Projection_8	2666.67	root	Column#1, Column#2
         └─Selection_12	3333.33	cop	gt(Column#1, 10)
           └─TableScan_11	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t;
+create table t(a int, b int);
+explain format="dot" select * from t where a < 2;
+dot contents
+
+digraph TableReader_7 {
+subgraph cluster7{
+node [style=filled, color=lightgrey]
+color=black
+label = "root"
+"TableReader_7"
+}
+subgraph cluster6{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"Selection_6" -> "TableScan_5"
+}
+"TableReader_7" -> "Selection_6"
+}
+
+drop table if exists t;
