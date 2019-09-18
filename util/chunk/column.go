@@ -334,14 +334,6 @@ func (c *Column) SetNulls(begin, end int, isNull bool) {
 	}
 }
 
-func (c *Column) SetBytes(rowID int, bs []byte) {
-	i := c.offsets[rowID]
-	for _, b := range bs {
-		c.data[i] = b
-		i++
-	}
-}
-
 // nullCount returns the number of nulls in this Column.
 func (c *Column) nullCount() int {
 	var cnt, i int
@@ -555,6 +547,11 @@ func (c *Column) GetRaw(rowID int) []byte {
 		data = c.data[c.offsets[rowID]:c.offsets[rowID+1]]
 	}
 	return data
+}
+
+// SetRaw set the raw bytes in rowIdx
+func (c *Column) SetRaw(rowID int, bs []byte) {
+	copy(c.data[c.offsets[rowID]:c.offsets[rowID+1]], bs)
 }
 
 // reconstruct reconstructs this Column by removing all filtered rows in it according to sel.

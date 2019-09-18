@@ -166,7 +166,7 @@ func (b *builtinUpperSig) vectorized() bool {
 }
 
 // vecEvalString evals a REVERSE(str).
-// See https://dev.mysql.com/doc/refman/8.0/en/string-functions.html#function_reverse
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
 func (b *builtinReverseSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
@@ -178,7 +178,7 @@ func (b *builtinReverseSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 		}
 		str := result.GetString(i)
 		reversed := reverseRunes([]rune(str))
-		result.SetBytes(i, []byte(string(reversed)))
+		result.SetRaw(i, []byte(string(reversed)))
 	}
 	return nil
 }
