@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/util/stringutil"
 	"math"
 	"time"
 
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
