@@ -620,8 +620,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
-	tp, fsp := t.Tp, t.Decimal
+func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, error) {
+	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		switch x := c.Expr.(type) {
 		case *ast.FuncCallExpr:
@@ -633,14 +633,14 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 					}
 				}
 				if defaultFsp != fsp {
-					return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
+					return nil, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 				}
 			}
 		}
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, int8(fsp))
 		value := vd.GetValue()
 		if err != nil {
-			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
+			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 		}
 
 		// Value is nil means `default null`.
@@ -680,10 +680,23 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 		}
 		return strconv.FormatUint(value, 10), nil
 	}
+	if tp == mysql.TypeSet && v.Kind() == types.KindInt64 {
+		setCnt := len(col.Elems)
+		maxLimit := int64(1<<uint(setCnt) - 1)
+		val := v.GetInt64()
+		if val < 1 || val > maxLimit {
+			return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+		}
+		setVal, err := types.ParseSetValue(col.Elems, uint64(val))
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		v.SetMysqlSet(setVal)
+	}
 
 	if tp == mysql.TypeDuration {
 		var err error
-		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, t); err != nil {
+		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
 			return "", errors.Trace(err)
 		}
 	}
@@ -2491,7 +2504,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
 	hasDefaultValue := false
-	value, err := getDefaultValue(ctx, col.Name.L, option, &col.FieldType)
+	value, err := getDefaultValue(ctx, col, option)
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}
