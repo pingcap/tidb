@@ -741,57 +741,106 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 				switch testCase.retEvalType {
 				case types.ETInt:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalInt(row); err != nil {
+							v, isNull, err := baseFunc.evalInt(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendInt64(v)
 							}
 						}
 					}
 				case types.ETReal:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalReal(row); err != nil {
+							v, isNull, err := baseFunc.evalReal(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendFloat64(v)
 							}
 						}
 					}
 				case types.ETDecimal:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalDecimal(row); err != nil {
+							v, isNull, err := baseFunc.evalDecimal(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendMyDecimal(v)
 							}
 						}
 					}
 				case types.ETDatetime, types.ETTimestamp:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalTime(row); err != nil {
+							v, isNull, err := baseFunc.evalTime(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendTime(v)
 							}
 						}
 					}
 				case types.ETDuration:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalDuration(row); err != nil {
+							v, isNull, err := baseFunc.evalDuration(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendDuration(v)
 							}
 						}
 					}
 				case types.ETJson:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalJSON(row); err != nil {
+							v, isNull, err := baseFunc.evalJSON(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendJSON(v)
 							}
 						}
 					}
 				case types.ETString:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalString(row); err != nil {
+							v, isNull, err := baseFunc.evalString(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendString(v)
 							}
 						}
 					}
