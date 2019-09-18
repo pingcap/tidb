@@ -40,7 +40,6 @@ func (s *testSuite2) TestJoinPanic(c *C) {
 func (s *testSuite2) TestJoinInDisk(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newConf := config.NewConfig()
-	newConf.MemQuotaQuery = 1
 	newConf.OOMUseTmpStorage = true
 	config.StoreGlobalConfig(newConf)
 	defer config.StoreGlobalConfig(originCfg)
@@ -55,6 +54,7 @@ func (s *testSuite2) TestJoinInDisk(c *C) {
 	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 
 	// TODO(fengliyuan): how to ensure that it is using disk really?
+	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int, c2 int)")
