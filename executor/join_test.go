@@ -790,6 +790,9 @@ func (s *testSuite2) TestSubquery(c *C) {
 	tk.MustExec("insert into t2 value(null)")
 	tk.MustQuery("select * from t1 where 1 in (select b from t2)").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t1 where 1 not in (select b from t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 where 2 not in (select b from t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 where 2 in (select b from t2)").Check(testkit.Rows())
+
 	tk.MustQuery("select 1 in (select b from t2) from t1").Check(testkit.Rows("1"))
 	tk.MustQuery("select 1 in (select 1 from t2) from t1").Check(testkit.Rows("1"))
 	tk.MustQuery("select 1 not in (select b from t2) from t1").Check(testkit.Rows("0"))

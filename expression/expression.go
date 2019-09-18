@@ -155,10 +155,6 @@ func (e CNFExprs) Shallow() CNFExprs {
 	return cnf
 }
 
-func isColumnInOperand(c *Column) bool {
-	return c.InOperand
-}
-
 // IsEQCondFromIn checks if an expression is equal condition converted from `[not] in (subq)`.
 func IsEQCondFromIn(expr Expression) bool {
 	sf, ok := expr.(*ScalarFunction)
