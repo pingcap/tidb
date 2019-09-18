@@ -530,11 +530,9 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 // testVectorizedBuiltinFunc is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
-	flag.Parse()
-	var testFunc map[string]bool
-	testFunc = make(map[string]bool)
+	testFunc := make(map[string]bool)
 	argList := flag.Args()
-	testAll := len(argList) > 0
+	testAll := len(argList) == 0
 	for _, arg := range argList {
 		testFunc[arg] = true
 	}
@@ -671,12 +669,9 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 // using the vectorized expression evaluations
 func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
-
-	flag.Parse()
-	var testFunc map[string]bool
-	testFunc = make(map[string]bool)
+	testFunc := make(map[string]bool)
 	argList := flag.Args()
-	testAll := len(argList) > 0
+	testAll := len(argList) == 0
 	for _, arg := range argList {
 		testFunc[arg] = true
 	}
