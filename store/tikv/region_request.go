@@ -119,7 +119,6 @@ func (s *RegionRequestSender) SendReqCtx(
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
 		default:
 			err = errors.Errorf("unsupported storage type: %v", sType)
-			// err = errors.Errorf("Can not find the TiFlash store address, region version id:%v", RegionVerID)
 		}
 		if err != nil {
 			return nil, nil, err
