@@ -959,7 +959,7 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 		if ok && dec.lock.startTS == startTS {
 
 			// If the lock has already outdated, clean up it.
-			if uint64(oracle.ExtractPhysical(dec.lock.startTS))+dec.lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
+			if currentTS == 0 || uint64(oracle.ExtractPhysical(dec.lock.startTS))+dec.lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
 				if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
 					return err
 				}
