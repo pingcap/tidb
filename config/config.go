@@ -67,9 +67,9 @@ type Config struct {
 	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool            `toml:"split-table" json:"split-table"`
 	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
+	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
-	MemQuotaHashJoin int64           `toml:"mem-quota-hashjoin" json:"mem-quota-hashjoin"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
@@ -337,9 +337,9 @@ var defaultConf = Config{
 	SplitTable:                   true,
 	Lease:                        "45s",
 	TokenLimit:                   1000,
+	OOMUseTmpStorage:             true,
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
-	MemQuotaHashJoin:             32 << 30,
 	EnableStreaming:              false,
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,

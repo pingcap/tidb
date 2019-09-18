@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -36,10 +37,15 @@ func (s *testSuite2) TestJoinPanic(c *C) {
 }
 
 func (s *testSuite2) TestJoinInDisk(c *C) {
+	originCfg := config.GetGlobalConfig()
+	newConf := config.NewConfig()
+	newConf.MemQuotaQuery = 1
+	newConf.OOMUseTmpStorage = true
+	config.StoreGlobalConfig(newConf)
+	defer config.StoreGlobalConfig(originCfg)
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_mem_quota_hashjoin = 1")
-	c.Assert(tk.Se.GetSessionVars().MemQuotaHashJoin, Equals, int64(1))
 
+	// TODO(fengliyuan): how to ensure that it is using disk really?
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")

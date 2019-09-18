@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util"
@@ -132,7 +133,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	e.memTracker = memory.NewTracker(e.id, -1) // memory is limited by hashRowContainer.SetSpillToDisk
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.closeCh = make(chan struct{})
@@ -507,7 +508,10 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(innerResultLabel)
-	e.rowContainer.SetSpillToDisk(e.ctx.GetSessionVars().MemQuotaHashJoin)
+	if config.GetGlobalConfig().OOMUseTmpStorage {
+		actionSpill := e.rowContainer.ActionSpill()
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceedWithFallback(actionSpill)
+	}
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {
 			return nil

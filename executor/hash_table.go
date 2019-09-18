@@ -17,6 +17,7 @@ import (
 	"hash"
 	"hash/fnv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
@@ -85,16 +86,21 @@ type hashRowContainer struct {
 	hashTable *rowHashMap
 
 	// memTracker is the reference of records.GetMemTracker().
+	// records would be set to nil for garbage collection when spilling is activated
+	// so we need this reference.
 	memTracker *memory.Tracker
 
-	records       *chunk.List
+	// records stores the chunks in memory.
+	records *chunk.List
+	// recordsInDisk stores the chunks in disk.
 	recordsInDisk *chunk.ListInDisk
 
 	// exceeded indicates that records have exceeded memQuota during
 	// this PutChunk and we should spill now.
 	exceeded bool
 	// spilled indicates that records have spilled out into disk.
-	spilled bool
+	// It's for concurrency usage, so access it with atomic.
+	spilled uint32
 }
 
 func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext) *hashRowContainer {
@@ -138,7 +144,7 @@ func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext)
 	matched = make([]chunk.Row, 0, len(innerPtrs))
 	var matchedRow chunk.Row
 	for _, ptr := range innerPtrs {
-		if c.spilled {
+		if c.alreadySpilled() {
 			matchedRow, err = c.recordsInDisk.GetRow(ptr)
 			if err != nil {
 				return
@@ -179,12 +185,18 @@ func (c *hashRowContainer) spillToDisk() (err error) {
 	return
 }
 
+// alreadySpilled indicates that records have spilled out into disk.
+func (c *hashRowContainer) alreadySpilled() bool { return c.recordsInDisk != nil }
+
+// alreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
+func (c *hashRowContainer) alreadySpilledSafe() bool { return atomic.LoadUint32(&c.spilled) == 1 }
+
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 	var chkIdx uint32
-	if c.spilled {
+	if c.alreadySpilled() {
 		// append chk to disk.
 		chkIdx = uint32(c.recordsInDisk.NumChunks())
 		err := c.recordsInDisk.Add(chk)
@@ -201,7 +213,7 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 			}
 			c.records = nil // GC its internal chunks.
 			c.memTracker.Consume(-c.memTracker.BytesConsumed())
-			c.spilled = true
+			atomic.StoreUint32(&c.spilled, 1)
 		}
 	}
 	numRows := chk.NumRows()
@@ -255,31 +267,39 @@ func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.memTracker
 // GetDiskTracker returns the underlying disk usage tracker in hashRowContainer.
 func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.recordsInDisk.GetDiskTracker() }
 
-// SetSpillToDisk sets the memQuota for disk spilling, if records in
-// hashRowContainer exceeds the memQuota, All records and further chunks
-// putting by PutChunk will be stored to disk.
-func (c *hashRowContainer) SetSpillToDisk(memQuota int64) {
-	c.memTracker.SetBytesLimit(memQuota)
-	c.memTracker.SetActionOnExceed(&spillDiskAction{c: c})
+// ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
+func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
+	return &spillDiskAction{c: c}
 }
 
-// spillDiskAction implements memory.ActionOnExceed for chunk.List if
-// the memory quota of chunk.List is exceeded, spillDiskAction.Action
-// is triggered.
+// spillDiskAction implements memory.ActionOnExceed for chunk.List. If
+// the memory quota of a query is exceeded, spillDiskAction.Action is
+// triggered.
 type spillDiskAction struct {
-	once sync.Once
-	c    *hashRowContainer
+	once           sync.Once
+	c              *hashRowContainer
+	fallbackAction memory.ActionOnExceed
 }
 
-// Action set the exceeded flag in hashRowContainer to true.
+// Action triggers spillToDisk method of hashRowContainer and if
+// it is already triggered before, call its fallbackAction.
 func (a *spillDiskAction) Action(t *memory.Tracker) {
+	if a.c.alreadySpilledSafe() {
+		if a.fallbackAction != nil {
+			a.fallbackAction.Action(t)
+		}
+	}
 	a.once.Do(func() {
 		a.c.exceeded = true
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.", zap.String("memory", t.String()))
 	})
 }
 
-func (a *spillDiskAction) SetLogHook(hook func(uint64)) { /* NOOP */ }
+func (a *spillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
+	a.fallbackAction = fallback
+}
+
+func (a *spillDiskAction) SetLogHook(hook func(uint64)) {}
 
 const (
 	initialEntrySliceLen = 64

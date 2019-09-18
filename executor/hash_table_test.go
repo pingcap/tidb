@@ -144,10 +144,11 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
 	rowContainer := newHashRowContainer(sctx, 0, hCtx)
-	rowContainer.GetMemTracker().AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
-	rowContainer.GetMemTracker().SetLabel(innerResultLabel)
+	tracker := rowContainer.GetMemTracker()
+	tracker.SetLabel(innerResultLabel)
 	if spill {
-		rowContainer.SetSpillToDisk(1)
+		rowContainer.ActionSpill().Action(tracker)
+		tracker.SetBytesLimit(1)
 	}
 	err = rowContainer.PutChunk(chk0)
 	c.Check(err, IsNil)
@@ -155,9 +156,13 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	c.Check(err, IsNil)
 
 	if spill {
+		c.Assert(rowContainer.alreadySpilled(), IsTrue)
+		c.Assert(rowContainer.alreadySpilledSafe(), IsTrue)
 		c.Check(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, true)
 		c.Check(rowContainer.GetDiskTracker().BytesConsumed() > 0, Equals, true)
 	} else {
+		c.Assert(rowContainer.alreadySpilled(), IsFalse)
+		c.Assert(rowContainer.alreadySpilledSafe(), IsFalse)
 		c.Check(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, true)
 	}
 
