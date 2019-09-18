@@ -215,13 +215,6 @@ func (t *Tracker) SearchTracker(label string) *Tracker {
 	return nil
 }
 
-// FindRoot finds the root tracker of itself.
-func (t *Tracker) FindRoot() (root *Tracker) {
-	for root = t; root.parent != nil; root = root.parent {
-	}
-	return
-}
-
 // String returns the string representation of this Tracker tree.
 func (t *Tracker) String() string {
 	buffer := bytes.NewBufferString("\n")
