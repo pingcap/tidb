@@ -178,3 +178,7 @@ drop table if exists t;
 create table t(a int, b int);
 explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;
 drop table if exists t;
+
+create table t(a int, b int);
+explain format="dot" select * from t where a < 2;
+drop table if exists t;
