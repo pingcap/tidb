@@ -237,20 +237,15 @@ func (b *builtinPowSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 		return err
 	}
 
-	buf2, err := b.bufAllocator.get(types.ETReal, n)
-	if err != nil {
+	if err := b.args[1].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf2)
-	if err := b.args[1].VecEvalReal(b.ctx, input, buf2); err != nil {
-		return err
-	}
+
 	x := buf1.Float64s()
-	y := buf2.Float64s()
-	result.ResizeFloat64(n, false)
+	y := result.Float64s()
 	f64s := result.Float64s()
 	for i := 0; i < n; i++ {
-		if buf1.IsNull(i) || buf2.IsNull(i) {
+		if buf1.IsNull(i) || result.IsNull(i) {
 			result.SetNull(i, true)
 			continue
 		}
