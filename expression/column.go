@@ -306,16 +306,13 @@ func (col *Column) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 	return nil
 }
 
+const columnPrefix = "Column#"
+
 // String implements Stringer interface.
 func (col *Column) String() string {
-	result := col.ColName.L
-	if col.TblName.L != "" {
-		result = col.TblName.L + "." + result
-	}
-	if col.DBName.L != "" {
-		result = col.DBName.L + "." + result
-	}
-	return result
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
+	return builder.String()
 }
 
 // MarshalJSON implements json.Marshaler interface.

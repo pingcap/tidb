@@ -126,7 +126,6 @@ var record bool
 
 func init() {
 	flag.BoolVar(&record, "record", false, "to generate test result")
-	flag.Parse()
 }
 
 type testCases struct {
@@ -222,6 +221,17 @@ func (t *TestData) OnRecord(updateFunc func()) {
 	if record {
 		updateFunc()
 	}
+}
+
+// ConvertRowsToStrings converts [][]interface{} to []string.
+func (t *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
+	for _, row := range rows {
+		s := fmt.Sprintf("%v", row)
+		// Trim the leftmost `[` and rightmost `]`.
+		s = s[1 : len(s)-1]
+		rs = append(rs, s)
+	}
+	return rs
 }
 
 // GenerateOutputIfNeeded generate the output file.

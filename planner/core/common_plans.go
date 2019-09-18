@@ -226,6 +226,11 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	}
 
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+		// In order to avoid some correctness issues, we have to clear the
+		// cached plan once the schema version is changed.
+		// Cached plan in prepared struct does NOT have a "cache key" with
+		// schema version like prepared plan cache key
+		prepared.CachedPlan = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		err := Preprocess(sctx, prepared.Stmt, is, InPrepare)
@@ -243,30 +248,56 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) error {
+	if prepared.CachedPlan != nil {
+		// Rewriting the expression in the select.where condition  will convert its
+		// type from "paramMarker" to "Constant".When Point Select queries are executed,
+		// the expression in the where condition will not be evaluated,
+		// so you don't need to consider whether prepared.useCache is enabled.
+		plan := prepared.CachedPlan.(Plan)
+		err := e.rebuildRange(plan)
+		if err != nil {
+			return err
+		}
+		if metrics.ResettablePlanCacheCounterFortTest {
+			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+		} else {
+			planCacheCounter.Inc()
+		}
+		e.names = plan.OutputNames()
+		e.Plan = plan
+		return nil
+	}
 	var cacheKey kvcache.Key
-	sessionVars := sctx.GetSessionVars()
-	sessionVars.StmtCtx.UseCache = prepared.UseCache
+	sctx.GetSessionVars().StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
+		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if metrics.ResettablePlanCacheCounterFortTest {
 				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 			} else {
 				planCacheCounter.Inc()
 			}
-			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
-			err := e.rebuildRange(plan)
+			cachedVal := cacheValue.(*PSTMTPlanCacheValue)
+			err := e.rebuildRange(cachedVal.Plan)
 			if err != nil {
 				return err
 			}
-			e.names = cacheValue.(*PSTMTPlanCacheValue).OutPutNames
-			e.Plan = plan
+			e.names = cachedVal.OutPutNames
+			e.Plan = cachedVal.Plan
 			return nil
 		}
 	}
 	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return err
+	}
+	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+	if err != nil {
+		return err
+	}
+	if ok {
+		// just cache point plan now
+		prepared.CachedPlan = p
 	}
 	e.names = p.OutputNames()
 	e.Plan = p
@@ -739,22 +770,25 @@ func (e *Explain) getIndent4Child(indent string, isLastChild bool) string {
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	buffer := bytes.NewBufferString("")
-	buffer.WriteString(fmt.Sprintf("\ndigraph %s {\n", p.ExplainID()))
+	fmt.Fprintf(buffer, "\ndigraph %s {\n", p.ExplainID())
 	e.prepareTaskDot(p, "root", buffer)
-	buffer.WriteString(fmt.Sprintln("}"))
+	buffer.WriteString("}\n")
 
 	e.Rows = append(e.Rows, []string{buffer.String()})
 }
 
 func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
-	buffer.WriteString(fmt.Sprintf("subgraph cluster%v{\n", p.ID()))
+	fmt.Fprintf(buffer, "subgraph cluster%v{\n", p.ID())
 	buffer.WriteString("node [style=filled, color=lightgrey]\n")
 	buffer.WriteString("color=black\n")
-	buffer.WriteString(fmt.Sprintf("label = \"%s\"\n", taskTp))
+	fmt.Fprintf(buffer, "label = \"%s\"\n", taskTp)
 
 	if len(p.Children()) == 0 {
-		buffer.WriteString(fmt.Sprintf("\"%s\"\n}\n", p.ExplainID()))
-		return
+		if taskTp == "cop" {
+			fmt.Fprintf(buffer, "\"%s\"\n}\n", p.ExplainID())
+			return
+		}
+		fmt.Fprintf(buffer, "\"%s\"\n", p.ExplainID())
 	}
 
 	var copTasks []PhysicalPlan
@@ -776,7 +810,7 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 			copTasks = append(copTasks, copPlan.indexPlan)
 		}
 		for _, child := range curPlan.Children() {
-			buffer.WriteString(fmt.Sprintf("\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID()))
+			fmt.Fprintf(buffer, "\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID())
 			planQueue = append(planQueue, child)
 		}
 	}
@@ -788,5 +822,46 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 
 	for i := range pipelines {
 		buffer.WriteString(pipelines[i])
+	}
+}
+
+// IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
+//  1. ctx is auto commit tagged
+//  2. txn is not valid
+//  3. plan is point get by pk, or point get by unique index (no double read)
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
+	// check auto commit
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false, nil
+	}
+
+	// check txn
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return false, err
+	}
+	if txn.Valid() {
+		return false, nil
+	}
+
+	// check plan
+	if proj, ok := p.(*PhysicalProjection); ok {
+		p = proj.Children()[0]
+	}
+
+	switch v := p.(type) {
+	case *PhysicalIndexReader:
+		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
+	case *PhysicalTableReader:
+		tableScan := v.TablePlans[0].(*PhysicalTableScan)
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
+	case *PointGetPlan:
+		// If the PointGetPlan needs to read data using unique index (double read), we
+		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
+		// and the data and index would be inconsistent!
+		return v.IndexInfo == nil, nil
+	default:
+		return false, nil
 	}
 }

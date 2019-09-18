@@ -16,6 +16,7 @@ package expression
 // This file contains benchmarks of our expression evaluation.
 
 import (
+	"flag"
 	"fmt"
 	"math/rand"
 	"reflect"
@@ -257,6 +258,15 @@ func (rig *rangeInt64Gener) gen() interface{} {
 	return int64(rand.Intn(rig.end-rig.begin) + rig.begin)
 }
 
+// numStrGener is used to generate number strings.
+type numStrGener struct {
+	rangeInt64Gener
+}
+
+func (g *numStrGener) gen() interface{} {
+	return fmt.Sprintf("%v", g.rangeInt64Gener.gen())
+}
+
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
 type randLenStrGener struct {
 	lenBegin int
@@ -277,6 +287,12 @@ func (g *randLenStrGener) gen() interface{} {
 		}
 	}
 	return string(buf)
+}
+
+type randDurInt struct{}
+
+func (g *randDurInt) gen() interface{} {
+	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
 type vecExprBenchCase struct {
@@ -385,7 +401,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 	return expr, input, output
 }
 
-// testVectorizedEvalOneVec is used to verify that the special vectorized
+// testVectorizedEvalOneVec is used to verify that the vectorized
 // expression is evaluated correctly during projection
 func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
@@ -433,7 +449,7 @@ func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 }
 
 // benchmarkVectorizedEvalOneVec is used to get the effect of
-// using the special vectorized expression evaluations during projection
+// using the vectorized expression evaluations during projection
 func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
 	for funcName, testCases := range vecExprCases {
@@ -511,13 +527,27 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	return baseFunc, input, result
 }
 
-// testVectorizedBuiltinFunc is used to verify that the special vectorized
+// testVectorizedBuiltinFunc is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
+	testFunc := make(map[string]bool)
+	argList := flag.Args()
+	testAll := len(argList) == 0
+	for _, arg := range argList {
+		testFunc[arg] = true
+	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
 			baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
+			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
+			tmp := strings.Split(baseFuncName, ".")
+			baseFuncName = tmp[len(tmp)-1]
+
+			if !testAll && testFunc[baseFuncName] != true {
+				continue
+			}
+
 			it := chunk.NewIterator4Chunk(input)
 			i := 0
 			var vecWarnCnt uint16
@@ -636,15 +666,25 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 }
 
 // benchmarkVectorizedBuiltinFunc is used to get the effect of
-// using the special vectorized expression evaluations
+// using the vectorized expression evaluations
 func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
+	testFunc := make(map[string]bool)
+	argList := flag.Args()
+	testAll := len(argList) == 0
+	for _, arg := range argList {
+		testFunc[arg] = true
+	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
+
+			if !testAll && testFunc[baseFuncName] != true {
+				continue
+			}
 
 			b.Run(baseFuncName+"-VecBuiltinFunc", func(b *testing.B) {
 				b.ResetTimer()
@@ -701,57 +741,106 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 				switch testCase.retEvalType {
 				case types.ETInt:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalInt(row); err != nil {
+							v, isNull, err := baseFunc.evalInt(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendInt64(v)
 							}
 						}
 					}
 				case types.ETReal:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalReal(row); err != nil {
+							v, isNull, err := baseFunc.evalReal(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendFloat64(v)
 							}
 						}
 					}
 				case types.ETDecimal:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalDecimal(row); err != nil {
+							v, isNull, err := baseFunc.evalDecimal(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendMyDecimal(v)
 							}
 						}
 					}
 				case types.ETDatetime, types.ETTimestamp:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalTime(row); err != nil {
+							v, isNull, err := baseFunc.evalTime(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendTime(v)
 							}
 						}
 					}
 				case types.ETDuration:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalDuration(row); err != nil {
+							v, isNull, err := baseFunc.evalDuration(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendDuration(v)
 							}
 						}
 					}
 				case types.ETJson:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalJSON(row); err != nil {
+							v, isNull, err := baseFunc.evalJSON(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendJSON(v)
 							}
 						}
 					}
 				case types.ETString:
 					for i := 0; i < b.N; i++ {
+						output.Reset()
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							if _, _, err := baseFunc.evalString(row); err != nil {
+							v, isNull, err := baseFunc.evalString(row)
+							if err != nil {
 								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendString(v)
 							}
 						}
 					}
@@ -760,5 +849,116 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 				}
 			})
 		}
+	}
+}
+
+func genVecEvalBool(numCols int, colTypes []types.EvalType) (CNFExprs, *chunk.Chunk) {
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	gens := make([]dataGenerator, 0, len(eTypes))
+	for _, eType := range eTypes {
+		if eType == types.ETString {
+			gens = append(gens, &numStrGener{rangeInt64Gener{0, 10}})
+		} else {
+			gens = append(gens, &defaultGener{nullRation: 0.05, eType: eType})
+		}
+	}
+
+	ts := make([]types.EvalType, 0, numCols)
+	gs := make([]dataGenerator, 0, numCols)
+	fts := make([]*types.FieldType, 0, numCols)
+	for i := 0; i < numCols; i++ {
+		idx := rand.Intn(len(eTypes))
+		if colTypes != nil {
+			for j := range eTypes {
+				if colTypes[i] == eTypes[j] {
+					idx = j
+					break
+				}
+			}
+		}
+		ts = append(ts, eTypes[idx])
+		gs = append(gs, gens[idx])
+		fts = append(fts, eType2FieldType(eTypes[idx]))
+	}
+
+	input := chunk.New(fts, 1024, 1024)
+	exprs := make(CNFExprs, 0, numCols)
+	for i := 0; i < numCols; i++ {
+		fillColumn(ts[i], input, i, vecExprBenchCase{geners: gs})
+		exprs = append(exprs, &Column{Index: i, RetType: fts[i]})
+	}
+	return exprs, input
+}
+
+func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
+	ctx := mock.NewContext()
+	for numCols := 1; numCols <= 10; numCols++ {
+		for round := 0; round < 64; round++ {
+			exprs, input := genVecEvalBool(numCols, nil)
+			selected, nulls, err := VecEvalBool(ctx, exprs, input, nil, nil)
+			c.Assert(err, IsNil)
+			it := chunk.NewIterator4Chunk(input)
+			i := 0
+			for row := it.Begin(); row != it.End(); row = it.Next() {
+				ok, null, err := EvalBool(mock.NewContext(), exprs, row)
+				c.Assert(err, IsNil)
+				c.Assert(null, Equals, nulls[i])
+				c.Assert(ok, Equals, selected[i])
+				i++
+			}
+		}
+	}
+}
+
+func BenchmarkVecEvalBool(b *testing.B) {
+	ctx := mock.NewContext()
+	selected := make([]bool, 0, 1024)
+	nulls := make([]bool, 0, 1024)
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	for numCols := 1; numCols <= 3; numCols++ {
+		typeCombination := make([]types.EvalType, numCols)
+		var combFunc func(nCols int)
+		combFunc = func(nCols int) {
+			if nCols == 0 {
+				name := ""
+				for _, t := range typeCombination {
+					for i := range eTypes {
+						if t == eTypes[i] {
+							name += tNames[t] + "/"
+						}
+					}
+				}
+				exprs, input := genVecEvalBool(numCols, typeCombination)
+				b.Run("Vec-"+name, func(b *testing.B) {
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						_, _, err := VecEvalBool(ctx, exprs, input, selected, nulls)
+						if err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+				b.Run("Row-"+name, func(b *testing.B) {
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						it := chunk.NewIterator4Chunk(input)
+						for row := it.Begin(); row != it.End(); row = it.Next() {
+							_, _, err := EvalBool(ctx, exprs, row)
+							if err != nil {
+								b.Fatal(err)
+							}
+						}
+					}
+				})
+				return
+			}
+			for _, eType := range eTypes {
+				typeCombination[nCols-1] = eType
+				combFunc(nCols - 1)
+			}
+		}
+
+		combFunc(numCols)
 	}
 }
