@@ -16,6 +16,7 @@ package expression
 // This file contains benchmarks of our expression evaluation.
 
 import (
+	"flag"
 	"fmt"
 	"math/rand"
 	"reflect"
@@ -400,7 +401,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 	return expr, input, output
 }
 
-// testVectorizedEvalOneVec is used to verify that the special vectorized
+// testVectorizedEvalOneVec is used to verify that the vectorized
 // expression is evaluated correctly during projection
 func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
@@ -448,7 +449,7 @@ func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 }
 
 // benchmarkVectorizedEvalOneVec is used to get the effect of
-// using the special vectorized expression evaluations during projection
+// using the vectorized expression evaluations during projection
 func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
 	for funcName, testCases := range vecExprCases {
@@ -526,13 +527,27 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	return baseFunc, input, result
 }
 
-// testVectorizedBuiltinFunc is used to verify that the special vectorized
+// testVectorizedBuiltinFunc is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
+	testFunc := make(map[string]bool)
+	argList := flag.Args()
+	testAll := len(argList) == 0
+	for _, arg := range argList {
+		testFunc[arg] = true
+	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
 			baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
+			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
+			tmp := strings.Split(baseFuncName, ".")
+			baseFuncName = tmp[len(tmp)-1]
+
+			if !testAll && testFunc[baseFuncName] != true {
+				continue
+			}
+
 			it := chunk.NewIterator4Chunk(input)
 			i := 0
 			var vecWarnCnt uint16
@@ -651,15 +666,25 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 }
 
 // benchmarkVectorizedBuiltinFunc is used to get the effect of
-// using the special vectorized expression evaluations
+// using the vectorized expression evaluations
 func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
+	testFunc := make(map[string]bool)
+	argList := flag.Args()
+	testAll := len(argList) == 0
+	for _, arg := range argList {
+		testFunc[arg] = true
+	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			baseFunc, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
+
+			if !testAll && testFunc[baseFuncName] != true {
+				continue
+			}
 
 			b.Run(baseFuncName+"-VecBuiltinFunc", func(b *testing.B) {
 				b.ResetTimer()
