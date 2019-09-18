@@ -334,6 +334,14 @@ func (c *Column) SetNulls(begin, end int, isNull bool) {
 	}
 }
 
+func (c *Column) SetBytes(rowID int, bs []byte) {
+	i := c.offsets[rowID]
+	for _, b := range bs {
+		c.data[i] = b
+		i++
+	}
+}
+
 // nullCount returns the number of nulls in this Column.
 func (c *Column) nullCount() int {
 	var cnt, i int
