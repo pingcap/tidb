@@ -243,10 +243,10 @@ func (b *builtinPowSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 
 	x := buf1.Float64s()
 	y := result.Float64s()
+	result.MergeNulls(buf1)
 	f64s := result.Float64s()
 	for i := 0; i < n; i++ {
-		if buf1.IsNull(i) || result.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		power := math.Pow(x[i], y[i])
