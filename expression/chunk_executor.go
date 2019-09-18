@@ -340,7 +340,7 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 	// canVectorized use to check whether all of the filters can vectorized evaluate by chunk
 	canVectorized := true
 	for _, filter := range filters {
-		if !filter.Vectorized() || filter.GetType().EvalType() == types.ETInt {
+		if !filter.Vectorized() {
 			canVectorized = false
 			break
 		}

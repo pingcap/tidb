@@ -920,7 +920,8 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 		for round := 0; round < 64; round++ {
 			exprs, input := genVecEvalBool(numCols, nil)
 			it := chunk.NewIterator4Chunk(input)
-			selected, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it, nil, nil)
+			isNull := make([]bool, it.Len())
+			selected, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
 			c.Assert(err, IsNil)
 			selected2, nulls2, err2 := VectorizedFilterConsiderNull2(ctx, exprs, it, nil, nil)
 			c.Assert(err2, IsNil)
