@@ -891,5 +891,13 @@
         "Warning": "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t1) */ is inapplicable"
       }
     ]
+  },
+  {
+    "Name": "TestIndexJoinUnionScan",
+    "Cases": null
+  },
+  {
+    "Name": "TestSemiJoinToInner",
+    "Cases": null
   }
 ]
