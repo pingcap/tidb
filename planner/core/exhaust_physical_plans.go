@@ -358,6 +358,7 @@ func (p *LogicalJoin) constructIndexJoin(
 		innerTask:        innerTask,
 		KeyOff2IdxOff:    newKeyOff,
 		Ranges:           ranges,
+		KeepOuterOrder:   len(prop.Items) > 0,
 		CompareFilters:   compareFilters,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	if path != nil {
