@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -43,10 +44,17 @@ func (s *testSuite2) TestJoinInDisk(c *C) {
 	newConf.OOMUseTmpStorage = true
 	config.StoreGlobalConfig(newConf)
 	defer config.StoreGlobalConfig(originCfg)
+
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 
 	// TODO(fengliyuan): how to ensure that it is using disk really?
-	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int, c2 int)")
