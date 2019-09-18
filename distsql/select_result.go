@@ -38,41 +38,10 @@ var (
 	_ SelectResult = (*streamResult)(nil)
 )
 
-// DecodeType indicates the decode type.
-type DecodeType int
-
-const (
-	// DecodeTypeDefault indicates the default decode type.
-	DecodeTypeDefault DecodeType = iota
-	// DecodeTypeArrow indicates the arrow decode type.
-	DecodeTypeArrow
-)
-
-func (t DecodeType) String() string {
-	switch t {
-	case DecodeTypeDefault:
-		return "DecodeTypeDefault"
-	case DecodeTypeArrow:
-		return "DecodeTypeArrow"
-	}
-	return "unknown decode type"
-}
-
-// CalcDecodeType convert tipb.EncodeType to DecodeType.
-func CalcDecodeType(encodeType tipb.EncodeType) (decodeType DecodeType) {
-	switch encodeType {
-	case tipb.EncodeType_TypeDefault:
-		return DecodeTypeDefault
-	case tipb.EncodeType_TypeArrow:
-		return DecodeTypeArrow
-	}
-	panic("unsupported encode type")
-}
-
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
 	// Fetch fetches partial results from client.
-	Fetch(context.Context, DecodeType)
+	Fetch(context.Context, tipb.EncodeType)
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
 	// Next reads the data into chunk.
@@ -104,7 +73,7 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
-	decodeType   DecodeType
+	encodeType   tipb.EncodeType
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
@@ -114,8 +83,8 @@ type selectResult struct {
 	memTracker *memory.Tracker
 }
 
-func (r *selectResult) Fetch(ctx context.Context, dt DecodeType) {
-	r.decodeType = dt
+func (r *selectResult) Fetch(ctx context.Context, et tipb.EncodeType) {
+	r.encodeType = et
 	go r.fetch(ctx)
 }
 
@@ -185,15 +154,15 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return err
 		}
 		if len(r.selectResp.RowBatchData) == 0 {
-			r.decodeType = DecodeTypeDefault
+			r.encodeType = tipb.EncodeType_TypeDefault
 			metrics.DistSQLDecodeTypeErrorCount.Inc()
 		}
 	}
 
-	switch r.decodeType {
-	case DecodeTypeDefault:
+	switch r.encodeType {
+	case tipb.EncodeType_TypeDefault:
 		return r.readFromDefault(ctx, chk)
-	case DecodeTypeArrow:
+	case tipb.EncodeType_TypeArrow:
 		return r.readFromArrow(ctx, chk)
 	}
 	panic("unsupported decode type")

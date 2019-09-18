@@ -272,7 +272,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
+	result.Fetch(ctx, dagPB.EncodeType)
 	return result, nil
 }
 

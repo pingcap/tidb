@@ -270,7 +270,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	if err != nil {
 		return err
 	}
-	result.Fetch(ctx, distsql.CalcDecodeType(tipb.EncodeType_TypeDefault))
+	result.Fetch(ctx, tipb.EncodeType_TypeDefault)
 	if isNullRange {
 		e.countNullRes = result
 	} else {
@@ -440,7 +440,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx, distsql.CalcDecodeType(tipb.EncodeType_TypeDefault))
+	result.Fetch(ctx, tipb.EncodeType_TypeDefault)
 	return result, nil
 }
 

@@ -122,7 +122,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
+	e.result.Fetch(ctx, dagPB.EncodeType)
 	return nil
 }
 
@@ -278,7 +278,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
+	result.Fetch(ctx, dagPB.EncodeType)
 	return result, nil
 }
 
@@ -644,7 +644,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
+	result.Fetch(ctx, dagPB.EncodeType)
 	return result, nil
 }
 

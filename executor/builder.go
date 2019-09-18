@@ -2112,7 +2112,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx, distsql.CalcDecodeType(e.dagPB.EncodeType))
+	result.Fetch(ctx, e.dagPB.EncodeType)
 	e.resultHandler.open(nil, result)
 	return e, nil
 }
