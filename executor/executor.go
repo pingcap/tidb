@@ -1385,7 +1385,7 @@ func extractStmtHintsFromStmtNode(stmtNode ast.StmtNode) []*ast.TableOptimizerHi
 }
 
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, warns []error) {
-	if hints == nil {
+	if len(hints) == 0 {
 		return
 	}
 	var memoryQuotaHint, useToJAHint *ast.TableOptimizerHint
