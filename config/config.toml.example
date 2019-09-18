@@ -37,7 +37,7 @@ mem-quota-query = 34359738368
 # Set to true to enable use of temporary disk for some executors when mem-quota-query is exceeded.
 oom-use-tmp-storage = true
 
-# What to do when mem-quota-query is exceeded.
+# What to do when mem-quota-query is exceeded and can not be spilled over to disk any more.
 # Valid options: ["log", "cancel"]
 oom-action = "log"
 
