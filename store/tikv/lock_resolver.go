@@ -329,6 +329,7 @@ type txnExpireTime struct {
 func (t *txnExpireTime) update(lockExpire int64) {
 	t.initialized = true
 	if lockExpire <= 0 {
+		t.txnExpire = 0
 		return
 	}
 	if lockExpire < t.txnExpire {
