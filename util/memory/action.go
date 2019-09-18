@@ -65,6 +65,7 @@ func (a *LogOnExceed) Action(t *Tracker) {
 	}
 }
 
+// SetFallback sets a fallback action.
 func (a *LogOnExceed) SetFallback(ActionOnExceed) {}
 
 // PanicOnExceed panics when memory usage exceeds memory quota.
@@ -95,6 +96,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
 }
 
+// SetFallback sets a fallback action.
 func (a *PanicOnExceed) SetFallback(ActionOnExceed) {}
 
 var (
