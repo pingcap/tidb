@@ -49,6 +49,10 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	ast.Round: {
 		{types.ETDecimal, []types.EvalType{types.ETDecimal}, nil},
 	},
+	ast.Pow: {
+		{types.ETReal, []types.EvalType{types.ETReal, types.ETReal}, []dataGenerator{&rangeRealGener{0, 10, 0.5}, &rangeRealGener{0, 100, 0.5}}},
+
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinMathEvalOneVec(c *C) {

@@ -14,7 +14,9 @@
 package expression
 
 import (
+	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -221,5 +223,49 @@ func (b *builtinRoundDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinRoundDecSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinPowSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	buf2, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[1].VecEvalReal(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	x := buf1.Float64s()
+	y := buf2.Float64s()
+	result.ResizeFloat64(n, false)
+	f64s := result.Float64s()
+	for i := 0; i < n; i++ {
+		if (buf1.IsNull(i) || buf2.IsNull(i)) {
+			result.SetNull(i, true)
+			continue
+		}
+		power := math.Pow(x[i], y[i])
+		if math.IsInf(power, -1) || math.IsInf(power, 1) || math.IsNaN(power) {
+			err := types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x[i], 'f', -1, 64), strconv.FormatFloat(y[i], 'f', -1, 64)))
+			b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+			f64s[i] = 0
+		} else {
+			f64s[i] = power
+		}
+	}
+	return nil
+}
+
+func (b *builtinPowSig) vectorized() bool {
 	return true
 }

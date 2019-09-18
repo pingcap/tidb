@@ -247,6 +247,24 @@ func (g *defaultGener) gen() interface{} {
 	return nil
 }
 
+// rangeRealGener is used to generate float64 items in [begin, end].
+type rangeRealGener struct {
+	begin float64
+	end float64
+	nullRation float64
+}
+
+func (g *rangeRealGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	if g.end <= g.begin {
+		g.begin = -100
+		g.end = 100
+	}
+	return rand.Float64() * (g.end - g.begin) + g.begin
+}
+
 // rangeInt64Gener is used to generate int64 items in [begin, end).
 type rangeInt64Gener struct {
 	begin int
