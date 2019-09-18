@@ -376,6 +376,7 @@ func runTestLoadData(c *C, server *Server) {
 		config.AllowAllFiles = true
 		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		rs, err1 := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err1, IsNil)
@@ -423,6 +424,7 @@ func runTestLoadData(c *C, server *Server) {
 
 		// specify faileds and lines
 		dbt.mustExec("delete from test")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
 		dbt.Assert(err, IsNil)
 		lastID, err = rs.LastInsertId()
@@ -462,6 +464,7 @@ func runTestLoadData(c *C, server *Server) {
 			_, err = fp.WriteString(fmt.Sprintf("xxx row%d_col1	- row%d_col2\n", i, i))
 			dbt.Assert(err, IsNil)
 		}
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
 		dbt.Assert(err, IsNil)
 		lastID, err = rs.LastInsertId()
@@ -474,10 +477,12 @@ func runTestLoadData(c *C, server *Server) {
 		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
 
 		// don't support lines terminated is ""
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test lines terminated by ''")
 		dbt.Assert(err, NotNil)
 
 		// infile doesn't exist
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err = dbt.db.Exec("load data local infile '/tmp/nonexistence.csv' into table test")
 		dbt.Assert(err, NotNil)
 	})
@@ -503,6 +508,7 @@ func runTestLoadData(c *C, server *Server) {
 		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (str varchar(10) default null, i int default null)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
 		dbt.Assert(err1, IsNil)
 		var (
@@ -548,6 +554,7 @@ func runTestLoadData(c *C, server *Server) {
 		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a date, b date, c date not null, d date)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ','`)
 		dbt.Assert(err1, IsNil)
 		var (
@@ -601,6 +608,7 @@ func runTestLoadData(c *C, server *Server) {
 		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(20), b varchar(20))")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
 		dbt.Assert(err1, IsNil)
 		var (
@@ -645,6 +653,7 @@ func runTestLoadData(c *C, server *Server) {
 		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (id INT NOT NULL PRIMARY KEY,  b INT,  c varchar(10))")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' IGNORE 1 LINES`)
 		dbt.Assert(err1, IsNil)
 		var (
@@ -669,6 +678,7 @@ func runTestLoadData(c *C, server *Server) {
 		config.AllowAllFiles = true
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err, NotNil)
 		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
