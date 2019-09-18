@@ -174,7 +174,7 @@ type ImplSelection struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplSelection) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	return prop.IsEmpty()
+	return true
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
