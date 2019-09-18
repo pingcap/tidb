@@ -22,6 +22,28 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+func (b *builtinLog2Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if f64s[i] <= 0 {
+			result.SetNull(i, true)
+		} else {
+			f64s[i] = math.Log2(f64s[i])
+		}
+	}
+	return nil
+}
+
+func (b *builtinLog2Sig) vectorized() bool {
+	return true
+}
+
 func (b *builtinLog10Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
@@ -204,6 +226,42 @@ func (b *builtinCotSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 }
 
 func (b *builtinCotSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinSinSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Sin(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinSinSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTanSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Tan(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinTanSig) vectorized() bool {
 	return true
 }
 

@@ -770,22 +770,25 @@ func (e *Explain) getIndent4Child(indent string, isLastChild bool) string {
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	buffer := bytes.NewBufferString("")
-	buffer.WriteString(fmt.Sprintf("\ndigraph %s {\n", p.ExplainID()))
+	fmt.Fprintf(buffer, "\ndigraph %s {\n", p.ExplainID())
 	e.prepareTaskDot(p, "root", buffer)
-	buffer.WriteString(fmt.Sprintln("}"))
+	buffer.WriteString("}\n")
 
 	e.Rows = append(e.Rows, []string{buffer.String()})
 }
 
 func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
-	buffer.WriteString(fmt.Sprintf("subgraph cluster%v{\n", p.ID()))
+	fmt.Fprintf(buffer, "subgraph cluster%v{\n", p.ID())
 	buffer.WriteString("node [style=filled, color=lightgrey]\n")
 	buffer.WriteString("color=black\n")
-	buffer.WriteString(fmt.Sprintf("label = \"%s\"\n", taskTp))
+	fmt.Fprintf(buffer, "label = \"%s\"\n", taskTp)
 
 	if len(p.Children()) == 0 {
-		buffer.WriteString(fmt.Sprintf("\"%s\"\n}\n", p.ExplainID()))
-		return
+		if taskTp == "cop" {
+			fmt.Fprintf(buffer, "\"%s\"\n}\n", p.ExplainID())
+			return
+		}
+		fmt.Fprintf(buffer, "\"%s\"\n", p.ExplainID())
 	}
 
 	var copTasks []PhysicalPlan
@@ -805,9 +808,18 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.tablePlan)
 			copTasks = append(copTasks, copPlan.indexPlan)
+		case *PhysicalIndexMergeReader:
+			for i := 0; i < len(copPlan.partialPlans); i++ {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
+				copTasks = append(copTasks, copPlan.partialPlans[i])
+			}
+			if copPlan.tablePlan != nil {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
+				copTasks = append(copTasks, copPlan.tablePlan)
+			}
 		}
 		for _, child := range curPlan.Children() {
-			buffer.WriteString(fmt.Sprintf("\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID()))
+			fmt.Fprintf(buffer, "\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID())
 			planQueue = append(planQueue, child)
 		}
 	}
