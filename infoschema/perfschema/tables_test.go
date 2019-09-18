@@ -109,7 +109,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	).Check(testkit.Rows("test 4 4 insert into t values(1, 'a')"))
 
 	// Disable it again
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = false")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
@@ -119,6 +119,38 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustQuery("select * from t where a=2")
 
 	// The table should be cleared
+	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest`,
+	).Check(testkit.Rows())
+
+	// Enable it in session scope
+	tk.MustExec("set session tidb_enable_stmt_summary = on")
+	// It should work immediately
+	tk.MustQuery("select * from t where a=2")
+	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("test 1 0 select * from t where a=2"))
+
+	// Disable it in global scope
+	tk.MustExec("set global tidb_enable_stmt_summary = off")
+
+	// Create a new session to test
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustQuery("select * from t where a=2")
+
+	// Statement summary is still enabled
+	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("test 2 0 select * from t where a=2"))
+
+	// Unset session variable
+	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+	tk.MustQuery("select * from t where a=2")
+
+	// Statement summary is disabled
 	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest`,
 	).Check(testkit.Rows())
