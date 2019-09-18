@@ -1053,19 +1053,12 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 					return nil, infoschema.ErrCannotAddForeign
 				}
 			}
-			fk, err := buildFKInfo(model.NewCIStr(constr.Name), constr.Keys, constr.Refer, cols)
+			fk, err := buildFKInfo(model.NewCIStr(constr.Name), constr.Keys, constr.Refer, cols, tbInfo)
 			if err != nil {
 				return nil, err
 			}
 			fk.State = model.StatePublic
 
-			if len(fk.Cols) != len(fk.RefCols) {
-				return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(tbInfo.Name.O)
-			}
-			if len(fk.Cols) == 0 {
-				// TODO: In MySQL, this case will report a parse error.
-				return nil, infoschema.ErrCannotAddForeign
-			}
 			tbInfo.ForeignKeys = append(tbInfo.ForeignKeys, fk)
 			continue
 		}
@@ -3283,12 +3276,10 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	return errors.Trace(err)
 }
 
-func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
+func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column, tbInfo *model.TableInfo) (*model.FKInfo, error) {
 	var fkInfo model.FKInfo
 	fkInfo.Name = fkName
 	fkInfo.RefTable = refer.Table.Name
-
-	fkInfo.Cols = make([]model.CIStr, len(keys))
 
 	// all base columns of stored generated columns
 	baseCols := make(map[string]struct{})
@@ -3299,6 +3290,12 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 			}
 		}
 	}
+
+	if len(keys) == 0 {
+		// TODO: In MySQL, this case will report a parse error.
+		return nil, infoschema.ErrCannotAddForeign
+	}
+	fkInfo.Cols = make([]model.CIStr, len(keys))
 
 	for i, key := range keys {
 		// Check add foreign key to generated columns
@@ -3348,6 +3345,9 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 		fkInfo.Cols[i] = key.Column.Name
 	}
 
+	if len(keys) != len(refer.IndexColNames) {
+		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(tbInfo.Name.O)
+	}
 	fkInfo.RefCols = make([]model.CIStr, len(refer.IndexColNames))
 	for i, key := range refer.IndexColNames {
 		fkInfo.RefCols[i] = key.Column.Name
@@ -3371,7 +3371,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols())
+	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}

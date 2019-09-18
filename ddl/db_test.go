@@ -1851,21 +1851,21 @@ func (s *testDBSuite2) TestFKOnGeneratedColumns(c *C) {
 	s.tk.MustExec("use test")
 	// test add foreign key to generated column
 
-	// foreign key constraint cannot reference a virtual generated column.
+	// foreign key constraint cannot be defined on a virtual generated column.
 	s.tk.MustExec("create table t1 (a int primary key);")
 	s.tk.MustGetErrCode("create table t2 (a int, b int as (a+1) virtual, foreign key (b) references t1(a));", tmysql.ErrCannotAddForeign)
 	s.tk.MustExec("create table t2 (a int, b int generated always as (a+1) virtual);")
 	s.tk.MustGetErrCode("alter table t2 add foreign key (b) references t1(a);", tmysql.ErrCannotAddForeign)
 	s.tk.MustExec("drop table t1, t2;")
 
-	// foreign key constraint can reference a stored generated column.
+	// foreign key constraint can be defined on a stored generated column.
 	s.tk.MustExec("create table t2 (a int primary key);")
-	s.tk.MustExec("create table t1 (a int, b int as (a+1) stored, foreign key (b) references t(a));")
+	s.tk.MustExec("create table t1 (a int, b int as (a+1) stored, foreign key (b) references t2(a));")
 	s.tk.MustExec("create table t3 (a int, b int generated always as (a+1) stored);")
 	s.tk.MustExec("alter table t3 add foreign key (b) references t2(a);")
 	s.tk.MustExec("drop table t1, t2, t3;")
 
-	// foreign key constraint can defined on a stored generated column.
+	// foreign key constraint can reference a stored generated column.
 	s.tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored primary key);")
 	s.tk.MustExec("create table t2 (a int, foreign key (a) references t1(b));")
 	s.tk.MustExec("create table t3 (a int);")
