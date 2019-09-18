@@ -1798,9 +1798,10 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			ctx:       MockContext(),
-			is:        s.is,
+			colMapper:     make(map[*ast.ColumnNameExpr]int),
+			ctx:           MockContext(),
+			is:            s.is,
+			hintProcessor: &BlockHintProcessor{},
 		}
 		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
 		_, err = builder.Build(context.TODO(), stmt)
@@ -1917,9 +1918,10 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
+			ctx:           MockContext(),
+			is:            s.is,
+			colMapper:     make(map[*ast.ColumnNameExpr]int),
+			hintProcessor: &BlockHintProcessor{},
 		}
 		plan, err := builder.Build(ctx, stmt)
 		if tt.err {
@@ -2050,9 +2052,10 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
+			ctx:           MockContext(),
+			is:            s.is,
+			colMapper:     make(map[*ast.ColumnNameExpr]int),
+			hintProcessor: &BlockHintProcessor{},
 		}
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
@@ -2177,9 +2180,10 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
+			ctx:           MockContext(),
+			is:            s.is,
+			colMapper:     make(map[*ast.ColumnNameExpr]int),
+			hintProcessor: &BlockHintProcessor{},
 		}
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
@@ -2209,9 +2213,10 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
+			ctx:           MockContext(),
+			is:            s.is,
+			colMapper:     make(map[*ast.ColumnNameExpr]int),
+			hintProcessor: &BlockHintProcessor{},
 		}
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
@@ -2494,9 +2499,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
+			ctx:           MockContext(),
+			is:            s.is,
+			colMapper:     make(map[*ast.ColumnNameExpr]int),
+			hintProcessor: &BlockHintProcessor{},
 		}
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
@@ -2584,9 +2590,10 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
+			ctx:           MockContext(),
+			is:            s.is,
+			colMapper:     make(map[*ast.ColumnNameExpr]int),
+			hintProcessor: &BlockHintProcessor{},
 		}
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {

@@ -519,6 +519,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
 			Table:           is.Table,
+			TableAsName:     ds.TableAsName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx)

@@ -98,6 +98,8 @@ const (
 	preferRightAsIndexInner
 	preferHashJoin
 	preferMergeJoin
+	preferHashAgg
+	preferStreamAgg
 )
 
 // LogicalJoin is the logical join plan.
@@ -246,6 +248,9 @@ type LogicalAggregation struct {
 	GroupByItems []expression.Expression
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
+
+	// aggHints stores aggregation hint information.
+	aggHints aggHintInfo
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
