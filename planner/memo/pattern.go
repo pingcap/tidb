@@ -27,39 +27,41 @@ type Operand int
 const (
 	// OperandAny is a placeholder for any Operand.
 	OperandAny Operand = iota
-	// OperandJoin for LogicalJoin.
+	// OperandJoin is the operand for LogicalJoin.
 	OperandJoin
-	// OperandAggregation for LogicalAggregation.
+	// OperandAggregation is the operand for LogicalAggregation.
 	OperandAggregation
-	// OperandProjection for LogicalProjection.
+	// OperandProjection is the operand for LogicalProjection.
 	OperandProjection
-	// OperandSelection for LogicalSelection.
+	// OperandSelection is the operand for LogicalSelection.
 	OperandSelection
-	// OperandApply for LogicalApply.
+	// OperandApply is the operand for LogicalApply.
 	OperandApply
-	// OperandMaxOneRow for LogicalMaxOneRow.
+	// OperandMaxOneRow is the operand for LogicalMaxOneRow.
 	OperandMaxOneRow
-	// OperandTableDual for LogicalTableDual.
+	// OperandTableDual is the operand for LogicalTableDual.
 	OperandTableDual
-	// OperandDataSource for DataSource.
+	// OperandDataSource is the operand for DataSource.
 	OperandDataSource
-	// OperandUnionScan for LogicalUnionScan.
+	// OperandUnionScan is the operand for LogicalUnionScan.
 	OperandUnionScan
-	// OperandUnionAll for LogicalUnionAll.
+	// OperandUnionAll is the operand for LogicalUnionAll.
 	OperandUnionAll
-	// OperandSort for LogicalSort.
+	// OperandSort is the operand for LogicalSort.
 	OperandSort
-	// OperandTopN for LogicalTopN.
+	// OperandTopN is the operand for LogicalTopN.
 	OperandTopN
-	// OperandLock for LogicalLock.
+	// OperandLock is the operand for LogicalLock.
 	OperandLock
-	// OperandLimit for LogicalLimit.
+	// OperandLimit is the operand for LogicalLimit.
 	OperandLimit
-	// OperandTableGather for TableGather.
+	// OperandTableGather is the operand for TableGather.
 	OperandTableGather
-	// OperandTableScan for TableScan.
+	// OperandTableScan is the operand for TableScan.
 	OperandTableScan
-	// OperandUnsupported is upper bound of defined Operand yet.
+	// OperandShow is the operand for Show.
+	OperandShow
+	// OperandUnsupported is the operand for unsupported operators.
 	OperandUnsupported
 )
 
@@ -98,6 +100,8 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandTableGather
 	case *plannercore.TableScan:
 		return OperandTableScan
+	case *plannercore.LogicalShow:
+		return OperandShow
 	default:
 		return OperandUnsupported
 	}
