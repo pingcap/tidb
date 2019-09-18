@@ -680,7 +680,26 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		}
 		return strconv.FormatUint(value, 10), nil
 	}
-	if tp == mysql.TypeSet && v.Kind() == types.KindInt64 {
+
+	switch tp {
+	case mysql.TypeSet:
+		return setSetDefaultValue(v, col)
+	case mysql.TypeDuration:
+		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
+			return "", errors.Trace(err)
+		}
+	case mysql.TypeBit:
+		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
+			// For BIT fields, convert int into BinaryLiteral.
+			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), nil
+		}
+	}
+
+	return v.ToString()
+}
+
+func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
+	if v.Kind() == types.KindInt64 {
 		setCnt := len(col.Elems)
 		maxLimit := int64(1<<uint(setCnt) - 1)
 		val := v.GetInt64()
@@ -692,21 +711,40 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 			return "", errors.Trace(err)
 		}
 		v.SetMysqlSet(setVal)
+		return v.ToString()
 	}
 
-	if tp == mysql.TypeDuration {
-		var err error
-		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
-			return "", errors.Trace(err)
-		}
+	str, err := v.ToString()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if str == "" {
+		return str, nil
 	}
 
-	if tp == mysql.TypeBit {
-		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
-			// For BIT fields, convert int into BinaryLiteral.
-			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), nil
+	valMap := make(map[string]struct{}, len(col.Elems))
+	dVals := strings.SplitN(strings.ToLower(str), ",", -1)
+	for _, dv := range dVals {
+		valMap[dv] = struct{}{}
+	}
+	var existCnt int
+	for dv := range valMap {
+		for i := range col.Elems {
+			e := strings.ToLower(col.Elems[i])
+			if e == dv {
+				existCnt++
+				break
+			}
 		}
 	}
+	if existCnt != len(valMap) {
+		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+	}
+	setVal, err := types.ParseSetName(col.Elems, str)
+	if err != nil {
+		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+	}
+	v.SetMysqlSet(setVal)
 
 	return v.ToString()
 }
