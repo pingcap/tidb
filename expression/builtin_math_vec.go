@@ -250,7 +250,7 @@ func (b *builtinPowSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
 	for i := 0; i < n; i++ {
-		if (buf1.IsNull(i) || buf2.IsNull(i)) {
+		if buf1.IsNull(i) || buf2.IsNull(i) {
 			result.SetNull(i, true)
 			continue
 		}
