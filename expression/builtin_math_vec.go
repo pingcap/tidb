@@ -15,10 +15,11 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"math"
 	"strconv"
+
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 func (b *builtinLog10Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
@@ -251,9 +252,8 @@ func (b *builtinPowSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 		power := math.Pow(x[i], y[i])
 		if math.IsInf(power, -1) || math.IsInf(power, 1) || math.IsNaN(power) {
 			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x[i], 'f', -1, 64), strconv.FormatFloat(y[i], 'f', -1, 64)))
-		} else {
-			f64s[i] = power
 		}
+		f64s[i] = power
 	}
 	return nil
 }
