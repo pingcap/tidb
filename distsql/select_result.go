@@ -182,7 +182,7 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if r.selectResp == nil || len(r.selectResp.RowBatchData) == 0 {
 		err := r.getSelectResp()
 		if err != nil || r.selectResp == nil {
-			return errors.Trace(err)
+			return err
 		}
 		if len(r.selectResp.RowBatchData) == 0 {
 			r.decodeType = DecodeTypeDefault
@@ -224,15 +224,11 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 			return errors.Trace(err)
 		}
 	}
-	r.readRowBatch(chk)
-	return nil
-}
-
-func (r *selectResult) readRowBatch(chk *chunk.Chunk) {
 	rowBatchData := r.selectResp.RowBatchData
 	codec := chunk.NewCodec(r.fieldTypes)
 	remained := codec.DecodeToChunk(rowBatchData, chk)
 	r.selectResp.RowBatchData = remained
+	return nil
 }
 
 func (r *selectResult) getSelectResp() error {

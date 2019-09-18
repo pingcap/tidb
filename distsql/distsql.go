@@ -145,7 +145,10 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 	return result, nil
 }
 
-// SetEncodeType set a DAGRequest's EncodeType
+// SetEncodeType sets the encoding method for the DAGRequest. Possible encoding
+// methods are:
+// 1. arrow: result is encoded using the apache arrow format.
+// 2. default: result is encoded row by row.
 func SetEncodeType(dagReq *tipb.DAGRequest) {
 	if useChunkIPC(dagReq) {
 		dagReq.EncodeType = tipb.EncodeType_TypeArrow
@@ -207,6 +210,7 @@ func useChunkIPC(dagReq *tipb.DAGRequest) bool {
 	return true
 }
 
+// typeSupported indicate the type support to encode in arrow format.
 func typeSupported(tpInput int32) bool {
 	tp := byte(tpInput)
 	return tp != mysql.TypeBit && tp != mysql.TypeEnum && tp != mysql.TypeSet

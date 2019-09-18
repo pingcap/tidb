@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// PbTypeToFieldType convert tipb.FieldType to FieldType
+// PbTypeToFieldType converts tipb.FieldType to FieldType
 func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 	return &types.FieldType{
 		Tp:      byte(tp.Tp),
