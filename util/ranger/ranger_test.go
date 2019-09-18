@@ -1119,12 +1119,7 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			for _, row := range testKit.MustQuery(tt).Rows() {
-				s := fmt.Sprintf("%v", row)
-				// Trim the leftmost `[` and rightmost `]`.
-				s = s[1 : len(s)-1]
-				output[i].Result = append(output[i].Result, s)
-			}
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}

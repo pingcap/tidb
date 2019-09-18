@@ -996,12 +996,7 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 			s.testData.OnRecord(func() {
 				output[i].SQL = ts
 				if j == len(ts)-1 {
-					for _, row := range tk.MustQuery(tt).Rows() {
-						s := fmt.Sprintf("%v", row)
-						// Trim the leftmost `[` and rightmost `]`.
-						s = s[1 : len(s)-1]
-						output[i].Plan = append(output[i].Plan, s)
-					}
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 				}
 			})
 			if j == len(ts)-1 {
