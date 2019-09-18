@@ -721,4 +721,5 @@ var funcs = map[string]functionClass{
 	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
 }
 
+// Funcs is an exported name of funcs
 var Funcs = funcs
