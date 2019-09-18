@@ -25,6 +25,9 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	ast.Log10: {
 		{types.ETReal, []types.EvalType{types.ETReal}, nil},
 	},
+	ast.Log2: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
 	ast.Sqrt: {
 		{types.ETReal, []types.EvalType{types.ETReal}, nil},
 	},
