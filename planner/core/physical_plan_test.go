@@ -615,7 +615,7 @@ func (s *testPlanSuite) TestSemiJoinToInner(c *C) {
 			output[i].SQL = tt
 			output[i].Best = core.ToString(p)
 		})
-		c.Assert(core.ToString(p), Equals, output[i].SQL)
+		c.Assert(core.ToString(p), Equals, output[i].Best)
 	}
 }
 

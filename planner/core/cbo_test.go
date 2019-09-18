@@ -36,11 +36,23 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testAnalyzeSuite{})
 
 type testAnalyzeSuite struct {
+	testData testutil.TestData
+}
+
+func (s *testAnalyzeSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "analyze_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testAnalyzeSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testAnalyzeSuite) loadTableStats(fileName string, dom *domain.Domain) error {
@@ -998,7 +1010,6 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 		}
 	}
 }
-
 
 func (s *testAnalyzeSuite) TestUpdateProjEliminate(c *C) {
 	store, dom, err := newStoreWithBootstrap()
