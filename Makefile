@@ -78,14 +78,10 @@ goword:tools/bin/goword
 gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
-check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign
-	@ # TODO: enable megacheck.
-	@ # TODO: gometalinter has been DEPRECATED.
-	@ # https://github.com/alecthomas/gometalinter/issues/590
-	tools/bin/gometalinter --disable-all --deadline 120s \
-	  --enable misspell \
-	  --enable ineffassign \
-	  $$($(PACKAGE_DIRECTORIES))
+check-static:tools/bin/golangci-lint
+	tools/bin/golangci-lint run ./...  --disable-all --deadline 120s \
+	  --enable=misspell \
+	  --enable=ineffassign \
 
 check-slow:tools/bin/gometalinter tools/bin/gosec
 	tools/bin/gometalinter --disable-all \
@@ -238,9 +234,18 @@ tools/bin/goword: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
 
+
 tools/bin/gometalinter: tools/check/go.mod
+	@ # TODO: We should replace gometalinter to golangci-lint all
+	@ # TODO: gometalinter has been DEPRECATED.
+	@ # https://github.com/alecthomas/gometalinter/issues/590
 	cd tools/check; \
 	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v3
+
+
+tools/bin/golangci-lint: tools/check/go.mod
+	cd tools/check ; \
+	$(GO) build -o ../bin/golangci-lint  github.com/golangci/golangci-lint/cmd/golangci-lint
 
 tools/bin/gosec: tools/check/go.mod
 	cd tools/check; \
@@ -253,9 +258,3 @@ tools/bin/errcheck: tools/check/go.mod
 tools/bin/failpoint-ctl: go.mod
 	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
 
-tools/bin/misspell:tools/check/go.mod
-	$(GO) get -u github.com/client9/misspell/cmd/misspell
-
-tools/bin/ineffassign:tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
