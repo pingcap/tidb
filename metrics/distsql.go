@@ -52,4 +52,13 @@ var (
 			Help:      "number of partial results for each query.",
 		},
 	)
+
+	DistSQLDecodeTypeErrorCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "distsql",
+			Name:      "decode_type_error_num",
+			Help:      "count of expected decode type is different from actual.",
+		},
+	)
 )

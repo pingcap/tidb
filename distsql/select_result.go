@@ -186,6 +186,7 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		if len(r.selectResp.RowBatchData) == 0 {
 			r.decodeType = DecodeTypeDefault
+			metrics.DistSQLDecodeTypeErrorCount.Inc()
 		}
 	}
 
