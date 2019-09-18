@@ -223,7 +223,7 @@ func (t *TestData) OnRecord(updateFunc func()) {
 	}
 }
 
-// MustQuery execute the query sql and return a query result.
+// ConvertRowsToStrings converts [][]interface{} to []string.
 func (t *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
 	for _, row := range rows {
 		s := fmt.Sprintf("%v", row)
