@@ -515,7 +515,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				}
 			case ast.ColumnOptionUniqKey:
 				// Check UniqueFlag first to avoid extra duplicate constraints.
-				if col.Flag&mysql.UniqueFlag != 0 {
+				if col.Flag&mysql.UniqueFlag == 0 {
 					constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Keys: keys}
 					constraints = append(constraints, constraint)
 					col.Flag |= mysql.UniqueKeyFlag
