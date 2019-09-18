@@ -231,11 +231,11 @@ type illegalFunctionChecker struct {
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch node := inNode.(type) {
 	case *ast.FuncCallExpr:
-		if _, found := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]; !found {
+		if _, found := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]; found {
 			c.hasIllegalFunc = true
 			return inNode, true
 		}
-		if _, found := expression.Funcs[node.FnName.L]; found {
+		if _, found := expression.Funcs[node.FnName.L]; !found {
 			c.hasIllegalFunc = true
 			return inNode, true
 		}
