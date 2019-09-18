@@ -3237,11 +3237,9 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	// Check for drop index on auto_increment column.
-	cols := t.Cols()
-	for _, idxCol := range indexInfo.Columns {
-		if mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) && countOfIndexContainColumn(t.Meta(), idxCol.Name.L) < 2 {
-			return autoid.ErrWrongAutoKey
-		}
+	err = checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
@@ -3255,20 +3253,6 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
-}
-
-func countOfIndexContainColumn(tblInfo *model.TableInfo, colName string) int {
-	count := 0
-	for _, idx := range tblInfo.Indices {
-		for _, c := range idx.Columns {
-			if c.Name.L != colName {
-				continue
-			}
-			count++
-			break
-		}
-	}
-	return count
 }
 
 func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
