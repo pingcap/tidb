@@ -263,52 +263,56 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 				sel[j] = sel[i] // this row passes this filter
 				j++
 			}
+			sel = sel[:j]
+			input.SetSel(sel)
+			globalColumnAllocator.put(buf)
+			continue
 
-		} else {
-			if err := vecEval(ctx, expr, input, buf); err != nil {
+		}
+
+		if err := vecEval(ctx, expr, input, buf); err != nil {
+			return nil, nil, err
+		}
+
+		isEQCondFromIn := IsEQCondFromIn(expr)
+		d := types.Datum{}
+		for i := range sel {
+			if buf.IsNull(i) {
+				if !isEQCondFromIn {
+					continue
+				}
+				// In this case, we set this row to null and let it pass this filter.
+				// The null flag may be set to false later by other expressions in some cases.
+				nulls[sel[i]] = true
+				sel[j] = sel[i]
+				j++
+				continue
+			}
+
+			switch eType {
+			case types.ETReal:
+				d.SetFloat64(buf.GetFloat64(i))
+			case types.ETDuration:
+				d.SetMysqlDuration(buf.GetDuration(i, 0))
+			case types.ETDatetime, types.ETTimestamp:
+				d.SetMysqlTime(buf.GetTime(i))
+			case types.ETString:
+				d.SetString(buf.GetString(i))
+			case types.ETJson:
+				d.SetMysqlJSON(buf.GetJSON(i))
+			case types.ETDecimal:
+				d.SetMysqlDecimal(buf.GetDecimal(i))
+			}
+
+			b, err := d.ToBool(ctx.GetSessionVars().StmtCtx)
+			if err != nil {
 				return nil, nil, err
 			}
-
-			isEQCondFromIn := IsEQCondFromIn(expr)
-			d := types.Datum{}
-			for i := range sel {
-				if buf.IsNull(i) {
-					if !isEQCondFromIn {
-						continue
-					}
-					// In this case, we set this row to null and let it pass this filter.
-					// The null flag may be set to false later by other expressions in some cases.
-					nulls[sel[i]] = true
-					sel[j] = sel[i]
-					j++
-					continue
-				}
-
-				switch eType {
-				case types.ETReal:
-					d.SetFloat64(buf.GetFloat64(i))
-				case types.ETDuration:
-					d.SetMysqlDuration(buf.GetDuration(i, 0))
-				case types.ETDatetime, types.ETTimestamp:
-					d.SetMysqlTime(buf.GetTime(i))
-				case types.ETString:
-					d.SetString(buf.GetString(i))
-				case types.ETJson:
-					d.SetMysqlJSON(buf.GetJSON(i))
-				case types.ETDecimal:
-					d.SetMysqlDecimal(buf.GetDecimal(i))
-				}
-
-				b, err := d.ToBool(ctx.GetSessionVars().StmtCtx)
-				if err != nil {
-					return nil, nil, err
-				}
-				if b == 0 {
-					continue
-				}
-				sel[j] = sel[i] // this row passes this filter
-				j++
+			if b == 0 {
+				continue
 			}
+			sel[j] = sel[i] // this row passes this filter
+			j++
 		}
 		sel = sel[:j]
 		input.SetSel(sel)
