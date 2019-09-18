@@ -251,6 +251,7 @@ func (g *defaultGener) gen() interface{} {
 type rangeRealGener struct {
 	begin      float64
 	end        float64
+
 	nullRation float64
 }
 
