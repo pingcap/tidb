@@ -122,22 +122,12 @@ Limit_10	1.00	root	offset:0, count:1
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
 id	count	task	operator info
-<<<<<<< HEAD
-Projection_6	1999.00	root	5_aux_0
-└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_13, other cond:eq(1, test.t2.c2)
+Projection_6	1999.00	root	Column#8
+└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_13, other cond:eq(1, Column#5)
   ├─IndexReader_11	1999.00	root	index:IndexScan_10
   │ └─IndexScan_10	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
   └─TableReader_13	1985.00	root	data:TableScan_12
     └─TableScan_12	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
-=======
-Projection_6	1999.00	root	Column#8
-└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_14
-  ├─IndexReader_11	1999.00	root	index:IndexScan_10
-  │ └─IndexScan_10	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
-  └─TableReader_14	0.00	root	data:Selection_13
-    └─Selection_13	0.00	cop	eq(1, Column#5)
-      └─TableScan_12	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
->>>>>>> 786929944cf98019b7d508229fee214d9fea1be5
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
