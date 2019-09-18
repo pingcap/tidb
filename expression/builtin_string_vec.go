@@ -18,6 +18,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -162,5 +163,47 @@ Loop:
 }
 
 func (b *builtinUpperSig) vectorized() bool {
+	return true
+}
+
+// vecEvalString evals a builtinSpaceSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_space
+func (b *builtinSpaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		num := nums[i]
+		if num < 0 {
+			num = 0
+		}
+		if uint64(num) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("space", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+		if num > mysql.MaxBlobWidth {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(strings.Repeat(" ", int(num)))
+	}
+	return nil
+}
+
+func (b *builtinSpaceSig) vectorized() bool {
 	return true
 }
