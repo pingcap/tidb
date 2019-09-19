@@ -2451,11 +2451,17 @@ func (s *testSuite4) TestRebaseIfNeeded(c *C) {
 func (s *testSuite4) TestDeferConstraintCheckForInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
+
+	tk.MustExec(`drop table if exists t;create table t (a int primary key, b int);`)
+	tk.MustExec(`insert into t values (1,2),(2,2)`)
+	_, err := tk.Exec("update t set a=a+1 where b=2")
+	c.Assert(err, NotNil)
+
 	tk.MustExec(`drop table if exists t;create table t (i int key);`)
 	tk.MustExec(`insert t values (1);`)
 	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
 	tk.MustExec(`begin;`)
-	_, err := tk.Exec(`insert t values (1);`)
+	_, err = tk.Exec(`insert t values (1);`)
 	c.Assert(err, NotNil)
 	tk.MustExec(`update t set i = 2 where i = 1;`)
 	tk.MustExec(`commit;`)

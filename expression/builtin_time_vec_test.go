@@ -28,6 +28,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.Month: {
 		{types.ETInt, []types.EvalType{types.ETDatetime}, nil},
 	},
+	ast.Year: {
+		{types.ETInt, []types.EvalType{types.ETDatetime}, nil},
+	},
 	ast.Date: {
 		{types.ETDatetime, []types.EvalType{types.ETDatetime}, nil},
 	},
