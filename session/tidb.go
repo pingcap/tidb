@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -229,9 +228,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil)
 			s.(*executor.ExecStmt).SummaryStmt()
 			pps := types.CloneRow(sessVars.PreparedParams)
-			sessVars.PrevStmt = stringutil.MemoizeStr(func() string {
-				return executor.FormatSQL(s.OriginText(), pps)
-			})
+			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), pps)
 		}
 	}()
 

@@ -182,9 +182,7 @@ func (a *recordSet) Close() error {
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	sessVars := a.stmt.Ctx.GetSessionVars()
 	pps := types.CloneRow(sessVars.PreparedParams)
-	sessVars.PrevStmt = stringutil.MemoizeStr(func() string {
-		return FormatSQL(a.stmt.OriginText(), pps)
-	})
+	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), pps)
 	a.stmt.logAudit()
 	a.stmt.SummaryStmt()
 	return err
@@ -735,13 +733,15 @@ func (a *ExecStmt) logAudit() {
 }
 
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
-func FormatSQL(sql string, pps variable.PreparedParams) string {
-	cfg := config.GetGlobalConfig()
-	length := len(sql)
-	if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
-		sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
+func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc {
+	return func() string {
+		cfg := config.GetGlobalConfig()
+		length := len(sql)
+		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
+			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
+		}
+		return QueryReplacer.Replace(sql) + pps.String()
 	}
-	return QueryReplacer.Replace(sql) + pps.String()
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
@@ -773,7 +773,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	_, digest := sessVars.StmtCtx.SQLDigest()
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:       txnTS,
-		SQL:         sql,
+		SQL:         sql.String(),
 		Digest:      digest,
 		TimeTotal:   costTime,
 		TimeParse:   a.Ctx.GetSessionVars().DurationParse,
@@ -800,7 +800,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			userString = sessVars.User.String()
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
-			SQL:        sql,
+			SQL:        sql.String(),
 			Digest:     digest,
 			Start:      a.Ctx.GetSessionVars().StartTime,
 			Duration:   costTime,
