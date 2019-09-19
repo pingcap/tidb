@@ -365,3 +365,24 @@ func (b *builtinPowSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 func (b *builtinPowSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if f64s[i] <= 0 {
+			result.SetNull(i, true)
+		}
+		f64s[i] = math.Log(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinLog1ArgSig) vectorized() bool {
+	return true
+}
