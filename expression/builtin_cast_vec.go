@@ -125,12 +125,12 @@ func (b *builtinCastRealAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk
 	}
 	n := input.NumRows()
 	f64s := result.Float64s()
-	o := b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag)
+	conditionUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		if o && f64s[i] < 0 {
+		if conditionUnionAndUnsigned && f64s[i] < 0 {
 			f64s[i] = 0
 		}
 	}
