@@ -24,6 +24,7 @@ import (
 var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 	ast.Greatest: {
 		{types.ETDecimal, []types.EvalType{types.ETDecimal, types.ETDecimal, types.ETDecimal}, nil},
+		{types.ETInt, []types.EvalType{types.ETInt, types.ETInt, types.ETInt}, nil},
 	},
 	ast.Least: {
 		{types.ETDecimal, []types.EvalType{types.ETDecimal, types.ETDecimal, types.ETDecimal}, nil},
