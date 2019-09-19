@@ -52,12 +52,14 @@ HashLeftJoin_19	4166.67	root	left outer join, inner:TableReader_32, equal:[eq(Co
     └─TableScan_30	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
-Point_Get_1	1.00	root	table:t1, handle:1
+Update_2	N/A	root	N/A
+└─Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
-IndexLookUp_9	10.00	root	
-├─IndexScan_7	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
-└─TableScan_8	10.00	cop	table:t1, keep order:false, stats:pseudo
+Delete_3	N/A	root	N/A
+└─IndexLookUp_9	10.00	root	
+  ├─IndexScan_7	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
+  └─TableScan_8	10.00	cop	table:t1, keep order:false, stats:pseudo
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	9990.00	root	cast(Column#9)
@@ -658,7 +660,8 @@ begin;
 insert into t values (1, 1);
 explain update t set j = -j where i = 1 and j = 1;
 id	count	task	operator info
-Point_Get_1	1.00	root	table:t, index:i j
+Update_2	N/A	root	N/A
+└─Point_Get_1	1.00	root	table:t, index:i j
 rollback;
 drop table if exists t;
 create table t(a int);
@@ -721,4 +724,25 @@ Projection_8	2666.67	root	Column#1, Column#2
       └─TableReader_13	3333.33	root	data:Selection_12
         └─Selection_12	3333.33	cop	gt(Column#1, 10)
           └─TableScan_11	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, b int);
+explain format="dot" select * from t where a < 2;
+dot contents
+
+digraph TableReader_7 {
+subgraph cluster7{
+node [style=filled, color=lightgrey]
+color=black
+label = "root"
+"TableReader_7"
+}
+subgraph cluster6{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"Selection_6" -> "TableScan_5"
+}
+"TableReader_7" -> "Selection_6"
+}
+
 drop table if exists t;
