@@ -148,7 +148,7 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	// Check the returned data is default/arrow format.
-	if r.selectResp == nil || len(r.selectResp.RowBatchData) == 0 {
+	if r.selectResp == nil || (len(r.selectResp.RowBatchData) == 0 && r.respChkIdx == len(r.selectResp.Chunks)) {
 		err := r.getSelectResp()
 		if err != nil || r.selectResp == nil {
 			return err
