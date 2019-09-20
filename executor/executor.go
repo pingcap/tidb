@@ -1202,9 +1202,9 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	if num := req.NumRows(); num == 0 {
-		for i := range e.schema.Columns {
-			req.AppendNull(i)
-		}
+		// for i := range e.schema.Columns {
+		// 	req.AppendNull(i)
+		// }
 		return nil
 	} else if num != 1 {
 		return errors.New("subquery returns more than 1 row")
