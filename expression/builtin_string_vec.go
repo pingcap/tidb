@@ -187,7 +187,7 @@ func (b *builtinLeftSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
-	for i :=0; i < n; i++ {
+	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
