@@ -640,7 +640,7 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 	if err == nil {
 		key = bs
 	}
-	// Try decode as table record key.
+	// Try to decode it as a record key.
 	tableID, handle, err := tablecodec.DecodeRecordKey(key)
 	if err == nil {
 		return "tableID=" + strconv.FormatInt(tableID, 10) + ", handle=" + strconv.FormatInt(handle, 10)
