@@ -1002,6 +1002,8 @@ type Concurrency struct {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
+
+	// TODO: remove them below sometime, it should have only one Quota(MemQuotaQuery).
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
 	MemQuotaHashJoin int64
 	// MemQuotaMergeJoin defines the memory quota for a merge join executor.

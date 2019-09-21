@@ -123,8 +123,7 @@ func (s *pkgTestSuite) TestHashRowContainer(c *C) {
 		return h
 	}
 	s.testHashRowContainer(c, hashFuncCollision, false)
-	c.Check(h.count > 0, IsTrue)
-
+	c.Assert(h.count > 0, IsTrue)
 }
 
 func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, spill bool) {
@@ -151,19 +150,17 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 		tracker.SetBytesLimit(1)
 	}
 	err = rowContainer.PutChunk(chk0)
-	c.Check(err, IsNil)
+	c.Assert(err, IsNil)
 	err = rowContainer.PutChunk(chk1)
-	c.Check(err, IsNil)
+	c.Assert(err, IsNil)
 
-	if spill {
-		c.Assert(rowContainer.alreadySpilled(), IsTrue)
-		c.Assert(rowContainer.alreadySpilledSafe(), IsTrue)
-		c.Check(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, true)
-		c.Check(rowContainer.GetDiskTracker().BytesConsumed() > 0, Equals, true)
-	} else {
-		c.Assert(rowContainer.alreadySpilled(), IsFalse)
-		c.Assert(rowContainer.alreadySpilledSafe(), IsFalse)
-		c.Check(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, true)
+	c.Assert(rowContainer.alreadySpilled(), Equals, spill)
+	c.Assert(rowContainer.alreadySpilledSafe(), Equals, spill)
+	c.Assert(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, spill)
+	c.Assert(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, !spill)
+	if rowContainer.alreadySpilled() {
+		c.Assert(rowContainer.GetDiskTracker(), NotNil)
+		c.Assert(rowContainer.GetDiskTracker().BytesConsumed() > 0, Equals, true)
 	}
 
 	probeChk, probeColType := initProbeChunk(2)
@@ -175,9 +172,8 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	probeCtx.hasNull = make([]bool, 1)
 	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	matched, err := rowContainer.GetMatchedRows(probeRow, probeCtx)
-	c.Check(err, IsNil)
-	if c.Check(len(matched), Equals, 2) {
-		c.Check(matched[0].GetDatumRow(colTypes), DeepEquals, chk0.GetRow(1).GetDatumRow(colTypes))
-		c.Check(matched[1].GetDatumRow(colTypes), DeepEquals, chk1.GetRow(1).GetDatumRow(colTypes))
-	}
+	c.Assert(err, IsNil)
+	c.Assert(len(matched), Equals, 2)
+	c.Assert(matched[0].GetDatumRow(colTypes), DeepEquals, chk0.GetRow(1).GetDatumRow(colTypes))
+	c.Assert(matched[1].GetDatumRow(colTypes), DeepEquals, chk1.GetRow(1).GetDatumRow(colTypes))
 }

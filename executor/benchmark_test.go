@@ -557,11 +557,6 @@ func prepare4Join(testCase *hashJoinTestCase, innerExec, outerExec Executor) *Ha
 	for _, keyIdx := range testCase.keyIdx {
 		joinKeys = append(joinKeys, cols0[keyIdx])
 	}
-	if testCase.disk {
-		testCase.ctx.GetSessionVars().MemQuotaHashJoin = 1
-	} else {
-		testCase.ctx.GetSessionVars().MemQuotaHashJoin = 32 * 1024 * 1024 * 1024
-	}
 	e := &HashJoinExec{
 		baseExecutor:  newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
 		concurrency:   uint(testCase.concurrency),
@@ -580,6 +575,13 @@ func prepare4Join(testCase *hashJoinTestCase, innerExec, outerExec Executor) *Ha
 		e.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
 			nil, lhsTypes, rhsTypes)
 	}
+	memLimit := int64(-1)
+	if testCase.disk {
+		memLimit = 1
+	}
+	t := memory.NewTracker(stringutil.StringerStr("root of prepare4Join"), memLimit)
+	t.SetActionOnExceed(nil)
+	e.ctx.GetSessionVars().StmtCtx.MemTracker = t
 	return e
 }
 
@@ -628,6 +630,9 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			b.Fatal(err)
 		}
 		b.StopTimer()
+		if exec.rowContainer.alreadySpilled() != casTest.disk {
+			b.Fatal("wrong usage with disk")
+		}
 	}
 }
 
@@ -706,6 +711,9 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 			b.Fatal(err)
 		}
 		b.StopTimer()
+		if exec.rowContainer.alreadySpilled() != casTest.disk {
+			b.Fatal("wrong usage with disk")
+		}
 	}
 }
 

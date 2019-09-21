@@ -94,7 +94,7 @@ const (
 	// "tidb_mem_quota_indexlookupjoin":	control the memory quota of "IndexLookUpJoin".
 	// "tidb_mem_quota_nestedloopapply": 	control the memory quota of "NestedLoopApplyExec".
 	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
-	// TODO: remove them sometime, it should have only one Quota(TIDBMemQuotaQuery).
+	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
 	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
