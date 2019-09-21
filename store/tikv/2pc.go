@@ -854,10 +854,6 @@ func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte
 	return c.doActionOnKeys(bo, actionPessimisticRollback, keys)
 }
 
-// MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
-// We use it to abort the transaction to guarantee GC worker will not influence it.
-const MaxTxnTimeUse = 24 * 60 * 60 * 1000
-
 func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) error {
 	err := c.execute(ctx)
 	if err != nil {
@@ -946,7 +942,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	if c.store.oracle.IsExpired(c.startTS, MaxTxnTimeUse) {
+	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
 		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err

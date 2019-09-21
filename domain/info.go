@@ -27,7 +27,10 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -180,20 +183,31 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 }
 
 // ReportMinStartTS reports self server min start timestamp to ETCD.
-func (is *InfoSyncer) ReportMinStartTS() {
+func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	if is.manager == nil {
 		// Server may not start in time.
 		return
 	}
 	pl := is.manager.ShowProcessList()
+
+	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
+	currentVer, err := store.CurrentVersion()
+	if err != nil {
+		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
+		return
+	}
+	now := time.Unix(0, oracle.ExtractPhysical(currentVer.Ver)*1e6)
+	startTSLowerLimit := variable.GoTimeToTS(now.Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond))
+
 	var minStartTS uint64 = math.MaxUint64
 	for _, info := range pl {
-		if info.CurTxnStartTS != 0 && info.CurTxnStartTS < minStartTS {
+		if info.CurTxnStartTS != 0 && info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
 		}
 	}
+
 	is.minStartTS = minStartTS
-	err := is.storeMinStartTS(context.Background())
+	err = is.storeMinStartTS(context.Background())
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
 	}

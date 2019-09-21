@@ -321,15 +321,13 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 }
 
 // calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
-func (w *GCWorker) calSafePointByMinStartTS(now time.Time, lifeTime time.Duration) time.Time {
-	safePoint := now.Add(-lifeTime)
+func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
 	kvs, err := w.store.GetSafePointKV().GetWithPrefix(domain.ServerMinStartTSPath)
 	if err != nil {
 		logutil.BgLogger().Warn("get all minStartTS failed", zap.Error(err))
 		return safePoint
 	}
 
-	maxTxnTimeUse := time.Duration(tikv.MaxTxnTimeUse)*time.Millisecond + 10*time.Second
 	for _, v := range kvs {
 		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 64)
 		if err != nil {
@@ -337,7 +335,7 @@ func (w *GCWorker) calSafePointByMinStartTS(now time.Time, lifeTime time.Duratio
 			continue
 		}
 		minStartTime := time.Unix(0, oracle.ExtractPhysical(minStartTS)*1e6)
-		if now.Sub(minStartTime) < maxTxnTimeUse && minStartTime.Before(safePoint) {
+		if minStartTime.Before(safePoint) {
 			safePoint = minStartTime
 		}
 	}
@@ -471,7 +469,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	safePoint := w.calSafePointByMinStartTS(now, *lifeTime)
+	safePoint := w.calSafePointByMinStartTS(now.Add(-*lifeTime))
 	// We should never decrease safePoint.
 	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
 		logutil.BgLogger().Info("[gc worker] last safe point is later than current one."+
