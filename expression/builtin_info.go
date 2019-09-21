@@ -632,7 +632,7 @@ func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error
 func decodeKey(ctx sessionctx.Context, s string) string {
 	key, err := hex.DecodeString(s)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the key is a invalid record/index key"))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %v", key))
 		return s
 	}
 	// Auto decode byte if needs.
