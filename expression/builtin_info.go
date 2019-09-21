@@ -635,7 +635,7 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %v", key))
 		return s
 	}
-	// Auto decode byte if needs.
+	// Auto decode byte if needed.
 	_, bs, err := codec.DecodeBytes([]byte(key), nil)
 	if err == nil {
 		key = bs
