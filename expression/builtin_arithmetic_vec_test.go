@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/types"
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -30,12 +32,25 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 	ast.Mul:    {},
 	ast.Round:  {},
 	ast.And:    {},
-	ast.Plus:   {},
-	ast.NE:     {},
+	ast.Plus: {{types.ETInt, []types.EvalType{types.ETInt, types.ETInt}, []dataGenerator{
+		&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2},
+		&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2}},
+	},
+		{types.ETDecimal, []types.EvalType{types.ETDecimal, types.ETDecimal}, nil},
+		{types.ETReal, []types.EvalType{types.ETReal, types.ETReal}, nil},},
+	ast.NE: {},
+}
+
+func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticEvalOneVec(c *C) {
+	testVectorizedEvalOneVec(c, vecBuiltinArithmeticCases)
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinArithmeticCases)
+}
+
+func BenchmarkVectorizedBuiltinArithmeticEvalOneVec(b *testing.B) {
+	benchmarkVectorizedEvalOneVec(b, vecBuiltinArithmeticCases)
 }
 
 func BenchmarkVectorizedBuiltinArithmeticFunc(b *testing.B) {
