@@ -431,3 +431,11 @@ func (b *builtinAbsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 func (b *builtinAbsIntSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinRoundIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalInt(b.ctx, input, result)
+}
+
+func (b *builtinRoundIntSig) vectorized() bool {
+	return true
+}
