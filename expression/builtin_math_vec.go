@@ -415,9 +415,6 @@ func (b *builtinAbsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 	}
 	f64s := result.Float64s()
 	for i := 0; i < len(f64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		f64s[i] = math.Abs(f64s[i])
 	}
 	return nil
