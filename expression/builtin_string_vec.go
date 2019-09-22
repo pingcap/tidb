@@ -164,3 +164,49 @@ Loop:
 func (b *builtinUpperSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinRightSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf2.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+		runes := []rune(str)
+		strLength, rightLength := len(runes), int(nums[i])
+		if rightLength > strLength {
+			rightLength = strLength
+		} else if rightLength < 0 {
+			rightLength = 0
+		}
+
+		result.AppendString(string(runes[strLength-rightLength:]))
+	}
+	return nil
+}
+
+func (b *builtinRightSig) vectorized() bool {
+	return true
+}
