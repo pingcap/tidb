@@ -408,3 +408,26 @@ func (b *builtinPowSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 func (b *builtinPowSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinAbsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	i64s := result.Int64s()
+	for i := 0; i < len(i64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if i64s[i] == math.MinInt64 {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("abs(%d)", i64s[i]))
+		}
+		if i64s[i] < 0 {
+			i64s[i] = -i64s[i]
+		}
+	}
+	return nil
+}
+
+func (b *builtinAbsIntSig) vectorized() bool {
+	return true
+}
