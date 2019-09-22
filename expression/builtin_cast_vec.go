@@ -133,7 +133,7 @@ func (b *builtinCastRealAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		if conditionUnionAndUnsigned && f64s[i] < 0 {
+		if f64s[i] < 0 {
 			f64s[i] = 0
 		}
 	}
