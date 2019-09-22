@@ -46,6 +46,9 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	ast.Cos: {
 		{types.ETReal, []types.EvalType{types.ETReal}, nil},
 	},
+	ast.Exp: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
 	ast.Degrees: {
 		{types.ETReal, []types.EvalType{types.ETReal}, nil},
 	},
