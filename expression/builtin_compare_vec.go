@@ -107,11 +107,10 @@ func (b *builtinGreatestIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 		if err := b.args[j].VecEvalInt(b.ctx, input, buf); err != nil {
 			return err
 		}
+
+		result.MergeNulls(buf)
 		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
-				continue
-			} else if buf.IsNull(i) {
-				result.SetNull(i, true)
 				continue
 			}
 			v := buf.GetInt64(i)
