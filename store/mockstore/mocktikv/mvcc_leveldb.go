@@ -700,6 +700,12 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 	}
 	if ok {
 		if dec.lock.startTS != startTS {
+			if isPessimisticLock {
+				// NOTE: A special handling.
+				// When pessimistic txn prewrite meets lock, set the TTL = 0 means
+				// telling TiDB to rollback the transaction **unconditionly**.
+				dec.lock.ttl = 0
+			}
 			return dec.lock.lockErr(mutation.Key)
 		}
 		if dec.lock.op != kvrpcpb.Op_PessimisticLock {
@@ -926,7 +932,8 @@ func getTxnCommitInfo(iter *Iterator, expectKey []byte, startTS uint64) (mvccVal
 }
 
 // Cleanup implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
+// Cleanup API is deprecated, use CheckTxnStatus instead.
+func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 	mvcc.mu.Lock()
 	defer func() {
 		mvcc.mu.Unlock()
@@ -934,11 +941,64 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
 	}()
 
 	batch := &leveldb.Batch{}
-	err := rollbackKey(mvcc.db, batch, key, startTS)
+	startKey := mvccEncode(key, lockVer)
+	iter := newIterator(mvcc.db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	if iter.Valid() {
+		dec := lockDecoder{
+			expectKey: key,
+		}
+		ok, err := dec.Decode(iter)
+		if err != nil {
+			return err
+		}
+		// If current transaction's lock exists.
+		if ok && dec.lock.startTS == startTS {
+
+			// If the lock has already outdated, clean up it.
+			if currentTS == 0 || uint64(oracle.ExtractPhysical(dec.lock.startTS))+dec.lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
+				if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
+					return err
+				}
+				return mvcc.db.Write(batch, nil)
+			}
+
+			// Otherwise, return a locked error with the TTL information.
+			return dec.lock.lockErr(key)
+		}
+
+		// If current transaction's lock does not exist.
+		// If the commit information of the current transaction exist.
+		c, ok, err := getTxnCommitInfo(iter, key, startTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
+			// If the current transaction has already committed.
+			if c.valueType != typeRollback {
+				return ErrAlreadyCommitted(c.commitTS)
+			}
+			// If the current transaction has already rollbacked.
+			return nil
+		}
+	}
+
+	// If current transaction is not prewritted before.
+	value := mvccValue{
+		valueType: typeRollback,
+		startTS:   startTS,
+		commitTS:  startTS,
+	}
+	writeKey := mvccEncode(key, startTS)
+	writeValue, err := value.MarshalBinary()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return mvcc.db.Write(batch, nil)
+	batch.Put(writeKey, writeValue)
+	return nil
 }
 
 // CheckTxnStatus checks the primary lock of a transaction to decide its status.
