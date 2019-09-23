@@ -455,7 +455,9 @@ func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 			case types.ETInt:
 				for i := 0; i < input.NumRows(); i++ {
 					c.Assert(c1.IsNull(i), Equals, c2.IsNull(i), commentf(i))
-					c.Assert(c1.IsNull(i) != c2.IsNull(i) || (!c1.IsNull(i) && c1.GetInt64(i) != c2.GetInt64(i)), IsFalse)
+					if !c1.IsNull(i) {
+						c.Assert(c1.GetInt64(i), Equals, c2.GetInt64(i), commentf(i))
+					}
 				}
 			case types.ETReal:
 				for i := 0; i < input.NumRows(); i++ {
