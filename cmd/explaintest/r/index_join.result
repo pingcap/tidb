@@ -19,13 +19,13 @@ IndexJoin_22	5.00	root	inner join, inner:IndexLookUp_21, outer key:Column#4, inn
 explain select * from t1 join t2 on t1.a=t2.a;
 id	count	task	operator info
 Projection_6	5.00	root	Column#1, Column#2, Column#4, Column#5
-└─HashRightJoin_31	5.00	root	inner join, inner:TableReader_42, equal:[eq(Column#4, Column#1)]
-  ├─TableReader_42	1.00	root	data:Selection_41
-  │ └─Selection_41	1.00	cop	not(isnull(Column#4))
-  │   └─TableScan_40	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
-  └─TableReader_48	5.00	root	data:Selection_47
-    └─Selection_47	5.00	cop	not(isnull(Column#1))
-      └─TableScan_46	5.00	cop	table:t1, range:[-inf,+inf], keep order:false
+└─HashRightJoin_20	5.00	root	inner join, inner:TableReader_31, equal:[eq(Column#4, Column#1)]
+  ├─TableReader_31	1.00	root	data:Selection_30
+  │ └─Selection_30	1.00	cop	not(isnull(Column#4))
+  │   └─TableScan_29	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
+  └─TableReader_37	5.00	root	data:Selection_36
+    └─Selection_36	5.00	cop	not(isnull(Column#1))
+      └─TableScan_35	5.00	cop	table:t1, range:[-inf,+inf], keep order:false
 drop table if exists t1, t2;
 create table t1(a int not null, b int not null);
 create table t2(a int not null, b int not null, key a(a));
