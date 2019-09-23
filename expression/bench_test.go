@@ -1092,7 +1092,34 @@ func BenchmarkVectorizedFilterConsiderNull(b *testing.B) {
 				combFunc(nCols - 1)
 			}
 		}
-
 		combFunc(numCols)
 	}
+
+	// Add special case to prove only in the int type as column participates in the selection, the
+	// VectorizedFilterConsiderNull2 will be slower than VectorizedFilterConsiderNull.
+	// When some calculations are added, the VectorizedFilterConsiderNull2 for int types will be
+	// faster than VectorizedFilterConsiderNull.
+	funcName := ast.Least
+	testCase := vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}}
+	expr, _, input, _ := genVecExprBenchCase(ctx, funcName, testCase)
+	it := chunk.NewIterator4Chunk(input)
+
+	b.Run("Vec-special case", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _, err := VectorizedFilterConsiderNull2(ctx, []Expression{expr}, it, selected, nulls)
+			if err != nil {
+				panic(err)
+			}
+		}
+	})
+	b.Run("Row-special case", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _, err := VectorizedFilterConsiderNull(ctx, []Expression{expr}, it, selected, nulls)
+			if err != nil {
+				panic(err)
+			}
+		}
+	})
 }
