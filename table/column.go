@@ -366,7 +366,7 @@ func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (ty
 	// If the column type is BIT, both `OriginDefaultValue` and `DefaultValue` of ColumnInfo are corrupted, because
 	// after JSON marshaling and unmarshaling against the field with type `interface{}`, the content with actual type `[]byte` is changed.
 	// We need `DefaultValueBit` to restore OriginDefaultValue before reading it.
-	if col.OriginDefaultValue != nil && col.DefaultValueBit != nil && col.Tp == mysql.TypeBit {
+	if col.Tp == mysql.TypeBit && col.DefaultValueBit != nil && col.OriginDefaultValue != nil {
 		col.OriginDefaultValue = col.DefaultValueBit
 	}
 	return getColDefaultValue(ctx, col, col.OriginDefaultValue)
