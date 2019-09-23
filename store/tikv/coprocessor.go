@@ -354,6 +354,9 @@ type copIterator struct {
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
+
+	// cancelErr saves last cancel error iff it has be cancelled.
+	cancelErr error
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -516,7 +519,7 @@ func (sender *copIteratorTaskSender) run() {
 	}
 }
 
-func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
+func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok, exit bool, err error) {
 	select {
 	case resp, ok = <-respCh:
 		if it.memTracker != nil && resp != nil {
@@ -524,12 +527,15 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		}
 	case <-it.finishCh:
 		exit = true
+		err = it.cancelErr
 	case <-ctx.Done():
 		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
 		if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 			close(it.finishCh)
+			it.cancelErr = ctx.Err()
 		}
 		exit = true
+		err = it.cancelErr
 	}
 	return
 }
@@ -562,12 +568,16 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp   *copResponse
 		ok     bool
 		closed bool
+		err    error
 	)
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if it.respChan != nil {
 		// Get next fetched resp from chan
-		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
+		resp, ok, closed, err = it.recvFromRespCh(ctx, it.respChan)
+		if err != nil {
+			return nil, err
+		}
 		if !ok || closed {
 			return nil, nil
 		}
@@ -578,7 +588,10 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				return nil, nil
 			}
 			task := it.tasks[it.curr]
-			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
+			resp, ok, closed, err = it.recvFromRespCh(ctx, task.respChan)
+			if err != nil {
+				return nil, err
+			}
 			if closed {
 				// Close() is already called, so Next() is invalid.
 				return nil, nil
@@ -597,7 +610,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		return nil, errors.Trace(resp.err)
 	}
 
-	err := it.store.CheckVisibility(it.req.StartTs)
+	err = it.store.CheckVisibility(it.req.StartTs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
