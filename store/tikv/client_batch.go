@@ -283,13 +283,14 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 	for {
 		resp, err := c.recv()
 		if err != nil {
-			if !c.isStopped() {
-				logutil.BgLogger().Warn(
-					"batchRecvLoop fails when receiving, needs to reconnect",
-					zap.String("target", c.target),
-					zap.Error(err),
-				)
+			if c.isStopped() {
+				return
 			}
+			logutil.BgLogger().Warn(
+				"batchRecvLoop fails when receiving, needs to reconnect",
+				zap.String("target", c.target),
+				zap.Error(err),
+			)
 
 			now := time.Now()
 			if stopped := c.reCreateStreamingClient(err); stopped {
