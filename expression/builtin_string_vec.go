@@ -253,4 +253,3 @@ func (b *builtinSpaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 func (b *builtinSpaceSig) vectorized() bool {
 	return true
 }
-
