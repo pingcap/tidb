@@ -149,7 +149,7 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 	return
 }
 
-// DecodeIndexKey decodes the key and gets the tableID, indexID, indexValues.
+// DecodeIndexKeyPrefix decodes the key and gets the tableID, indexID, indexValues.
 func DecodeIndexKeyPrefix(key kv.Key) (tableID int64, indexID int64, indexValues []byte, err error) {
 	k := key
 
