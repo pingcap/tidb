@@ -241,11 +241,11 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 	}
 	return nil
 }
+{{ end }}{{/* if .AllNull */}}
 
 func (b *{{.SigName}}) vectorized() bool {
 	return true
 }
-{{ end }}{{/* if .AllNull */}}
 {{ end }}{{/* range */}}
 `))
 

@@ -583,6 +583,10 @@ func (b *builtinAddTimeDateTimeNullSig) vecEvalTime(input *chunk.Chunk, result *
 	return nil
 }
 
+func (b *builtinAddTimeDateTimeNullSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinAddTimeStringNullSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
@@ -594,10 +598,18 @@ func (b *builtinAddTimeStringNullSig) vecEvalString(input *chunk.Chunk, result *
 	return nil
 }
 
+func (b *builtinAddTimeStringNullSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinAddTimeDurationNullSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	result.ResizeGoDuration(n, true)
 
 	return nil
+}
+
+func (b *builtinAddTimeDurationNullSig) vectorized() bool {
+	return true
 }
