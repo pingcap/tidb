@@ -118,3 +118,28 @@ func (b *builtinCastIntAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 func (b *builtinCastIntAsRealSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinCastRealAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	f64s := result.Float64s()
+	conditionUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag)
+	if !conditionUnionAndUnsigned {
+		return nil
+	}
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if f64s[i] < 0 {
+			f64s[i] = 0
+		}
+	}
+	return nil
+}
+
+func (b *builtinCastRealAsRealSig) vectorized() bool {
+	return true
+}
