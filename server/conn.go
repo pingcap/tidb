@@ -160,8 +160,12 @@ type clientConn struct {
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
-	return fmt.Sprintf("id:%d, addr:%s status:%d, collation:%s, user:%s",
-		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
+	autoCommit := 0
+	if cc.ctx.GetSessionVars().IsAutocommit() {
+		autoCommit = 1
+	}
+	return fmt.Sprintf("id:%d, addr:%s status:%d, collation:%s, user:%s autocommit:%d",
+		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user, autoCommit,
 	)
 }
 
