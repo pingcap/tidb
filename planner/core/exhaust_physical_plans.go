@@ -561,7 +561,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 			keyOff2IdxOff[keyOff] = idxOff
 		}
 	}
-	joins = make([]PhysicalPlan, 0, 2)
+	joins = make([]PhysicalPlan, 0, 3)
 	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.idxCols, outerJoinKeys)
 	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, avgInnerRowCnt)
 
