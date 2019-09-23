@@ -25,6 +25,32 @@ import (
 
 // FindBestPlan is the optimization entrance of the cascades planner. The
 // optimization is composed of 2 phases: exploration and implementation.
+//
+//------------------------------------------------------------------------------
+// Phase 1: Exploration
+//------------------------------------------------------------------------------
+//
+// The target of this phase is to explore all the logically equivalent
+// expressions by exploring all the equivalent group expressions of each group.
+//
+// At the very beginning, there is only one group expression in a Group. After
+// applying some transformation rules on certain expressions of the Group, all
+// the equivalent expressions are found and stored in the Group. This procedure
+// can be regarded as searching for a weak connected component in a directed
+// graph, where nodes are expressions and directed edges are the transformation
+// rules.
+//
+//------------------------------------------------------------------------------
+// Phase 2: Implementation
+//------------------------------------------------------------------------------
+//
+// The target of this phase is to search the best physical plan for a Group
+// which satisfies a certain required physical property.
+//
+// In this phase, we need to enumerate all the applicable implementation rules
+// for each expression in each group under the required physical property. A
+// memo structure is used for a group to reduce the repeated search on the same
+// required physical property.
 func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (p plannercore.PhysicalPlan, err error) {
 	rootGroup := convert2Group(logical)
 	err = onPhaseExploration(sctx, rootGroup)
@@ -178,7 +204,13 @@ func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.
 	return impl.GetPlan(), nil
 }
 
-// implGroup picks one implementation with lowest cost for a Group, which satisfies specified physical property.
+// implGroup finds the best Implementation which satisfies the required
+// physical property for a Group. The best Implementation should have the
+// lowest cost among all the applicable Implementations.
+//
+// g:			the Group to be implemented.
+// reqPhysProp: the required physical property.
+// costLimit:   the maximum cost of all the Implementations.
 func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit float64) (memo.Implementation, error) {
 	groupImpl := g.GetImpl(reqPhysProp)
 	if groupImpl != nil {

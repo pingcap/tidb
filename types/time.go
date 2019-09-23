@@ -194,10 +194,12 @@ const (
 
 // FromGoTime translates time.Time to mysql time internal representation.
 func FromGoTime(t gotime.Time) MysqlTime {
+	// Plus 500 nanosecond for rounding of the millisecond part.
+	t = t.Add(500 * gotime.Nanosecond)
+
 	year, month, day := t.Date()
 	hour, minute, second := t.Clock()
-	// Nanosecond plus 500 then divided 1000 means rounding to microseconds.
-	microsecond := (t.Nanosecond() + 500) / 1000
+	microsecond := t.Nanosecond() / 1000
 	return FromDate(year, int(month), day, hour, minute, second, microsecond)
 }
 
