@@ -347,7 +347,7 @@ const (
 	DefTiDBWaitSplitRegionFinish       = true
 	DefTiDBExpensiveQueryTimeThreshold = 60  // 60s
 	DefWaitSplitRegionTimeout          = 300 // 300s
-	DefTiDBEnableStmtSummary           = false
+	DefTiDBAllowRemoveAutoInc          = false
 )
 
 // Process global variables.
@@ -367,5 +367,4 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
-	EnableStmtSummary              int32  = BoolToInt32(DefTiDBEnableStmtSummary)
 )
