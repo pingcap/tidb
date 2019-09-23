@@ -312,7 +312,6 @@ func (p *LogicalJoin) constructIndexJoin(
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
 	joinType := p.JoinType
-	outerSchema := p.children[outerIdx].Schema()
 	var (
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
@@ -323,11 +322,6 @@ func (p *LogicalJoin) constructIndexJoin(
 	} else {
 		innerJoinKeys = p.LeftJoinKeys
 		outerJoinKeys = p.RightJoinKeys
-	}
-	all, _ := prop.AllSameOrder()
-	// If the order by columns are not all from outer child, index join cannot promise the order.
-	if !prop.AllColsFromSchema(outerSchema) || !all {
-		return nil
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, Items: prop.Items}
@@ -425,8 +419,13 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 // First of all, we'll check whether the inner child is DataSource.
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
 // or match some part of on index. If so we will choose the best one and construct a index join.
-func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, outerIdx int) []PhysicalPlan {
+func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, outerIdx int) (joins []PhysicalPlan) {
 	outerChild, innerChild := p.children[outerIdx], p.children[1-outerIdx]
+	all, _ := prop.AllSameOrder()
+	// If the order by columns are not all from outer child, index join cannot promise the order.
+	if !prop.AllColsFromSchema(outerChild.Schema()) || !all {
+		return nil
+	}
 	var (
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
@@ -454,6 +453,21 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	if outerChild.statsInfo().RowCount > 0 {
 		avgInnerRowCnt = p.equalCondOutCnt / outerChild.statsInfo().RowCount
 	}
+	joins = p.buildIndexJoinInner2TableScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt)
+	if joins != nil {
+		return
+	}
+	return p.buildIndexJoinInner2IndexScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt)
+}
+
+// buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
+// IndexJoin if possible.
+// If the inner side of a index join is a TableScan, only one tuple will be
+// fetched from the inner side for every tuple from the outer side. This will be
+// promised to be no worse than building IndexScan as the inner child.
+func (p *LogicalJoin) buildIndexJoinInner2TableScan(
+	prop *property.PhysicalProperty, ds *DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
+	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	var tblPath *accessPath
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
@@ -461,31 +475,39 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			break
 		}
 	}
-	if pkCol := ds.getPKIsHandleCol(); pkCol != nil && tblPath != nil {
-		keyOff2IdxOff := make([]int, len(innerJoinKeys))
-		pkMatched := false
-		for i, key := range innerJoinKeys {
-			if !key.Equal(nil, pkCol) {
-				keyOff2IdxOff[i] = -1
-				continue
-			}
-			pkMatched = true
-			keyOff2IdxOff[i] = 0
-		}
-		if pkMatched {
-			joins := make([]PhysicalPlan, 0, 2)
-
-			innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, avgInnerRowCnt)
-			joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
-			// The index merge join's inner plan is different from index join, so we should consturct another inner plan
-			// for it.
-			innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, avgInnerRowCnt)
-			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
-			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
-			// comparing to other index.
-			return joins
-		}
+	if tblPath == nil {
+		return nil
 	}
+	pkCol := ds.getPKIsHandleCol()
+	if pkCol == nil {
+		return nil
+	}
+	keyOff2IdxOff := make([]int, len(innerJoinKeys))
+	pkMatched := false
+	for i, key := range innerJoinKeys {
+		if !key.Equal(nil, pkCol) {
+			keyOff2IdxOff[i] = -1
+			continue
+		}
+		pkMatched = true
+		keyOff2IdxOff[i] = 0
+	}
+	if !pkMatched {
+		return nil
+	}
+	joins = make([]PhysicalPlan, 0, 2)
+	innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, avgInnerRowCnt)
+	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
+	// The index merge join's inner plan is different from index join, so we
+	// should construct another inner plan for it.
+	innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, avgInnerRowCnt)
+	joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
+	return joins
+}
+
+func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
+	prop *property.PhysicalProperty, ds *DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
+	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	helper := &indexJoinBuildHelper{join: p}
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
@@ -499,28 +521,28 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			logutil.BgLogger().Warn("build index join failed", zap.Error(err))
 		}
 	}
-	if helper.chosenPath != nil {
-		keyOff2IdxOff := make([]int, len(innerJoinKeys))
-		for i := range keyOff2IdxOff {
-			keyOff2IdxOff[i] = -1
-		}
-		for idxOff, keyOff := range helper.idxOff2KeyOff {
-			if keyOff != -1 {
-				keyOff2IdxOff[keyOff] = idxOff
-			}
-		}
-		joins := make([]PhysicalPlan, 0, 2)
-		rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.idxCols, outerJoinKeys)
-		innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, avgInnerRowCnt)
-
-		joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
-		// The index merge join's inner plan is different from index join, so we should consturct another inner plan
-		// for it.
-		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, avgInnerRowCnt)
-		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
-		return joins
+	if helper.chosenPath == nil {
+		return nil
 	}
-	return nil
+	keyOff2IdxOff := make([]int, len(innerJoinKeys))
+	for i := range keyOff2IdxOff {
+		keyOff2IdxOff[i] = -1
+	}
+	for idxOff, keyOff := range helper.idxOff2KeyOff {
+		if keyOff != -1 {
+			keyOff2IdxOff[keyOff] = idxOff
+		}
+	}
+	joins = make([]PhysicalPlan, 0, 2)
+	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.idxCols, outerJoinKeys)
+	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, avgInnerRowCnt)
+
+	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	// The index merge join's inner plan is different from index join, so we
+	// should construct another inner plan for it.
+	innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, avgInnerRowCnt)
+	joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	return joins
 }
 
 type indexJoinBuildHelper struct {
@@ -1091,20 +1113,12 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		rhsCardinality := p.Children()[1].statsInfo().Count()
 
 		leftJoins := p.getIndexJoinByOuterIdx(prop, 0)
-		if leftJoins != nil && leftOuter && !rightOuter {
-			return leftJoins, true
-		}
-
-		rightJoins := p.getIndexJoinByOuterIdx(prop, 1)
-		if rightJoins != nil && rightOuter && !leftOuter {
-			return rightJoins, true
-		}
-
-		if leftJoins != nil && lhsCardinality < rhsCardinality {
+		if leftJoins != nil && (leftOuter && !rightOuter || lhsCardinality < rhsCardinality) {
 			return leftJoins, leftOuter
 		}
 
-		if rightJoins != nil && rhsCardinality < lhsCardinality {
+		rightJoins := p.getIndexJoinByOuterIdx(prop, 1)
+		if rightJoins != nil && (rightOuter && !leftOuter || rhsCardinality < lhsCardinality) {
 			return rightJoins, rightOuter
 		}
 
