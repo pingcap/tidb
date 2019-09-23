@@ -511,7 +511,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
-	innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, desc, avgInnerRowCnt)
+	innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, len(prop.Items) > 0 && prop.Items[0].Desc, avgInnerRowCnt)
 	joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
 	return joins
 }
@@ -546,12 +546,12 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	}
 	joins = make([]PhysicalPlan, 0, 2)
 	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.idxCols, outerJoinKeys)
-	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, avgInnerRowCnt)
+	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, false, avgInnerRowCnt)
 
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
-	innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, avgInnerRowCnt)
+	innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, len(prop.Items) > 0 && prop.Items[0].Desc, avgInnerRowCnt)
 	joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	return joins
 }
