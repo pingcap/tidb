@@ -147,7 +147,7 @@ import (
 var vecBuiltinControlCases = map[string][]vecExprBenchCase{
 	ast.If: {
 {{ range . }}
-		{types.ET{{ .ETName }}, []types.EvalType{types.ETInt, types.ET{{ .ETName }}, types.ET{{ .ETName }}}, nil},
+		{retEvalType: types.ET{{ .ETName }}, childrenTypes: []types.EvalType{types.ETInt, types.ET{{ .ETName }}, types.ET{{ .ETName }}}},
 {{ end }}
 	},
 }
