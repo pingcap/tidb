@@ -446,7 +446,7 @@ func (b *builtinRoundRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinRoundRealSig) vectorized() bool {
-  return true
+	return true
 }
 
 func (b *builtinAbsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
