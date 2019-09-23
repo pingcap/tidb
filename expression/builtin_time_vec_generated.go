@@ -360,6 +360,7 @@ func (b *builtinAddStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 
 	arg1Type := b.args[1].GetType()
 	if mysql.HasBinaryFlag(arg1Type.Flag) {
+		result.ReserveString(n)
 		for i := 0; i < n; i++ {
 			result.AppendNull()
 		}

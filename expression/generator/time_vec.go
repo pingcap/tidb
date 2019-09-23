@@ -123,6 +123,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 {{ if eq .SigName "builtinAddStringAndStringSig" }}
 	arg1Type := b.args[1].GetType()
 	if mysql.HasBinaryFlag(arg1Type.Flag) {
+		result.Reserve{{ .Output.TypeNameInColumn }}(n)
 		for i := 0; i < n; i++ {
 			result.AppendNull()
 		}
