@@ -58,6 +58,45 @@ func (b *builtinMonthSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	ds := buf.Times()
+	for i := 0; i < input.NumRows(); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if ds[i].IsZero() {
+			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+				if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+					return err
+				}
+				result.SetNull(i, true)
+				continue
+			}
+			i64s[i] = 0
+			continue
+		}
+		i64s[i] = int64(ds[i].Time.Year())
+	}
+	return nil
+}
+
+func (b *builtinYearSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
 		return err

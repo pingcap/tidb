@@ -135,3 +135,78 @@ func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 func (b *builtinStringIsNullSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		return nil
+	}
+
+Loop:
+	for i := 0; i < input.NumRows(); i++ {
+		str := result.GetBytes(i)
+		for _, c := range str {
+			if c >= utf8.RuneSelf {
+				continue Loop
+			}
+		}
+		for i := range str {
+			if str[i] >= 'a' && str[i] <= 'z' {
+				str[i] -= 'a' - 'A'
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinUpperSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinRightSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf2.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+		runes := []rune(str)
+		strLength, rightLength := len(runes), int(nums[i])
+		if rightLength > strLength {
+			rightLength = strLength
+		} else if rightLength < 0 {
+			rightLength = 0
+		}
+
+		result.AppendString(string(runes[strLength-rightLength:]))
+	}
+	return nil
+}
+
+func (b *builtinRightSig) vectorized() bool {
+	return true
+}
