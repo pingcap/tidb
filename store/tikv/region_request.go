@@ -52,18 +52,18 @@ var ShuttingDown uint32
 // errors, since region range have changed, the request may need to split, so we
 // simply return the error to caller.
 type RegionRequestSender struct {
-	regionCache  *RegionCache
-	client       Client
-	storeAddr    string
-	rpcError     error
-	failStoreIDs map[uint64]struct{}
+	regionCache	*RegionCache
+	client		Client
+	storeAddr	string
+	rpcError	error
+	failStoreIDs	map[uint64]struct{}
 }
 
 // NewRegionRequestSender creates a new sender.
 func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequestSender {
 	return &RegionRequestSender{
-		regionCache: regionCache,
-		client:      client,
+		regionCache:	regionCache,
+		client:		client,
 	}
 }
 
@@ -75,26 +75,26 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
 func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, *RPCContext, error) {
-	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("tikvStoreSendReqResult")); ok {
 		switch val.(string) {
 		case "timeout":
-			failpoint.Return(nil, nil, errors.New("timeout"))
+			return nil, nil, errors.New("timeout")
 		case "GCNotLeader":
 			if req.Type == tikvrpc.CmdGC {
-				failpoint.Return(&tikvrpc.Response{
-					Type: tikvrpc.CmdGC,
-					GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-				}, nil, nil)
+				return &tikvrpc.Response{
+					Type:	tikvrpc.CmdGC,
+					GC:	&kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+				}, nil, nil
 			}
 		case "GCServerIsBusy":
 			if req.Type == tikvrpc.CmdGC {
-				failpoint.Return(&tikvrpc.Response{
-					Type: tikvrpc.CmdGC,
-					GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
-				}, nil, nil)
+				return &tikvrpc.Response{
+					Type:	tikvrpc.CmdGC,
+					GC:	&kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
+				}, nil, nil
 			}
 		}
-	})
+	}
 
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)

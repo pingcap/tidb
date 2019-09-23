@@ -39,50 +39,50 @@ import (
 
 var (
 	// RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
-	RunWorker = true
+	RunWorker	= true
 	// ddlWorkerID is used for generating the next DDL worker ID.
-	ddlWorkerID = int32(0)
+	ddlWorkerID	= int32(0)
 	// WaitTimeWhenErrorOccured is waiting interval when processing DDL jobs encounter errors.
-	WaitTimeWhenErrorOccured = 1 * time.Second
+	WaitTimeWhenErrorOccured	= 1 * time.Second
 )
 
 type workerType byte
 
 const (
 	// generalWorker is the worker who handles all DDL statements except “add index”.
-	generalWorker workerType = 0
+	generalWorker	workerType	= 0
 	// addIdxWorker is the worker who handles the operation of adding indexes.
-	addIdxWorker workerType = 1
+	addIdxWorker	workerType	= 1
 	// waitDependencyJobInterval is the interval when the dependency job doesn't be done.
-	waitDependencyJobInterval = 200 * time.Millisecond
+	waitDependencyJobInterval	= 200 * time.Millisecond
 	// noneDependencyJob means a job has no dependency-job.
-	noneDependencyJob = 0
+	noneDependencyJob	= 0
 )
 
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
 type worker struct {
-	id       int32
-	tp       workerType
-	ddlJobCh chan struct{}
-	quitCh   chan struct{}
-	wg       sync.WaitGroup
+	id		int32
+	tp		workerType
+	ddlJobCh	chan struct{}
+	quitCh		chan struct{}
+	wg		sync.WaitGroup
 
-	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
-	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
-	delRangeManager delRangeManager
-	logCtx          context.Context
+	sessPool	*sessionPool	// sessPool is used to new sessions to execute SQL in ddl package.
+	reorgCtx	*reorgCtx	// reorgCtx is used for reorganization.
+	delRangeManager	delRangeManager
+	logCtx		context.Context
 }
 
 func newWorker(tp workerType, store kv.Storage, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
 	worker := &worker{
-		id:              atomic.AddInt32(&ddlWorkerID, 1),
-		tp:              tp,
-		ddlJobCh:        make(chan struct{}, 1),
-		quitCh:          make(chan struct{}),
-		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
-		sessPool:        sessPool,
-		delRangeManager: delRangeMgr,
+		id:			atomic.AddInt32(&ddlWorkerID, 1),
+		tp:			tp,
+		ddlJobCh:		make(chan struct{}, 1),
+		quitCh:			make(chan struct{}),
+		reorgCtx:		&reorgCtx{notifyCancelReorgJob: 0},
+		sessPool:		sessPool,
+		delRangeManager:	delRangeMgr,
 	}
 
 	worker.logCtx = logutil.WithKeyValue(context.Background(), "worker", worker.String())
@@ -359,9 +359,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		}
 
 		var (
-			job       *model.Job
-			schemaVer int64
-			runJobErr error
+			job		*model.Job
+			schemaVer	int64
+			runJobErr	error
 		)
 		waitTime := 2 * d.lease
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
@@ -480,8 +480,9 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	failpoint.
 	// Mock for run ddl job panic.
-	failpoint.Inject("mockPanicInRunDDLJob", func(_ failpoint.Value) {})
+	Eval(_curpkg_("mockPanicInRunDDLJob"))
 
 	logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	timeStart := time.Now()
@@ -689,9 +690,9 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 	diff := &model.SchemaDiff{
-		Version:  schemaVersion,
-		Type:     job.Type,
-		SchemaID: job.SchemaID,
+		Version:	schemaVersion,
+		Type:		job.Type,
+		SchemaID:	job.SchemaID,
 	}
 	if job.Type == model.ActionTruncateTable {
 		// Truncate table has two table ID, should be handled differently.

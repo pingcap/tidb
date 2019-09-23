@@ -36,11 +36,11 @@ import (
 )
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("mockExceedErrorLimit")); ok {
 		if val.(bool) {
-			failpoint.Return(ver, errors.New("mock do job error"))
+			return ver, errors.New("mock do job error")
 		}
-	})
+	}
 
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
@@ -183,7 +183,7 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 const (
-	recoverTableCheckFlagNone int64 = iota
+	recoverTableCheckFlagNone	int64	= iota
 	recoverTableCheckFlagEnableGC
 	recoverTableCheckFlagDisableGC
 )
@@ -275,11 +275,11 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
+		if val, ok := failpoint.Eval(_curpkg_("mockRecoverTableCommitErr")); ok {
 			if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
 				kv.MockCommitErrorEnable()
 			}
-		})
+		}
 
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
@@ -405,12 +405,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	failpoint.Inject("truncateTableErr", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("truncateTableErr")); ok {
 		if val.(bool) {
 			job.State = model.JobStateCancelled
-			failpoint.Return(ver, errors.New("occur an error after dropping table"))
+			return ver, errors.New("occur an error after dropping table")
 		}
-	})
+	}
 
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
@@ -572,12 +572,12 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	failpoint.Inject("renameTableErr", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("renameTableErr")); ok {
 		if val.(bool) {
 			job.State = model.JobStateCancelled
-			failpoint.Return(ver, errors.New("occur an error after renaming table"))
+			return ver, errors.New("occur an error after renaming table")
 		}
-	})
+	}
 
 	tblInfo.Name = tableName
 	err = t.CreateTableOrView(newSchemaID, tblInfo)

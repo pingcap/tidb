@@ -38,8 +38,8 @@ import (
 )
 
 const (
-	newSessionRetryInterval = 200 * time.Millisecond
-	logIntervalCnt          = int(3 * time.Second / newSessionRetryInterval)
+	newSessionRetryInterval	= 200 * time.Millisecond
+	logIntervalCnt		= int(3 * time.Second / newSessionRetryInterval)
 )
 
 // Manager is used to campaign the owner and manage the owner information.
@@ -62,10 +62,10 @@ type Manager interface {
 
 const (
 	// NewSessionDefaultRetryCnt is the default retry times when create new session.
-	NewSessionDefaultRetryCnt = 3
+	NewSessionDefaultRetryCnt	= 3
 	// NewSessionRetryUnlimited is the unlimited retry times when create new session.
-	NewSessionRetryUnlimited = math.MaxInt64
-	keyOpDefaultTimeout      = 5 * time.Second
+	NewSessionRetryUnlimited	= math.MaxInt64
+	keyOpDefaultTimeout		= 5 * time.Second
 )
 
 // DDLOwnerChecker is used to check whether tidb is owner.
@@ -76,27 +76,27 @@ type DDLOwnerChecker interface {
 
 // ownerManager represents the structure which is used for electing owner.
 type ownerManager struct {
-	id        string // id is the ID of the manager.
-	key       string
-	prompt    string
-	logPrefix string
-	logCtx    context.Context
-	etcdCli   *clientv3.Client
-	cancel    context.CancelFunc
-	elec      unsafe.Pointer
+	id		string	// id is the ID of the manager.
+	key		string
+	prompt		string
+	logPrefix	string
+	logCtx		context.Context
+	etcdCli		*clientv3.Client
+	cancel		context.CancelFunc
+	elec		unsafe.Pointer
 }
 
 // NewOwnerManager creates a new Manager.
 func NewOwnerManager(etcdCli *clientv3.Client, prompt, id, key string, cancel context.CancelFunc) Manager {
 	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", prompt, key, id)
 	return &ownerManager{
-		etcdCli:   etcdCli,
-		id:        id,
-		key:       key,
-		prompt:    prompt,
-		cancel:    cancel,
-		logPrefix: logPrefix,
-		logCtx:    logutil.WithKeyValue(context.Background(), "owner info", logPrefix),
+		etcdCli:	etcdCli,
+		id:		id,
+		key:		key,
+		prompt:		prompt,
+		cancel:		cancel,
+		logPrefix:	logPrefix,
+		logCtx:		logutil.WithKeyValue(context.Background(), "owner info", logPrefix),
 	}
 }
 
@@ -143,21 +143,21 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 			return etcdSession, errors.Trace(err)
 		}
 
-		failpoint.Inject("closeClient", func(val failpoint.Value) {
+		if val, ok := failpoint.Eval(_curpkg_("closeClient")); ok {
 			if val.(bool) {
 				if err := etcdCli.Close(); err != nil {
-					failpoint.Return(etcdSession, errors.Trace(err))
+					return etcdSession, errors.Trace(err)
 				}
 			}
-		})
+		}
 
-		failpoint.Inject("closeGrpc", func(val failpoint.Value) {
+		if val, ok := failpoint.Eval(_curpkg_("closeGrpc")); ok {
 			if val.(bool) {
 				if err := etcdCli.ActiveConnection().Close(); err != nil {
-					failpoint.Return(etcdSession, errors.Trace(err))
+					return etcdSession, errors.Trace(err)
 				}
 			}
-		})
+		}
 
 		startTime := time.Now()
 		etcdSession, err = concurrency.NewSession(etcdCli,

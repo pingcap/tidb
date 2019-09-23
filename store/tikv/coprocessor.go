@@ -93,12 +93,12 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		return copErrorResponse{err}
 	}
 	it := &copIterator{
-		store:       c.store,
-		req:         req,
-		concurrency: req.Concurrency,
-		finishCh:    make(chan struct{}),
-		vars:        vars,
-		memTracker:  req.MemTracker,
+		store:		c.store,
+		req:		req,
+		concurrency:	req.Concurrency,
+		finishCh:	make(chan struct{}),
+		vars:		vars,
+		memTracker:	req.MemTracker,
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -119,12 +119,12 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	region RegionVerID
-	ranges *copRanges
+	region	RegionVerID
+	ranges	*copRanges
 
-	respChan  chan *copResponse
-	storeAddr string
-	cmdType   tikvrpc.CmdType
+	respChan	chan *copResponse
+	storeAddr	string
+	cmdType		tikvrpc.CmdType
 }
 
 func (r *copTask) String() string {
@@ -135,9 +135,9 @@ func (r *copTask) String() string {
 // copRanges is like []kv.KeyRange, but may has extra elements at head/tail.
 // It's for avoiding alloc big slice during build copTask.
 type copRanges struct {
-	first *kv.KeyRange
-	mid   []kv.KeyRange
-	last  *kv.KeyRange
+	first	*kv.KeyRange
+	mid	[]kv.KeyRange
+	last	*kv.KeyRange
 }
 
 func (r *copRanges) String() string {
@@ -215,8 +215,8 @@ func (r *copRanges) toPBRanges() []*coprocessor.KeyRange {
 	ranges := make([]*coprocessor.KeyRange, 0, r.len())
 	r.do(func(ran *kv.KeyRange) {
 		ranges = append(ranges, &coprocessor.KeyRange{
-			Start: ran.StartKey,
-			End:   ran.EndKey,
+			Start:	ran.StartKey,
+			End:	ran.EndKey,
 		})
 	})
 	return ranges
@@ -261,12 +261,12 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
 			tasks = append(tasks, &copTask{
-				region: region,
-				ranges: ranges.slice(i, nextI),
+				region:	region,
+				ranges:	ranges.slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
-				respChan: make(chan *copResponse, 2),
-				cmdType:  cmdType,
+				respChan:	make(chan *copResponse, 2),
+				cmdType:	cmdType,
 			})
 			i = nextI
 		}
@@ -316,15 +316,15 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 			// Part of r is not in the region. We need to split it.
 			taskRanges := ranges.slice(0, i)
 			taskRanges.last = &kv.KeyRange{
-				StartKey: r.StartKey,
-				EndKey:   loc.EndKey,
+				StartKey:	r.StartKey,
+				EndKey:		loc.EndKey,
 			}
 			fn(loc.Region, taskRanges)
 
 			ranges = ranges.slice(i+1, ranges.len())
 			ranges.first = &kv.KeyRange{
-				StartKey: loc.EndKey,
-				EndKey:   r.EndKey,
+				StartKey:	loc.EndKey,
+				EndKey:		r.EndKey,
 			}
 		} else {
 			// rs[i] is not in the region.
@@ -363,65 +363,65 @@ func reverseTasks(tasks []*copTask) {
 }
 
 type copIterator struct {
-	store       *tikvStore
-	req         *kv.Request
-	concurrency int
-	finishCh    chan struct{}
+	store		*tikvStore
+	req		*kv.Request
+	concurrency	int
+	finishCh	chan struct{}
 	// closed represents when the Close is called.
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
-	closed uint32
+	closed	uint32
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
-	tasks []*copTask
-	curr  int
+	tasks	[]*copTask
+	curr	int
 	// sendRate controls the sending rate of copIteratorTaskSender, if keepOrder,
 	// to prevent all tasks being done (aka. all of the responses are buffered)
-	sendRate *rateLimit
+	sendRate	*rateLimit
 
 	// Otherwise, results are stored in respChan.
-	respChan chan *copResponse
-	wg       sync.WaitGroup
+	respChan	chan *copResponse
+	wg		sync.WaitGroup
 
-	vars *kv.Variables
+	vars	*kv.Variables
 
-	memTracker *memory.Tracker
+	memTracker	*memory.Tracker
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
 type copIteratorWorker struct {
-	taskCh   <-chan *copTask
-	wg       *sync.WaitGroup
-	store    *tikvStore
-	req      *kv.Request
-	respChan chan<- *copResponse
-	finishCh <-chan struct{}
-	vars     *kv.Variables
+	taskCh		<-chan *copTask
+	wg		*sync.WaitGroup
+	store		*tikvStore
+	req		*kv.Request
+	respChan	chan<- *copResponse
+	finishCh	<-chan struct{}
+	vars		*kv.Variables
 
-	memTracker *memory.Tracker
+	memTracker	*memory.Tracker
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	taskCh   chan<- *copTask
-	wg       *sync.WaitGroup
-	tasks    []*copTask
-	finishCh <-chan struct{}
-	respChan chan<- *copResponse
-	sendRate *rateLimit
+	taskCh		chan<- *copTask
+	wg		*sync.WaitGroup
+	tasks		[]*copTask
+	finishCh	<-chan struct{}
+	respChan	chan<- *copResponse
+	sendRate	*rateLimit
 }
 
 type copResponse struct {
-	pbResp   *coprocessor.Response
-	detail   *execdetails.ExecDetails
-	startKey kv.Key
-	err      error
-	respSize int64
+	pbResp		*coprocessor.Response
+	detail		*execdetails.ExecDetails
+	startKey	kv.Key
+	err		error
+	respSize	int64
 }
 
 const (
-	sizeofExecDetails   = int(unsafe.Sizeof(execdetails.ExecDetails{}))
-	sizeofCommitDetails = int(unsafe.Sizeof(execdetails.CommitDetails{}))
+	sizeofExecDetails	= int(unsafe.Sizeof(execdetails.ExecDetails{}))
+	sizeofCommitDetails	= int(unsafe.Sizeof(execdetails.CommitDetails{}))
 )
 
 // GetData implements the kv.ResultSubset GetData interface.
@@ -489,24 +489,24 @@ func (it *copIterator) open(ctx context.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
-			taskCh:   taskCh,
-			wg:       &it.wg,
-			store:    it.store,
-			req:      it.req,
-			respChan: it.respChan,
-			finishCh: it.finishCh,
-			vars:     it.vars,
+			taskCh:		taskCh,
+			wg:		&it.wg,
+			store:		it.store,
+			req:		it.req,
+			respChan:	it.respChan,
+			finishCh:	it.finishCh,
+			vars:		it.vars,
 
-			memTracker: it.memTracker,
+			memTracker:	it.memTracker,
 		}
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh:   taskCh,
-		wg:       &it.wg,
-		tasks:    it.tasks,
-		finishCh: it.finishCh,
-		sendRate: it.sendRate,
+		taskCh:		taskCh,
+		wg:		&it.wg,
+		tasks:		it.tasks,
+		finishCh:	it.finishCh,
+		sendRate:	it.sendRate,
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
@@ -582,9 +582,9 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 // NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
 func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	var (
-		resp   *copResponse
-		ok     bool
-		closed bool
+		resp	*copResponse
+		ok	bool
+		closed	bool
 	)
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
@@ -659,26 +659,26 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
-	failpoint.Inject("handleTaskOnceError", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("handleTaskOnceError")); ok {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
+			return nil, errors.New("mock handleTaskOnce error")
 		}
-	})
+	}
 
 	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
 	req := &tikvrpc.Request{
-		Type: task.cmdType,
+		Type:	task.cmdType,
 		Cop: &coprocessor.Request{
-			Tp:     worker.req.Tp,
-			Data:   worker.req.Data,
-			Ranges: task.ranges.toPBRanges(),
+			Tp:	worker.req.Tp,
+			Data:	worker.req.Data,
+			Ranges:	task.ranges.toPBRanges(),
 		},
 		Context: kvrpcpb.Context{
-			IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
-			Priority:       kvPriorityToCommandPri(worker.req.Priority),
-			NotFillCache:   worker.req.NotFillCache,
-			HandleTime:     true,
-			ScanDetail:     true,
+			IsolationLevel:	pbIsolationLevel(worker.req.IsolationLevel),
+			Priority:	kvPriorityToCommandPri(worker.req.Priority),
+			NotFillCache:	worker.req.NotFillCache,
+			HandleTime:	true,
+			ScanDetail:	true,
 		},
 	}
 	startTime := time.Now()
@@ -703,9 +703,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 }
 
 const (
-	minLogBackoffTime   = 100
-	minLogKVProcessTime = 100
-	minLogKVWaitTime    = 200
+	minLogBackoffTime	= 100
+	minLogKVProcessTime	= 100
+	minLogKVWaitTime	= 200
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {

@@ -32,11 +32,11 @@ func EncodeDecimal(b []byte, dec *types.MyDecimal, precision, frac int) ([]byte,
 
 // DecodeDecimal decodes bytes to decimal.
 func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, int, int, error) {
-	failpoint.Inject("errorInDecodeDecimal", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("errorInDecodeDecimal")); ok {
 		if val.(bool) {
-			failpoint.Return(b, nil, 0, 0, errors.New("gofail error"))
+			return b, nil, 0, 0, errors.New("gofail error")
 		}
-	})
+	}
 
 	if len(b) < 3 {
 		return b, nil, 0, 0, errors.New("insufficient bytes to decode value")

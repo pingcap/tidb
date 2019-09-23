@@ -37,39 +37,39 @@ var (
 )
 
 const (
-	scanBatchSize = 256
-	batchGetSize  = 5120
+	scanBatchSize	= 256
+	batchGetSize	= 5120
 )
 
 var (
-	tikvTxnCmdCounterWithBatchGet          = metrics.TiKVTxnCmdCounter.WithLabelValues("batch_get")
-	tikvTxnCmdHistogramWithBatchGet        = metrics.TiKVTxnCmdHistogram.WithLabelValues("batch_get")
-	tikvTxnRegionsNumHistogramWithSnapshot = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("snapshot")
+	tikvTxnCmdCounterWithBatchGet		= metrics.TiKVTxnCmdCounter.WithLabelValues("batch_get")
+	tikvTxnCmdHistogramWithBatchGet		= metrics.TiKVTxnCmdHistogram.WithLabelValues("batch_get")
+	tikvTxnRegionsNumHistogramWithSnapshot	= metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("snapshot")
 )
 
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
-	store        *tikvStore
-	version      kv.Version
-	priority     pb.CommandPri
-	notFillCache bool
-	syncLog      bool
-	keyOnly      bool
-	vars         *kv.Variables
+	store		*tikvStore
+	version		kv.Version
+	priority	pb.CommandPri
+	notFillCache	bool
+	syncLog		bool
+	keyOnly		bool
+	vars		*kv.Variables
 
 	// Cache the result of BatchGet.
 	// The invariance is that calling BatchGet multiple times using the same start ts,
 	// the result should not change.
-	cached map[string][]byte
+	cached	map[string][]byte
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
 func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 	return &tikvSnapshot{
-		store:    store,
-		version:  ver,
-		priority: pb.CommandPri_Normal,
-		vars:     kv.DefaultVars,
+		store:		store,
+		version:	ver,
+		priority:	pb.CommandPri_Normal,
+		vars:		kv.DefaultVars,
 	}
 }
 
@@ -187,14 +187,14 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 	pending := batch.keys
 	for {
 		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdBatchGet,
+			Type:	tikvrpc.CmdBatchGet,
 			BatchGet: &pb.BatchGetRequest{
-				Keys:    pending,
-				Version: s.version.Ver,
+				Keys:		pending,
+				Version:	s.version.Ver,
 			},
 			Context: pb.Context{
-				Priority:     s.priority,
-				NotFillCache: s.notFillCache,
+				Priority:	s.priority,
+				NotFillCache:	s.notFillCache,
 			},
 		}
 		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutMedium)
@@ -218,8 +218,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			return errors.Trace(ErrBodyMissing)
 		}
 		var (
-			lockedKeys [][]byte
-			locks      []*Lock
+			lockedKeys	[][]byte
+			locks		[]*Lock
 		)
 		for _, pair := range batchGetResp.Pairs {
 			keyErr := pair.GetError()
@@ -276,14 +276,14 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
 
 	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGet,
+		Type:	tikvrpc.CmdGet,
 		Get: &pb.GetRequest{
-			Key:     k,
-			Version: s.version.Ver,
+			Key:		k,
+			Version:	s.version.Ver,
 		},
 		Context: pb.Context{
-			Priority:     s.priority,
-			NotFillCache: s.notFillCache,
+			Priority:	s.priority,
+			NotFillCache:	s.notFillCache,
 		},
 	}
 	for {
@@ -352,12 +352,12 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 }
 
 func extractKeyErr(keyErr *pb.KeyError) error {
-	failpoint.Inject("ErrMockRetryableOnly", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("ErrMockRetryableOnly")); ok {
 		if val.(bool) {
 			keyErr.Conflict = nil
 			keyErr.Retryable = "mock retryable error"
 		}
-	})
+	}
 
 	if keyErr.Conflict != nil {
 		return newWriteConflictError(keyErr.Conflict)

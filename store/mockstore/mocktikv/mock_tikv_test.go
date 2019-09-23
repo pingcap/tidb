@@ -503,7 +503,7 @@ func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {
 	s.mustPutOK(c, "test", "test2", 5, 8)
 
 	// simulate `getTxnStatus` for txn 2.
-	err := s.store.Cleanup([]byte("test"), 2)
+	err := s.store.Cleanup([]byte("test"), 2, math.MaxUint64)
 	c.Assert(err, IsNil)
 	req = &kvrpcpb.PrewriteRequest{
 		Mutations:    putMutations("test", "test3"),

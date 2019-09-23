@@ -77,9 +77,9 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 		}
 
 		idxColumns = append(idxColumns, &model.IndexColumn{
-			Name:   col.Name,
-			Offset: col.Offset,
-			Length: ic.Length,
+			Name:	col.Name,
+			Offset:	col.Offset,
+			Length:	ic.Length,
 		})
 	}
 
@@ -181,9 +181,9 @@ func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, idxColNames
 
 	// Create index info.
 	idxInfo := &model.IndexInfo{
-		Name:    indexName,
-		Columns: idxColumns,
-		State:   state,
+		Name:		indexName,
+		Columns:	idxColumns,
+		State:		state,
 	}
 	return idxInfo, nil
 }
@@ -272,10 +272,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 	}
 
 	var (
-		unique      bool
-		indexName   model.CIStr
-		idxColNames []*ast.IndexColName
-		indexOption *ast.IndexOption
+		unique		bool
+		indexName	model.CIStr
+		idxColNames	[]*ast.IndexColName
+		indexOption	*ast.IndexOption
 	)
 	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption)
 	if err != nil {
@@ -532,42 +532,42 @@ const (
 
 // indexRecord is the record information of an index.
 type indexRecord struct {
-	handle int64
-	key    []byte        // It's used to lock a record. Record it to reduce the encoding time.
-	vals   []types.Datum // It's the index values.
-	skip   bool          // skip indicates that the index key is already exists, we should not add it.
+	handle	int64
+	key	[]byte		// It's used to lock a record. Record it to reduce the encoding time.
+	vals	[]types.Datum	// It's the index values.
+	skip	bool		// skip indicates that the index key is already exists, we should not add it.
 }
 
 type addIndexWorker struct {
-	id        int
-	ddlWorker *worker
-	batchCnt  int
-	sessCtx   sessionctx.Context
-	taskCh    chan *reorgIndexTask
-	resultCh  chan *addIndexResult
-	index     table.Index
-	table     table.Table
-	closed    bool
-	priority  int
+	id		int
+	ddlWorker	*worker
+	batchCnt	int
+	sessCtx		sessionctx.Context
+	taskCh		chan *reorgIndexTask
+	resultCh	chan *addIndexResult
+	index		table.Index
+	table		table.Table
+	closed		bool
+	priority	int
 
 	// The following attributes are used to reduce memory allocation.
-	defaultVals        []types.Datum
-	idxRecords         []*indexRecord
-	rowMap             map[int64]types.Datum
-	rowDecoder         *decoder.RowDecoder
-	idxKeyBufs         [][]byte
-	batchCheckKeys     []kv.Key
-	distinctCheckFlags []bool
+	defaultVals		[]types.Datum
+	idxRecords		[]*indexRecord
+	rowMap			map[int64]types.Datum
+	rowDecoder		*decoder.RowDecoder
+	idxKeyBufs		[][]byte
+	batchCheckKeys		[]kv.Key
+	distinctCheckFlags	[]bool
 }
 
 type reorgIndexTask struct {
-	physicalTableID int64
-	startHandle     int64
-	endHandle       int64
+	physicalTableID	int64
+	startHandle	int64
+	endHandle	int64
 	// endIncluded indicates whether the range include the endHandle.
 	// When the last handle is math.MaxInt64, set endIncluded to true to
 	// tell worker backfilling index of endHandle.
-	endIncluded bool
+	endIncluded	bool
 }
 
 func (r *reorgIndexTask) String() string {
@@ -579,19 +579,19 @@ func (r *reorgIndexTask) String() string {
 }
 
 type addIndexResult struct {
-	addedCount int
-	scanCount  int
-	nextHandle int64
-	err        error
+	addedCount	int
+	scanCount	int
+	nextHandle	int64
+	err		error
 }
 
 // addIndexTaskContext is the context of the batch adding indices.
 // After finishing the batch adding indices, result in addIndexTaskContext will be merged into addIndexResult.
 type addIndexTaskContext struct {
-	nextHandle int64
-	done       bool
-	addedCount int
-	scanCount  int
+	nextHandle	int64
+	done		bool
+	addedCount	int
+	scanCount	int
 }
 
 // mergeAddIndexCtxToResult merge partial result in taskCtx into result.
@@ -605,18 +605,18 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	rowDecoder := decoder.NewRowDecoder(t, decodeColMap)
 	return &addIndexWorker{
-		id:          id,
-		ddlWorker:   worker,
-		batchCnt:    int(variable.GetDDLReorgBatchSize()),
-		sessCtx:     sessCtx,
-		taskCh:      make(chan *reorgIndexTask, 1),
-		resultCh:    make(chan *addIndexResult, 1),
-		index:       index,
-		table:       t,
-		rowDecoder:  rowDecoder,
-		priority:    kv.PriorityLow,
-		defaultVals: make([]types.Datum, len(t.Cols())),
-		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
+		id:		id,
+		ddlWorker:	worker,
+		batchCnt:	int(variable.GetDDLReorgBatchSize()),
+		sessCtx:	sessCtx,
+		taskCh:		make(chan *reorgIndexTask, 1),
+		resultCh:	make(chan *addIndexResult, 1),
+		index:		index,
+		table:		t,
+		rowDecoder:	rowDecoder,
+		priority:	kv.PriorityLow,
+		defaultVals:	make([]types.Datum, len(t.Cols())),
+		rowMap:		make(map[int64]types.Datum, len(decodeColMap)),
 	}
 }
 
@@ -835,11 +835,11 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx addIndexTaskContext, errInTxn error) {
-	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("errorMockPanic")); ok {
 		if val.(bool) {
 			panic("panic test")
 		}
-	})
+	}
 
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
@@ -957,13 +957,13 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		}
 
 		logutil.Logger(ddlLogCtx).Debug("[ddl] add index worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
-		failpoint.Inject("mockAddIndexErr", func() {
+		if _, ok := failpoint.Eval(_curpkg_("mockAddIndexErr")); ok {
 			if w.id == 0 {
 				result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
 				w.resultCh <- result
-				failpoint.Continue()
+				continue
 			}
-		})
+		}
 
 		// Dynamic change batch size.
 		w.batchCnt = int(variable.GetDDLReorgBatchSize())
@@ -1011,7 +1011,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endH
 		return []kv.KeyRange{kvRange}, nil
 	}
 
-	maxSleep := 10000 // ms
+	maxSleep := 10000	// ms
 	bo := tikv.NewBackoffer(context.Background(), maxSleep)
 	ranges, err := tikv.SplitRegionRanges(bo, s.GetRegionCache(), []kv.KeyRange{kvRange})
 	if err != nil {
@@ -1044,9 +1044,9 @@ func closeAddIndexWorkers(workers []*addIndexWorker) {
 
 func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAddedCount *int64, startHandle int64) (int64, int64, error) {
 	var (
-		addedCount int64
-		nextHandle = startHandle
-		firstErr   error
+		addedCount	int64
+		nextHandle	= startHandle
+		firstErr	error
 	)
 	for i := 0; i < taskCnt; i++ {
 		worker := workers[i]
@@ -1152,9 +1152,9 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 
 var (
 	// TestCheckWorkerNumCh use for test adjust add index worker.
-	TestCheckWorkerNumCh = make(chan struct{})
+	TestCheckWorkerNumCh	= make(chan struct{})
 	// TestCheckWorkerNumber use for test adjust add index worker.
-	TestCheckWorkerNumber = int32(16)
+	TestCheckWorkerNumber	= int32(16)
 )
 
 func loadDDLReorgVars(w *worker) error {
@@ -1231,21 +1231,21 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 			closeAddIndexWorkers(workers)
 		}
 
-		failpoint.Inject("checkIndexWorkerNum", func(val failpoint.Value) {
+		if val, ok := failpoint.Eval(_curpkg_("checkIndexWorkerNum")); ok {
 			if val.(bool) {
 				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
 				if num != 0 {
 					if num > len(kvRanges) {
 						if len(idxWorkers) != len(kvRanges) {
-							failpoint.Return(errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers)))
+							return errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers))
 						}
 					} else if num != len(idxWorkers) {
-						failpoint.Return(errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers)))
+						return errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers))
 					}
 					TestCheckWorkerNumCh <- struct{}{}
 				}
 			}
-		})
+		}
 
 		logutil.Logger(ddlLogCtx).Info("[ddl] start add index workers to reorg index", zap.Int("workerCnt", len(idxWorkers)), zap.Int("regionCnt", len(kvRanges)), zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
 		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges)

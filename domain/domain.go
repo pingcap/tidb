@@ -55,24 +55,24 @@ import (
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store                kv.Storage
-	infoHandle           *infoschema.Handle
-	privHandle           *privileges.Handle
-	bindHandle           *bindinfo.BindHandle
-	statsHandle          unsafe.Pointer
-	statsLease           time.Duration
-	statsUpdating        sync2.AtomicInt32
-	ddl                  ddl.DDL
-	info                 *InfoSyncer
-	m                    sync.Mutex
-	SchemaValidator      SchemaValidator
-	sysSessionPool       *sessionPool
-	exit                 chan struct{}
-	etcdClient           *clientv3.Client
-	wg                   sync.WaitGroup
-	gvc                  GlobalVariableCache
-	slowQuery            *topNSlowQueries
-	expensiveQueryHandle *expensivequery.Handle
+	store			kv.Storage
+	infoHandle		*infoschema.Handle
+	privHandle		*privileges.Handle
+	bindHandle		*bindinfo.BindHandle
+	statsHandle		unsafe.Pointer
+	statsLease		time.Duration
+	statsUpdating		sync2.AtomicInt32
+	ddl			ddl.DDL
+	info			*InfoSyncer
+	m			sync.Mutex
+	SchemaValidator		SchemaValidator
+	sysSessionPool		*sessionPool
+	exit			chan struct{}
+	etcdClient		*clientv3.Client
+	wg			sync.WaitGroup
+	gvc			GlobalVariableCache
+	slowQuery		*topNSlowQueries
+	expensiveQueryHandle	*expensivequery.Handle
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -212,8 +212,8 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 }
 
 const (
-	initialVersion         = 0
-	maxNumberOfDiffsToLoad = 100
+	initialVersion		= 0
+	maxNumberOfDiffsToLoad	= 100
 )
 
 func isTooOldSchema(usedVersion, newVersion int64) bool {
@@ -308,11 +308,11 @@ func (do *Domain) GetScope(status string) variable.ScopeFlag {
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
-	failpoint.Inject("ErrorMockReloadFailed", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("ErrorMockReloadFailed")); ok {
 		if val.(bool) {
-			failpoint.Return(errors.New("mock reload failed"))
+			return errors.New("mock reload failed")
 		}
-	})
+	}
 
 	// Lock here for only once at the same time.
 	do.m.Lock()
@@ -335,8 +335,8 @@ func (do *Domain) Reload() error {
 	}
 
 	var (
-		fullLoad        bool
-		changedTableIDs []int64
+		fullLoad	bool
+		changedTableIDs	[]int64
 	)
 	neededSchemaVersion, changedTableIDs, fullLoad, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
@@ -556,7 +556,7 @@ func (do *Domain) Close() {
 
 type ddlCallback struct {
 	ddl.BaseCallback
-	do *Domain
+	do	*Domain
 }
 
 func (c *ddlCallback) OnChanged(err error) error {
@@ -573,19 +573,19 @@ func (c *ddlCallback) OnChanged(err error) error {
 	return nil
 }
 
-const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
+const resourceIdleTimeout = 3 * time.Minute	// resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory) *Domain {
-	capacity := 200 // capacity of the sysSessionPool size
+	capacity := 200	// capacity of the sysSessionPool size
 	return &Domain{
-		store:           store,
-		SchemaValidator: NewSchemaValidator(ddlLease),
-		exit:            make(chan struct{}),
-		sysSessionPool:  newSessionPool(capacity, factory),
-		statsLease:      statsLease,
-		infoHandle:      infoschema.NewHandle(store),
-		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7, 500),
+		store:			store,
+		SchemaValidator:	NewSchemaValidator(ddlLease),
+		exit:			make(chan struct{}),
+		sysSessionPool:		newSessionPool(capacity, factory),
+		statsLease:		statsLease,
+		infoHandle:		infoschema.NewHandle(store),
+		slowQuery:		newTopNSlowQueries(30, time.Hour*24*7, 500),
 	}
 }
 
@@ -596,18 +596,18 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
-				Endpoints:        addrs,
-				AutoSyncInterval: 30 * time.Second,
-				DialTimeout:      5 * time.Second,
+				Endpoints:		addrs,
+				AutoSyncInterval:	30 * time.Second,
+				DialTimeout:		5 * time.Second,
 				DialOptions: []grpc.DialOption{
 					grpc.WithBackoffMaxDelay(time.Second * 3),
 					grpc.WithKeepaliveParams(keepalive.ClientParameters{
-						Time:                time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
-						Timeout:             time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
-						PermitWithoutStream: true,
+						Time:			time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+						Timeout:		time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
+						PermitWithoutStream:	true,
 					}),
 				},
-				TLS: ebd.TLSConfig(),
+				TLS:	ebd.TLSConfig(),
 			})
 			if err != nil {
 				return errors.Trace(err)
@@ -660,18 +660,18 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 }
 
 type sessionPool struct {
-	resources chan pools.Resource
-	factory   pools.Factory
-	mu        struct {
+	resources	chan pools.Resource
+	factory		pools.Factory
+	mu		struct {
 		sync.RWMutex
-		closed bool
+		closed	bool
 	}
 }
 
 func newSessionPool(cap int, factory pools.Factory) *sessionPool {
 	return &sessionPool{
-		resources: make(chan pools.Resource, cap),
-		factory:   factory,
+		resources:	make(chan pools.Resource, cap),
+		factory:	factory,
 	}
 }
 
@@ -1071,15 +1071,15 @@ func recoverInDomain(funcName string, quit bool) {
 
 // Domain error codes.
 const (
-	codeInfoSchemaExpired terror.ErrCode = 1
-	codeInfoSchemaChanged terror.ErrCode = 2
+	codeInfoSchemaExpired	terror.ErrCode	= 1
+	codeInfoSchemaChanged	terror.ErrCode	= 2
 )
 
 var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
-	ErrInfoSchemaExpired = terror.ClassDomain.New(codeInfoSchemaExpired, "Information schema is out of date.")
+	ErrInfoSchemaExpired	= terror.ClassDomain.New(codeInfoSchemaExpired, "Information schema is out of date.")
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
-	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged,
+	ErrInfoSchemaChanged	= terror.ClassDomain.New(codeInfoSchemaChanged,
 		"Information schema is changed. "+kv.TxnRetryableMark)
 )
 

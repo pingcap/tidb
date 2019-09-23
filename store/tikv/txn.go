@@ -35,39 +35,39 @@ var (
 )
 
 var (
-	tikvTxnCmdCountWithGet             = metrics.TiKVTxnCmdCounter.WithLabelValues("get")
-	tikvTxnCmdHistogramWithGet         = metrics.TiKVTxnCmdHistogram.WithLabelValues("get")
-	tikvTxnCmdCountWithSeek            = metrics.TiKVTxnCmdCounter.WithLabelValues("seek")
-	tikvTxnCmdHistogramWithSeek        = metrics.TiKVTxnCmdHistogram.WithLabelValues("seek")
-	tikvTxnCmdCountWithSeekReverse     = metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse")
-	tikvTxnCmdHistogramWithSeekReverse = metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse")
-	tikvTxnCmdCountWithDelete          = metrics.TiKVTxnCmdCounter.WithLabelValues("delete")
-	tikvTxnCmdCountWithSet             = metrics.TiKVTxnCmdCounter.WithLabelValues("set")
-	tikvTxnCmdCountWithCommit          = metrics.TiKVTxnCmdCounter.WithLabelValues("commit")
-	tikvTxnCmdHistogramWithCommit      = metrics.TiKVTxnCmdHistogram.WithLabelValues("commit")
-	tikvTxnCmdCountWithRollback        = metrics.TiKVTxnCmdCounter.WithLabelValues("rollback")
-	tikvTxnCmdHistogramWithLockKeys    = metrics.TiKVTxnCmdCounter.WithLabelValues("lock_keys")
+	tikvTxnCmdCountWithGet			= metrics.TiKVTxnCmdCounter.WithLabelValues("get")
+	tikvTxnCmdHistogramWithGet		= metrics.TiKVTxnCmdHistogram.WithLabelValues("get")
+	tikvTxnCmdCountWithSeek			= metrics.TiKVTxnCmdCounter.WithLabelValues("seek")
+	tikvTxnCmdHistogramWithSeek		= metrics.TiKVTxnCmdHistogram.WithLabelValues("seek")
+	tikvTxnCmdCountWithSeekReverse		= metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse")
+	tikvTxnCmdHistogramWithSeekReverse	= metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse")
+	tikvTxnCmdCountWithDelete		= metrics.TiKVTxnCmdCounter.WithLabelValues("delete")
+	tikvTxnCmdCountWithSet			= metrics.TiKVTxnCmdCounter.WithLabelValues("set")
+	tikvTxnCmdCountWithCommit		= metrics.TiKVTxnCmdCounter.WithLabelValues("commit")
+	tikvTxnCmdHistogramWithCommit		= metrics.TiKVTxnCmdHistogram.WithLabelValues("commit")
+	tikvTxnCmdCountWithRollback		= metrics.TiKVTxnCmdCounter.WithLabelValues("rollback")
+	tikvTxnCmdHistogramWithLockKeys		= metrics.TiKVTxnCmdCounter.WithLabelValues("lock_keys")
 )
 
 // tikvTxn implements kv.Transaction.
 type tikvTxn struct {
-	snapshot  *tikvSnapshot
-	us        kv.UnionStore
-	store     *tikvStore // for connection to region.
-	startTS   uint64
-	startTime time.Time // Monotonic timestamp for recording txn time consuming.
-	commitTS  uint64
-	valid     bool
-	lockKeys  [][]byte
-	lockedMap map[string]struct{}
-	mu        sync.Mutex // For thread-safe LockKeys function.
-	dirty     bool
-	setCnt    int64
-	vars      *kv.Variables
-	committer *twoPhaseCommitter
+	snapshot	*tikvSnapshot
+	us		kv.UnionStore
+	store		*tikvStore	// for connection to region.
+	startTS		uint64
+	startTime	time.Time	// Monotonic timestamp for recording txn time consuming.
+	commitTS	uint64
+	valid		bool
+	lockKeys	[][]byte
+	lockedMap	map[string]struct{}
+	mu		sync.Mutex	// For thread-safe LockKeys function.
+	dirty		bool
+	setCnt		int64
+	vars		*kv.Variables
+	committer	*twoPhaseCommitter
 
 	// For data consistency check.
-	assertions []assertionPair
+	assertions	[]assertionPair
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -84,20 +84,20 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
 	snapshot := newTiKVSnapshot(store, ver)
 	return &tikvTxn{
-		snapshot:  snapshot,
-		us:        kv.NewUnionStore(snapshot),
-		lockedMap: map[string]struct{}{},
-		store:     store,
-		startTS:   startTS,
-		startTime: time.Now(),
-		valid:     true,
-		vars:      kv.DefaultVars,
+		snapshot:	snapshot,
+		us:		kv.NewUnionStore(snapshot),
+		lockedMap:	map[string]struct{}{},
+		store:		store,
+		startTS:	startTS,
+		startTime:	time.Now(),
+		valid:		true,
+		vars:		kv.DefaultVars,
 	}, nil
 }
 
 type assertionPair struct {
-	key       kv.Key
-	assertion kv.AssertionType
+	key		kv.Key
+	assertion	kv.AssertionType
 }
 
 func (a assertionPair) String() string {
@@ -245,12 +245,12 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.close()
 
-	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("mockCommitError")); ok {
 		if val.(bool) && kv.IsMockCommitErrorEnable() {
 			kv.MockCommitErrorDisable()
-			failpoint.Return(errors.New("mock commit error"))
+			return errors.New("mock commit error")
 		}
-	})
+	}
 
 	tikvTxnCmdCountWithSet.Add(float64(txn.setCnt))
 	tikvTxnCmdCountWithCommit.Inc()
@@ -426,11 +426,11 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *sync.WaitGroup {
 	// Clone a new committer for execute in background.
 	committer := &twoPhaseCommitter{
-		store:       txn.committer.store,
-		connID:      txn.committer.connID,
-		startTS:     txn.committer.startTS,
-		forUpdateTS: txn.committer.forUpdateTS,
-		primaryKey:  txn.committer.primaryKey,
+		store:		txn.committer.store,
+		connID:		txn.committer.connID,
+		startTS:	txn.committer.startTS,
+		forUpdateTS:	txn.committer.forUpdateTS,
+		primaryKey:	txn.committer.primaryKey,
 	}
 	wg := new(sync.WaitGroup)
 	wg.Add(1)

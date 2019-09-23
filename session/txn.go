@@ -46,15 +46,15 @@ type TxnState struct {
 	// Pending: kv.Transaction == nil && txnFuture != nil
 	// Valid:	kv.Transaction != nil && txnFuture == nil
 	kv.Transaction
-	txnFuture *txnFuture
+	txnFuture	*txnFuture
 
-	buf          kv.MemBuffer
-	mutations    map[int64]*binlog.TableMutation
-	dirtyTableOP []dirtyTableOperation
+	buf		kv.MemBuffer
+	mutations	map[int64]*binlog.TableMutation
+	dirtyTableOP	[]dirtyTableOperation
 
 	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	// doNotCommit flag may be set when StmtCommit fail.
-	doNotCommit error
+	doNotCommit	error
 }
 
 func (st *TxnState) init() {
@@ -147,10 +147,10 @@ func (st *TxnState) changeToInvalid() {
 // dirtyTableOperation represents an operation to dirtyTable, we log the operation
 // first and apply the operation log when statement commit.
 type dirtyTableOperation struct {
-	kind   int
-	tid    int64
-	handle int64
-	row    []types.Datum
+	kind	int
+	tid	int64
+	handle	int64
+	row	[]types.Datum
 }
 
 var hasMockAutoIDRetry = int64(0)
@@ -180,19 +180,19 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	}
 
 	// mockCommitError8942 is used for PR #8942.
-	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("mockCommitError8942")); ok {
 		if val.(bool) {
-			failpoint.Return(kv.ErrTxnRetryable)
+			return kv.ErrTxnRetryable
 		}
-	})
+	}
 
 	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
-	failpoint.Inject("mockCommitRetryForAutoID", func(val failpoint.Value) {
+	if val, ok := failpoint.Eval(_curpkg_("mockCommitRetryForAutoID")); ok {
 		if val.(bool) && !mockAutoIDRetry() {
 			enableMockAutoIDRetry()
-			failpoint.Return(kv.ErrTxnRetryable)
+			return kv.ErrTxnRetryable
 		}
-	})
+	}
 
 	return st.Transaction.Commit(ctx)
 }
@@ -375,10 +375,10 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	future oracle.Future
-	store  kv.Storage
+	future	oracle.Future
+	store	kv.Storage
 
-	mockFail bool
+	mockFail	bool
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
@@ -421,11 +421,11 @@ func (s *session) StmtCommit() error {
 	st := &s.txn
 	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
-		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
+		if val, ok := failpoint.Eval(_curpkg_("mockStmtCommitError")); ok {
 			if val.(bool) {
 				count++
 			}
-		})
+		}
 
 		if count > 3 {
 			return errors.New("mock stmt commit error")
