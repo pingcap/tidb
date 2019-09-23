@@ -73,7 +73,8 @@ func (b *builtinIsIPv4Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	for i := 0; i < n; i++ {
 		// Note that even when the i-th input string is null, the output is
 		// 0 instead of null, therefore we do not set the null bit mask in
-		// result's corresponding row. See builtinIsIPv4Sig's implementation.
+		// result's corresponding row.
+		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
 		if isIPv4(buf.GetString(i)) {
 			i64s[i] = 1
 		} else {
