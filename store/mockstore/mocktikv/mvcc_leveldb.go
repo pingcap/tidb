@@ -932,7 +932,7 @@ func getTxnCommitInfo(iter *Iterator, expectKey []byte, startTS uint64) (mvccVal
 }
 
 // Cleanup implements the MVCCStore interface.
-// Cleanup API is depreciated, use CheckTxnStatus instead.
+// Cleanup API is deprecated, use CheckTxnStatus instead.
 func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 	mvcc.mu.Lock()
 	defer func() {
