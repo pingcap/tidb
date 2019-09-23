@@ -296,12 +296,6 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (int64, error
 			return msBeforeTxnExpired.value(), err
 		}
 
-		if err != nil {
-			msBeforeTxnExpired.update(0)
-			err = errors.Trace(err)
-			return msBeforeTxnExpired.value(), err
-		}
-
 		if status.ttl == 0 {
 			tikvLockResolverCountWithExpired.Inc()
 			// If the lock is committed or rollbacked, resolve lock.
@@ -338,9 +332,12 @@ type txnExpireTime struct {
 }
 
 func (t *txnExpireTime) update(lockExpire int64) {
-	t.initialized = true
 	if lockExpire <= 0 {
-		t.txnExpire = 0
+		lockExpire = 0
+	}
+	if !t.initialized {
+		t.txnExpire = lockExpire
+		t.initialized = true
 		return
 	}
 	if lockExpire < t.txnExpire {
