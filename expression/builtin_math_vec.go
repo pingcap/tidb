@@ -22,6 +22,28 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if f64s[i] <= 0 {
+			result.SetNull(i, true)
+		} else {
+			f64s[i] = math.Log(f64s[i])
+		}
+	}
+	return nil
+}
+
+func (b *builtinLog1ArgSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinLog2Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
@@ -229,6 +251,67 @@ func (b *builtinCotSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinDegreesSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = f64s[i] * 180 / math.Pi
+	}
+	return nil
+}
+
+func (b *builtinDegreesSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinExpSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		exp := math.Exp(f64s[i])
+		if math.IsInf(exp, 0) || math.IsNaN(exp) {
+			s := fmt.Sprintf("exp(%s)", b.args[0].String())
+			if err := types.ErrOverflow.GenWithStackByArgs("DOUBLE", s); err != nil {
+				return err
+			}
+		}
+		f64s[i] = exp
+	}
+	return nil
+}
+
+func (b *builtinExpSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinRadiansSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = f64s[i] * math.Pi / 180
+	}
+	return nil
+}
+
+func (b *builtinRadiansSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinSinSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
@@ -309,5 +392,87 @@ func (b *builtinRoundDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinRoundDecSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinPowSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	if err := b.args[1].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	x := buf1.Float64s()
+	y := result.Float64s()
+	result.MergeNulls(buf1)
+	f64s := result.Float64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		power := math.Pow(x[i], y[i])
+		if math.IsInf(power, -1) || math.IsInf(power, 1) || math.IsNaN(power) {
+			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x[i], 'f', -1, 64), strconv.FormatFloat(y[i], 'f', -1, 64)))
+		}
+		f64s[i] = power
+	}
+	return nil
+}
+
+func (b *builtinPowSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinAbsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		f64s[i] = math.Abs(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinAbsRealSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinAbsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	i64s := result.Int64s()
+	for i := 0; i < len(i64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if i64s[i] == math.MinInt64 {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("abs(%d)", i64s[i]))
+		}
+		if i64s[i] < 0 {
+			i64s[i] = -i64s[i]
+		}
+	}
+	return nil
+}
+
+func (b *builtinAbsIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinRoundIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalInt(b.ctx, input, result)
+}
+
+func (b *builtinRoundIntSig) vectorized() bool {
 	return true
 }

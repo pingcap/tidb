@@ -22,6 +22,9 @@ import (
 )
 
 var vecBuiltinMathCases = map[string][]vecExprBenchCase{
+	ast.Log: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
 	ast.Log10: {
 		{types.ETReal, []types.EvalType{types.ETReal}, nil},
 	},
@@ -46,7 +49,16 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	ast.Cos: {
 		{types.ETReal, []types.EvalType{types.ETReal}, nil},
 	},
+	ast.Exp: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
+	ast.Degrees: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
 	ast.Cot: {
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+	},
+	ast.Radians: {
 		{types.ETReal, []types.EvalType{types.ETReal}, nil},
 	},
 	ast.Sin: {
@@ -57,9 +69,15 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	},
 	ast.Abs: {
 		{types.ETDecimal, []types.EvalType{types.ETDecimal}, nil},
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{types.ETInt, []types.EvalType{types.ETInt}, nil},
 	},
 	ast.Round: {
 		{types.ETDecimal, []types.EvalType{types.ETDecimal}, nil},
+		{types.ETInt, []types.EvalType{types.ETInt}, nil},
+	},
+	ast.Pow: {
+		{types.ETReal, []types.EvalType{types.ETReal, types.ETReal}, []dataGenerator{&rangeRealGener{0, 10, 0.5}, &rangeRealGener{0, 100, 0.5}}},
 	},
 }
 
