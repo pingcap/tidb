@@ -474,6 +474,9 @@ func (b *builtinRoundIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinRoundIntSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinRoundWithFracIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
