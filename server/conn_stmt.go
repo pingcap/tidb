@@ -634,5 +634,5 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
 	}
 	preparedAst := preparedObj.PreparedAst
-	return preparedAst.Stmt.Text() + sv.GetExecuteArgumentsInfo()
+	return prepared.Stmt.Text() + sv.PreparedParams.String()
 }
