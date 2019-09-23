@@ -4137,7 +4137,7 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	result.Check(testkit.Rows("7480000000000000FF2E5F728000000011FFE1A3000000000000"))
 	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warns, HasLen, 1)
-	c.Assert(warns[0].Err.Error(), Equals, "the key is a invalid record/index key")
+	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
