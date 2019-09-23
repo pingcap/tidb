@@ -39,7 +39,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
 	},
 	ast.Left: {
-		{types.ETString, []types.EvalType{types.ETString, types.ETInt}, nil},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
 	},
 }
 
