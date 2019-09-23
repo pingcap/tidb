@@ -23,7 +23,7 @@ import (
 
 var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.InetNtoa: {
-		{types.ETString, []types.EvalType{types.ETInt}, nil},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 }
 
