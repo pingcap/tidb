@@ -538,10 +538,12 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	lockInfo := s.getLockInfo(c, key)
 	elapsedTTL := lockInfo.LockTtl - PessimisticLockTTL
 	c.Assert(elapsedTTL, GreaterEqual, uint64(100))
-	// TODO: The getLockInfo function checks the secondary lock can't reflect the true TTL.
-	// When the CheckTxnStatus function is available, update getLockInfo and uncomment here.
-	// lockInfo2 := s.getLockInfo(c, key2)
-	// c.Assert(lockInfo2.LockTtl, Equals, lockInfo.LockTtl)
+
+	lr := newLockResolver(s.store)
+	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	status, err := lr.getTxnStatus(bo, txn.startTS, key2, txn.startTS)
+	c.Assert(err, IsNil)
+	c.Assert(status.ttl, Equals, lockInfo.LockTtl)
 
 	// Check primary lock TTL is auto increasing while the pessimistic txn is ongoing.
 	for i := 0; i < 50; i++ {
