@@ -215,8 +215,8 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 		c.batched.Store(requestID, entries[i])
 	}
 	if err := c.client.Send(request); err != nil {
-		logutil.BgLogger().Error(
-			"batch commands send error",
+		logutil.BgLogger().Warn(
+			"sending batch commands meets error",
 			zap.String("target", c.target),
 			zap.Error(err),
 		)
@@ -260,7 +260,7 @@ func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) error {
 
 		return nil
 	}
-	logutil.BgLogger().Error(
+	logutil.BgLogger().Warn(
 		"batchRecvLoop re-create streaming fail",
 		zap.String("target", c.target),
 		zap.Error(err),
@@ -283,11 +283,13 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 	for {
 		resp, err := c.recv()
 		if err != nil {
-			logutil.BgLogger().Error(
-				"batchRecvLoop error when receive",
-				zap.String("target", c.target),
-				zap.Error(err),
-			)
+			if !c.isStopped() {
+				logutil.BgLogger().Warn(
+					"batchRecvLoop fails when receiving, needs to reconnect",
+					zap.String("target", c.target),
+					zap.Error(err),
+				)
+			}
 
 			now := time.Now()
 			if stopped := c.reCreateStreamingClient(err); stopped {
