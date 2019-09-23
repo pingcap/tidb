@@ -470,8 +470,10 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	sendReqCh := make(chan SentReq, 20)
 
 	// The request sent to the specified key and store wil fail.
-	var failKey []byte
-	var failStore *metapb.Store
+	var (
+		failKey   []byte
+		failStore *metapb.Store
+	)
 	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		sendReqCh <- SentReq{req, addr}
 		resp := &tikvrpc.Response{
