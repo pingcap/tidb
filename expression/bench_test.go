@@ -622,6 +622,8 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 		panic(err)
 	}
 	result = chunk.NewColumn(eType2FieldType(testCase.retEvalType), 1024)
+	// Mess up the output to make sure vecEvalXXX to call ResizeXXX/ReserveXXX itself.
+	result.AppendNull()
 	return baseFunc, fts, input, result
 }
 

@@ -95,6 +95,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 	{{ if .Output.Fixed }}
 	result.Resize{{ .Output.TypeNameInColumn }}(n, true)
 	{{ else }}
+	result.Reserve{{ .Output.TypeNameInColumn }}(n)
 	for i := 0; i < n; i++ { result.AppendNull() }
 	{{ end }}
 	return nil
@@ -143,6 +144,8 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 {{ else if .Output.Fixed}}
 	result.Resize{{ .Output.TypeNameInColumn }}(n, false)
 	result.MergeNulls(buf0, buf1)
+{{ else }}
+	result.Reserve{{ .Output.TypeNameInColumn}}(n)
 {{ end }}
 
 {{ if .TypeA.Fixed }}

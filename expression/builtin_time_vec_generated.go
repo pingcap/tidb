@@ -293,6 +293,8 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 		return err
 	}
 
+	result.ReserveString(n)
+
 	arg1s := buf1.GoDurations()
 
 	for i := 0; i < n; i++ {
@@ -372,6 +374,8 @@ func (b *builtinAddStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
+
+	result.ReserveString(n)
 
 	for i := 0; i < n; i++ {
 
@@ -454,6 +458,8 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(input *chunk.Chunk, result 
 		return err
 	}
 
+	result.ReserveString(n)
+
 	arg0s := buf0.GoDurations()
 
 	arg1s := buf1.GoDurations()
@@ -514,6 +520,8 @@ func (b *builtinAddDateAndStringSig) vecEvalString(input *chunk.Chunk, result *c
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
+
+	result.ReserveString(n)
 
 	arg0s := buf0.GoDurations()
 
@@ -577,6 +585,7 @@ func (b *builtinAddTimeDateTimeNullSig) vecEvalTime(input *chunk.Chunk, result *
 func (b *builtinAddTimeStringNullSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
+	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		result.AppendNull()
 	}
