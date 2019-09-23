@@ -215,7 +215,7 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 		c.batched.Store(requestID, entries[i])
 	}
 	if err := c.client.Send(request); err != nil {
-		logutil.BgLogger().Warn(
+		logutil.BgLogger().Info(
 			"sending batch commands meets error",
 			zap.String("target", c.target),
 			zap.Error(err),
@@ -260,7 +260,7 @@ func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) error {
 
 		return nil
 	}
-	logutil.BgLogger().Warn(
+	logutil.BgLogger().Info(
 		"batchRecvLoop re-create streaming fail",
 		zap.String("target", c.target),
 		zap.Error(err),
@@ -286,7 +286,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 			if c.isStopped() {
 				return
 			}
-			logutil.BgLogger().Warn(
+			logutil.BgLogger().Info(
 				"batchRecvLoop fails when receiving, needs to reconnect",
 				zap.String("target", c.target),
 				zap.Error(err),
@@ -433,7 +433,7 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 		}
 	}
 	if cli == nil {
-		logutil.BgLogger().Warn("no available connections", zap.String("target", target))
+		logutil.BgLogger().Info("no available connections", zap.String("target", target))
 		for _, entry := range entries {
 			// Please ensure the error is handled in region cache correctly.
 			entry.err = errors.New("no available connections")
