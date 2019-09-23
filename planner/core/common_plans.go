@@ -376,6 +376,26 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 		}
 		return nil
+	case *BatchPointGetPlan:
+		for i, param := range x.HandleParams {
+			if param != nil {
+				x.Handles[i], err = param.Datum.ToInt64(sc)
+				if err != nil {
+					return err
+				}
+				return nil
+			}
+		}
+		for i, params := range x.IndexValueParams {
+			if len(params) < 1 {
+				continue
+			}
+			for j, param := range params {
+				if param != nil {
+					x.IndexValues[i][j] = param.Datum
+				}
+			}
+		}
 	case PhysicalPlan:
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)
@@ -911,6 +931,8 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!
+		return v.IndexInfo == nil, nil
+	case *BatchPointGetPlan:
 		return v.IndexInfo == nil, nil
 	default:
 		return false, nil

@@ -221,26 +221,14 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"Point_Get_1 1.00 root table:t, index:a b c",
 	))
 	tk.MustQuery("explain select * from t where (a, b, c) in ((1, 1, 1), (2, 2, 2))").Check(testkit.Rows(
-		"Union_3 2.00 root ",
-		"├─Point_Get_1 1.00 root table:t, index:a b c",
-		"└─Point_Get_2 1.00 root table:t, index:a b c",
+		"Batch_Point_Get_1 2.00 root table:t, index:a b c",
 	))
 
 	tk.MustQuery("explain select * from t where a in (1, 2, 3, 4, 5)").Check(testkit.Rows(
-		"Union_6 5.00 root ",
-		"├─Point_Get_1 1.00 root table:t, handle:1",
-		"├─Point_Get_2 1.00 root table:t, handle:2",
-		"├─Point_Get_3 1.00 root table:t, handle:3",
-		"├─Point_Get_4 1.00 root table:t, handle:4",
-		"└─Point_Get_5 1.00 root table:t, handle:5",
+		"Batch_Point_Get_1 5.00 root table:t",
 	))
 
 	tk.MustQuery("explain select * from t where a in (1, 2, 3, 1, 2)").Check(testkit.Rows(
-		"Union_6 5.00 root ",
-		"├─Point_Get_1 1.00 root table:t, handle:1",
-		"├─Point_Get_2 1.00 root table:t, handle:2",
-		"├─Point_Get_3 1.00 root table:t, handle:3",
-		"├─Point_Get_4 1.00 root table:t, handle:1",
-		"└─Point_Get_5 1.00 root table:t, handle:2",
+		"Batch_Point_Get_1 5.00 root table:t",
 	))
 }

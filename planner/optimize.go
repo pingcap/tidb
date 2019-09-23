@@ -211,14 +211,18 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, stmtN
 
 // isPointGetWithoutDoubleRead returns true when meets following conditions:
 //  1. ctx is auto commit tagged.
-//  2. plan is point get by pk.
+//  2. plan is point get or batch point get by pk.
 func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
 	if !ctx.GetSessionVars().IsAutocommit() {
 		return false
 	}
 
-	v, ok := p.(*plannercore.PointGetPlan)
-	return ok && v.IndexInfo == nil
+	pointGetPlan, ok := p.(*plannercore.PointGetPlan)
+	if ok {
+		return pointGetPlan.IndexInfo == nil
+	}
+	batchPointGetPlan, ok := p.(*plannercore.BatchPointGetPlan)
+	return ok && batchPointGetPlan.IndexInfo == nil
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
