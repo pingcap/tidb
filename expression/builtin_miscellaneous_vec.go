@@ -71,6 +71,9 @@ func (b *builtinIsIPv4Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
+		// Note that even when the i-th input string is null, the output is
+		// 0 instead of null, therefore we do not set the null bit mask in
+		// result's corresponding row. See builtinIsIPv4Sig's implementation.
 		if isIPv4(buf.GetString(i)) {
 			i64s[i] = 1
 		} else {
