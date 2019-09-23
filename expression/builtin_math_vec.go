@@ -442,7 +442,7 @@ func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 		}
 		if f64s[i] <= 0 {
 			result.SetNull(i, true)
-      continue
+			continue
 		}
 		f64s[i] = math.Log(f64s[i])
 	}
@@ -450,7 +450,7 @@ func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinLog1ArgSig) vectorized() bool {
-  	return true
+	return true
 }
 
 func (b *builtinAbsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
