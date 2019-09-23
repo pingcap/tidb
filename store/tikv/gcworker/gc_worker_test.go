@@ -16,13 +16,15 @@ package gcworker
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"math"
 	"sort"
 	"strconv"
 	"testing"
 	"time"
+
+	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -470,8 +471,8 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	sendReqCh := make(chan SentReq, 20)
 
 	// The request sent to the specified key and store wil fail.
-	var failKey []byte = nil
-	var failStore *metapb.Store = nil
+	var failKey []byte
+	var failStore *metapb.Store
 	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		sendReqCh <- SentReq{req, addr}
 		resp := &tikvrpc.Response{
