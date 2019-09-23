@@ -119,7 +119,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	// decode nullBitmap.
 	if nullCount > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
-		col.nullBitmap = buffer[:numNullBitmapBytes]
+		col.nullBitmap = append(col.nullBitmap[:0], buffer[:numNullBitmapBytes]...)
 		buffer = buffer[numNullBitmapBytes:]
 	} else {
 		c.setAllNotNull(col)
@@ -130,7 +130,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	numDataBytes := int64(numFixedBytes * col.length)
 	if numFixedBytes == -1 {
 		numOffsetBytes := (col.length + 1) * 8
-		col.offsets = bytesToI64Slice(buffer[:numOffsetBytes])
+		col.offsets = append(col.offsets[:0], bytesToI64Slice(buffer[:numOffsetBytes])...)
 		buffer = buffer[numOffsetBytes:]
 		numDataBytes = col.offsets[col.length]
 	} else if cap(col.elemBuf) < numFixedBytes {
@@ -138,7 +138,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	}
 
 	// decode data.
-	col.data = buffer[:numDataBytes]
+	col.data = append(col.data[:0], buffer[:numDataBytes]...)
 	return buffer[numDataBytes:]
 }
 
