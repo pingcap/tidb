@@ -21,6 +21,30 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 )
 
+// EngineType is used to determine which implementation the plan should use.
+// Different engine should use different implementations which also have
+// different cost estimation.
+type EngineType uint
+
+const (
+	TiDBRoot EngineType = iota
+	TiKVCop
+	TiFlashCop
+)
+
+// String implements fmt.Stringer interface.
+func (e EngineType) String() string {
+	switch e {
+	case TiDBRoot:
+		return "TiDBRoot"
+	case TiKVCop:
+		return "TiKVCop"
+	case TiFlashCop:
+		return "TiFlashCop"
+	}
+	return "UnknownEngineType"
+}
+
 // Group is short for expression Group, which is used to store all the
 // logically equivalent expressions. It's a set of GroupExpr.
 type Group struct {
@@ -34,6 +58,8 @@ type Group struct {
 
 	ImplMap map[string]Implementation
 	Prop    *property.LogicalProperty
+
+	EngineType EngineType
 }
 
 // NewGroupWithSchema creates a new Group with given schema.
@@ -45,8 +71,15 @@ func NewGroupWithSchema(e *GroupExpr, s *expression.Schema) *Group {
 		FirstExpr:    make(map[Operand]*list.Element),
 		ImplMap:      make(map[string]Implementation),
 		Prop:         prop,
+		EngineType:   TiDBRoot,
 	}
 	g.Insert(e)
+	return g
+}
+
+// SetEngineType sets the engine type of the group.
+func (g *Group) SetEngineType(e EngineType) *Group {
+	g.EngineType = e
 	return g
 }
 

@@ -38,19 +38,34 @@ func NewShowImpl(show *plannercore.PhysicalShow) *ShowImpl {
 	return &ShowImpl{baseImpl: baseImpl{plan: show}}
 }
 
-// SelectionImpl is the implementation of PhysicalSelection.
-type SelectionImpl struct {
+// RootSelectionImpl is the implementation of PhysicalSelection in TiDB layer.
+type RootSelectionImpl struct {
 	baseImpl
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (sel *SelectionImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
-	// TODO: When CPUFactor and CopCPUFactor can be set by users, we need to distinguish them.
+func (sel *RootSelectionImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
 	sel.cost = outCount*plannercore.CPUFactor + childCosts[0]
 	return sel.cost
 }
 
-// NewSelectionImpl creates a new SelectionImpl.
-func NewSelectionImpl(sel *plannercore.PhysicalSelection) *SelectionImpl {
-	return &SelectionImpl{baseImpl{plan: sel}}
+// NewRootSelectionImpl creates a new RootSelectionImpl.
+func NewRootSelectionImpl(sel *plannercore.PhysicalSelection) *RootSelectionImpl {
+	return &RootSelectionImpl{baseImpl{plan: sel}}
+}
+
+// TiKVCopSelectionImpl is the implementation of PhysicalSelection in TiKV layer.
+type TiKVCopSelectionImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (sel *TiKVCopSelectionImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
+	sel.cost = outCount*plannercore.CopCPUFactor + childCosts[0]
+	return sel.cost
+}
+
+// NewTiKVCopSelectionImpl creates a new TiKVCopSelectionImpl.
+func NewTiKVCopSelectionImpl(sel *plannercore.PhysicalSelection) *TiKVCopSelectionImpl {
+	return &TiKVCopSelectionImpl{baseImpl{plan: sel}}
 }
