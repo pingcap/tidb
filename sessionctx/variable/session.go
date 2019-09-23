@@ -1221,7 +1221,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
-		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+		writeSlowLogItem(&buf, SlowLogPlan, "select "+ast.TiDBDecodePlan+"('"+logItems.Plan+"')")
 	}
 
 	if logItems.PrevStmt != "" {
