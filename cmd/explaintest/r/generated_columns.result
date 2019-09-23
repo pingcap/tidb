@@ -82,13 +82,13 @@ IndexJoin_23	5.00	root	inner join, inner:IndexLookUp_22, outer key:Column#8, inn
 EXPLAIN SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	count	task	operator info
 Projection_6	5.00	root	Column#1, Column#2, Column#3, Column#4, Column#6, Column#7, Column#8, Column#9
-└─HashRightJoin_32	5.00	root	inner join, inner:TableReader_51, equal:[eq(Column#8, Column#3)]
-  ├─TableReader_51	1.00	root	data:Selection_50
-  │ └─Selection_50	1.00	cop	not(isnull(Column#8))
-  │   └─TableScan_49	1.00	cop	table:sgc2, range:[-inf,+inf], keep order:false
-  └─TableReader_60	5.00	root	data:Selection_59
-    └─Selection_59	5.00	cop	not(isnull(Column#3))
-      └─TableScan_58	5.00	cop	table:sgc1, range:[-inf,+inf], keep order:false
+└─HashRightJoin_21	5.00	root	inner join, inner:TableReader_40, equal:[eq(Column#8, Column#3)]
+  ├─TableReader_40	1.00	root	data:Selection_39
+  │ └─Selection_39	1.00	cop	not(isnull(Column#8))
+  │   └─TableScan_38	1.00	cop	table:sgc2, range:[-inf,+inf], keep order:false
+  └─TableReader_49	5.00	root	data:Selection_48
+    └─Selection_48	5.00	cop	not(isnull(Column#3))
+      └─TableScan_47	5.00	cop	table:sgc1, range:[-inf,+inf], keep order:false
 DROP TABLE IF EXISTS sgc3;
 CREATE TABLE sgc3 (
 j JSON,
