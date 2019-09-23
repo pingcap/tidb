@@ -27,8 +27,11 @@ import (
 type EngineType uint
 
 const (
+	// TiDBRoot stands for groups on top of `Gather`s which will be executed in TiDB layer.
 	TiDBRoot EngineType = iota
+	// TiKVCop stands for groups below `Gather`s which will be executed in TiKV coprocessor.
 	TiKVCop
+	// TiFlashCop stands for groups below `Gather`s which will be executed in TiFlash coprocessor.
 	TiFlashCop
 )
 
