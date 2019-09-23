@@ -361,7 +361,7 @@ func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
 	tk.MustExec("insert into t(id, v) values(1, 2),(1, 2),(2, 3);")
 	tk.MustExec("prepare s1 from 'select max(v) from t group by floor(id/?)';")
 	tk.MustExec("set @a=2;")
-	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("3", "2"))
+	tk.MustQuery("execute s1 using @a;").Sort().Check(testkit.Rows("2", "3"))
 
 	tk.MustExec("prepare s1 from 'select max(v) from t group by ?';")
 	tk.MustExec("set @a=2;")
