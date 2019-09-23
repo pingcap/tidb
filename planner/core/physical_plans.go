@@ -500,7 +500,7 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 type PhysicalShow struct {
 	physicalSchemaProducer
 
-	baseShowContent
+	ShowContents
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.

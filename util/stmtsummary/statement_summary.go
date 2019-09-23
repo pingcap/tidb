@@ -16,12 +16,10 @@ package stmtsummary
 import (
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -55,6 +53,15 @@ type stmtSummaryByDigestMap struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	sync.Mutex
 	summaryMap *kvcache.SimpleLRUCache
+
+	// enabledWrapper encapsulates variables needed to judge whether statement summary is enabled.
+	enabledWrapper struct {
+		sync.RWMutex
+		// enabled indicates whether statement summary is enabled in current server.
+		sessionEnabled string
+		// setInSession indicates whether statement summary has been set in any session.
+		globalEnabled string
+	}
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -97,9 +104,13 @@ type StmtExecInfo struct {
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
-	return &stmtSummaryByDigestMap{
+	ssMap := &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 	}
+	// enabledWrapper.defaultEnabled will be initialized in package variable.
+	ssMap.enabledWrapper.sessionEnabled = ""
+	ssMap.enabledWrapper.globalEnabled = ""
+	return ssMap
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo
@@ -164,7 +175,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 
 	ssMap.Lock()
 	// Check again. Statements could be added before disabling the flag and after Clear()
-	if atomic.LoadInt32(&variable.EnableStmtSummary) == 0 {
+	if !ssMap.Enabled() {
 		ssMap.Unlock()
 		return
 	}
@@ -188,7 +199,7 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.Unlock()
 }
 
-// Convert statement summary to Datum
+// ToDatum converts statement summary to Datum
 func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
@@ -219,12 +230,64 @@ func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 	return rows
 }
 
-// OnEnableStmtSummaryModified is triggered once EnableStmtSummary is modified.
-func OnEnableStmtSummaryModified(newValue string) {
-	if variable.TiDBOptOn(newValue) {
-		atomic.StoreInt32(&variable.EnableStmtSummary, 1)
+// SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
+func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) {
+	value = ssMap.normalizeEnableValue(value)
+
+	ssMap.enabledWrapper.Lock()
+	if inSession {
+		ssMap.enabledWrapper.sessionEnabled = value
 	} else {
-		atomic.StoreInt32(&variable.EnableStmtSummary, 0)
-		StmtSummaryByDigestMap.Clear()
+		ssMap.enabledWrapper.globalEnabled = value
 	}
+	sessionEnabled := ssMap.enabledWrapper.sessionEnabled
+	globalEnabled := ssMap.enabledWrapper.globalEnabled
+	ssMap.enabledWrapper.Unlock()
+
+	// Clear all summaries once statement summary is disabled.
+	var needClear bool
+	if ssMap.isSet(sessionEnabled) {
+		needClear = !ssMap.isEnabled(sessionEnabled)
+	} else {
+		needClear = !ssMap.isEnabled(globalEnabled)
+	}
+	if needClear {
+		ssMap.Clear()
+	}
+}
+
+// Enabled returns whether statement summary is enabled.
+func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
+	ssMap.enabledWrapper.RLock()
+	var enabled bool
+	if ssMap.isSet(ssMap.enabledWrapper.sessionEnabled) {
+		enabled = ssMap.isEnabled(ssMap.enabledWrapper.sessionEnabled)
+	} else {
+		enabled = ssMap.isEnabled(ssMap.enabledWrapper.globalEnabled)
+	}
+	ssMap.enabledWrapper.RUnlock()
+	return enabled
+}
+
+// normalizeEnableValue converts 'ON' to '1' and 'OFF' to '0'
+func (ssMap *stmtSummaryByDigestMap) normalizeEnableValue(value string) string {
+	switch {
+	case strings.EqualFold(value, "ON"):
+		return "1"
+	case strings.EqualFold(value, "OFF"):
+		return "0"
+	default:
+		return value
+	}
+}
+
+// isEnabled converts a string value to bool.
+// 1 indicates true, 0 or '' indicates false.
+func (ssMap *stmtSummaryByDigestMap) isEnabled(value string) bool {
+	return value == "1"
+}
+
+// isSet judges whether the variable is set.
+func (ssMap *stmtSummaryByDigestMap) isSet(value string) bool {
+	return value != ""
 }

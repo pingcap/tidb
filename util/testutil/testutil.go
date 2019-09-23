@@ -223,6 +223,17 @@ func (t *TestData) OnRecord(updateFunc func()) {
 	}
 }
 
+// ConvertRowsToStrings converts [][]interface{} to []string.
+func (t *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
+	for _, row := range rows {
+		s := fmt.Sprintf("%v", row)
+		// Trim the leftmost `[` and rightmost `]`.
+		s = s[1 : len(s)-1]
+		rs = append(rs, s)
+	}
+	return rs
+}
+
 // GenerateOutputIfNeeded generate the output file.
 func (t *TestData) GenerateOutputIfNeeded() error {
 	if !record {
