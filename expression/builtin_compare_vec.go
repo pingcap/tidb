@@ -144,13 +144,13 @@ func (b *builtinGreatestIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 		}
 
 		result.MergeNulls(buf)
+		v := buf.Int64s()
 		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
 				continue
 			}
-			v := buf.GetInt64(i)
-			if v > i64s[i] {
-				i64s[i] = v
+			if v[i] > i64s[i] {
+				i64s[i] = v[i]
 			}
 		}
 	}
