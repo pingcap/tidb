@@ -69,6 +69,7 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	},
 	ast.Abs: {
 		{types.ETDecimal, []types.EvalType{types.ETDecimal}, nil},
+		{types.ETReal, []types.EvalType{types.ETReal}, nil},
 		{types.ETInt, []types.EvalType{types.ETInt}, nil},
 	},
 	ast.Round: {
