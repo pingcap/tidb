@@ -653,6 +653,6 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 	}
 
 	// TODO: try to decode other type key.
-	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the key is a invalid record/index key"))
+	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %v", key))
 	return s
 }
