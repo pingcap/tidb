@@ -768,12 +768,12 @@ l_shipmode;
 id	count	task	operator info
 Sort_9	1.00	root	Column#29:asc
 └─Projection_11	1.00	root	Column#24, Column#27, Column#28
-  └─HashAgg_14	1.00	root	group by:Column#36, funcs:sum(Column#0), sum(Column#0), firstrow(Column#0)
-    └─Projection_49	10023369.01	root	cast(case(or(eq(Column#6, "1-URGENT"), eq(Column#6, "2-HIGH")), 1, 0)), cast(case(and(ne(Column#6, "1-URGENT"), ne(Column#6, "2-HIGH")), 1, 0)), Column#24, Column#24
+  └─HashAgg_14	1.00	root	group by:Column#34, funcs:sum(Column#0), sum(Column#0), firstrow(Column#0)
+    └─Projection_38	10023369.01	root	cast(case(or(eq(Column#6, "1-URGENT"), eq(Column#6, "2-HIGH")), 1, 0)), cast(case(and(ne(Column#6, "1-URGENT"), ne(Column#6, "2-HIGH")), 1, 0)), Column#24, Column#24
       └─IndexMergeJoin_22	10023369.01	root	inner join, inner:TableReader_20, outer key:Column#10, inner key:Column#1
-        ├─TableReader_45	10023369.01	root	data:Selection_44
-        │ └─Selection_44	10023369.01	cop	ge(Column#22, 1997-01-01 00:00:00.000000), in(Column#24, "RAIL", "FOB"), lt(Column#20, Column#21), lt(Column#21, Column#22), lt(Column#22, 1998-01-01)
-        │   └─TableScan_43	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
+        ├─TableReader_34	10023369.01	root	data:Selection_33
+        │ └─Selection_33	10023369.01	cop	ge(Column#22, 1997-01-01 00:00:00.000000), in(Column#24, "RAIL", "FOB"), lt(Column#20, Column#21), lt(Column#21, Column#22), lt(Column#22, 1998-01-01)
+        │   └─TableScan_32	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
         └─TableReader_20	1.00	root	data:TableScan_19
           └─TableScan_19	1.00	cop	table:orders, range: decided by [Column#10], keep order:true
 /*
@@ -930,16 +930,16 @@ id	count	task	operator info
 Sort_13	3863988.24	root	Column#28:desc, Column#25:asc, Column#26:asc, Column#27:asc
 └─Projection_15	3863988.24	root	Column#10, Column#11, Column#12, Column#24
   └─HashAgg_18	3863988.24	root	group by:Column#10, Column#11, Column#12, funcs:count(distinct Column#2), firstrow(Column#10), firstrow(Column#11), firstrow(Column#12)
-    └─HashLeftJoin_28	3863988.24	root	anti semi join, inner:TableReader_62, equal:[eq(Column#2, Column#16)]
+    └─HashLeftJoin_28	3863988.24	root	anti semi join, inner:TableReader_53, equal:[eq(Column#2, Column#16)]
       ├─IndexMergeJoin_36	4829985.30	root	inner join, inner:IndexReader_34, outer key:Column#7, inner key:Column#1
-      │ ├─TableReader_55	1200618.43	root	data:Selection_54
-      │ │ └─Selection_54	1200618.43	cop	in(Column#12, 48, 19, 12, 4, 41, 7, 21, 39), ne(Column#10, "Brand#34"), not(like(Column#11, "LARGE BRUSHED%", 92))
-      │ │   └─TableScan_53	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
+      │ ├─TableReader_46	1200618.43	root	data:Selection_45
+      │ │ └─Selection_45	1200618.43	cop	in(Column#12, 48, 19, 12, 4, 41, 7, 21, 39), ne(Column#10, "Brand#34"), not(like(Column#11, "LARGE BRUSHED%", 92))
+      │ │   └─TableScan_44	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
       │ └─IndexReader_34	4.02	root	index:IndexScan_33
       │   └─IndexScan_33	4.02	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(Column#1, Column#7)], keep order:true
-      └─TableReader_62	400000.00	root	data:Selection_61
-        └─Selection_61	400000.00	cop	like(Column#22, "%Customer%Complaints%", 92)
-          └─TableScan_60	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
+      └─TableReader_53	400000.00	root	data:Selection_52
+        └─Selection_52	400000.00	cop	like(Column#22, "%Customer%Complaints%", 92)
+          └─TableScan_51	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
 /*
 Q17 Small-Quantity-Order Revenue Query
 This query determines how much average yearly revenue would be lost if orders were no longer filled for small
@@ -1158,17 +1158,17 @@ Sort_28	20000.00	root	Column#48:asc
       └─Projection_52	64006.34	root	Column#12, Column#13, Column#14, Column#18, mul(0.5, Column#45)
         └─Selection_53	64006.34	root	gt(cast(Column#14), mul(0.5, Column#45))
           └─HashAgg_56	80007.93	root	group by:Column#12, Column#13, funcs:firstrow(Column#12), firstrow(Column#13), firstrow(Column#14), firstrow(Column#18), sum(Column#32)
-            └─HashLeftJoin_59	9711455.06	root	left outer join, inner:TableReader_95, equal:[eq(Column#12, Column#29) eq(Column#13, Column#30)]
+            └─HashLeftJoin_59	9711455.06	root	left outer join, inner:TableReader_86, equal:[eq(Column#12, Column#29) eq(Column#13, Column#30)]
               ├─IndexMergeJoin_69	321865.05	root	inner join, inner:IndexLookUp_67, outer key:Column#18, inner key:Column#12
-              │ ├─TableReader_90	80007.93	root	data:Selection_89
-              │ │ └─Selection_89	80007.93	cop	like(Column#19, "green%", 92)
-              │ │   └─TableScan_88	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
+              │ ├─TableReader_81	80007.93	root	data:Selection_80
+              │ │ └─Selection_80	80007.93	cop	like(Column#19, "green%", 92)
+              │ │   └─TableScan_79	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
               │ └─IndexLookUp_67	4.02	root	
               │   ├─IndexScan_65	4.02	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(Column#12, Column#18)], keep order:true
               │   └─TableScan_66	4.02	cop	table:partsupp, keep order:false
-              └─TableReader_95	44189356.65	root	data:Selection_94
-                └─Selection_94	44189356.65	cop	ge(Column#38, 1993-01-01 00:00:00.000000), lt(Column#38, 1994-01-01)
-                  └─TableScan_93	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
+              └─TableReader_86	44189356.65	root	data:Selection_85
+                └─Selection_85	44189356.65	cop	ge(Column#38, 1993-01-01 00:00:00.000000), lt(Column#38, 1994-01-01)
+                  └─TableScan_84	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
 /*
 Q21 Suppliers Who Kept Orders Waiting Query
 This query identifies certain suppliers who were not able to ship required parts in a timely manner.
