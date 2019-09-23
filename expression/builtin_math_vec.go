@@ -446,7 +446,22 @@ func (b *builtinRoundRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinRoundRealSig) vectorized() bool {
-  	return true
+  return true
+}
+
+func (b *builtinAbsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		f64s[i] = math.Abs(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinAbsRealSig) vectorized() bool {
+	return true
 }
 
 func (b *builtinAbsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -469,5 +484,13 @@ func (b *builtinAbsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinAbsIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinRoundIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalInt(b.ctx, input, result)
+}
+
+func (b *builtinRoundIntSig) vectorized() bool {
 	return true
 }
