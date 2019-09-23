@@ -817,7 +817,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 // getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
 func getPlanTree(p plannercore.Plan) string {
 	cfg := config.GetGlobalConfig()
-	if atomic.LoadUint32(&cfg.Log.SlowLogPlan) == 1 {
+	if atomic.LoadUint32(&cfg.Log.ShowPlanInSlowLog) == 1 {
 		var selectPlan plannercore.PhysicalPlan
 		if physicalPlan, ok := p.(plannercore.PhysicalPlan); ok {
 			selectPlan = physicalPlan

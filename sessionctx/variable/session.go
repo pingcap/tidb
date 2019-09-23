@@ -848,8 +848,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
-	case TiDBSlowLogPlan:
-		atomic.StoreUint32(&config.GetGlobalConfig().Log.SlowLogPlan, uint32(tidbOptInt64(val, logutil.DefaultSlowLogPlan)))
+	case TiDBShowPlanInSlowLog:
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.ShowPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultSlowLogPlan)))
 	case TiDBDDLSlowOprThreshold:
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:
