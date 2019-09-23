@@ -1829,12 +1829,10 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType
 	}
-
 	var (
 		outerFilter           []expression.Expression
 		leftTypes, rightTypes []*types.FieldType
 	)
-
 	if v.InnerChildIdx == 0 {
 		leftTypes, rightTypes = innerTypes, outerTypes
 		outerFilter = v.RightConditions
