@@ -1463,16 +1463,25 @@ type gbyResolver struct {
 	err     error
 	inExpr  bool
 	isParam bool
+
+	exprDepth int // exprDepth is the depth of current expression in expression tree.
 }
 
 func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+	g.exprDepth++
 	switch n := inNode.(type) {
 	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
 		return inNode, true
 	case *driver.ParamMarkerExpr:
-		newNode := expression.ConstructPositionExpr(n)
 		g.isParam = true
-		return newNode, true
+		if g.exprDepth == 1 {
+			_, isNull, isExpectedType := getUintFromNode(g.ctx, n)
+			// For constant uint expression in top level, it should be treated as position expression.
+			if !isNull && isExpectedType {
+				return expression.ConstructPositionExpr(n), true
+			}
+		}
+		return n, true
 	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
 	default:
 		g.inExpr = true
