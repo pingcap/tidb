@@ -53,12 +53,11 @@ var (
 		},
 	)
 
-	DistSQLDecodeTypeErrorCount = prometheus.NewCounter(
+	DistSQLDecodeTypeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
-			Name:      "decode_type_error_num",
-			Help:      "count of expected decode type is different from actual.",
-		},
-	)
+			Name:      "decode_type_total",
+			Help:      "Counter of each decode type",
+		}, []string{LblType})
 )

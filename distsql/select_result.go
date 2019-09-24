@@ -155,8 +155,8 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		if len(r.selectResp.RowBatchData) == 0 {
 			r.encodeType = tipb.EncodeType_TypeDefault
-			metrics.DistSQLDecodeTypeErrorCount.Inc()
 		}
+		metrics.DistSQLDecodeTypeCounter.WithLabelValues(r.encodeType.String()).Inc()
 	}
 
 	switch r.encodeType {
@@ -175,6 +175,7 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 			if err != nil || r.selectResp == nil {
 				return err
 			}
+			metrics.DistSQLDecodeTypeCounter.WithLabelValues(r.encodeType.String()).Inc()
 		}
 		err := r.readRowsData(chk)
 		if err != nil {
