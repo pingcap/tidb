@@ -294,7 +294,16 @@ func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
 			numPairs = 0
 		}
 	}
-	probeCost := numPairs * CPUFactor / concurrency
+	// Inner workers do hash join in parallel, but they can only save ONE outer
+	// batch results. So as the number of outer batch exceeds inner concurrency,
+	// it would fall back to linear execution. In a word, the hash join only runs
+	// in parallel for the first `innerConcurrency` number of inner tasks.
+	var probeCost float64
+	if outerCnt/batchSize >= concurrency {
+		probeCost = (numPairs - batchSize*innerCnt*(concurrency-1)) * CPUFactor
+	} else {
+		probeCost = batchSize * innerCnt * CPUFactor
+	}
 	cpuCost += probeCost
 	// Cost of additional concurrent goroutines.
 	cpuCost += (concurrency + 1.0) * concurrencyFactor

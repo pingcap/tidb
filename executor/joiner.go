@@ -315,6 +315,8 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 
 func (j *semiJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
 }
+
+// Clone implements joiner interface.
 func (j *semiJoiner) Clone() joiner {
 	return &semiJoiner{baseJoiner: j.baseJoiner.Clone()}
 }

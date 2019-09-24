@@ -424,7 +424,7 @@ func (p *LogicalJoin) constructIndexHashJoin(
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
 	// TODO(xuhuaiyu): support keep outer order for indexHashJoin.
-	if keepOuterOrder := len(prop.Items) > 0; keepOuterOrder {
+	if !prop.IsEmpty() {
 		return nil
 	}
 	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
