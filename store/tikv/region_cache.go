@@ -69,7 +69,7 @@ type Region struct {
 // RegionStore represents region stores info
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
-	workTikVIdx    int32    // point to current work peer in meta.Peers and work store in stores(same idx) for tikv peer
+	workTiKVIdx    int32    // point to current work peer in meta.Peers and work store in stores(same idx) for tikv peer
 	workTiFlashIdx int32    // point to current work peer in meta.Peers and work store in stores(same idx) for tiflash peer
 	stores         []*Store // stores in this region
 	storeFails     []uint32 // snapshots of store's fail, need reload when `storeFails[curr] != stores[cur].fail`
@@ -83,7 +83,7 @@ func (r *RegionStore) clone() *RegionStore {
 	}
 	return &RegionStore{
 		workTiFlashIdx: r.workTiFlashIdx,
-		workTikVIdx:    r.workTikVIdx,
+		workTiKVIdx:    r.workTiKVIdx,
 		stores:         r.stores,
 		storeFails:     storeFails,
 	}
@@ -93,12 +93,12 @@ func (r *RegionStore) clone() *RegionStore {
 func (r *RegionStore) follower(seed uint32) int32 {
 	l := uint32(len(r.stores))
 	if l <= 1 {
-		return r.workTikVIdx
+		return r.workTiKVIdx
 	}
 
 	for retry := l - 1; retry > 0; retry-- {
 		followerIdx := int32(seed % (l - 1))
-		if followerIdx >= r.workTikVIdx {
+		if followerIdx >= r.workTiKVIdx {
 			followerIdx++
 		}
 		if r.stores[followerIdx].storeType != TiKV {
@@ -109,7 +109,7 @@ func (r *RegionStore) follower(seed uint32) int32 {
 		}
 		seed++
 	}
-	return r.workTikVIdx
+	return r.workTiKVIdx
 }
 
 // init initializes region after constructed.
@@ -117,7 +117,7 @@ func (r *Region) init(c *RegionCache) {
 	// region store pull used store from global store map
 	// to avoid acquire storeMu in later access.
 	rs := &RegionStore{
-		workTikVIdx:    0,
+		workTiKVIdx:    0,
 		workTiFlashIdx: 0,
 		stores:         make([]*Store, 0, len(r.meta.Peers)),
 		storeFails:     make([]uint32, 0, len(r.meta.Peers)),
@@ -999,19 +999,19 @@ func (r *Region) GetMeta() *metapb.Region {
 // GetLeaderID returns leader region ID.
 func (r *Region) GetLeaderID() uint64 {
 	store := r.getStore()
-	if int(store.workTikVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
 		return 0
 	}
-	return r.meta.Peers[int(r.getStore().workTikVIdx)].Id
+	return r.meta.Peers[int(r.getStore().workTiKVIdx)].Id
 }
 
 // GetLeaderStoreID returns the store ID of the leader region.
 func (r *Region) GetLeaderStoreID() uint64 {
 	store := r.getStore()
-	if int(store.workTikVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
 		return 0
 	}
-	return r.meta.Peers[int(r.getStore().workTikVIdx)].StoreId
+	return r.meta.Peers[int(r.getStore().workTiKVIdx)].StoreId
 }
 
 func (r *Region) getStorePeer(rs *RegionStore, pidx int32) (store *Store, peer *metapb.Peer, idx int) {
@@ -1023,7 +1023,7 @@ func (r *Region) getStorePeer(rs *RegionStore, pidx int32) (store *Store, peer *
 
 // WorkStorePeer returns current work store with work peer.
 func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer, idx int) {
-	return r.getStorePeer(rs, rs.workTikVIdx)
+	return r.getStorePeer(rs, rs.workTiKVIdx)
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
@@ -1100,7 +1100,7 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 		}
 	}
 
-	if int(rs.workTikVIdx) != currentPeerIdx {
+	if int(rs.workTiKVIdx) != currentPeerIdx {
 		return
 	}
 
@@ -1109,7 +1109,7 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 		nextIdx = (nextIdx + 1) % len(rs.stores)
 	}
 	newRegionStore := rs.clone()
-	newRegionStore.workTikVIdx = int32(nextIdx)
+	newRegionStore.workTiKVIdx = int32(nextIdx)
 	r.compareAndSwapStore(rs, newRegionStore)
 }
 
@@ -1131,11 +1131,11 @@ func (c *RegionCache) switchWorkIdx(r *Region, leaderIdx int) {
 retry:
 	// switch to new leader.
 	oldRegionStore := r.getStore()
-	if oldRegionStore.workTikVIdx == int32(leaderIdx) {
+	if oldRegionStore.workTiKVIdx == int32(leaderIdx) {
 		return
 	}
 	newRegionStore := oldRegionStore.clone()
-	newRegionStore.workTikVIdx = int32(leaderIdx)
+	newRegionStore.workTiKVIdx = int32(leaderIdx)
 	if !r.compareAndSwapStore(oldRegionStore, newRegionStore) {
 		goto retry
 	}
