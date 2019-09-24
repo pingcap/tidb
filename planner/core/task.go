@@ -642,6 +642,7 @@ func (t *rootTask) plan() PhysicalPlan {
 
 func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
+	sunk := false
 	if cop, ok := t.(*copTask); ok {
 		// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 		// because handles would be reordered before being sent to table scan.
@@ -656,9 +657,42 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
 		t = finishCopTask(p.ctx, cop)
+		sunk = p.sinkIntoIndexLookUp(t)
 	}
-	t = attachPlan2Task(p, t)
-	return t
+	if sunk {
+		return t
+	}
+	return attachPlan2Task(p, t)
+}
+
+func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
+	root := t.(*rootTask)
+	reader, isDoubleRead := root.p.(*PhysicalIndexLookUpReader)
+	proj, isProj := root.p.(*PhysicalProjection)
+	if !isDoubleRead && !isProj {
+		return false
+	}
+	if isProj {
+		reader, isDoubleRead = proj.Children()[0].(*PhysicalIndexLookUpReader)
+		if !isDoubleRead {
+			return false
+		}
+	}
+	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
+	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
+	if !isTableScan {
+		return false
+	}
+	reader.PushedLimit = &PushedDownLimit{
+		Offset: p.Offset,
+		Count:  p.Count,
+	}
+	ts.stats = p.stats
+	reader.stats = p.stats
+	if isProj {
+		proj.stats = p.stats
+	}
+	return true
 }
 
 // GetCost computes cost of TopN operator itself.
