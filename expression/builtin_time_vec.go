@@ -153,6 +153,8 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			continue
 		}
 		arg0 := buf0.GetString(i)
+		arg1 := buf1.GetString(i)
+
 		if b.isFloat {
 			tm, err = types.ParseTimeFromFloatString(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 		} else {
@@ -166,7 +168,6 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			continue
 		}
 
-		arg1 := buf1.GetString(i)
 		if !isDuration(arg1) {
 			result.SetNull(i, true)
 			continue
