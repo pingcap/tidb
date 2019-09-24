@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/net/context"
@@ -62,7 +63,7 @@ var (
 	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
 )
 
-func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
+func (t backoffType) metric() (prometheus.Counter, prometheus.Histogram) {
 	switch t {
 	case boTiKVRPC:
 		return tikvBackoffCounterRPC, tikvBackoffHistogramRPC
@@ -70,7 +71,7 @@ func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
 		return tikvBackoffCounterLock, tikvBackoffHistogramLock
 	case boTxnLockFast:
 		return tikvBackoffCounterLockFast, tikvBackoffHistogramLockFast
-	case BoPDRPC:
+	case boPDRPC:
 		return tikvBackoffCounterPD, tikvBackoffHistogramPD
 	case BoRegionMiss:
 		return tikvBackoffCounterRegionMiss, tikvBackoffHistogramRegionMiss
