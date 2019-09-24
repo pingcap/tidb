@@ -267,7 +267,6 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			input.SetSel(sel)
 			globalColumnAllocator.put(buf)
 			continue
-
 		}
 
 		if err := vecEval(ctx, expr, input, buf); err != nil {
