@@ -21,18 +21,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
-	"go.uber.org/zap"
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
@@ -196,11 +193,16 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	e.cancelFunc = cancelFunc
 	innerCh := make(chan *lookUpMergeJoinTask, concurrency)
 	e.workerWg.Add(1)
-	go e.newOuterWorker(resultCh, innerCh).run(workerCtx, e.workerWg)
+	go e.newOuterWorker(resultCh, innerCh).run(workerCtx, e.workerWg, e.cancelFunc)
 	e.workerWg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
-		go e.newInnerMergeWorker(innerCh, i).run(workerCtx, e.workerWg)
+		go e.newInnerMergeWorker(innerCh, i).run(workerCtx, e.workerWg, e.cancelFunc)
 	}
+	go e.wait4JoinWorkers()
+}
+
+func (e *IndexLookUpMergeJoin) wait4JoinWorkers() {
+	e.workerWg.Wait()
 }
 
 func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMergeJoinTask) *outerMergeWorker {
@@ -294,21 +296,14 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) *lookUpMerge
 	return task
 }
 
-func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
+func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
 	defer func() {
-		if r := recover(); r != nil {
-			err := errors.Errorf("%v", r)
-			logutil.Logger(context.Background()).Error("outerMergeWorker panic in the recoverable goroutine", zap.Error(err))
-			task := &lookUpMergeJoinTask{
-				results: make(chan *indexMergeJoinResult, 1),
-				doneErr: make(chan error, 1),
-			}
-			task.doneErr <- err
-			omw.pushToChan(ctx, task, omw.resultCh)
-		}
 		close(omw.resultCh)
 		close(omw.innerCh)
 		wg.Done()
+		if r := recover(); r != nil {
+			cancelFunc()
+		}
 	}()
 	for {
 		task, err := omw.buildTask(ctx)
@@ -417,16 +412,13 @@ func (omw *outerMergeWorker) increaseBatchSize() {
 	}
 }
 
-func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
+func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
 	var task *lookUpMergeJoinTask
 	defer func() {
-		if r := recover(); r != nil {
-			err := errors.Errorf("%v", r)
-			logutil.Logger(context.Background()).Error("innerMergeWorker panic in the recoverable goroutine", zap.Error(err))
-			task.doneErr = make(chan error, 1)
-			task.doneErr <- err
-		}
 		wg.Done()
+		if r := recover(); r != nil {
+			cancelFunc()
+		}
 	}()
 
 	for ok := true; ok; {
@@ -504,8 +496,9 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 		if len(task.outerMatch) > 0 && !task.outerMatch[outerRow.Idx()] {
 			continue
 		}
-		hasMatch, hasNull := false, false
-		cmpResult := initCmpResult
+		hasMatch, hasNull, cmpResult := false, false, initCmpResult
+		// If it has iterated out all inner rows and the inner rows with same key is empty,
+		// that means the outer row needn't match any inner rows.
 		if noneInnerRowsRemain && len(task.sameKeyInnerRows) == 0 {
 			goto missMatch
 		}
@@ -520,11 +513,10 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 				task.sameKeyInnerRows = task.sameKeyInnerRows[:0]
 				goto missMatch
 			}
-			noneInnerRows, err := imw.fetchInnerRowsWithSameKey(ctx, task, outerRow)
+			noneInnerRowsRemain, err = imw.fetchInnerRowsWithSameKey(ctx, task, outerRow)
 			if err != nil {
 				return err
 			}
-			noneInnerRowsRemain = noneInnerRowsRemain || noneInnerRows
 		}
 
 		for task.sameKeyIter.Current() != task.sameKeyIter.End() {
@@ -532,7 +524,6 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 			if err != nil {
 				return err
 			}
-
 			hasMatch = hasMatch || matched
 			hasNull = hasNull || isNull
 			if !imw.fetchNewChunkWhenFull(ctx, task, &chk) {
@@ -681,7 +672,6 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
-	e.workerWg.Wait()
 	e.memTracker = nil
 	return e.baseExecutor.Close()
 }
