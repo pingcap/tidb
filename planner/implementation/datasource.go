@@ -14,8 +14,10 @@
 package implementation
 
 import (
+	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
+	"github.com/pingcap/tidb/statistics"
 )
 
 // TableDualImpl implementation of PhysicalTableDual.
@@ -31,4 +33,63 @@ func NewTableDualImpl(dual *plannercore.PhysicalTableDual) *TableDualImpl {
 // CalcCost calculates the cost of the table dual Implementation.
 func (impl *TableDualImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
 	return 0
+}
+
+// TableReaderImpl implementation of PhysicalTableReader.
+type TableReaderImpl struct {
+	baseImpl
+	tblColHists *statistics.HistColl
+}
+
+// NewTableReaderImpl creates a new table reader Implementation.
+func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, hists *statistics.HistColl) *TableReaderImpl {
+	base := baseImpl{plan: reader}
+	impl := &TableReaderImpl{
+		baseImpl:    base,
+		tblColHists: hists,
+	}
+	return impl
+}
+
+// CalcCost calculates the cost of the table reader Implementation.
+func (impl *TableReaderImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
+	reader := impl.plan.(*plannercore.PhysicalTableReader)
+	width := impl.tblColHists.GetAvgRowSize(reader.Schema().Columns, false)
+	networkCost := outCount * plannercore.NetworkFactor * width
+	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
+	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
+	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
+	// the number of regions involved, we simply use DistSQLScanConcurrency.
+	copIterWorkers := float64(reader.SCtx().GetSessionVars().DistSQLScanConcurrency)
+	impl.cost = (networkCost + childCosts[0]) / copIterWorkers
+	return impl.cost
+}
+
+// TableScanImpl implementation of PhysicalTableScan.
+type TableScanImpl struct {
+	baseImpl
+	tblColHists *statistics.HistColl
+	tblCols     []*expression.Column
+}
+
+// NewTableScanImpl creates a new table scan Implementation.
+func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Column, hists *statistics.HistColl) *TableScanImpl {
+	base := baseImpl{plan: ts}
+	impl := &TableScanImpl{
+		baseImpl:    base,
+		tblColHists: hists,
+		tblCols:     cols,
+	}
+	return impl
+}
+
+// CalcCost calculates the cost of the table scan Implementation.
+func (impl *TableScanImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
+	ts := impl.plan.(*plannercore.PhysicalTableScan)
+	width := impl.tblColHists.GetAvgRowSize(impl.tblCols, false)
+	impl.cost = outCount * plannercore.ScanFactor * width
+	if ts.Desc {
+		impl.cost = outCount * plannercore.DescScanFactor * width
+	}
+	return impl.cost
 }

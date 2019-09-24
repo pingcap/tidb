@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -55,14 +56,22 @@ func newLonglong(value int64) *Constant {
 }
 
 func newDate(year, month, day int) *Constant {
+	return newTimeConst(year, month, day, 0, 0, 0, mysql.TypeDate)
+}
+
+func newTimestamp(yy, mm, dd, hh, min, ss int) *Constant {
+	return newTimeConst(yy, mm, dd, hh, min, ss, mysql.TypeTimestamp)
+}
+
+func newTimeConst(yy, mm, dd, hh, min, ss int, tp uint8) *Constant {
 	var tmp types.Datum
 	tmp.SetMysqlTime(types.Time{
-		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
-		Type: mysql.TypeDate,
+		Time: types.FromDate(yy, mm, dd, 0, 0, 0, 0),
+		Type: tp,
 	})
 	return &Constant{
 		Value:   tmp,
-		RetType: types.NewFieldType(mysql.TypeDate),
+		RetType: types.NewFieldType(tp),
 	}
 }
 
@@ -87,7 +96,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn(3), newLonglong(1)),
 				newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
 			},
-			result: "1, eq(test.t.0, 1), eq(test.t.1, 1), eq(test.t.2, 1), eq(test.t.3, 1)",
+			result: "1, eq(Column#0, 1), eq(Column#1, 1), eq(Column#2, 1), eq(Column#3, 1)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver(), pgSolver2{}},
@@ -96,7 +105,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn(1), newLonglong(1)),
 				newFunction(ast.NE, newColumn(2), newLonglong(2)),
 			},
-			result: "eq(test.t.0, 1), eq(test.t.1, 1), ne(test.t.2, 2)",
+			result: "eq(Column#0, 1), eq(Column#1, 1), ne(Column#2, 2)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
@@ -108,7 +117,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.NE, newColumn(2), newLonglong(4)),
 				newFunction(ast.NE, newColumn(3), newLonglong(5)),
 			},
-			result: "eq(test.t.0, 1), eq(test.t.1, 1), eq(test.t.2, test.t.3), ge(test.t.2, 2), ge(test.t.3, 2), ne(test.t.2, 4), ne(test.t.2, 5), ne(test.t.3, 4), ne(test.t.3, 5)",
+			result: "eq(Column#0, 1), eq(Column#1, 1), eq(Column#2, Column#3), ge(Column#2, 2), ge(Column#3, 2), ne(Column#2, 4), ne(Column#2, 5), ne(Column#3, 4), ne(Column#3, 5)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
@@ -117,7 +126,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn(0), newColumn(2)),
 				newFunction(ast.GE, newColumn(1), newLonglong(0)),
 			},
-			result: "eq(test.t.0, test.t.1), eq(test.t.0, test.t.2), ge(test.t.0, 0), ge(test.t.1, 0), ge(test.t.2, 0)",
+			result: "eq(Column#0, Column#1), eq(Column#0, Column#2), ge(Column#0, 0), ge(Column#1, 0), ge(Column#2, 0)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
@@ -128,7 +137,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.LT, newColumn(0), newLonglong(1)),
 				newFunction(ast.GT, newLonglong(2), newColumn(1)),
 			},
-			result: "eq(test.t.0, test.t.1), gt(2, test.t.0), gt(2, test.t.1), gt(test.t.0, 2), gt(test.t.0, 3), gt(test.t.1, 2), gt(test.t.1, 3), lt(test.t.0, 1), lt(test.t.1, 1)",
+			result: "eq(Column#0, Column#1), gt(2, Column#0), gt(2, Column#1), gt(Column#0, 2), gt(Column#0, 3), gt(Column#1, 2), gt(Column#1, 3), lt(Column#0, 1), lt(Column#1, 1)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver(), pgSolver2{}},
@@ -145,7 +154,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.In, newColumn(0), newLonglong(1), newLonglong(2)),
 				newFunction(ast.In, newColumn(1), newLonglong(3), newLonglong(4)),
 			},
-			result: "eq(test.t.0, test.t.1), in(test.t.0, 1, 2), in(test.t.0, 3, 4), in(test.t.1, 1, 2), in(test.t.1, 3, 4)",
+			result: "eq(Column#0, Column#1), in(Column#0, 1, 2), in(Column#0, 3, 4), in(Column#1, 1, 2), in(Column#1, 3, 4)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
@@ -153,7 +162,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.EQ, newColumn(0), newFunction(ast.BitLength, newColumn(2))),
 			},
-			result: "eq(test.t.0, bit_length(cast(test.t.2))), eq(test.t.0, test.t.1), eq(test.t.1, bit_length(cast(test.t.2)))",
+			result: "eq(Column#0, Column#1), eq(Column#0, bit_length(cast(Column#2))), eq(Column#1, bit_length(cast(Column#2)))",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
@@ -161,7 +170,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.LE, newFunction(ast.Mul, newColumn(0), newColumn(0)), newLonglong(50)),
 			},
-			result: "eq(test.t.0, test.t.1), le(mul(test.t.0, test.t.0), 50), le(mul(test.t.1, test.t.1), 50)",
+			result: "eq(Column#0, Column#1), le(mul(Column#0, Column#0), 50), le(mul(Column#1, Column#1), 50)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
@@ -169,7 +178,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.LE, newColumn(0), newFunction(ast.Plus, newColumn(1), newLonglong(1))),
 			},
-			result: "eq(test.t.0, test.t.1), le(test.t.0, plus(test.t.0, 1)), le(test.t.0, plus(test.t.1, 1)), le(test.t.1, plus(test.t.1, 1))",
+			result: "eq(Column#0, Column#1), le(Column#0, plus(Column#0, 1)), le(Column#0, plus(Column#1, 1)), le(Column#1, plus(Column#1, 1))",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
@@ -177,7 +186,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.LE, newColumn(0), newFunction(ast.Rand)),
 			},
-			result: "eq(test.t.0, test.t.1), le(cast(test.t.0), rand())",
+			result: "eq(Column#0, Column#1), le(cast(Column#0), rand())",
 		},
 	}
 	for _, tt := range tests {
@@ -201,6 +210,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 	defer testleak.AfterTest(c)()
 	col1 := newColumnWithType(1, types.NewFieldType(mysql.TypeDate))
+	col2 := newColumnWithType(2, types.NewFieldType(mysql.TypeTimestamp))
 	tests := []struct {
 		solver     constraintSolver
 		conditions []Expression
@@ -214,7 +224,7 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 		// 		newFunction(ast.GT, newColumn(0), newLonglong(5)),
 		// 		newFunction(ast.GT, newColumn(0), newLonglong(7)),
 		// 	},
-		// 	result: "gt(test.t.0, 7)",
+		// 	result: "gt(Column#0, 7)",
 		// },
 		{
 			solver: newConstraintSolver(ruleColumnOPConst),
@@ -266,6 +276,15 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 			},
 			result: "0",
 		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			// col2 > unixtimestamp('2008-05-01 00:00:00') and unixtimestamp(col2) < unixtimestamp('2008-04-01 00:00:00') => false
+			conditions: []Expression{
+				newFunction(ast.GT, col2, newTimestamp(2008, 5, 1, 0, 0, 0)),
+				newFunction(ast.LT, newFunction(ast.UnixTimestamp, col2), newLonglong(1206979200)),
+			},
+			result: "0",
+		},
 	}
 	for _, tt := range tests {
 		ctx := mock.NewContext()
@@ -291,15 +310,15 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 	}{
 		{
 			condition: newFunction(ast.LT, newColumn(0), newFunction(ast.Plus, newLonglong(1), newLonglong(2))),
-			result:    "lt(test.t.0, 3)",
+			result:    "lt(Column#0, 3)",
 		},
 		{
 			condition: newFunction(ast.LT, newColumn(0), newFunction(ast.Greatest, newLonglong(1), newLonglong(2))),
-			result:    "lt(test.t.0, 2)",
+			result:    "lt(Column#0, 2)",
 		},
 		{
 			condition: newFunction(ast.EQ, newColumn(0), newFunction(ast.Rand)),
-			result:    "eq(cast(test.t.0), rand())",
+			result:    "eq(cast(Column#0), rand())",
 		},
 		{
 			condition: newFunction(ast.IsNull, newLonglong(1)),
@@ -307,11 +326,11 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 		},
 		{
 			condition: newFunction(ast.EQ, newColumn(0), newFunction(ast.UnaryNot, newFunction(ast.Plus, newLonglong(1), newLonglong(1)))),
-			result:    "eq(test.t.0, 0)",
+			result:    "eq(Column#0, 0)",
 		},
 		{
 			condition: newFunction(ast.LT, newColumn(0), newFunction(ast.Plus, newColumn(1), newFunction(ast.Plus, newLonglong(2), newLonglong(1)))),
-			result:    "lt(test.t.0, plus(test.t.1, 3))",
+			result:    "lt(Column#0, plus(Column#1, 3))",
 		},
 	}
 	for _, tt := range tests {
@@ -333,7 +352,7 @@ func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
 	}{
 		{
 			condition: newFunction(ast.LT, newColumn(0), nullConst),
-			deferred:  "lt(test.t.0, <nil>)",
+			deferred:  "lt(Column#0, <nil>)",
 		},
 	}
 	for _, tt := range tests {
@@ -346,6 +365,73 @@ func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
 		c.Assert(ok, IsTrue, comment)
 		c.Assert(newConst.DeferredExpr.String(), Equals, tt.deferred, comment)
 	}
+}
+
+func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := mock.NewContext()
+	testTime := time.Now()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{
+		types.NewIntDatum(1),
+		types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
+		types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+		types.NewDurationDatum(types.ZeroDuration),
+		types.NewStringDatum("{}"),
+		types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+		types.NewBytesDatum([]byte{'b'}),
+		types.NewFloat32Datum(1.1),
+		types.NewFloat64Datum(2.1),
+		types.NewUintDatum(100),
+		types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+		types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
+	}
+	cstInt := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newIntFieldType()}
+	cstDec := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 1}, RetType: newDecimalFieldType()}
+	cstTime := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 2}, RetType: newDateFieldType()}
+	cstDuration := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 3}, RetType: newDurFieldType()}
+	cstJSON := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 4}, RetType: newJSONFieldType()}
+	cstBytes := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 6}, RetType: newBlobFieldType()}
+	cstBinary := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 5}, RetType: newBinaryLiteralFieldType()}
+	cstFloat32 := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 7}, RetType: newFloatFieldType()}
+	cstFloat64 := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 8}, RetType: newFloatFieldType()}
+	cstUint := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 9}, RetType: newIntFieldType()}
+	cstBit := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 10}, RetType: newBinaryLiteralFieldType()}
+	cstEnum := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 11}, RetType: newEnumFieldType()}
+
+	c.Assert(mysql.TypeVarString, Equals, cstJSON.GetType().Tp)
+	c.Assert(mysql.TypeNewDecimal, Equals, cstDec.GetType().Tp)
+	c.Assert(mysql.TypeLonglong, Equals, cstInt.GetType().Tp)
+	c.Assert(mysql.TypeLonglong, Equals, cstUint.GetType().Tp)
+	c.Assert(mysql.TypeTimestamp, Equals, cstTime.GetType().Tp)
+	c.Assert(mysql.TypeDuration, Equals, cstDuration.GetType().Tp)
+	c.Assert(mysql.TypeBlob, Equals, cstBytes.GetType().Tp)
+	c.Assert(mysql.TypeBit, Equals, cstBinary.GetType().Tp)
+	c.Assert(mysql.TypeBit, Equals, cstBit.GetType().Tp)
+	c.Assert(mysql.TypeFloat, Equals, cstFloat32.GetType().Tp)
+	c.Assert(mysql.TypeDouble, Equals, cstFloat64.GetType().Tp)
+	c.Assert(mysql.TypeEnum, Equals, cstEnum.GetType().Tp)
+
+	d, _, err := cstInt.EvalInt(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(d, Equals, int64(1))
+	r, _, err := cstInt.EvalReal(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(r, Equals, float64(1))
+	de, _, err := cstDec.EvalDecimal(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(de.String(), Equals, "20170118123950.123")
+	s, _, err := cstInt.EvalString(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(s, Equals, "1")
+	t, _, err := cstTime.EvalTime(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(t.Compare(ctx.GetSessionVars().PreparedParams[2].GetMysqlTime()), Equals, 0)
+	dur, _, err := cstDuration.EvalDuration(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(dur.Duration, Equals, types.ZeroDuration.Duration)
+	json, _, err := cstJSON.EvalJSON(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(json, NotNil)
 }
 
 func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {

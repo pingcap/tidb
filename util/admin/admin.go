@@ -258,7 +258,7 @@ type RecordData struct {
 }
 
 func getCount(ctx sessionctx.Context, sql string) (int64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(sql)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -282,7 +282,7 @@ const (
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Add `` for some names like `table name`.
-	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName)
+	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX()", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -555,7 +555,7 @@ func ScanSnapshotTableRecord(sessCtx sessionctx.Context, store kv.Storage, ver k
 		return nil, 0, errors.Trace(err)
 	}
 
-	if sessCtx.GetSessionVars().ReplicaRead.IsFollowerRead() {
+	if sessCtx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snap.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 

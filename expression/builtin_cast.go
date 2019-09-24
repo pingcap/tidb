@@ -1775,7 +1775,10 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
-	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
+	tp.Flen, tp.Decimal = expr.GetType().Flen, expr.GetType().Decimal
+	if expr.GetType().EvalType() == types.ETInt {
+		tp.Flen = mysql.MaxIntWidth
+	}
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
