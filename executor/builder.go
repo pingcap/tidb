@@ -1823,7 +1823,6 @@ func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIn
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	idxHash.joiners = make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
-		// TODO: we may need to implement a Clone for joiner
 		idxHash.joiners[i] = e.joiner.Clone()
 	}
 	return idxHash
