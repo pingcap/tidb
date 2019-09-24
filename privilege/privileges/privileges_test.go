@@ -129,6 +129,24 @@ func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
 }
 
+func (s *testPrivilegeSuite) TestCheckPointGetDBPrivilege(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'tester'@'localhost';`)
+	mustExec(c, rootSe, `GRANT SELECT,UPDATE ON test.* TO  'tester'@'localhost';`)
+	mustExec(c, rootSe, `flush privileges;`)
+	mustExec(c, rootSe, `create database test2`)
+	mustExec(c, rootSe, `create table test2.t(id int, v int, primary key(id))`)
+	mustExec(c, rootSe, `insert into test2.t(id, v) values(1, 1)`)
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `use test;`)
+	_, err := se.Execute(context.Background(), `select * from test2.t where id = 1`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	_, err = se.Execute(context.Background(), "update test2.t set v = 2 where id = 1")
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'test1'@'localhost';`)
