@@ -144,12 +144,12 @@ func (b *builtinTimestamp1ArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 			continue
 		}
 		s := buf.GetString(i)
+
 		if b.isFloat {
 			tm, err = types.ParseTimeFromFloatString(sc, s, mysql.TypeDatetime, types.GetFsp(s))
 		} else {
 			tm, err = types.ParseTime(sc, s, mysql.TypeDatetime, types.GetFsp(s))
 		}
-
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
