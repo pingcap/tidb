@@ -915,8 +915,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 }
 
-func genVecEvalBool(numCols int, colTypes []types.EvalType) (CNFExprs, *chunk.Chunk) {
-	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+func genVecEvalBool(numCols int, colTypes []types.EvalType, eTypes []types.EvalType) (CNFExprs, *chunk.Chunk) {
 	gens := make([]dataGenerator, 0, len(eTypes))
 	for _, eType := range eTypes {
 		if eType == types.ETString {
@@ -955,9 +954,10 @@ func genVecEvalBool(numCols int, colTypes []types.EvalType) (CNFExprs, *chunk.Ch
 
 func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 	ctx := mock.NewContext()
+	eTypes := []types.EvalType{types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	for numCols := 1; numCols <= 10; numCols++ {
 		for round := 0; round < 64; round++ {
-			exprs, input := genVecEvalBool(numCols, nil)
+			exprs, input := genVecEvalBool(numCols, nil, eTypes)
 			selected, nulls, err := VecEvalBool(ctx, exprs, input, nil, nil)
 			c.Assert(err, IsNil)
 			it := chunk.NewIterator4Chunk(input)
@@ -992,7 +992,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 						}
 					}
 				}
-				exprs, input := genVecEvalBool(numCols, typeCombination)
+				exprs, input := genVecEvalBool(numCols, typeCombination, eTypes)
 				b.Run("Vec-"+name, func(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
@@ -1028,9 +1028,10 @@ func BenchmarkVecEvalBool(b *testing.B) {
 
 func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 	ctx := mock.NewContext()
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	for numCols := 1; numCols <= 10; numCols++ {
 		for round := 0; round < 64; round++ {
-			exprs, input := genVecEvalBool(numCols, nil)
+			exprs, input := genVecEvalBool(numCols, nil, eTypes)
 			it := chunk.NewIterator4Chunk(input)
 			isNull := make([]bool, it.Len())
 			selected, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
@@ -1065,7 +1066,7 @@ func BenchmarkVectorizedFilterConsiderNull(b *testing.B) {
 						}
 					}
 				}
-				exprs, input := genVecEvalBool(numCols, typeCombination)
+				exprs, input := genVecEvalBool(numCols, typeCombination, eTypes)
 				it := chunk.NewIterator4Chunk(input)
 				b.Run("Vec-"+name, func(b *testing.B) {
 					b.ResetTimer()
