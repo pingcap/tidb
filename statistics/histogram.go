@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -227,7 +228,10 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 		return value.ToString()
 	}
 	// Ignore the error and treat remaining part that cannot decode successfully as bytes.
-	decodedVals, remained, _ := codec.DecodeRange(value.GetBytes(), idxCols)
+	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols)
+	if err != nil {
+		logutil.Logger(context.Background()).Error("DecodeRange err", zap.Error(err))
+	}
 	if len(remained) > 0 {
 		decodedVals = append(decodedVals, types.NewBytesDatum(remained))
 	}

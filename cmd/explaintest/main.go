@@ -424,6 +424,7 @@ func (t *tester) create(tableName string, qText string) error {
 	}
 
 	resp, err := http.Get("http://127.0.0.1:10081/stats/dump/" + dbName + "/" + tableName)
+	defer resp.Close()
 	if err != nil {
 		return err
 	}

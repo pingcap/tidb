@@ -222,6 +222,7 @@ func (ts *HTTPHandlerTestSuite) TestListTableRegions(c *C) {
 
 	region := data[1]
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%d", region.TableID))
+	defer resp.Close()
 	c.Assert(err, IsNil)
 }
 

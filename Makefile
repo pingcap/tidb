@@ -79,9 +79,7 @@ gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
 check-static:tools/bin/golangci-lint
-	tools/bin/golangci-lint run ./...  --disable-all --deadline 120s \
-	  --enable=misspell \
-	  --enable=ineffassign \
+	tools/bin/golangci-lint run ./...
 
 check-slow:tools/bin/gometalinter tools/bin/gosec
 	tools/bin/gometalinter --disable-all \

@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"sync"
 
@@ -1439,7 +1440,8 @@ func (mvcc *MVCCLevelDB) MvccGetByStartTS(starTS uint64) (*kvrpcpb.MvccInfo, []b
 		var value mvccValue
 		err := value.UnmarshalBinary(iter.Value())
 		if err == nil && value.startTS == starTS {
-			_, key, _ = codec.DecodeBytes(iter.Key(), nil)
+			_, key, err = codec.DecodeBytes(iter.Key(), nil)
+			logutil.Logger(context.Background()).Error("DecodeBytes err", zap.Error(err))
 			break
 		}
 		iter.Next()

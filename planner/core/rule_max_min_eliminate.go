@@ -21,7 +21,9 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
 )
 
 // maxMinEliminator tries to eliminate max/min aggregate function.
@@ -143,7 +145,10 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) 
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.ctx, agg.blockOffset)
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
-		newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]})
+		err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]})
+		if err != nil {
+			logutil.Logger(context.Background()).Warn("PruneColumns error : ", zap.Error(err))
+		}
 		aggs = append(aggs, newAgg)
 	}
 	return aggs, true
