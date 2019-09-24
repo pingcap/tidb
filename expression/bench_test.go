@@ -315,7 +315,6 @@ func (g *randLenStrGener) gen() interface{} {
 type dataTimeStrGener struct{}
 
 func (g *dataTimeStrGener) gen() interface{} {
-	// rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60)
 	year := rand.Intn(2200)
 	month := rand.Intn(10) + 1
 	day := rand.Intn(20) + 1
