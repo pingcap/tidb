@@ -70,7 +70,6 @@ type Config struct {
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
-	EnableArrow      bool            `toml:"enable-arrow" json:"enable-arrow"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
@@ -287,6 +286,8 @@ type TiKVClient struct {
 	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
+	// EnableArrow indicate the data encode in arrow format.
+	EnableArrow bool `toml:"enable-arrow" json:"enable-arrow"`
 }
 
 // Binlog is the config for binlog.
@@ -340,7 +341,6 @@ var defaultConf = Config{
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
 	EnableStreaming:              false,
-	EnableArrow:                  true,
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
@@ -411,6 +411,8 @@ var defaultConf = Config{
 		OverloadThreshold: 200,
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
+
+		EnableArrow: true,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

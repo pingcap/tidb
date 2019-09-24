@@ -158,7 +158,7 @@ func SetEncodeType(dagReq *tipb.DAGRequest) {
 }
 
 func useChunkIPC(dagReq *tipb.DAGRequest) bool {
-	if config.GetGlobalConfig().EnableArrow == false {
+	if config.GetGlobalConfig().TiKVClient.EnableArrow == false {
 		return false
 	}
 	if config.GetGlobalConfig().EnableStreaming == true {
