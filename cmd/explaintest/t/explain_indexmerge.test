@@ -12,3 +12,4 @@ explain select * from t where b < 50 or c < 50;
 explain select * from t where b < 50 or c < 5000000;
 explain select * from t where a < 50 or b < 50 or c < 50;
 explain select * from t where (b < 10000 or c < 10000) and (a < 10 or d < 10) and f < 10;
+explain format="dot" select * from t where (a < 50 or b < 50) and f > 100;

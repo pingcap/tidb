@@ -20,11 +20,14 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -85,6 +88,48 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	tk.MustExec(`prepare stmt6 from "select distinct a from t order by a"`)
 	tk.MustQuery("execute stmt6").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 	tk.MustQuery("execute stmt6").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+
+	// test privilege change
+	rootSe := tk.Se
+	tk.MustExec("drop table if exists tp")
+	tk.MustExec(`create table tp(c1 int, c2 int, primary key (c1))`)
+	tk.MustExec(`insert into tp values(1, 1), (2, 2), (3, 3)`)
+
+	tk.MustExec(`create user 'u_tp'@'localhost'`)
+	tk.MustExec(`grant select on test.tp to u_tp@'localhost';flush privileges;`)
+
+	// user u_tp
+	userSess := newSession(c, store, "test")
+	c.Assert(userSess.Auth(&auth.UserIdentity{Username: "u_tp", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, userSess, `prepare ps_stp_r from 'select * from tp where c1 > ?'`)
+	mustExec(c, userSess, `set @p2 = 2`)
+	tk.Se = userSess
+	tk.MustQuery(`execute ps_stp_r using @p2`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`execute ps_stp_r using @p2`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`execute ps_stp_r using @p2`).Check(testkit.Rows("3 3"))
+
+	// root revoke
+	tk.Se = rootSe
+	tk.MustExec(`revoke all on test.tp from 'u_tp'@'localhost';flush privileges;`)
+
+	// user u_tp
+	tk.Se = userSess
+	_, err = tk.Exec(`execute ps_stp_r using @p2`)
+	c.Assert(err, NotNil)
+
+	// grant again
+	tk.Se = rootSe
+	tk.MustExec(`grant select on test.tp to u_tp@'localhost';flush privileges;`)
+
+	// user u_tp
+	tk.Se = userSess
+	tk.MustQuery(`execute ps_stp_r using @p2`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`execute ps_stp_r using @p2`).Check(testkit.Rows("3 3"))
+
+	// restore
+	tk.Se = rootSe
+	tk.MustExec("drop table if exists tp")
+	tk.MustExec(`DROP USER 'u_tp'@'localhost';`)
 }
 
 func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
@@ -369,4 +414,17 @@ func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
 	c.Assert(err.Error(), Equals, "Unknown column '2' in 'group statement'")
 	tk.MustExec("set @a=2.0;")
 	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("3"))
+}
+
+func newSession(c *C, store kv.Storage, dbName string) session.Session {
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	mustExec(c, se, "create database if not exists "+dbName)
+	mustExec(c, se, "use "+dbName)
+	return se
+}
+
+func mustExec(c *C, se session.Session, sql string) {
+	_, err := se.Execute(context.Background(), sql)
+	c.Assert(err, IsNil)
 }
