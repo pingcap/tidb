@@ -450,7 +450,7 @@ Sort_22	769.96	root	Column#55:asc, Column#56:asc, Column#57:asc
     └─Projection_28	1957240.42	root	Column#43, Column#47, extract("YEAR", Column#18), mul(Column#13, minus(1, Column#14))
       └─HashLeftJoin_40	1957240.42	root	inner join, inner:TableReader_94, equal:[eq(Column#37, Column#46)], other cond:or(and(eq(Column#43, "JAPAN"), eq(Column#47, "INDIA")), and(eq(Column#43, "INDIA"), eq(Column#47, "JAPAN")))
         ├─HashLeftJoin_51	24465505.20	root	inner join, inner:TableReader_91, equal:[eq(Column#26, Column#34)]
-        │ ├─IndexHashJoin_62	24465505.20	root	inner join, inner:TableReader_55, outer key:Column#8, inner key:Column#25
+        │ ├─IndexMergeJoin_60	24465505.20	root	inner join, inner:TableReader_58, outer key:Column#8, inner key:Column#25
         │ │ ├─HashRightJoin_66	24465505.20	root	inner join, inner:HashRightJoin_79, equal:[eq(Column#1, Column#10)]
         │ │ │ ├─HashRightJoin_79	40000.00	root	inner join, inner:TableReader_84, equal:[eq(Column#42, Column#4)]
         │ │ │ │ ├─TableReader_84	2.00	root	data:Selection_83
@@ -461,8 +461,8 @@ Sort_22	769.96	root	Column#55:asc, Column#56:asc, Column#57:asc
         │ │ │ └─TableReader_87	91446230.29	root	data:Selection_86
         │ │ │   └─Selection_86	91446230.29	cop	ge(Column#18, 1995-01-01 00:00:00.000000), le(Column#18, 1996-12-31 00:00:00.000000)
         │ │ │     └─TableScan_85	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
-        │ │ └─TableReader_55	1.00	root	data:TableScan_54
-        │ │   └─TableScan_54	1.00	cop	table:orders, range: decided by [Column#8], keep order:false
+        │ │ └─TableReader_58	1.00	root	data:TableScan_57
+        │ │   └─TableScan_57	1.00	cop	table:orders, range: decided by [Column#8], keep order:true
         │ └─TableReader_91	7500000.00	root	data:TableScan_90
         │   └─TableScan_90	7500000.00	cop	table:customer, range:[-inf,+inf], keep order:false
         └─TableReader_94	2.00	root	data:Selection_93
@@ -662,7 +662,7 @@ Projection_17	20.00	root	Column#1, Column#2, Column#39, Column#6, Column#36, Col
 └─TopN_20	20.00	root	Column#39:desc, offset:0, count:20
   └─HashAgg_26	3017307.69	root	group by:Column#50, Column#51, Column#52, Column#53, Column#54, Column#55, Column#56, funcs:sum(Column#0), firstrow(Column#0), firstrow(Column#0), firstrow(Column#0), firstrow(Column#0), firstrow(Column#0), firstrow(Column#0), firstrow(Column#0)
     └─Projection_66	12222016.17	root	mul(Column#23, minus(1, Column#24)), Column#1, Column#2, Column#3, Column#5, Column#6, Column#8, Column#36, Column#1, Column#2, Column#6, Column#5, Column#36, Column#3, Column#8
-      └─IndexHashJoin_40	12222016.17	root	inner join, inner:IndexLookUp_31, outer key:Column#9, inner key:Column#18
+      └─IndexMergeJoin_38	12222016.17	root	inner join, inner:IndexLookUp_36, outer key:Column#9, inner key:Column#18
         ├─HashLeftJoin_43	3017307.69	root	inner join, inner:TableReader_62, equal:[eq(Column#1, Column#10)]
         │ ├─HashRightJoin_55	7500000.00	root	inner join, inner:TableReader_59, equal:[eq(Column#35, Column#4)]
         │ │ ├─TableReader_59	25.00	root	data:TableScan_58
@@ -672,10 +672,10 @@ Projection_17	20.00	root	Column#1, Column#2, Column#39, Column#6, Column#36, Col
         │ └─TableReader_62	3017307.69	root	data:Selection_61
         │   └─Selection_61	3017307.69	cop	ge(Column#13, 1993-08-01 00:00:00.000000), lt(Column#13, 1993-11-01)
         │     └─TableScan_60	75000000.00	cop	table:orders, range:[-inf,+inf], keep order:false
-        └─IndexLookUp_31	1.00	root	
-          ├─IndexScan_28	4.05	cop	table:lineitem, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(Column#18, Column#9)], keep order:false
-          └─Selection_30	1.00	cop	eq(Column#26, "R")
-            └─TableScan_29	4.05	cop	table:lineitem, keep order:false
+        └─IndexLookUp_36	1.00	root	
+          ├─IndexScan_33	4.05	cop	table:lineitem, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(Column#18, Column#9)], keep order:true
+          └─Selection_35	1.00	cop	eq(Column#26, "R")
+            └─TableScan_34	4.05	cop	table:lineitem, keep order:false
 /*
 Q11 Important Stock Identification Query
 This query finds the most important subset of suppliers' stock in a given nation.
@@ -770,12 +770,12 @@ Sort_9	1.00	root	Column#29:asc
 └─Projection_11	1.00	root	Column#24, Column#27, Column#28
   └─HashAgg_14	1.00	root	group by:Column#34, funcs:sum(Column#0), sum(Column#0), firstrow(Column#0)
     └─Projection_40	10023369.01	root	cast(case(or(eq(Column#6, "1-URGENT"), eq(Column#6, "2-HIGH")), 1, 0)), cast(case(and(ne(Column#6, "1-URGENT"), ne(Column#6, "2-HIGH")), 1, 0)), Column#24, Column#24
-      └─IndexHashJoin_24	10023369.01	root	inner join, inner:TableReader_17, outer key:Column#10, inner key:Column#1
+      └─IndexMergeJoin_22	10023369.01	root	inner join, inner:TableReader_20, outer key:Column#10, inner key:Column#1
         ├─TableReader_36	10023369.01	root	data:Selection_35
         │ └─Selection_35	10023369.01	cop	ge(Column#22, 1997-01-01 00:00:00.000000), in(Column#24, "RAIL", "FOB"), lt(Column#20, Column#21), lt(Column#21, Column#22), lt(Column#22, 1998-01-01)
         │   └─TableScan_34	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
-        └─TableReader_17	1.00	root	data:TableScan_16
-          └─TableScan_16	1.00	cop	table:orders, range: decided by [Column#10], keep order:false
+        └─TableReader_20	1.00	root	data:TableScan_19
+          └─TableScan_19	1.00	cop	table:orders, range: decided by [Column#10], keep order:true
 /*
 Q13 Customer Distribution Query
 This query seeks relationships between customers and the size of their orders.
@@ -841,12 +841,12 @@ id	count	task	operator info
 Projection_8	1.00	root	div(mul(100.00, Column#27), Column#28)
 └─StreamAgg_13	1.00	root	funcs:sum(Column#0), sum(Column#0)
   └─Projection_41	4121984.49	root	case(like(Column#22, "PROMO%", 92), mul(Column#6, minus(1, Column#7)), 0), mul(Column#6, minus(1, Column#7))
-    └─IndexHashJoin_38	4121984.49	root	inner join, inner:TableReader_31, outer key:Column#2, inner key:Column#18
+    └─IndexMergeJoin_36	4121984.49	root	inner join, inner:TableReader_34, outer key:Column#2, inner key:Column#18
       ├─TableReader_27	4121984.49	root	data:Selection_26
       │ └─Selection_26	4121984.49	cop	ge(Column#11, 1996-12-01 00:00:00.000000), lt(Column#11, 1997-01-01)
       │   └─TableScan_25	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
-      └─TableReader_31	1.00	root	data:TableScan_30
-        └─TableScan_30	1.00	cop	table:part, range: decided by [Column#2], keep order:false
+      └─TableReader_34	1.00	root	data:TableScan_33
+        └─TableScan_33	1.00	cop	table:part, range: decided by [Column#2], keep order:true
 /*
 Q15 Top Supplier Query
 This query determines the top supplier so it can be rewarded, given more business, or identified for special recognition.
@@ -931,12 +931,12 @@ Sort_13	3863988.24	root	Column#28:desc, Column#25:asc, Column#26:asc, Column#27:
 └─Projection_15	3863988.24	root	Column#10, Column#11, Column#12, Column#24
   └─HashAgg_18	3863988.24	root	group by:Column#10, Column#11, Column#12, funcs:count(distinct Column#2), firstrow(Column#10), firstrow(Column#11), firstrow(Column#12)
     └─HashLeftJoin_30	3863988.24	root	anti semi join, inner:TableReader_57, equal:[eq(Column#2, Column#16)]
-      ├─IndexHashJoin_40	4829985.30	root	inner join, inner:IndexReader_33, outer key:Column#7, inner key:Column#1
+      ├─IndexMergeJoin_38	4829985.30	root	inner join, inner:IndexReader_36, outer key:Column#7, inner key:Column#1
       │ ├─TableReader_50	1200618.43	root	data:Selection_49
       │ │ └─Selection_49	1200618.43	cop	in(Column#12, 48, 19, 12, 4, 41, 7, 21, 39), ne(Column#10, "Brand#34"), not(like(Column#11, "LARGE BRUSHED%", 92))
       │ │   └─TableScan_48	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
-      │ └─IndexReader_33	4.02	root	index:IndexScan_32
-      │   └─IndexScan_32	4.02	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(Column#1, Column#7)], keep order:false
+      │ └─IndexReader_36	4.02	root	index:IndexScan_35
+      │   └─IndexScan_35	4.02	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(Column#1, Column#7)], keep order:true
       └─TableReader_57	400000.00	root	data:Selection_56
         └─Selection_56	400000.00	cop	like(Column#22, "%Customer%Complaints%", 92)
           └─TableScan_55	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
@@ -1091,13 +1091,13 @@ and l_shipinstruct = 'DELIVER IN PERSON'
 id	count	task	operator info
 StreamAgg_13	1.00	root	funcs:sum(Column#0)
 └─Projection_46	6286493.79	root	mul(Column#6, minus(1, Column#7))
-  └─IndexHashJoin_43	6286493.79	root	inner join, inner:TableReader_35, outer key:Column#2, inner key:Column#18, other cond:or(and(and(eq(Column#21, "Brand#52"), in(Column#24, "SM CASE", "SM BOX", "SM PACK", "SM PKG")), and(ge(Column#5, 4), and(le(Column#5, 14), le(Column#23, 5)))), or(and(and(eq(Column#21, "Brand#11"), in(Column#24, "MED BAG", "MED BOX", "MED PKG", "MED PACK")), and(ge(Column#5, 18), and(le(Column#5, 28), le(Column#23, 10)))), and(and(eq(Column#21, "Brand#51"), in(Column#24, "LG CASE", "LG BOX", "LG PACK", "LG PKG")), and(ge(Column#5, 29), and(le(Column#5, 39), le(Column#23, 15))))))
+  └─IndexMergeJoin_41	6286493.79	root	inner join, inner:TableReader_39, outer key:Column#2, inner key:Column#18, other cond:or(and(and(eq(Column#21, "Brand#52"), in(Column#24, "SM CASE", "SM BOX", "SM PACK", "SM PKG")), and(ge(Column#5, 4), and(le(Column#5, 14), le(Column#23, 5)))), or(and(and(eq(Column#21, "Brand#11"), in(Column#24, "MED BAG", "MED BOX", "MED PKG", "MED PACK")), and(ge(Column#5, 18), and(le(Column#5, 28), le(Column#23, 10)))), and(and(eq(Column#21, "Brand#51"), in(Column#24, "LG CASE", "LG BOX", "LG PACK", "LG PKG")), and(ge(Column#5, 29), and(le(Column#5, 39), le(Column#23, 15))))))
     ├─TableReader_29	6286493.79	root	data:Selection_28
     │ └─Selection_28	6286493.79	cop	eq(Column#14, "DELIVER IN PERSON"), in(Column#15, "AIR", "AIR REG"), or(and(ge(Column#5, 4), le(Column#5, 14)), or(and(ge(Column#5, 18), le(Column#5, 28)), and(ge(Column#5, 29), le(Column#5, 39))))
     │   └─TableScan_27	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
-    └─TableReader_35	0.80	root	data:Selection_34
-      └─Selection_34	0.80	cop	ge(Column#23, 1), or(and(eq(Column#21, "Brand#52"), and(in(Column#24, "SM CASE", "SM BOX", "SM PACK", "SM PKG"), le(Column#23, 5))), or(and(eq(Column#21, "Brand#11"), and(in(Column#24, "MED BAG", "MED BOX", "MED PKG", "MED PACK"), le(Column#23, 10))), and(eq(Column#21, "Brand#51"), and(in(Column#24, "LG CASE", "LG BOX", "LG PACK", "LG PKG"), le(Column#23, 15)))))
-        └─TableScan_33	1.00	cop	table:part, range: decided by [Column#2], keep order:false
+    └─TableReader_39	0.80	root	data:Selection_38
+      └─Selection_38	0.80	cop	ge(Column#23, 1), or(and(eq(Column#21, "Brand#52"), and(in(Column#24, "SM CASE", "SM BOX", "SM PACK", "SM PKG"), le(Column#23, 5))), or(and(eq(Column#21, "Brand#11"), and(in(Column#24, "MED BAG", "MED BOX", "MED PKG", "MED PACK"), le(Column#23, 10))), and(eq(Column#21, "Brand#51"), and(in(Column#24, "LG CASE", "LG BOX", "LG PACK", "LG PKG"), le(Column#23, 15)))))
+        └─TableScan_37	1.00	cop	table:part, range: decided by [Column#2], keep order:true
 /*
 Q20 Potential Part Promotion Query
 The Potential Part Promotion Query identifies suppliers in a particular nation having selected parts that may be candidates
@@ -1223,7 +1223,7 @@ Projection_25	1.00	root	Column#2, Column#104
   └─HashAgg_34	1.00	root	group by:Column#2, funcs:count(1), firstrow(Column#2)
     └─IndexHashJoin_48	7828961.66	root	anti semi join, inner:IndexLookUp_39, outer key:Column#8, inner key:Column#71, other cond:ne(Column#73, Column#1), ne(Column#73, Column#10)
       ├─IndexHashJoin_81	9786202.08	root	semi join, inner:IndexLookUp_73, outer key:Column#8, inner key:Column#38, other cond:ne(Column#40, Column#1), ne(Column#40, Column#10)
-      │ ├─IndexHashJoin_94	12232752.60	root	inner join, inner:TableReader_86, outer key:Column#8, inner key:Column#25
+      │ ├─IndexMergeJoin_92	12232752.60	root	inner join, inner:TableReader_90, outer key:Column#8, inner key:Column#25
       │ │ ├─HashRightJoin_98	12232752.60	root	inner join, inner:HashRightJoin_111, equal:[eq(Column#1, Column#10)]
       │ │ │ ├─HashRightJoin_111	20000.00	root	inner join, inner:TableReader_116, equal:[eq(Column#34, Column#4)]
       │ │ │ │ ├─TableReader_116	1.00	root	data:Selection_115
@@ -1234,9 +1234,9 @@ Projection_25	1.00	root	Column#2, Column#104
       │ │ │ └─TableReader_119	240004648.80	root	data:Selection_118
       │ │ │   └─Selection_118	240004648.80	cop	gt(Column#20, Column#19)
       │ │ │     └─TableScan_117	300005811.00	cop	table:l1, range:[-inf,+inf], keep order:false
-      │ │ └─TableReader_86	0.80	root	data:Selection_85
-      │ │   └─Selection_85	0.80	cop	eq(Column#27, "F")
-      │ │     └─TableScan_84	1.00	cop	table:orders, range: decided by [Column#8], keep order:false
+      │ │ └─TableReader_90	0.80	root	data:Selection_89
+      │ │   └─Selection_89	0.80	cop	eq(Column#27, "F")
+      │ │     └─TableScan_88	1.00	cop	table:orders, range: decided by [Column#8], keep order:true
       │ └─IndexLookUp_73	4.05	root	
       │   ├─IndexScan_71	4.05	cop	table:l2, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(Column#38, Column#8)], keep order:false
       │   └─TableScan_72	4.05	cop	table:l2, keep order:false

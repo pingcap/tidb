@@ -323,11 +323,11 @@ Projection_11	10000.00	root	Column#12
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─IndexHashJoin_46	12.50	root	inner join, inner:TableReader_39, outer key:Column#4, inner key:Column#7
+    └─IndexMergeJoin_44	12.50	root	inner join, inner:TableReader_42, outer key:Column#4, inner key:Column#7
       ├─IndexReader_33	10.00	root	index:IndexScan_32
       │ └─IndexScan_32	10.00	cop	table:s, index:b, range: decided by [eq(Column#5, Column#1)], keep order:false, stats:pseudo
-      └─TableReader_39	1.00	root	data:TableScan_38
-        └─TableScan_38	1.00	cop	table:t1, range: decided by [Column#4], keep order:false, stats:pseudo
+      └─TableReader_42	1.00	root	data:TableScan_41
+        └─TableScan_41	1.00	cop	table:t1, range: decided by [Column#4], keep order:true, stats:pseudo
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	Column#12
@@ -335,13 +335,13 @@ Projection_11	10000.00	root	Column#12
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─IndexHashJoin_48	12.49	root	inner join, inner:TableReader_41, outer key:Column#6, inner key:Column#7
+    └─IndexMergeJoin_46	12.49	root	inner join, inner:TableReader_44, outer key:Column#6, inner key:Column#7
       ├─IndexLookUp_35	9.99	root	
       │ ├─IndexScan_32	10.00	cop	table:s, index:b, range: decided by [eq(Column#5, Column#1)], keep order:false, stats:pseudo
       │ └─Selection_34	9.99	cop	not(isnull(Column#6))
       │   └─TableScan_33	10.00	cop	table:s, keep order:false, stats:pseudo
-      └─TableReader_41	1.00	root	data:TableScan_40
-        └─TableScan_40	1.00	cop	table:t1, range: decided by [Column#6], keep order:false, stats:pseudo
+      └─TableReader_44	1.00	root	data:TableScan_43
+        └─TableScan_43	1.00	cop	table:t1, range: decided by [Column#6], keep order:true, stats:pseudo
 insert into t values(1, 1, 1), (2, 2 ,2), (3, 3, 3), (4, 3, 4),(5,3,5);
 analyze table t;
 explain select t.c in (select count(*) from t s, t t1 where s.b = t.a and s.b = 3 and s.a = t1.a) from t;

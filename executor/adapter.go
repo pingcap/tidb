@@ -785,7 +785,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		slowItems.PrevStmt = sessVars.PrevStmt
 	}
 	if costTime < threshold {
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
+		//logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
 	} else {
 		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
