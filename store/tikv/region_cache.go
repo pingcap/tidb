@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -347,9 +348,11 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 
 	regionStore := cachedRegion.getStore()
 
-	tikvCnt := 0
-	for i, store := range regionStore.stores {
-		addr, err := c.getStoreAddr(bo, cachedRegion, store, i)
+	tikvCnt, sIdx := 0, rand.Int()%len(regionStore.stores)
+	for i := range regionStore.stores {
+		storeIdx := (sIdx + i) % len(regionStore.stores)
+		store := regionStore.stores[storeIdx]
+		addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
 		if err != nil {
 			return nil, err
 		}
@@ -364,7 +367,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			tikvCnt++
 			continue
 		}
-		peer, storeIdx := cachedRegion.meta.Peers[i], i
+		peer := cachedRegion.meta.Peers[storeIdx]
 		storeFailEpoch := atomic.LoadUint32(&store.fail)
 		if storeFailEpoch != regionStore.storeFails[storeIdx] {
 			cachedRegion.invalidate()
@@ -1078,6 +1081,9 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 	}
 
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
+	for rs.stores[nextIdx].storeType == TiFlash {
+		nextIdx = (nextIdx + 1) % len(rs.stores)
+	}
 	newRegionStore := rs.clone()
 	newRegionStore.workStoreIdx = int32(nextIdx)
 	r.compareAndSwapStore(rs, newRegionStore)
@@ -1191,8 +1197,10 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		s.addr = addr
 		s.storeType = TiKV
 		for _, label := range store.Labels {
-			if label.Key == "engine" && label.Value == "tiflash" {
-				s.storeType = TiFlash
+			if label.Key == "engine" {
+				if label.Value == "tiflash" {
+					s.storeType = TiFlash
+				}
 				break
 			}
 		}
@@ -1234,8 +1242,11 @@ func (s *Store) reResolve(c *RegionCache) {
 
 	storeType := TiKV
 	for _, label := range store.Labels {
-		if label.Key == "engine" && label.Value == "tiflash" {
-			storeType = TiFlash
+		if label.Key == "engine" {
+			if label.Value == "tiflash" {
+				storeType = TiFlash
+			}
+			break
 		}
 	}
 	addr = store.GetAddress()
