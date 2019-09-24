@@ -89,6 +89,12 @@ type PhysicalIndexReader struct {
 	OutputColumns []*expression.Column
 }
 
+// PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
+type PushedDownLimit struct {
+	Offset uint64
+	Count  uint64
+}
+
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
 type PhysicalIndexLookUpReader struct {
 	physicalSchemaProducer
@@ -101,6 +107,8 @@ type PhysicalIndexLookUpReader struct {
 	tablePlan  PhysicalPlan
 
 	ExtraHandleCol *expression.Column
+	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
+	PushedLimit *PushedDownLimit
 }
 
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
