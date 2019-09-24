@@ -303,6 +303,9 @@ func composeGlobalPrivUpdate(priv mysql.PrivilegeType, value string) (string, er
 	if priv == mysql.AllPriv {
 		strs := make([]string, 0, len(mysql.Priv2UserCol))
 		for _, v := range mysql.Priv2UserCol {
+			if v == mysql.Priv2UserCol[mysql.GrantPriv] {
+				continue
+			}
 			strs = append(strs, fmt.Sprintf(`%s='%s'`, v, value))
 		}
 		return strings.Join(strs, ", "), nil
