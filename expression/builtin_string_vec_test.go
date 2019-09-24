@@ -41,6 +41,9 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.Left: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
 	},
+	ast.Trim: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},	
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinStringEvalOneVec(c *C) {

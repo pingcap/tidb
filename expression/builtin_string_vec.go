@@ -255,3 +255,32 @@ func (b *builtinRightSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 func (b *builtinRightSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinTrim1ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+		result.AppendString(strings.Trim(str, spaceChars))
+	}
+
+	return nil
+}
+
+func (b *builtinTrim1ArgSig) vectorized() bool {
+	return true
+}
