@@ -457,6 +457,10 @@ func (b *builtinTruncateRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
+func (b *builtinTruncateRealSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinAbsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
@@ -489,10 +493,6 @@ func (b *builtinAbsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		}
 	}
 	return nil
-}
-
-func (b *builtinTruncateRealSig) vectorized() bool {
-	return true
 }
 
 func (b *builtinAbsIntSig) vectorized() bool {
