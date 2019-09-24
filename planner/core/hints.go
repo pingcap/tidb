@@ -242,27 +242,6 @@ func extractTableAsName(p PhysicalPlan) *model.CIStr {
 	return nil
 }
 
-func getJoinTableNames(sctx sessionctx.Context, nodeType nodeType, parentOffset int, children ...PhysicalPlan) (res []ast.HintTable) {
-	for _, child := range children {
-		if child.SelectBlockOffset() == -1 {
-			continue
-		}
-		var ht ast.HintTable
-		if child.SelectBlockOffset() != parentOffset {
-			ht.TableName = sctx.GetSessionVars().PlannerSelectBlockAsName[child.SelectBlockOffset()]
-			ht.QBName = generateQBName(nodeType, child.SelectBlockOffset())
-		} else {
-			name := extractTableAsName(child)
-			if name == nil {
-				continue
-			}
-			ht.TableName = *name
-		}
-		res = append(res, ht)
-	}
-	return res
-}
-
 func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType nodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
 	for i, child := range children {
 		if child.SelectBlockOffset() == -1 {

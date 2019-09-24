@@ -42,7 +42,7 @@
         "SQL": "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
         "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(Column#1,Column#14)",
         "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `t1` `c_d_e`), USE_INDEX(@`sel_1` `t2` `f`), HASH_JOIN(@`sel_-1` `t2`@`sel_1`, `t2`@`sel_1`)"
+        "Hints": "USE_INDEX(@`sel_1` `t1` `c_d_e`), USE_INDEX(@`sel_1` `t2` `f`), HASH_JOIN(@`sel_1` `t1`, `t2`)"
       },
       {
         "SQL": "select /*+ IGNORE_INDEX(t1, c_d_e), IGNORE_INDEX(t2, f), HASH_JOIN(t1) */ * from t t1, t t2 where t1.a = t2.b",
@@ -1028,7 +1028,7 @@
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
         "Best": "RightHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexMergeJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(Column#13,Column#1)}(Column#25,Column#13)->Projection",
         "Warning": "",
-        "Hints": "USE_INDEX(@`sel_1` `t3` `f`), USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_1` `t2` `f`), INL_JOIN(@`sel_1` `t1`), HASH_JOIN(@`sel_-1` `t3`@`sel_1`, `t3`@`sel_1`)"
+        "Hints": "USE_INDEX(@`sel_1` `t3` `f`), USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_1` `t2` `f`), INL_JOIN(@`sel_1` `t1`), HASH_JOIN(@`sel_1` `t3`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
@@ -1105,22 +1105,22 @@
       {
         "SQL": "select /*+ SM_JOIN(@sel_1 t1), INL_JOIN(@sel_2 t3) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Plan": "MergeInnerJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
-        "Hints": "USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_2` `t2` ), USE_INDEX(@`sel_2` `t3` `c_d_e`), INL_JOIN(@`sel_2` `t3`), SM_JOIN(@`sel_1` `t1`, `s`@`sel_2`)"
+        "Hints": "USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_2` `t2` ), USE_INDEX(@`sel_2` `t3` `c_d_e`), INL_JOIN(@`sel_2` `t3`), SM_JOIN(@`sel_1` `t1`), SM_JOIN(@`sel_2` `s`)"
       },
       {
         "SQL": "select /*+ SM_JOIN(@sel_1 t1), INL_JOIN(@qb t3) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Plan": "MergeInnerJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
-        "Hints": "USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_2` `t2` ), USE_INDEX(@`sel_2` `t3` `c_d_e`), INL_JOIN(@`sel_2` `t3`), SM_JOIN(@`sel_1` `t1`, `s`@`sel_2`)"
+        "Hints": "USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_2` `t2` ), USE_INDEX(@`sel_2` `t3` `c_d_e`), INL_JOIN(@`sel_2` `t3`), SM_JOIN(@`sel_1` `t1`), SM_JOIN(@`sel_2` `s`)"
       },
       {
         "SQL": "select /*+ HASH_JOIN(@sel_1 t1), SM_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Plan": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
-        "Hints": "USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_2` `t2` ), USE_INDEX(@`sel_2` `t3` `c_d_e`), SM_JOIN(@`sel_2` `t2`, `t3`), HASH_JOIN(@`sel_1` `t1`, `s`@`sel_2`)"
+        "Hints": "USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_2` `t2` ), USE_INDEX(@`sel_2` `t3` `c_d_e`), SM_JOIN(@`sel_2` `t2`, `t3`), HASH_JOIN(@`sel_1` `t1`), HASH_JOIN(@`sel_2` `s`)"
       },
       {
         "SQL": "select /*+ HASH_JOIN(@sel_1 t1), SM_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Plan": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
-        "Hints": "USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_2` `t2` ), USE_INDEX(@`sel_2` `t3` `c_d_e`), SM_JOIN(@`sel_2` `t2`, `t3`), HASH_JOIN(@`sel_1` `t1`, `s`@`sel_2`)"
+        "Hints": "USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_2` `t2` ), USE_INDEX(@`sel_2` `t3` `c_d_e`), SM_JOIN(@`sel_2` `t2`, `t3`), HASH_JOIN(@`sel_1` `t1`), HASH_JOIN(@`sel_2` `s`)"
       },
       {
         "SQL": "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
@@ -1150,7 +1150,7 @@
       {
         "SQL": "select /*+ HASH_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t1) */ t1.b, t2.a, t2.aa from t t1, (select t1.a as a, t2.a as aa from t t1, t t2) t2 where t1.a = t2.aa;",
         "Plan": "RightHashJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])}}(Column#1,Column#25)->Projection",
-        "Hints": "USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_2` `t1` `f`), USE_INDEX(@`sel_2` `t2` `f`), HASH_JOIN(@`sel_2` `t1`, `t2`), HASH_JOIN(@`sel_1` `t1`)"
+        "Hints": "USE_INDEX(@`sel_1` `t1` ), USE_INDEX(@`sel_2` `t1` `f`), USE_INDEX(@`sel_2` `t2` `f`), HASH_JOIN(@`sel_2` `t1`, `t2`), HASH_JOIN(@`sel_1` `t1`), HASH_JOIN(@`sel_2` `t2`)"
       }
     ]
   },
