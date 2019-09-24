@@ -144,17 +144,15 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(buf0, buf1)
 	times := result.Times()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	var tm types.Time
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if buf0.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		arg0 := buf0.GetString(i)
-		arg1 := buf1.GetString(i)
-
 		if b.isFloat {
 			tm, err = types.ParseTimeFromFloatString(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 		} else {
@@ -168,6 +166,11 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			continue
 		}
 
+		if buf1.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
+		arg1 := buf1.GetString(i)
 		if !isDuration(arg1) {
 			result.SetNull(i, true)
 			continue
