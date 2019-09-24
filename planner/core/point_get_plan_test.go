@@ -231,4 +231,8 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 	tk.MustQuery("explain select * from t where a in (1, 2, 3, 1, 2)").Check(testkit.Rows(
 		"Batch_Point_Get_1 5.00 root table:t",
 	))
+
+	tk.MustQuery("explain select * from t where (a) in ((1), (2), (3), (1), (2))").Check(testkit.Rows(
+		"Batch_Point_Get_1 5.00 root table:t",
+	))
 }

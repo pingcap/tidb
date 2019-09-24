@@ -272,6 +272,10 @@ func getBatchPointGetPlan(
 		var handles = make([]int64, len(patternInExpr.List))
 		var handleParams = make([]*driver.ParamMarkerExpr, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
+			// SELECT * FROM t WHERE (key) in ((1), (2))
+			if p, ok := item.(*ast.ParenthesesExpr); ok {
+				item = p.Expr
+			}
 			var d types.Datum
 			var param *driver.ParamMarkerExpr
 			switch x := item.(type) {
@@ -340,6 +344,10 @@ func getBatchPointGetPlan(
 	indexValues := make([][]types.Datum, len(patternInExpr.List))
 	indexValueParams := make([][]*driver.ParamMarkerExpr, len(patternInExpr.List))
 	for i, item := range patternInExpr.List {
+		// SELECT * FROM t WHERE (key) in ((1), (2))
+		if p, ok := item.(*ast.ParenthesesExpr); ok {
+			item = p.Expr
+		}
 		var values []types.Datum
 		var valuesParams []*driver.ParamMarkerExpr
 		switch x := item.(type) {
@@ -421,7 +429,13 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) P
 		fieldType     *types.FieldType
 		whereColNames []string
 	)
-	switch colName := in.Expr.(type) {
+
+	// SELECT * FROM t WHERE (key) in ((1), (2))
+	colExpr := in.Expr
+	if p, ok := colExpr.(*ast.ParenthesesExpr); ok {
+		colExpr = p.Expr
+	}
+	switch colName := colExpr.(type) {
 	case *ast.ColumnNameExpr:
 		if name := colName.Name.Table.L; name != "" && name != tblAlias.L {
 			return nil
