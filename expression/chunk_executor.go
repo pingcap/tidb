@@ -337,6 +337,15 @@ func executeToString(ctx sessionctx.Context, expr Expression, fieldType *types.F
 // returns a bool slice, which indicates whether a row is passed the filters.
 // Filters is executed vectorized.
 func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool) (_ []bool, err error) {
+	selected, _, err = VectorizedFilterConsiderNull(ctx, filters, iterator, selected, nil)
+	return selected, err
+}
+
+// VectorizedFilterConsiderNull applies a list of filters to a Chunk and
+// returns two bool slices, `selected` indicates whether a row passed the
+// filters, `isNull` indicates whether the result of the filter is null.
+// Filters is executed vectorized.
+func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
 	// canVectorized use to check whether all of the filters can vectorized evaluate by chunk
 	canVectorized := true
 	for _, filter := range filters {
@@ -346,18 +355,14 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 		}
 	}
 	if canVectorized {
-		selected, _, err = VectorizedFilterConsiderNull2(ctx, filters, iterator, selected, nil)
+		return vectorizedFilterConsiderNull2(ctx, filters, iterator, selected, nil)
 	} else {
-		selected, _, err = VectorizedFilterConsiderNull(ctx, filters, iterator, selected, nil)
+		return vectorizedFilterConsiderNull(ctx, filters, iterator, selected, nil)
 	}
-	return selected, err
 }
 
-// VectorizedFilterConsiderNull applies a list of filters to a Chunk and
-// returns two bool slices, `selected` indicates whether a row passed the
-// filters, `isNull` indicates whether the result of the filter is null.
-// Filters is executed vectorized.
-func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
+// Filters can not be evaluated vectorized.
+func vectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
 	selected = selected[:0]
 	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
 		selected = append(selected, true)
@@ -404,11 +409,8 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 	return selected, isNull, nil
 }
 
-// VectorizedFilterConsiderNull2 applies a list of filters to a Chunk and
-// returns two bool slices, `selected` indicates whether a row passed the
-// filters, `isNull` indicates whether the result of the filter is null.
-// Filters is executed vectorized by chunk
-func VectorizedFilterConsiderNull2(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
+// Filters can be evaluated vectorized.
+func vectorizedFilterConsiderNull2(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
 	selected, isNull, err := VecEvalBool(ctx, filters, iterator.GetChunk(), selected, isNull)
 	if err != nil {
 		return nil, nil, err

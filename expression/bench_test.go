@@ -1034,9 +1034,9 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 			exprs, input := genVecEvalBool(numCols, nil, eTypes)
 			it := chunk.NewIterator4Chunk(input)
 			isNull := make([]bool, it.Len())
-			selected, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
+			selected, nulls, err := vectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
 			c.Assert(err, IsNil)
-			selected2, nulls2, err2 := VectorizedFilterConsiderNull2(ctx, exprs, it, nil, nil)
+			selected2, nulls2, err2 := vectorizedFilterConsiderNull2(ctx, exprs, it, nil, nil)
 			c.Assert(err2, IsNil)
 			length := it.Len()
 			for i := 0; i < length; i++ {
@@ -1071,7 +1071,7 @@ func BenchmarkVectorizedFilterConsiderNull(b *testing.B) {
 				b.Run("Vec-"+name, func(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						_, _, err := VectorizedFilterConsiderNull2(ctx, exprs, it, selected, nulls)
+						_, _, err := vectorizedFilterConsiderNull2(ctx, exprs, it, selected, nulls)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -1080,7 +1080,7 @@ func BenchmarkVectorizedFilterConsiderNull(b *testing.B) {
 				b.Run("Row-"+name, func(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						_, _, err := VectorizedFilterConsiderNull(ctx, exprs, it, selected, nulls)
+						_, _, err := vectorizedFilterConsiderNull(ctx, exprs, it, selected, nulls)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -1108,7 +1108,7 @@ func BenchmarkVectorizedFilterConsiderNull(b *testing.B) {
 	b.Run("Vec-special case", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := VectorizedFilterConsiderNull2(ctx, []Expression{expr}, it, selected, nulls)
+			_, _, err := vectorizedFilterConsiderNull2(ctx, []Expression{expr}, it, selected, nulls)
 			if err != nil {
 				panic(err)
 			}
@@ -1117,7 +1117,7 @@ func BenchmarkVectorizedFilterConsiderNull(b *testing.B) {
 	b.Run("Row-special case", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := VectorizedFilterConsiderNull(ctx, []Expression{expr}, it, selected, nulls)
+			_, _, err := vectorizedFilterConsiderNull(ctx, []Expression{expr}, it, selected, nulls)
 			if err != nil {
 				panic(err)
 			}
