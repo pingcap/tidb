@@ -127,14 +127,10 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []string, err error) {
 	k := key
 
-	tableID, indexID, isRecord, err := DecodeKeyHead(key)
+	tableID, indexID, key, err = DecodeIndexKeyPrefix(key)
 	if err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
-	if isRecord {
-		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
-	}
-	key = key[prefixLen+idLen:]
 
 	for len(key) > 0 {
 		// FIXME: Without the schema information, we can only decode the raw kind of
@@ -151,6 +147,22 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		key = remain
 	}
 	return
+}
+
+// DecodeIndexKeyPrefix decodes the key and gets the tableID, indexID, indexValues.
+func DecodeIndexKeyPrefix(key kv.Key) (tableID int64, indexID int64, indexValues []byte, err error) {
+	k := key
+
+	tableID, indexID, isRecord, err := DecodeKeyHead(key)
+	if err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
+	if isRecord {
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
+	}
+	indexValues = key[prefixLen+idLen:]
+
+	return tableID, indexID, indexValues, nil
 }
 
 // DecodeKeyHead decodes the key's head and gets the tableID, indexID. isRecordKey is true when is a record key.
