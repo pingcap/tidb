@@ -552,7 +552,6 @@ func %[1]sParse(yylex %[1]sLexer, parser *Parser) int {
 	yyEx, _ := yylex.(%[1]sLexerEx)
 	var yyn int
 	parser.yylval = %[1]sSymType{}
-	parser.yyVAL = %[1]sSymType{}
 	yyS := parser.cache
 
 	Nerrs := 0   /* number of errors */
@@ -580,13 +579,13 @@ ret1:
 yystack:
 	/* put a state and value onto the stack */
 	yyp++
-	if yyp >= len(yyS) {
+	if yyp+1 >= len(yyS) {
 		nyys := make([]%[1]sSymType, len(yyS)*2)
 		copy(nyys, yyS)
 		yyS = nyys
 		parser.cache = yyS
 	}
-	yyS[yyp] = parser.yyVAL
+	parser.yyVAL = &yyS[yyp+1]
 	yyS[yyp].yys = yystate
 
 yynewstate:
@@ -614,7 +613,7 @@ yynewstate:
 	switch {
 	case yyn > 0: // shift
 		yychar = -1
-		parser.yyVAL = parser.yylval
+		*parser.yyVAL = parser.yylval
 		yystate = yyn
 		yyshift = yyn
 		if %[1]sDebug >= 2 {
@@ -712,7 +711,7 @@ yynewstate:
 		yyS = nyys
 		parser.cache = yyS
 	}
-	parser.yyVAL = yyS[yyp+1]
+	parser.yyVAL = &yyS[yyp+1]
 
 	/* consult goto table to find next state */
 	exState := yystate
@@ -781,7 +780,7 @@ yynewstate:
 	mustFormat(f, `%u
 	}
 
-	if yyEx != nil && yyEx.Reduced(r, exState, &parser.yyVAL) {
+	if yyEx != nil && yyEx.Reduced(r, exState, parser.yyVAL) {
 		return -1
 	}
 	goto yystack /* stack new state and value */

@@ -100,7 +100,7 @@ type Parser struct {
 	// the following fields are used by yyParse to reduce allocation.
 	cache  []yySymType
 	yylval yySymType
-	yyVAL  yySymType
+	yyVAL  *yySymType
 }
 
 type stmtTexter interface {
