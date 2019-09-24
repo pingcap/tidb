@@ -1806,10 +1806,10 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
-	if v.KeepOuterOrder {
-		return e
-	}
 	idxHash := &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
+	if v.KeepOuterOrder {
+		idxHash.keepOuterOrder = true
+	}
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	idxHash.joiners = make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
