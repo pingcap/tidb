@@ -198,11 +198,6 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	for i := 0; i < concurrency; i++ {
 		go e.newInnerMergeWorker(innerCh, i).run(workerCtx, e.workerWg, e.cancelFunc)
 	}
-	go e.wait4JoinWorkers()
-}
-
-func (e *IndexLookUpMergeJoin) wait4JoinWorkers() {
-	e.workerWg.Wait()
 }
 
 func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMergeJoinTask) *outerMergeWorker {
@@ -671,6 +666,7 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
 	}
+	e.workerWg.Wait()
 	e.joinChkResourceCh = nil
 	e.memTracker = nil
 	return e.baseExecutor.Close()
