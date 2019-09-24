@@ -404,7 +404,9 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		case <-ctx.Done():
 			return
 		}
-		close(resultCh)
+		if task.keepOuterOrder {
+			close(resultCh)
+		}
 	}
 }
 
