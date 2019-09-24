@@ -274,9 +274,6 @@ type PhysicalIndexJoin struct {
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
-	// KeepOuterOrder indicates whether to keep the order of the join results be
-	// the same as the outer table.
-	KeepOuterOrder bool
 	// IdxColLens stores the length of each index column.
 	IdxColLens []int
 	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
@@ -298,6 +295,14 @@ type PhysicalIndexMergeJoin struct {
 	// OuterCompareFuncs store the compare functions for outer join keys and outer join
 	// keys, it's for outer rows sort's convenience.
 	OuterCompareFuncs []expression.CompareFunc
+}
+
+// PhysicalIndexHashJoin represents the plan of index look up hash join.
+type PhysicalIndexHashJoin struct {
+	PhysicalIndexJoin
+	// keepOuterOrder indicates whether keeping the output result order as the
+	// outer side.
+	keepOuterOrder bool
 }
 
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.
