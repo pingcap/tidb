@@ -284,6 +284,9 @@ const (
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
+
+	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
+	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 )
 
 // Default TiDB system variable values.
