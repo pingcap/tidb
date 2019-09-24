@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"strconv"
 	"time"
 
@@ -199,9 +198,9 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	now := time.Unix(0, oracle.ExtractPhysical(currentVer.Ver)*1e6)
 	startTSLowerLimit := variable.GoTimeToTS(now.Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond))
 
-	var minStartTS uint64 = math.MaxUint64
+	minStartTS := variable.GoTimeToTS(now)
 	for _, info := range pl {
-		if info.CurTxnStartTS != 0 && info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
+		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
 		}
 	}

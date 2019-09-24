@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,8 +78,16 @@ func (w *MockSafePointKV) Get(k string) (string, error) {
 }
 
 // GetWithPrefix implements the Get method for SafePointKV
-func (w *MockSafePointKV) GetWithPrefix(k string) ([]*mvccpb.KeyValue, error) {
-	return nil, nil
+func (w *MockSafePointKV) GetWithPrefix(prefix string) ([]*mvccpb.KeyValue, error) {
+	w.mockLock.RLock()
+	defer w.mockLock.RUnlock()
+	kvs := make([]*mvccpb.KeyValue, 0, len(w.store))
+	for k, v := range w.store {
+		if strings.HasPrefix(k, prefix) {
+			kvs = append(kvs, &mvccpb.KeyValue{Key: []byte(k), Value: []byte(v)})
+		}
+	}
+	return kvs, nil
 }
 
 // EtcdSafePointKV implements SafePointKV at runtime

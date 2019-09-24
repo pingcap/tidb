@@ -16,6 +16,7 @@ package gcworker
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -185,6 +186,27 @@ func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 	t2, err := s.gcWorker.getOracleTime()
 	c.Assert(err, IsNil)
 	s.timeEqual(c, t2, t1.Add(time.Second*10), time.Millisecond*10)
+}
+
+func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
+	spkv := s.store.GetSafePointKV()
+	err := spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
+	c.Assert(err, IsNil)
+	now := time.Now()
+	sp := s.gcWorker.calSafePointByMinStartTS(now)
+	c.Assert(sp.Second(), Equals, now.Second())
+	err = spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "a"), "0")
+	c.Assert(err, IsNil)
+	sp = s.gcWorker.calSafePointByMinStartTS(now)
+	zeroTime := time.Unix(0, oracle.ExtractPhysical(0)*1e6)
+	c.Assert(sp, Equals, zeroTime)
+
+	err = spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "a"), "0")
+	c.Assert(err, IsNil)
+	err = spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "b"), "1")
+	c.Assert(err, IsNil)
+	sp = s.gcWorker.calSafePointByMinStartTS(now)
+	c.Assert(sp, Equals, zeroTime)
 }
 
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {

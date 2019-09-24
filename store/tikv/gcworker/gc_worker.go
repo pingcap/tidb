@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -328,18 +329,18 @@ func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
 		return safePoint
 	}
 
+	safePointTS := variable.GoTimeToTS(safePoint)
 	for _, v := range kvs {
 		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 64)
 		if err != nil {
 			logutil.BgLogger().Warn("parse minStartTS failed", zap.Error(err))
 			continue
 		}
-		minStartTime := time.Unix(0, oracle.ExtractPhysical(minStartTS)*1e6)
-		if minStartTime.Before(safePoint) {
-			safePoint = minStartTime
+		if minStartTS < safePointTS {
+			safePointTS = minStartTS
 		}
 	}
-
+	safePoint = time.Unix(0, oracle.ExtractPhysical(safePointTS)*1e6)
 	logutil.BgLogger().Debug("calSafePointByMinStartTS", zap.Time("safePoint", safePoint))
 	return safePoint
 }
