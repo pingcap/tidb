@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -549,6 +550,13 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	for i := 0; i < 50; i++ {
 		lockInfoNew := s.getLockInfo(c, key)
 		if lockInfoNew.LockTtl > lockInfo.LockTtl {
+			currentTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+			c.Assert(err, IsNil)
+			// Check that the TTL is update to a reasonable range.
+			expire := oracle.ExtractPhysical(txn.startTS) + int64(lockInfoNew.LockTtl)
+			now := oracle.ExtractPhysical(currentTS)
+			c.Assert(expire > now, IsTrue)
+			c.Assert(uint64(expire-now) <= PessimisticLockTTL, IsTrue)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
