@@ -161,9 +161,9 @@ id	count	task	operator info
 Projection_10	428.32	root	Column#1, Column#2, Column#4, Column#5, Column#3, Column#24, Column#25, Column#26, Column#11, Column#12, Column#13, Column#14, Column#15, Column#16, Column#17
 └─Limit_13	428.32	root	offset:0, count:2000
   └─IndexMergeJoin_25	428.32	root	inner join, inner:IndexLookUp_23, outer key:Column#2, Column#5, inner key:Column#21, Column#23
-    ├─TableReader_53	428.32	root	data:Selection_52
-    │ └─Selection_52	428.32	cop	eq(Column#18, 0), eq(Column#4, "ios"), gt(Column#9, 1478185592), not(isnull(Column#5))
-    │   └─TableScan_51	2000.00	cop	table:dt, range:[0,+inf], keep order:false
+    ├─TableReader_40	428.32	root	data:Selection_39
+    │ └─Selection_39	428.32	cop	eq(Column#18, 0), eq(Column#4, "ios"), gt(Column#9, 1478185592), not(isnull(Column#5))
+    │   └─TableScan_38	2000.00	cop	table:dt, range:[0,+inf], keep order:false
     └─IndexLookUp_23	0.48	root	
       ├─IndexScan_20	1.00	cop	table:rr, index:aid, dic, range: decided by [eq(Column#21, Column#2) eq(Column#23, Column#5)], keep order:true
       └─Selection_22	0.48	cop	eq(Column#22, "ios"), gt(Column#26, 1478185592)

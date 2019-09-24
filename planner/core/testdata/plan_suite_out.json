@@ -141,7 +141,7 @@
       },
       {
         "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.d limit 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(Column#5, 1)])->Limit, Table(t))->Limit"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(Column#5, 1)])->Limit, Table(t))"
       },
       {
         "SQL": "select c from t where t.c = 1 and t.e = 1 order by t.d limit 1",
@@ -177,7 +177,7 @@
       },
       {
         "SQL": "select c, b from t where c = 1 limit 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))->Limit->Projection"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))->Projection"
       },
       {
         "SQL": "select c, b from t where c = 1 and e = 1 and b = 1 limit 1",
@@ -201,7 +201,7 @@
       },
       {
         "SQL": "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([gt(Column#1, 1)])->Limit, Table(t))->Limit"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([gt(Column#1, 1)])->Limit, Table(t))"
       },
       {
         "SQL": "select * from t use index(e_d_c_str_prefix) where t.c_str = 'abcdefghijk' and t.d_str = 'd' and t.e_str = 'e'",
@@ -496,7 +496,7 @@
       },
       {
         "SQL": "select * from t where c = 1 order by c limit 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))->Limit"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))"
       },
       {
         "SQL": "select * from t order by a limit 1",
