@@ -144,12 +144,12 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 	}
 
 	result.ResizeTime(n, false)
+	result.MergeNulls(buf0, buf1)
 	times := result.Times()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	var tm types.Time
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		arg0 := buf0.GetString(i)
@@ -166,10 +166,6 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			continue
 		}
 
-		if buf1.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
 		arg1 := buf1.GetString(i)
 		if !isDuration(arg1) {
 			result.SetNull(i, true)
