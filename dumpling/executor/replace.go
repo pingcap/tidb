@@ -179,7 +179,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	 */
 
 	// Get keys need to be checked.
-	toBeCheckedRows, err := e.getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
+	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
 	if err != nil {
 		return err
 	}
