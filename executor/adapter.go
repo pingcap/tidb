@@ -614,9 +614,6 @@ func (a *ExecStmt) logAudit() {
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
-	if level > zapcore.WarnLevel {
-		return
-	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.Ctx.GetSessionVars().StmtCtx.StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
