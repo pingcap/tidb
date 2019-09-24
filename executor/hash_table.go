@@ -97,7 +97,8 @@ type hashRowContainer struct {
 
 	// exceeded indicates that records have exceeded memQuota during
 	// this PutChunk and we should spill now.
-	exceeded bool
+	// It's for concurrency usage, so access it with atomic.
+	exceeded uint32
 	// spilled indicates that records have spilled out into disk.
 	// It's for concurrency usage, so access it with atomic.
 	spilled uint32
@@ -206,7 +207,7 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 	} else {
 		chkIdx = uint32(c.records.NumChunks())
 		c.records.Add(chk)
-		if c.exceeded {
+		if atomic.LoadUint32(&c.exceeded) != 0 {
 			err := c.spillToDisk()
 			if err != nil {
 				return err
@@ -281,8 +282,8 @@ type spillDiskAction struct {
 	fallbackAction memory.ActionOnExceed
 }
 
-// Action triggers spillToDisk method of hashRowContainer and if
-// it is already triggered before, call its fallbackAction.
+// Action sends a signal to trigger spillToDisk method of hashRowContainer
+// and if it is already triggered before, call its fallbackAction.
 func (a *spillDiskAction) Action(t *memory.Tracker) {
 	if a.c.alreadySpilledSafe() {
 		if a.fallbackAction != nil {
@@ -290,7 +291,7 @@ func (a *spillDiskAction) Action(t *memory.Tracker) {
 		}
 	}
 	a.once.Do(func() {
-		a.c.exceeded = true
+		atomic.StoreUint32(&a.c.exceeded, 1)
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.", zap.String("memory", t.String()))
 	})
 }

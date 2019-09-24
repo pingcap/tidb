@@ -510,7 +510,7 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 	e.rowContainer.GetMemTracker().SetLabel(innerResultLabel)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceedWithFallback(actionSpill)
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {

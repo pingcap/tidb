@@ -101,7 +101,7 @@ func (s *testSuite) TestOOMAction(c *C) {
 	action1 := &mockAction{}
 	action2 := &mockAction{}
 	tracker.SetActionOnExceed(action1)
-	tracker.SetActionOnExceedWithFallback(action2)
+	tracker.FallbackOldAndSetNewAction(action2)
 	c.Assert(action1.called, IsFalse)
 	c.Assert(action2.called, IsFalse)
 	tracker.Consume(10000)
