@@ -188,12 +188,6 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 }
 
 func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
-	if len(r.selectResp.RowBatchData) == 0 {
-		err := r.getSelectResp()
-		if err != nil || r.selectResp == nil {
-			return errors.Trace(err)
-		}
-	}
 	rowBatchData := r.selectResp.RowBatchData
 	codec := chunk.NewCodec(r.fieldTypes)
 	remained := codec.DecodeToChunk(rowBatchData, chk)
