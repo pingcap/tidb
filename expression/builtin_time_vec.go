@@ -122,3 +122,74 @@ func (b *builtinDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) e
 func (b *builtinDateSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeTime(n, false)
+	result.MergeNulls(buf0, buf1)
+	times := result.Times()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	var tm types.Time
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		arg0 := buf0.GetString(i)
+		arg1 := buf1.GetString(i)
+
+		if b.isFloat {
+			tm, err = types.ParseTimeFromFloatString(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
+		} else {
+			tm, err = types.ParseTime(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
+		}
+		if err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+
+		if !isDuration(arg1) {
+			result.SetNull(i, true)
+			continue
+		}
+
+		duration, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		if err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		tmp, err := tm.Add(sc, duration)
+		if err != nil {
+			return err
+		}
+		times[i] = tmp
+	}
+	return nil
+}
+
+func (b *builtinTimestamp2ArgsSig) vectorized() bool {
+	return true
+}
