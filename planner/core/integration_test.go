@@ -17,11 +17,23 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
+	testData testutil.TestData
+}
+
+func (s *testIntegrationSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testIntegrationSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testIntegrationSuite) TestShowSubquery(c *C) {
@@ -95,4 +107,33 @@ func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
 	tk.MustExec("drop table bit_col_t")
 	tk.MustGetErrCode("create table bit_col_t (a bit(0))", mysql.ErrInvalidFieldSize)
 	tk.MustGetErrCode("create table bit_col_t (a bit(65))", mysql.ErrTooBigDisplaywidth)
+}
+
+func (s *testIntegrationSuite) TestPushLimitDownIndexLookUpReader(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl")
+	tk.MustExec("create table tbl(a int, b int, c int, key idx_b_c(b,c))")
+	tk.MustExec("insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
+	tk.MustExec("analyze table tbl")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
 }

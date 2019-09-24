@@ -20,7 +20,7 @@ import (
 )
 
 type testShowStatsSuite struct {
-	testSuite
+	*baseTestSuite
 }
 
 func (s *testShowStatsSuite) TestShowStatsMeta(c *C) {
@@ -84,6 +84,7 @@ func (s *testShowStatsSuite) TestShowStatsBuckets(c *C) {
 func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, index idx(a))")
 	tk.MustExec("insert into t values(NULL)")
 	tk.MustExec("analyze table t")
