@@ -366,7 +366,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		}
 
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-			innerRow := types.CloneRow(innerChunkRow.GetDatumRow(fields))
+			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount++
 			row, err := e.getRow(ctx, innerRow)
 			if err != nil {
@@ -383,8 +383,12 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				}
 			}
 		}
+		err = base.exec(ctx, rows)
+		if err != nil {
+			return err
+		}
 	}
-	return base.exec(ctx, rows)
+	return nil
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {

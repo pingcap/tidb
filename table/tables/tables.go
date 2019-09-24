@@ -23,6 +23,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -38,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
 )
@@ -430,6 +431,12 @@ func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.Retrie
 	return bs, nil
 }
 
+var rowPool = sync.Pool {
+	New: func() interface{} {
+		return make([]types.Datum, 0, 200)
+	},
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	var opt table.AddRecordOpt
@@ -487,7 +494,11 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	var colIDs, binlogColIDs []int64
 	var row, binlogRow []types.Datum
 	colIDs = make([]int64, 0, len(r))
-	row = make([]types.Datum, 0, len(r))
+	row = rowPool.Get().([]types.Datum)
+	row = row[:0]
+	defer func() {
+		rowPool.Put(row)
+	}()
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
