@@ -125,3 +125,38 @@ func (b *builtinLeastIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 func (b *builtinLeastIntSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinGreatestIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	i64s := result.Int64s()
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalInt(b.ctx, input, buf); err != nil {
+			return err
+		}
+
+		result.MergeNulls(buf)
+		v := buf.Int64s()
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			if v[i] > i64s[i] {
+				i64s[i] = v[i]
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinGreatestIntSig) vectorized() bool {
+	return true
+}
