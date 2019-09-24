@@ -18,14 +18,19 @@
 package expression
 
 import (
+	"encoding/hex"
+	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/planner/codec"
+	planCodec "github.com/pingcap/tidb/planner/codec"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/printer"
 )
 
@@ -46,6 +51,7 @@ var (
 	_ functionClass = &tidbVersionFunctionClass{}
 	_ functionClass = &tidbIsDDLOwnerFunctionClass{}
 	_ functionClass = &tidbDecodePlanFunctionClass{}
+	_ functionClass = &tidbDecodeKeyFunctionClass{}
 )
 
 var (
@@ -59,6 +65,7 @@ var (
 	_ builtinFunc = &builtinVersionSig{}
 	_ builtinFunc = &builtinTiDBVersionSig{}
 	_ builtinFunc = &builtinRowCountSig{}
+	_ builtinFunc = &builtinTiDBDecodeKeySig{}
 )
 
 type databaseFunctionClass struct {
@@ -592,6 +599,66 @@ func (b *builtinRowCountSig) evalInt(_ chunk.Row) (res int64, isNull bool, err e
 	return res, false, nil
 }
 
+type tidbDecodeKeyFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbDecodeKeyFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	sig := &builtinTiDBDecodeKeySig{bf}
+	return sig, nil
+}
+
+type builtinTiDBDecodeKeySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
+	newSig := &builtinTiDBDecodeKeySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinTiDBIsDDLOwnerSig.
+func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error) {
+	s, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return decodeKey(b.ctx, s), false, nil
+}
+
+func decodeKey(ctx sessionctx.Context, s string) string {
+	key, err := hex.DecodeString(s)
+	if err != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+		return s
+	}
+	// Auto decode byte if needed.
+	_, bs, err := codec.DecodeBytes([]byte(key), nil)
+	if err == nil {
+		key = bs
+	}
+	// Try to decode it as a record key.
+	tableID, handle, err := tablecodec.DecodeRecordKey(key)
+	if err == nil {
+		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle, 10)
+	}
+	// Try decode as table index key.
+	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKeyPrefix(key)
+	if err == nil {
+		idxValueStr := fmt.Sprintf("%X", indexValues)
+		return "tableID=" + strconv.FormatInt(tableID, 10) + ", indexID=" + strconv.FormatInt(indexID, 10) + ", indexValues=" + idxValueStr
+	}
+
+	// TODO: try to decode other type key.
+	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+	return s
+}
+
 type tidbDecodePlanFunctionClass struct {
 	baseFunctionClass
 }
@@ -621,6 +688,6 @@ func (b *builtinTiDBDecodePlanSig) evalString(row chunk.Row) (string, bool, erro
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	planTree, err := codec.DecodePlan(planString)
+	planTree, err := planCodec.DecodePlan(planString)
 	return planTree, false, err
 }

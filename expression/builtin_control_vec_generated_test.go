@@ -26,19 +26,19 @@ import (
 var vecBuiltinControlCases = map[string][]vecExprBenchCase{
 	ast.If: {
 
-		{types.ETInt, []types.EvalType{types.ETInt, types.ETInt, types.ETInt}, nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt}},
 
-		{types.ETReal, []types.EvalType{types.ETInt, types.ETReal, types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETReal}},
 
-		{types.ETDecimal, []types.EvalType{types.ETInt, types.ETDecimal, types.ETDecimal}, nil},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETDecimal}},
 
-		{types.ETString, []types.EvalType{types.ETInt, types.ETString, types.ETString}, nil},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString}},
 
-		{types.ETDatetime, []types.EvalType{types.ETInt, types.ETDatetime, types.ETDatetime}, nil},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt, types.ETDatetime, types.ETDatetime}},
 
-		{types.ETDuration, []types.EvalType{types.ETInt, types.ETDuration, types.ETDuration}, nil},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt, types.ETDuration, types.ETDuration}},
 
-		{types.ETJson, []types.EvalType{types.ETInt, types.ETJson, types.ETJson}, nil},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETInt, types.ETJson, types.ETJson}},
 	},
 }
 
