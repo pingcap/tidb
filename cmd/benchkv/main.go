@@ -128,7 +128,7 @@ func main() {
 	t := time.Now()
 	batchRW(value)
 	resp, err := http.Get("http://localhost:9191/metrics")
-	defer resp.Close()
+	defer resp.Body.Close()
 	terror.MustNil(err)
 
 	defer terror.Call(resp.Body.Close)
