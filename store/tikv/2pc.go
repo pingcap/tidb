@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -94,8 +95,9 @@ type twoPhaseCommitter struct {
 	// maxTxnTimeUse represents max time a Txn may use (in ms) from its startTS to commitTS.
 	// We use it to guarantee GC worker will not influence any active txn. The value
 	// should be less than GC life time.
-	maxTxnTimeUse  uint64
-	detail         *execdetails.CommitDetails
+	maxTxnTimeUse uint64
+	detail        unsafe.Pointer
+
 	primaryKey     []byte
 	forUpdateTS    uint64
 	pessimisticTTL uint64
@@ -273,7 +275,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = getTxnPriority(txn)
 	c.syncLog = getTxnSyncLog(txn)
-	c.detail = commitDetail
+	c.setDetail(commitDetail)
 	return nil
 }
 
@@ -334,7 +336,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 			}
 		}
 		sizeFunc = c.keyValueSize
-		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
+		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
 	}
 	// Make sure the group that contains primary key goes first.
 	batches = appendBatchBySize(batches, firstRegion, groups[firstRegion], sizeFunc, txnCommitBatchSize)
@@ -418,6 +420,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 
 		batch := batch1
 		go func() {
+			var singleBatchBackoffer *Backoffer
 			if action == actionCommit {
 				// Because the secondary batches of the commit actions are implemented to be
 				// committed asynchronously in background goroutines, we should not
@@ -426,12 +429,22 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				// Here we makes a new clone of the original backoffer for this goroutine
 				// exclusively to avoid the data race when using the same backoffer
 				// in concurrent goroutines.
-				singleBatchBackoffer := backoffer.Clone()
-				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
+				singleBatchBackoffer = backoffer.Clone()
 			} else {
-				singleBatchBackoffer, singleBatchCancel := backoffer.Fork()
+				var singleBatchCancel context.CancelFunc
+				singleBatchBackoffer, singleBatchCancel = backoffer.Fork()
 				defer singleBatchCancel()
-				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
+			}
+			beforeSleep := singleBatchBackoffer.totalSleep
+			ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
+			commitDetail := c.getDetail()
+			if commitDetail != nil { // lock operations of pessimistic-txn will let commitDetail be nil
+				if delta := singleBatchBackoffer.totalSleep - beforeSleep; delta > 0 {
+					atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(singleBatchBackoffer.totalSleep-beforeSleep)*int64(time.Millisecond))
+					commitDetail.Mu.Lock()
+					commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, singleBatchBackoffer.types...)
+					commitDetail.Mu.Unlock()
+				}
 			}
 		}()
 	}
@@ -566,7 +579,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		atomic.AddInt64(&c.detail.ResolveLockTime, int64(time.Since(start)))
+		atomic.AddInt64(&c.getDetail().ResolveLockTime, int64(time.Since(start)))
 		if msBeforeExpired > 0 {
 			err = bo.BackoffWithMaxSleep(BoTxnLock, int(msBeforeExpired), errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
@@ -712,6 +725,14 @@ func kvPriorityToCommandPri(pri int) pb.CommandPri {
 		return pb.CommandPri_High
 	}
 	return pb.CommandPri_Normal
+}
+
+func (c *twoPhaseCommitter) setDetail(d *execdetails.CommitDetails) {
+	atomic.StorePointer(&c.detail, unsafe.Pointer(d))
+}
+
+func (c *twoPhaseCommitter) getDetail() *execdetails.CommitDetails {
+	return (*execdetails.CommitDetails)(atomic.LoadPointer(&c.detail))
 }
 
 func (c *twoPhaseCommitter) setUndeterminedErr(err error) {
@@ -906,8 +927,14 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	prewriteBo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
 	err := c.prewriteKeys(prewriteBo, c.keys)
-	c.detail.PrewriteTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(prewriteBo.totalSleep) * time.Millisecond
+	commitDetail := c.getDetail()
+	commitDetail.PrewriteTime = time.Since(start)
+	if prewriteBo.totalSleep > 0 {
+		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(prewriteBo.totalSleep)*int64(time.Millisecond))
+		commitDetail.Mu.Lock()
+		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, prewriteBo.types...)
+		commitDetail.Mu.Unlock()
+	}
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
@@ -929,7 +956,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			zap.Uint64("txnStartTS", c.startTS))
 		return errors.Trace(err)
 	}
-	c.detail.GetCommitTsTime = time.Since(start)
+	commitDetail.GetCommitTsTime = time.Since(start)
 
 	// check commitTS
 	if commitTS <= c.startTS {
@@ -958,8 +985,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	start = time.Now()
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
 	err = c.commitKeys(commitBo, c.keys)
-	c.detail.CommitTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(commitBo.totalSleep) * time.Millisecond
+	commitDetail.CommitTime = time.Since(start)
+	if commitBo.totalSleep > 0 {
+		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(commitBo.totalSleep)*int64(time.Millisecond))
+		commitDetail.Mu.Lock()
+		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, commitBo.types...)
+		commitDetail.Mu.Unlock()
+	}
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
 			logutil.Logger(ctx).Error("2PC commit result undetermined",
