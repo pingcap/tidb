@@ -326,6 +326,9 @@ func composeDBPrivUpdate(priv mysql.PrivilegeType, value string) (string, error)
 			if !ok {
 				return "", errors.Errorf("Unknown db privilege %v", priv)
 			}
+			if p == mysql.GrantPriv {
+				continue
+			}
 			strs = append(strs, fmt.Sprintf(`%s='%s'`, v, value))
 		}
 		return strings.Join(strs, ", "), nil
@@ -346,12 +349,18 @@ func composeTablePrivUpdateForGrant(ctx sessionctx.Context, priv mysql.Privilege
 			if !ok {
 				return "", errors.Errorf("Unknown table privilege %v", p)
 			}
+			if p == mysql.GrantPriv {
+				continue
+			}
 			newTablePriv = addToSet(newTablePriv, v)
 		}
 		for _, p := range mysql.AllColumnPrivs {
 			v, ok := mysql.Priv2SetStr[p]
 			if !ok {
 				return "", errors.Errorf("Unknown column privilege %v", p)
+			}
+			if p == mysql.GrantPriv {
+				continue
 			}
 			newColumnPriv = addToSet(newColumnPriv, v)
 		}

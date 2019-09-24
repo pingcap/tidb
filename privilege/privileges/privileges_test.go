@@ -491,7 +491,7 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	// high privileged user
 	mustExec(c, se, "CREATE USER 'usesuper'")
 	mustExec(c, se, "CREATE USER 'usenobody'")
-	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper' WITH GRANT OPTION")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "use mysql")
 	// low privileged user
@@ -538,7 +538,7 @@ func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER tcd1, tcd2`)
-	mustExec(c, se, `GRANT ALL ON *.* to tcd2`)
+	mustExec(c, se, `GRANT ALL ON *.* to tcd2 WITH GRANT OPTION`)
 
 	// should fail
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil), IsTrue)
@@ -581,7 +581,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	// high privileged user
 	mustExec(c, se, "CREATE USER 'asuper'")
 	mustExec(c, se, "CREATE USER 'anobody'")
-	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper' WITH GRANT OPTION")
 	mustExec(c, se, "CREATE DATABASE atest")
 	mustExec(c, se, "use atest")
 	mustExec(c, se, "CREATE TABLE t1 (a int)")
@@ -682,6 +682,9 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	buf.WriteString("select ")
 	i := 0
 	for _, priv := range mysql.Priv2UserCol {
+		if priv == mysql.Priv2UserCol[mysql.GrantPriv] {
+			continue
+		}
 		if i != 0 {
 			buf.WriteString(", ")
 			res.WriteString(" ")
