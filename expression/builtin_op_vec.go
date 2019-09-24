@@ -30,19 +30,11 @@ func (b *builtinLogicAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		return err
 	}
 
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	result.ResizeInt64(n, false)
 
 	arg0 := buf0.Int64s()
-	arg1 := buf1.Int64s()
 	i64s := result.Int64s()
 
 	for i := 0; i < n; i++ {
@@ -52,8 +44,8 @@ func (b *builtinLogicAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 
-		isNull1 := buf1.IsNull(i)
-		if !isNull1 && arg1[i] == 0 {
+		isNull1 := result.IsNull(i)
+		if !isNull1 && i64s[i] == 0 {
 			i64s[i] = 0
 			continue
 		}
