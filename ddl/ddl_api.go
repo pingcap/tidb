@@ -1623,8 +1623,9 @@ func checkRangeColumnsPartitionValue(ctx sessionctx.Context, tbInfo *model.Table
 	if len(curr.LessThan) != len(pi.Columns) {
 		return errors.Trace(ast.ErrPartitionColumnList)
 	}
+	var prev *model.PartitionDefinition
 	for i := 1; i < len(defs); i++ {
-		prev, curr := curr, &defs[i]
+		prev, curr = curr, &defs[i]
 		succ, err := checkTwoRangeColumns(ctx, curr, prev, pi, tbInfo)
 		if err != nil {
 			return err
@@ -2203,7 +2204,11 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	// old partitions to check all partitions is strictly increasing.
 	tmp := *partInfo
 	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	err = checkCreatePartitionValue(ctx, meta, &tmp, t.Cols())
+	if len(tmp.Columns) == 0 {
+		err = checkCreatePartitionValue(ctx, meta, &tmp, t.Cols())
+	} else {
+		err = checkRangeColumnsPartitionValue(ctx, meta, &tmp)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
