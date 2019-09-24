@@ -130,9 +130,10 @@ func (s *testPrivilegeSuite) TestCheckPointGetDBPrivilege(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `use test;`)
 	_, err := se.Execute(context.Background(), `select * from test2.t where id = 1`)
-	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	fmt.Println(err.Error())
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.Execute(context.Background(), "update test2.t set v = 2 where id = 1")
-	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
