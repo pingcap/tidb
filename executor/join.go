@@ -69,6 +69,9 @@ type HashJoinExec struct {
 	memTracker  *memory.Tracker // track memory usage.
 	prepared    bool
 	isOuterJoin bool
+
+	matchedStatus [][]int32
+	outerHashJoin bool
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -138,6 +141,12 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.joinWorkerWaitGroup = sync.WaitGroup{}
+
+	if e.joinType == 1 || e.joinType == 2 {
+		e.outerHashJoin = true
+	} else {
+		e.outerHashJoin = false
+	}
 	return nil
 }
 
@@ -174,8 +183,10 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 		}
 		if !hasWaitedForInner {
 			if outerResult.NumRows() == 0 {
-				e.finished.Store(true)
-				return
+				if !e.outerHashJoin {
+					e.finished.Store(true)
+					return
+				}
 			}
 			jobFinished, innerErr := e.wait4Inner()
 			if innerErr != nil {
@@ -311,8 +322,48 @@ func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 	e.joinWorkerWaitGroup.Done()
 }
 
+// TODO(fangzhuhe): to concurrently handle unmatched rows
+func (e *HashJoinExec) handleUnmatchedRowsFromHashTable() (status bool, err error) {
+	workerID := uint(0)
+	ok, joinResult := e.getNewJoinResult(workerID)
+	if !ok {
+		return false, err
+	}
+	for i := 0; i < e.rowContainer.records.NumChunks(); i++ {
+		chk := e.rowContainer.records.GetChunk(i)
+		for j := 0; j < chk.NumRows(); j++ {
+			if e.matchedStatus[i][j] == 0 { // process unmatched outer rows
+				e.joiners[workerID].onMissMatch(false, chk.GetRow(j), joinResult.chk)
+			}
+			if joinResult.chk.IsFull() {
+				e.joinResultCh <- joinResult
+				ok, joinResult = e.getNewJoinResult(workerID)
+				if !ok {
+					return false, err
+				}
+			}
+		}
+	}
+	if joinResult == nil {
+		return true, nil
+	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+		e.joinResultCh <- joinResult
+	}
+	return true, nil
+}
+
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.joinWorkerWaitGroup.Wait()
+	// TODO(fangzhuhe): is it ok with following close?
+	if e.outerHashJoin {
+		ok, err := e.handleUnmatchedRowsFromHashTable()
+		if err != nil {
+			fmt.Println("error at the tail")
+		}
+		if !ok {
+			fmt.Println("error status")
+		}
+	}
 	close(e.joinResultCh)
 }
 
@@ -346,7 +397,11 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 		if !ok {
 			break
 		}
-		ok, joinResult = e.join2Chunk(workerID, outerResult, hCtx, joinResult, selected)
+		if e.outerHashJoin {
+			ok, joinResult = e.join2ChunkForOuterHashJoin(workerID, outerResult, hCtx, joinResult)
+		} else {
+			ok, joinResult = e.join2Chunk(workerID, outerResult, hCtx, joinResult, selected)
+		}
 		if !ok {
 			break
 		}
@@ -358,12 +413,47 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 		return
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		e.joinResultCh <- joinResult
+	} else if joinResult.chk.NumRows() == 0 {
+		e.joinChkResourceCh[workerID] <- joinResult.chk
 	}
 }
 
+// Note that the inner* and outer* lables are reversed
+func (e *HashJoinExec) joinMatchedOuterRow2ChunkForOuterHashJoin(workerID uint, outerRow chunk.Row, hCtx *hashContext,
+	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
+	innerRows, rowsIds, err := e.rowContainer.GetMatchedRowsAndIds(outerRow, hCtx)
+	if err != nil {
+		joinResult.err = err
+		return false, joinResult
+	}
+	if len(innerRows) == 0 {
+		return true, joinResult
+	}
+	for i := range rowsIds {
+		atomic.CompareAndSwapInt32(&e.matchedStatus[rowsIds[i].ChkIdx][rowsIds[i].RowIdx], 0, 1)
+	}
+	iter := chunk.NewIterator4Slice(innerRows)
+	var outerMatchStatus []outerRowStatusFlag
+	for iter.Begin(); iter.Current() != iter.End(); {
+		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(iter, outerRow, joinResult.chk, outerMatchStatus)
+		if err != nil {
+			joinResult.err = err
+			return false, joinResult
+		}
+
+		if joinResult.chk.IsFull() {
+			e.joinResultCh <- joinResult
+			ok, joinResult := e.getNewJoinResult(workerID)
+			if !ok {
+				return false, joinResult
+			}
+		}
+	}
+	return true, joinResult
+}
 func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	innerRows, err := e.rowContainer.GetMatchedRows(outerRow, hCtx)
+	innerRows, _, err := e.rowContainer.GetMatchedRowsAndIds(outerRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -409,7 +499,6 @@ func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerRes
 	}
 	return ok, joinResult
 }
-
 func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult,
 	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
@@ -426,6 +515,22 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, hCtx *ha
 			if !ok {
 				return false, joinResult
 			}
+		}
+		if joinResult.chk.IsFull() {
+			e.joinResultCh <- joinResult
+			ok, joinResult = e.getNewJoinResult(workerID)
+			if !ok {
+				return false, joinResult
+			}
+		}
+	}
+	return true, joinResult
+}
+func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, outerChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
+	for i := 0; i < outerChk.NumRows(); i++ {
+		ok, joinResult = e.joinMatchedOuterRow2ChunkForOuterHashJoin(workerID, outerChk.GetRow(i), hCtx, joinResult)
+		if !ok {
+			return false, joinResult
 		}
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
@@ -504,6 +609,8 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 		allTypes:  allTypes,
 		keyColIdx: innerKeyColIdx,
 	}
+	var err error
+	var selected []bool
 	initList := chunk.NewList(allTypes, e.initCap, e.maxChunkSize)
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx, initList)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
@@ -512,7 +619,21 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 		if e.finished.Load().(bool) {
 			return nil
 		}
-		err := e.rowContainer.PutChunk(chk)
+		if e.outerHashJoin {
+			matched4Chk := make([]int32, chk.NumRows())
+			e.matchedStatus = append(e.matchedStatus, matched4Chk)
+			if len(e.outerFilter) > 0 {
+				selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), selected)
+				if err != nil {
+					return err
+				}
+				err = e.rowContainer.PutChunkSelected(chk, selected)
+			} else {
+				err = e.rowContainer.PutChunk(chk)
+			}
+		} else {
+			err = e.rowContainer.PutChunk(chk)
+		}
 		if err != nil {
 			return err
 		}
