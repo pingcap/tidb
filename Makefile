@@ -79,6 +79,7 @@ gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
 check-static:tools/bin/golangci-lint
+	$(GO) mod download
 	tools/bin/golangci-lint run ./...
 
 check-slow:tools/bin/gometalinter tools/bin/gosec
@@ -242,8 +243,8 @@ tools/bin/gometalinter: tools/check/go.mod
 
 
 tools/bin/golangci-lint: tools/check/go.mod
-	cd tools/check ; \
-	$(GO) build -o ../bin/golangci-lint  github.com/golangci/golangci-lint/cmd/golangci-lint
+	cd tools/; \
+    curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s v1.18.0
 
 tools/bin/gosec: tools/check/go.mod
 	cd tools/check; \
