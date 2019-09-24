@@ -47,13 +47,13 @@ type IndexNestedLoopHashJoin struct {
 	// - keepOuterOrder is false: transfer the join results
 	// - keepOuterOrder is true: transfer the error in finishJoinWorkers
 	resultCh          chan *indexHashJoinResult
-	taskCh            chan *indexHashJoinTask
 	joinChkResourceCh []chan *chunk.Chunk
-	keepOuterOrder    bool
 	// We build individual joiner for each inner worker when using chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
-	joiners []joiner
-	curTask *indexHashJoinTask
+	joiners        []joiner
+	keepOuterOrder bool
+	curTask        *indexHashJoinTask
+	taskCh         chan *indexHashJoinTask
 }
 
 type indexHashJoinOuterWorker struct {
@@ -139,7 +139,9 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	ow := e.newOuterWorker(innerCh)
 	go util.WithRecovery(func() { ow.run(workerCtx, cancelFunc) }, e.finishJoinWorkers)
 
-	e.resultCh = make(chan *indexHashJoinResult, concurrency)
+	if !e.keepOuterOrder {
+		e.resultCh = make(chan *indexHashJoinResult, concurrency)
+	}
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := int(0); i < concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
@@ -155,7 +157,8 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
-		e.resultCh <- &indexHashJoinResult{err: errors.Errorf("%v", r)}
+		logutil.BgLogger().Error("IndexNestedLoopHashJoin failed", zap.Error(errors.Errorf("%v", r)))
+		e.cancelFunc()
 	}
 	e.workerWg.Done()
 }
@@ -198,27 +201,20 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 }
 
 func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chunk) error {
+	var (
+		result *indexHashJoinResult
+		ok     bool
+	)
 	for {
 		task := e.fetchNextTask(ctx)
 		if task == nil {
 			return nil
 		}
-		var (
-			result *indexHashJoinResult
-			ok     bool
-		)
 		select {
 		case result, ok = <-task.resultCh:
 			if !ok {
 				e.curTask = nil
 				continue
-			}
-			if result.err != nil {
-				return result.err
-			}
-		case result, ok = <-e.resultCh:
-			if !ok {
-				return nil
 			}
 			if result.err != nil {
 				return result.err
@@ -386,7 +382,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			break
 		}
 		if task.keepOuterOrder {
-			if resultCh != iw.resultCh {
+			if resultCh != nil {
 				close(resultCh)
 			}
 			resultCh = task.resultCh
@@ -408,6 +404,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		case <-ctx.Done():
 			return
 		}
+		close(resultCh)
 	}
 }
 
