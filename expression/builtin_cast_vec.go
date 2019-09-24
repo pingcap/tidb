@@ -161,12 +161,12 @@ func (b *builtinCastDecimalAsRealSig) vecEvalReal(input *chunk.Chunk, result *ch
 	d := buf.Decimals()
 	rs := result.Float64s()
 
-	conditionCheck := b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag)
+	inUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		if conditionCheck && d[i].IsNegative() {
+		if inUnionAndUnsigned && d[i].IsNegative() {
 			rs[i] = 0
 		} else {
 			res, err := d[i].ToFloat64()
