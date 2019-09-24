@@ -388,6 +388,9 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 				break
 			}
 		}
+		// If index column has prefix length, the merge join can not guarantee the relevance
+		// between index and join keys. So we should skip this case.
+		// For more details, please check the following code and comments.
 		if hasPrefixCol {
 			continue
 		}

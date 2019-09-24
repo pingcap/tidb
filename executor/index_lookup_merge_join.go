@@ -87,7 +87,6 @@ type innerMergeCtx struct {
 	keyCols       []int
 	compareFuncs  []expression.CompareFunc
 	colLens       []int
-	hasPrefixCol  bool
 	desc          bool
 }
 
@@ -467,12 +466,12 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 
 func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lookUpMergeJoinTask, chk **chunk.Chunk) bool {
 	if !(*chk).IsFull() {
-		return false
+		return true
 	}
 	select {
 	case task.results <- &indexMergeJoinResult{*chk, imw.joinChkResourceCh}:
 	case <-ctx.Done():
-		return true
+		return false
 	}
 	var ok bool
 	*chk, ok = <-imw.joinChkResourceCh
@@ -536,7 +535,7 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 
 			hasMatch = hasMatch || matched
 			hasNull = hasNull || isNull
-			if imw.fetchNewChunkWhenFull(ctx, task, &chk) {
+			if !imw.fetchNewChunkWhenFull(ctx, task, &chk) {
 				return nil
 			}
 		}
@@ -544,7 +543,7 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 	missMatch:
 		if !hasMatch {
 			imw.joiner.onMissMatch(hasNull, outerRow, chk)
-			if imw.fetchNewChunkWhenFull(ctx, task, &chk) {
+			if !imw.fetchNewChunkWhenFull(ctx, task, &chk) {
 				return nil
 			}
 		}
@@ -595,15 +594,6 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 		}
 		if dLookUpKey == nil {
 			continue
-		}
-
-		if imw.hasPrefixCol {
-			for i := range imw.outerMergeCtx.keyCols {
-				// If it's a prefix column. Try to fix it.
-				if imw.colLens[i] != types.UnspecifiedLength {
-					ranger.CutDatumByPrefixLen(&dLookUpKey.keys[i], imw.colLens[i], imw.rowTypes[imw.keyCols[i]])
-				}
-			}
 		}
 		dLookUpKeys = append(dLookUpKeys, dLookUpKey)
 	}

@@ -1861,13 +1861,6 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 	}
 	executorCounterIndexLookUpJoin.Inc()
-	hasPrefixCol := false
-	for _, l := range v.IdxColLens {
-		if l != types.UnspecifiedLength {
-			hasPrefixCol = true
-			break
-		}
-	}
 
 	e := &IndexLookUpMergeJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
@@ -1886,7 +1879,6 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 			keyCols:       innerKeyCols,
 			compareFuncs:  v.CompareFuncs,
 			colLens:       v.IdxColLens,
-			hasPrefixCol:  hasPrefixCol,
 			desc:          v.Desc,
 		},
 		workerWg:      new(sync.WaitGroup),
