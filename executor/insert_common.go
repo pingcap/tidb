@@ -387,6 +387,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		if err != nil {
 			return err
 		}
+		rows = rows[:0]
 	}
 	return nil
 }
