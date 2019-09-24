@@ -165,12 +165,12 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	case tipb.EncodeType_TypeArrow:
 		return r.readFromArrow(ctx, chk)
 	}
-	panic("unsupported decode type")
+	return errors.Errorf("unsupported encode type:%v", r.encodeType)
 }
 
 func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) error {
 	for !chk.IsFull() {
-		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+		if r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
 				return err
@@ -188,7 +188,7 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 }
 
 func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
-	if r.selectResp == nil || len(r.selectResp.RowBatchData) == 0 {
+	if len(r.selectResp.RowBatchData) == 0 {
 		err := r.getSelectResp()
 		if err != nil || r.selectResp == nil {
 			return errors.Trace(err)
