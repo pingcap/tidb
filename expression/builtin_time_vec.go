@@ -155,6 +155,7 @@ func (b *builtinTimestamp1ArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 				return err
 			}
 			result.SetNull(i, true)
+			continue
 		}
 		times[i] = tm
 	}
