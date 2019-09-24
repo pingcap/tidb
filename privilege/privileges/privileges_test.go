@@ -507,9 +507,12 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	mustExec(c, se, "CREATE USER 'usenobody'")
 	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper'")
 	//without grant option
-	_, e := se.Execute(context.Background(), "GRANT ALL ON *.* TO 'usesuper'")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, e := se.Execute(context.Background(), "GRANT SELECT ON mysql.* TO 'usenobody'")
 	c.Assert(e, NotNil)
 	//with grant option
+	se = newSession(c, s.store, s.dbName)
+	// high privileged user
 	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper' WITH GRANT OPTION")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "use mysql")
