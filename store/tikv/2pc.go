@@ -591,22 +591,29 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	}
 }
 
+type ttlManagerState uint32
+
+const (
+	stateUninitialized ttlManagerState = iota
+	stateRunning
+	stateClosed
+)
+
 type ttlManager struct {
-	// 0 uninitialized, 1 running, 2 closed
-	initialized uint32
-	ch          chan struct{}
+	state ttlManagerState
+	ch    chan struct{}
 }
 
 func (tm *ttlManager) run(c *twoPhaseCommitter) {
 	// Run only once.
-	if !atomic.CompareAndSwapUint32(&tm.initialized, 0, 1) {
+	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateUninitialized), uint32(stateRunning)) {
 		return
 	}
 	go tm.keepAlive(c)
 }
 
 func (tm *ttlManager) close() {
-	if !atomic.CompareAndSwapUint32(&tm.initialized, 1, 2) {
+	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateRunning), uint32(stateClosed)) {
 		return
 	}
 	close(tm.ch)
@@ -623,7 +630,6 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 		case <-tm.ch:
 			return
 		case <-ticker.C:
-
 			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
 			if err != nil {
 				err1 := bo.Backoff(BoPDRPC, err)
