@@ -243,6 +243,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
+		isEQCondFromIn := IsEQCondFromIn(expr)
 		j := 0
 		if eType == types.ETInt {
 			if err = expr.VecEvalInt(ctx, input, buf); err != nil {
@@ -252,6 +253,9 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			i64s := buf.Int64s()
 			for i := range sel {
 				if buf.IsNull(i) {
+					if !isEQCondFromIn {
+						continue
+					}
 					nulls[sel[i]] = true
 					sel[j] = sel[i]
 					j++
@@ -274,7 +278,6 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		isEQCondFromIn := IsEQCondFromIn(expr)
 		d := types.Datum{}
 		for i := range sel {
 			if buf.IsNull(i) {
