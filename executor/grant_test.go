@@ -50,6 +50,15 @@ func (s *testSuite3) TestGrantGlobal(c *C) {
 	tk.MustExec("GRANT ALL ON *.* TO 'testGlobal1'@'localhost';")
 	// Make sure all the global privs for granted user is "Y".
 	for _, v := range mysql.AllGlobalPrivs {
+		if v == mysql.GrantPriv {
+			continue
+		}
+		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
+		tk.MustQuery(sql).Check(testkit.Rows("Y"))
+	}
+	//with grant option
+	tk.MustExec("GRANT ALL ON *.* TO 'testGlobal1'@'localhost' WITH GRANT OPTION;")
+	for _, v := range mysql.AllGlobalPrivs {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
 	}
@@ -79,6 +88,9 @@ func (s *testSuite3) TestGrantDBScope(c *C) {
 	tk.MustExec("GRANT ALL ON * TO 'testDB1'@'localhost';")
 	// Make sure all the db privs for granted user is "Y".
 	for _, v := range mysql.AllDBPrivs {
+		if v == mysql.GrantPriv {
+			continue
+		}
 		sql := fmt.Sprintf("SELECT %s FROM mysql.DB WHERE User=\"testDB1\" and host=\"localhost\" and db=\"test\";", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
 	}
@@ -124,7 +136,7 @@ func (s *testSuite3) TestTableScope(c *C) {
 	tk.MustExec("USE test;")
 	tk.MustExec(`CREATE TABLE test2(c1 int);`)
 	// Grant all table scope privs.
-	tk.MustExec("GRANT ALL ON test2 TO 'testTbl1'@'localhost';")
+	tk.MustExec("GRANT ALL ON test2 TO 'testTbl1'@'localhost' WITH GRANT OPTION;")
 	// Make sure all the table privs for granted user are in the Table_priv set.
 	for _, v := range mysql.AllTablePrivs {
 		rows := tk.MustQuery(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTbl1" and host="localhost" and db="test" and Table_name="test2";`).Rows()

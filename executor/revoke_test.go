@@ -36,6 +36,9 @@ func (s *testSuite1) TestRevokeGlobal(c *C) {
 
 	// Make sure all the global privs for new user is "Y".
 	for _, v := range mysql.AllDBPrivs {
+		if v == mysql.GrantPriv {
+			continue
+		}
 		sql := fmt.Sprintf(`SELECT %s FROM mysql.User WHERE User="testGlobalRevoke" and host="localhost";`, mysql.Priv2UserCol[v])
 		r := tk.MustQuery(sql)
 		r.Check(testkit.Rows("Y"))
@@ -61,6 +64,9 @@ func (s *testSuite1) TestRevokeDBScope(c *C) {
 
 	// Revoke each priv from the user.
 	for _, v := range mysql.AllDBPrivs {
+		if v == mysql.GrantPriv {
+			continue
+		}
 		check := fmt.Sprintf(`SELECT %s FROM mysql.DB WHERE User="testDBRevoke" and host="localhost" and db="test"`, mysql.Priv2UserCol[v])
 		sql := fmt.Sprintf("REVOKE %s ON test.* FROM 'testDBRevoke'@'localhost';", mysql.Priv2Str[v])
 
@@ -82,7 +88,7 @@ func (s *testSuite1) TestRevokeTableScope(c *C) {
 
 	// Make sure all the table privs for new user is Y.
 	res := tk.MustQuery(`SELECT Table_priv FROM mysql.tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`)
-	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Grant,Index,Alter"))
+	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter"))
 
 	// Revoke each priv from the user.
 	for _, v := range mysql.AllTablePrivs {
