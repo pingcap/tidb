@@ -334,8 +334,7 @@ func (g *timeStrGener) gen() interface{} {
 	month := rand.Intn(10) + 1
 	day := rand.Intn(20) + 1
 
-	return fmt.Sprintf("%d-%d-%d",
-		year, month, day)
+	return fmt.Sprintf("%d-%d-%d", year, month, day)
 }
 
 // dataStrGener is used to generate strings which are data format
