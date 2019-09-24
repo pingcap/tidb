@@ -620,7 +620,6 @@ func (tm *ttlManager) close() {
 }
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
-	bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
 	// PessimisticLockTTL is 15s in conf, so the ticker is 5s.
 	// In the test, PessimisticLockTTL is set to 300ms, then ticker is 100ms.
 	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 3)
@@ -630,6 +629,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 		case <-tm.ch:
 			return
 		case <-ticker.C:
+			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
 			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
 			if err != nil {
 				err1 := bo.Backoff(BoPDRPC, err)
