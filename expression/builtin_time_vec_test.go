@@ -26,10 +26,13 @@ import (
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.Month: {
-		{types.ETInt, []types.EvalType{types.ETDatetime}, nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.Year: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.Date: {
-		{types.ETDatetime, []types.EvalType{types.ETDatetime}, nil},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 }
 
@@ -58,7 +61,7 @@ func (s *testEvaluatorSuite) TestVecMonth(c *C) {
 	input.AppendNull(0)
 	input.AppendTime(0, types.ZeroDate)
 
-	f, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{types.ETInt, []types.EvalType{types.ETDatetime}, nil})
+	f, _, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}})
 	c.Assert(ctx.GetSessionVars().StrictSQLMode, IsTrue)
 	c.Assert(f.vecEvalInt(input, result), IsNil)
 	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 2)
