@@ -356,9 +356,8 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 	}
 	if canVectorized {
 		return vectorizedFilterConsiderNull2(ctx, filters, iterator, selected, nil)
-	} else {
-		return vectorizedFilterConsiderNull(ctx, filters, iterator, selected, nil)
 	}
+	return vectorizedFilterConsiderNull(ctx, filters, iterator, selected, nil)
 }
 
 // Filters can not be evaluated vectorized.
