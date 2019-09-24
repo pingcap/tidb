@@ -149,7 +149,7 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.Init(s.ctx, s.blockOffset)
+	}.Init(s.ctx, -1)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
 	return join

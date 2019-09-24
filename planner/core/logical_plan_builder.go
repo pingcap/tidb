@@ -183,6 +183,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 				col.TblName = x.AsName
 			}
 		}
+		b.ctx.GetSessionVars().PlannerSelectBlockAsName[p.SelectBlockOffset()] = p.Schema().Columns[0].TblName
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
 		dupNames := make(map[string]struct{}, len(p.Schema().Columns))
@@ -2302,6 +2303,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	tblName := *asName
 	if tblName.L == "" {
 		tblName = tn.Name
+	}
+	if b.getSelectOffset() != -1 {
+		b.ctx.GetSessionVars().PlannerSelectBlockAsName[b.getSelectOffset()] = tblName
 	}
 	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, tblName)
 	if err != nil {
