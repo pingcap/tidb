@@ -541,10 +541,10 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 func (cc *clientConn) SessionStatusToString() string {
 	status := cc.ctx.Status()
 	inTxn, autoCommit := 0, 0
-	if status & mysql.ServerStatusInTrans > 0 {
+	if status&mysql.ServerStatusInTrans > 0 {
 		inTxn = 1
 	}
-	if status & mysql.ServerStatusAutocommit > 0 {
+	if status&mysql.ServerStatusAutocommit > 0 {
 		autoCommit = 1
 	}
 	return fmt.Sprintf("inTxn:%d, autocommit:%d",
