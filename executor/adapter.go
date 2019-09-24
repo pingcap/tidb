@@ -133,7 +133,8 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
-	a.stmt.Ctx.GetSessionVars().PrevStmt = a.stmt.OriginText()
+	sessVars := a.stmt.Ctx.GetSessionVars()
+	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), sessVars)
 	a.stmt.logAudit()
 	a.stmt.SummaryStmt()
 	return err
@@ -665,7 +666,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		Succ:        succ,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
-		slowItems.PrevStmt = FormatSQL(sessVars.PrevStmt, sessVars)
+		slowItems.PrevStmt = sessVars.PrevStmt
 	}
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
