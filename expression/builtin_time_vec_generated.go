@@ -393,10 +393,6 @@ func (b *builtinAddStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 
 		// calculate
 
-		if !isDuration(arg1) {
-			result.AppendNull() // fixed: false
-			continue
-		}
 		sc := b.ctx.GetSessionVars().StmtCtx
 		arg1Duration, err := types.ParseDuration(sc, arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {

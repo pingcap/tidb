@@ -53,10 +53,11 @@ import (
 
 {{ define "SetNull" }}{{if .Output.Fixed}}result.SetNull(i, true){{else}}result.AppendNull(){{end}} // fixed: {{.Output.Fixed }}{{ end }}
 {{ define "ConvertStringToDuration" }}
+		{{ if ne .SigName "builtinAddStringAndStringSig" }}
 		if !isDuration(arg1) {
 			{{ template "SetNull" . }}
 			continue
-		}
+		}{{ end }}
 		sc := b.ctx.GetSessionVars().StmtCtx
 		arg1Duration, err := types.ParseDuration(sc, arg1, {{if eq .Output.TypeName "String"}}getFsp4TimeAddSub{{else}}types.GetFsp{{end}}(arg1))
 		if err != nil {
