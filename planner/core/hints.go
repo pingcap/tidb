@@ -243,7 +243,7 @@ func extractTableAsName(p PhysicalPlan) *model.CIStr {
 }
 
 func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType nodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
-	for i, child := range children {
+	for _, child := range children {
 		if child.SelectBlockOffset() == -1 {
 			continue
 		}
@@ -256,15 +256,12 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 		if tableName == nil {
 			continue
 		}
-		if len(res) > 0 && children[i].SelectBlockOffset() == children[i-1].SelectBlockOffset() {
-			res[len(res)-1].Tables = append(res[len(res)-1].Tables, ast.HintTable{TableName: *tableName})
-			continue
-		}
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   generateQBName(nodeType, child.SelectBlockOffset()),
 			HintName: model.NewCIStr(joinType),
 			Tables:   []ast.HintTable{{TableName: *tableName}},
 		})
+		break
 	}
 	return res
 }
