@@ -40,13 +40,14 @@ func (b *builtinLogicAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	for i := 0; i < n; i++ {
 		isNull0 := result.IsNull(i)
 		if !isNull0 && i64s[i] == 0 {
-			i64s[i] = 0
+			result.SetNull(i, false)
 			continue
 		}
 
 		isNull1 := buf1.IsNull(i)
 		if !isNull1 && arg1[i] == 0 {
 			i64s[i] = 0
+			result.SetNull(i, false)
 			continue
 		}
 
