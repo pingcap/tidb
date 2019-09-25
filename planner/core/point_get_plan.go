@@ -450,12 +450,12 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) P
 					break
 				}
 			}
+		} else {
+			// Downgrade to use unique index
+			whereColNames = append(whereColNames, colName.Name.Name.L)
 		}
 
 	case *ast.RowExpr:
-		if len(colName.Values) < 1 {
-			return nil
-		}
 		for _, col := range colName.Values {
 			c, ok := col.(*ast.ColumnNameExpr)
 			if !ok {
