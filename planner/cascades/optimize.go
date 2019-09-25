@@ -23,6 +23,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
+// DefaultOptimizer is the optimizer which contains all of the default
+// transformation and implementation rules.
+var DefaultOptimizer = NewOptimizer()
+
 // Optimizer is the struct for cascades optimizer.
 type Optimizer struct {
 	transformationRuleMap map[memo.Operand][]Transformation
