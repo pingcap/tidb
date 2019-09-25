@@ -17,10 +17,40 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 )
 
 var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
-}
+	ast.Decode: {
+	},
+	ast.TiDBVersion: {
+	},
+	ast.Date: {
+	},
+	ast.Timestamp: {
+	},
+	ast.CurrentUser: {
+	},
+	ast.FoundRows: {
+	},
+	ast.Database: {
+	},
+	ast.Format: {
+	},
+	ast.User: {
+	},
+	ast.TiDBDecodeKey: {
+	},
+	ast.RowCount: {
+	},
+	ast.CurrentRole: {
+	},
+	ast.Time: {
+	},
+	ast.TiDBIsDDLOwner: {
+	},
+	ast.ConnectionID: {
+	},}
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinInfoFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinInfoCases)
@@ -29,4 +59,3 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinInfoFunc(c *C) {
 func BenchmarkVectorizedBuiltinInfoFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinInfoCases)
 }
-

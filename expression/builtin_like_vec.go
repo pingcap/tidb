@@ -12,3 +12,32 @@
 // limitations under the License.
 
 package expression
+
+import (
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/chunk"
+)
+
+func (b *builtinLikeSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinRegexpBinarySig) vectorized() bool {
+	return false
+}
+
+func (b *builtinRegexpBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinRegexpSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinRegexpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}

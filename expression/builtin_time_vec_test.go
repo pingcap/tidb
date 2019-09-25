@@ -25,7 +25,146 @@ import (
 )
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
-	ast.Month: {
+	ast.CurrentTime: {
+	},
+	ast.Format: {
+	},
+	ast.DateDiff: {
+	},
+	ast.LT: {
+	},
+	ast.Day: {
+	},
+	ast.Week: {
+	},
+	ast.YearWeek: {
+	},
+	ast.DayName: {
+	},
+	ast.TimeToSec: {
+	},
+	ast.DayOfMonth: {
+	},
+	ast.Regexp: {
+	},
+	ast.SubDate: {
+	},
+	ast.MakeDate: {
+	},
+	ast.Lower: {
+	},
+	ast.DateLiteral: {
+	},
+	ast.UTCTime: {
+	},
+	ast.Quarter: {
+	},
+	ast.GetFormat: {
+	},
+	ast.StrToDate: {
+	},
+	ast.TimestampAdd: {
+	},
+	ast.FromUnixTime: {
+	},
+	ast.Mul: {
+	},
+	ast.UTCDate: {
+	},
+	ast.Convert: {
+	},
+	ast.SecToTime: {
+	},
+	ast.UTCTimestamp: {
+	},
+	ast.Abs: {
+	},
+	ast.SubTime: {
+	},
+	ast.Bin: {
+	},
+	ast.Length: {
+	},
+	ast.DayOfWeek: {
+	},
+	ast.MicroSecond: {
+	},
+	ast.PeriodAdd: {
+	},
+	ast.CurrentDate: {
+	},
+	ast.Replace: {
+	},
+	ast.UnixTimestamp: {
+	},
+	ast.If: {
+	},
+	ast.AddDate: {
+	},
+	ast.Hour: {
+	},
+	ast.Log: {
+	},
+	ast.Timestamp: {
+	},
+	ast.GE: {
+	},
+	ast.DayOfYear: {
+	},
+	ast.Round: {
+	},
+	ast.FromDays: {
+	},
+	ast.TimeDiff: {
+	},
+	ast.Upper: {
+	},
+	ast.AddTime: {
+	},
+	ast.MakeTime: {
+	},
+	ast.MonthName: {
+	},
+	ast.And: {
+	},
+	ast.TimeFormat: {
+	},
+	ast.TimestampLiteral: {
+	},
+	ast.ToSeconds: {
+	},
+	ast.TimestampDiff: {
+	},
+	ast.Extract: {
+	},
+	ast.ToDays: {
+	},
+	ast.LastDay: {
+	},
+	ast.ConvertTz: {
+	},
+	ast.Truncate: {
+	},
+	ast.Conv: {
+	},
+	ast.Minute: {
+	},
+	ast.Second: {
+	},
+	ast.TimeLiteral: {
+	},
+	ast.Interval: {
+	},
+	ast.Now: {
+	},
+	ast.WeekOfYear: {
+	},
+	ast.DateFormat: {
+	},
+	ast.PeriodDiff: {
+	},
+	ast.Weekday: {
+	}, ast.Month: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.Year: {

@@ -22,7 +22,54 @@ import (
 )
 
 var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
-	ast.InetNtoa: {
+	ast.NameConst: {
+	},
+	ast.LT: {
+	},
+	ast.Inet6Aton: {
+	},
+	ast.Time: {
+	},
+	ast.IsIPv6: {
+	},
+	ast.Charset: {
+	},
+	ast.Mod: {
+	},
+	ast.ReleaseLock: {
+	},
+	ast.Bin: {
+	},
+	ast.Length: {
+	},
+	ast.Collation: {
+	},
+	ast.Sleep: {
+	},
+	ast.UUID: {
+	},
+	ast.Date: {
+	},
+	ast.Timestamp: {
+	},
+	ast.Inet6Ntoa: {
+	},
+	ast.And: {
+	},
+	ast.InetAton: {
+	},
+	ast.AnyValue: {
+	},
+	ast.Second: {
+	},
+	ast.IsIPv4Mapped: {
+	},
+	ast.Now: {
+	},
+	ast.IsIPv4Compat: {
+	},
+	ast.LE: {
+	},	ast.InetNtoa: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.IsIPv4: {

@@ -22,7 +22,50 @@ import (
 )
 
 var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
-	ast.Greatest: {
+	ast.Conv: {
+	},
+	ast.Interval: {
+	},
+	ast.NE: {
+	},
+	ast.IsNull: {
+	},
+	ast.LE: {
+	},
+	ast.LT: {
+	},
+	ast.Time: {
+	},
+	ast.Field: {
+	},
+	ast.Or: {
+	},
+	ast.Coalesce: {
+	},
+	ast.NullEQ: {
+	},
+	ast.Convert: {
+	},
+	ast.Floor: {
+	},
+	ast.GT: {
+	},
+	ast.Length: {
+	},
+	ast.Bin: {
+	},
+	ast.Ceil: {
+	},
+	ast.If: {
+	},
+	ast.EQ: {
+	},
+	ast.Timestamp: {
+	},
+	ast.GE: {
+	},
+	ast.Date: {
+	},	ast.Greatest: {
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt}},
 	},

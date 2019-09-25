@@ -17,10 +17,54 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 )
 
 var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
-}
+	ast.GT: {
+	},
+	ast.Bin: {
+	},
+	ast.Length: {
+	},
+	ast.Decode: {
+	},
+	ast.AesEncrypt: {
+	},
+	ast.Replace: {
+	},
+	ast.Uncompress: {
+	},
+	ast.If: {
+	},
+	ast.AesDecrypt: {
+	},
+	ast.Compress: {
+	},
+	ast.MD5: {
+	},
+	ast.LE: {
+	},
+	ast.SHA: {
+	},
+	ast.RandomBytes: {
+	},
+	ast.Encode: {
+	},
+	ast.Mod: {
+	},
+	ast.UncompressedLength: {
+	},
+	ast.Lower: {
+	},
+	ast.SHA1: {
+	},
+	ast.PasswordFunc: {
+	},
+	ast.SHA2: {
+	},
+	ast.Rand: {
+	},}
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinEncryptionFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinEncryptionCases)

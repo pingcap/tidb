@@ -17,10 +17,52 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
-}
+	ast.Minus: {
+	},
+	ast.Time: {
+	},
+	ast.IsTruth: {
+	},
+	ast.Or: {
+	},
+	ast.BitNeg: {
+	},
+	ast.LeftShift: {
+	},
+	ast.IsFalsity: {
+	},
+	ast.Left: {
+	},
+	ast.LogicOr: {
+	},
+	ast.LogicXor: {
+	},
+	ast.Xor: {
+	},
+	ast.Right: {
+	},
+	ast.RightShift: {
+	},
+	ast.Log: {
+	},
+	ast.Date: {
+	},
+	ast.Timestamp: {
+	},
+	ast.And: {
+	},
+	ast.LogicAnd: {
+	},
+	ast.UnaryNot: {
+	},
+	ast.UnaryMinus: {
+	},
+	ast.IsNull: {
+	},}
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinOpFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinOpCases)
@@ -29,4 +71,3 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinOpFunc(c *C) {
 func BenchmarkVectorizedBuiltinOpFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinOpCases)
 }
-

@@ -17,10 +17,16 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 )
 
 var vecBuiltinLikeCases = map[string][]vecExprBenchCase{
-}
+	ast.Bin: {
+	},
+	ast.GE: {
+	},
+	ast.Regexp: {
+	},}
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinLikeFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinLikeCases)
@@ -29,4 +35,3 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinLikeFunc(c *C) {
 func BenchmarkVectorizedBuiltinLikeFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinLikeCases)
 }
-

@@ -22,7 +22,48 @@ import (
 )
 
 var vecBuiltinMathCases = map[string][]vecExprBenchCase{
-	ast.Log: {
+	ast.CRC32: {
+	},
+	ast.If: {
+	},
+	ast.Date: {
+	},
+	ast.Timestamp: {
+	},
+	ast.GE: {
+	},
+	ast.Space: {
+	},
+	ast.Upper: {
+	},
+	ast.And: {
+	},
+	ast.Conv: {
+	},
+	ast.Now: {
+	},
+	ast.Format: {
+	},
+	ast.Trim: {
+	},
+	ast.LE: {
+	},
+	ast.PI: {
+	},
+	ast.Time: {
+	},
+	ast.Field: {
+	},
+	ast.Mod: {
+	},
+	ast.Rand: {
+	},
+	ast.Floor: {
+	},
+	ast.Length: {
+	},
+	ast.Sign: {
+	}, ast.Log: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Log10: {
