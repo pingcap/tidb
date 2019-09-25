@@ -1,0 +1,47 @@
+[
+  {
+    "Name": "TestPushLimitDownIndexLookUpReader",
+    "Cases": [
+      {
+        "SQL": "explain select * from tbl use index(idx_b_c) where b > 1 limit 2,1",
+        "Plan": [
+          "IndexLookUp_14 1.00 root limit embedded(offset:2, count:1)",
+          "├─Limit_13 3.00 cop offset:0, count:3",
+          "│ └─IndexScan_11 3.00 cop table:tbl, index:b, c, range:(1,+inf], keep order:false",
+          "└─TableScan_12 1.00 cop table:tbl, keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1",
+        "Plan": [
+          "Projection_25 1.00 root Column#1, Column#2, Column#3",
+          "└─IndexLookUp_24 1.00 root limit embedded(offset:2, count:1)",
+          "  ├─Limit_23 3.00 cop offset:0, count:3",
+          "  │ └─IndexScan_21 3.00 cop table:tbl, index:b, c, range:(1,+inf], keep order:true, desc",
+          "  └─TableScan_22 1.00 cop table:tbl, keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1",
+        "Plan": [
+          "IndexLookUp_15 1.00 root limit embedded(offset:2, count:1)",
+          "├─Limit_14 3.00 cop offset:0, count:3",
+          "│ └─Selection_13 3.00 cop gt(Column#3, 1)",
+          "│   └─IndexScan_11 3.75 cop table:tbl, index:b, c, range:(1,+inf], keep order:false",
+          "└─TableScan_12 1.00 cop table:tbl, keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from tbl use index(idx_b_c) where b > 1 and a > 1 limit 2,1",
+        "Plan": [
+          "Limit_9 1.00 root offset:2, count:1",
+          "└─IndexLookUp_15 3.00 root ",
+          "  ├─IndexScan_11 3.75 cop table:tbl, index:b, c, range:(1,+inf], keep order:false",
+          "  └─Limit_14 3.00 cop offset:0, count:3",
+          "    └─Selection_13 3.00 cop gt(Column#1, 1)",
+          "      └─TableScan_12 3.75 cop table:tbl, keep order:false"
+        ]
+      }
+    ]
+  }
+]
