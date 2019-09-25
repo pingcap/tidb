@@ -607,13 +607,12 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 			e.cacheHasValue = append(e.cacheHasValue, hasValue)
 			// Store the plain datum of autoIncrement column directly for lazy handle.
 			return datum, nil
-		} else {
-			d, err := e.adjustAutoIncrementDatum(ctx, datum, hasValue, column)
-			if err != nil {
-				return types.Datum{}, err
-			}
-			return d, nil
 		}
+		d, err := e.adjustAutoIncrementDatum(ctx, datum, hasValue, column)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		return d, nil
 	}
 	if !hasValue {
 		d, err := e.getColDefaultValue(idx, column)
