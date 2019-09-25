@@ -390,7 +390,7 @@ func (b *builtinCastDecimalAsRealSig) vectorized() bool {
 }
 
 func (b *builtinCastDecimalAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-  n := input.NumRows()
+	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETDecimal, n)
 	if err != nil {
 		return err
