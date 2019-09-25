@@ -59,8 +59,7 @@ func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Tra
 // GetImplementationRules gets all the candidate implementation rules of the optimizer
 // for the logical plan node.
 func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
-	operand := memo.GetOperand(node)
-	return opt.implementationRuleMap[operand]
+	return opt.implementationRuleMap[memo.GetOperand(node)]
 }
 
 // FindBestPlan is the optimization entrance of the cascades planner. The
