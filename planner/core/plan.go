@@ -34,8 +34,10 @@ import (
 type Plan interface {
 	// Get the schema.
 	Schema() *expression.Schema
+
 	// Get the ID.
 	ID() int
+
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
 
@@ -52,6 +54,7 @@ type Plan interface {
 
 	// OutputNames returns the outputting names of each column.
 	OutputNames() []*types.FieldName
+
 	SelectBlockOffset() int
 }
 
@@ -283,6 +286,10 @@ func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
+}
+
+func (p *basePlan) ExplainInfo() string {
+	return "N/A"
 }
 
 func (p *basePlan) SelectBlockOffset() int {
