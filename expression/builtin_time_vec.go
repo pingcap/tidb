@@ -14,6 +14,8 @@
 package expression
 
 import (
+	gotime "time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -172,12 +174,111 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, res
 	return errors.Errorf("not implemented")
 }
 
+// Monday is 0, ... Sunday = 6 in MySQL
+// but in go, Sunday is 0, ... Saturday is 6
+// we will do a conversion.
+func weekdayConversion(weekday gotime.Weekday) int64 {
+	return (int64(weekday) + 6) % 7
+}
+
 func (b *builtinDayNameSig) vectorized() bool {
-	return false
+	return true
+}
+
+// evalString evals a builtinDayNameSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
+func (b *builtinDayNameSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	ds := buf.Times()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		if ds[i].InvalidZero() {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+				return err
+			}
+			result.AppendNull()
+			continue
+		}
+		idx := weekdayConversion(ds[i].Time.Weekday())
+		result.AppendString(types.WeekdayNames[idx])
+	}
+	return nil
+}
+
+func (b *builtinDayNameSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeFloat64(n, false)
+	result.MergeNulls(buf)
+	f64s := result.Float64s()
+	ds := buf.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if ds[i].InvalidZero() {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		f64s[i] = float64(weekdayConversion(ds[i].Time.Weekday()))
+	}
+
+	return nil
 }
 
 func (b *builtinDayNameSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	ds := buf.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if ds[i].InvalidZero() {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		i64s[i] = weekdayConversion(ds[i].Time.Weekday())
+	}
+	return nil
 }
 
 func (b *builtinWeekDaySig) vectorized() bool {
