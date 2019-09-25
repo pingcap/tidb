@@ -39,28 +39,29 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 
 	bo := NewBackoffer(context.Background(), 3000)
 
-	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), false, false, kv.TiKV)
+	req := &kv.Request{}
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), req)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), false, false, kv.TiKV)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), req)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), false, false, kv.TiKV)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), req)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), false, false, kv.TiKV)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), req)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
 	s.taskEqual(c, tasks[1], regionIDs[1], "g", "k")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), false, false, kv.TiKV)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), req)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 4)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
@@ -68,23 +69,23 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
 	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), false, false, kv.TiKV)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), req)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), false, false, kv.TiKV)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), req)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), false, false, kv.TiKV)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), req)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
 	s.taskEqual(c, tasks[1], regionIDs[2], "o", "p")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), false, false, kv.TiKV)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), req)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[1], "h", "k", "m", "n")
@@ -154,7 +155,8 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	defer cache.Close()
 	bo := NewBackoffer(context.Background(), 3000)
 
-	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), false, false, kv.TiKV)
+	req := &kv.Request{}
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), req)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "m")
@@ -167,7 +169,8 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	cluster.Split(regionIDs[1], regionIDs[2], []byte("q"), []uint64{peerIDs[2]}, storeID)
 	cache.InvalidateCachedRegion(tasks[1].region)
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "z"), true, false, kv.TiKV)
+	req.Desc = true
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "z"), req)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 3)
 	s.taskEqual(c, tasks[2], regionIDs[0], "a", "m")
