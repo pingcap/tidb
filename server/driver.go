@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -142,4 +143,5 @@ type ResultSet interface {
 	StoreFetchedRows(rows []chunk.Row)
 	GetFetchedRows() []chunk.Row
 	Close() error
+	PrepareStmt() *core.CachedPrepareStmt
 }

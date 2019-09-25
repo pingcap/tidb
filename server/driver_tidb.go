@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -80,7 +81,8 @@ func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs Re
 		return
 	}
 	rs = &tidbResultSet{
-		recordSet: tidbRecordset,
+		recordSet:    tidbRecordset,
+		preparedStmt: ts.ctx.GetSessionVars().PreparedStmts[ts.id].(*core.CachedPrepareStmt),
 	}
 	return
 }
@@ -351,10 +353,15 @@ func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
 }
 
 type tidbResultSet struct {
-	recordSet sqlexec.RecordSet
-	columns   []*ColumnInfo
-	rows      []chunk.Row
-	closed    int32
+	recordSet    sqlexec.RecordSet
+	columns      []*ColumnInfo
+	rows         []chunk.Row
+	closed       int32
+	preparedStmt *core.CachedPrepareStmt
+}
+
+func (trs *tidbResultSet) SetPs(ps *core.CachedPrepareStmt) {
+	trs.preparedStmt = ps
 }
 
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
@@ -391,6 +398,10 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 		}
 	}
 	return trs.columns
+}
+
+func (trs *tidbResultSet) PrepareStmt() *core.CachedPrepareStmt {
+	return trs.preparedStmt
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {

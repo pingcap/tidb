@@ -1312,16 +1312,51 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	return cc.flush()
 }
 
-func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
+func (cc *clientConn) writeColumnInfo(rs ResultSet, serverStatus uint16) error {
+	var err error
 	data := cc.alloc.AllocWithLen(4, 1024)
+	ps := rs.PrepareStmt()
+	storer := func(columnBytes []byte) {
+		if ps != nil {
+			destBytes := make([]byte, len(columnBytes))
+			copy(destBytes, columnBytes)
+			ps.ColumnsInfoBytes = append(ps.ColumnsInfoBytes, destBytes)
+		}
+	}
+	defer func() {
+		if ps != nil {
+			if err != nil {
+				ps.ColumnsInfoBytes = nil
+			}
+		}
+	}()
+	// try to use cached column info bytes writing packet directly
+	if ps != nil && ps.ColumnsInfoBytes != nil {
+		return cc.writeColumnInfoByBytes(data, ps.ColumnsInfoBytes, serverStatus)
+	}
+	columns := rs.Columns()
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
-	if err := cc.writePacket(data); err != nil {
+	storer(data[4:])
+	if err = cc.writePacket(data); err != nil {
 		return err
 	}
 	for _, v := range columns {
 		data = data[0:4]
 		data = v.Dump(data)
-		if err := cc.writePacket(data); err != nil {
+		storer(data[4:])
+		if err = cc.writePacket(data); err != nil {
+			return err
+		}
+	}
+	return cc.writeEOF(serverStatus)
+}
+
+func (cc *clientConn) writeColumnInfoByBytes(data []byte, columnsInfoBytes [][]byte, serverStatus uint16) error {
+	var err error
+	for _, content := range columnsInfoBytes {
+		curData := data[0:4]
+		curData = append(curData, content...)
+		if err = cc.writePacket(curData); err != nil {
 			return err
 		}
 	}
@@ -1344,8 +1379,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
-			columns := rs.Columns()
-			err = cc.writeColumnInfo(columns, serverStatus)
+			err = cc.writeColumnInfo(rs, serverStatus)
 			if err != nil {
 				return err
 			}
