@@ -71,12 +71,22 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout)
+	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, TiKV)
 	return resp, err
 }
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
-func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, *RPCContext, error) {
+func (s *RegionRequestSender) SendReqCtx(
+	bo *Backoffer,
+	req *tikvrpc.Request,
+	regionID RegionVerID,
+	timeout time.Duration,
+	sType StoreType,
+) (
+	resp *tikvrpc.Response,
+	rpcCtx *RPCContext,
+	err error,
+) {
 	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
 		switch val.(string) {
 		case "timeout":
@@ -106,9 +116,16 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 	}
 	seed := req.ReplicaReadSeed
 	for {
-		ctx, err := s.regionCache.GetRPCContext(bo, regionID, replicaRead, seed)
+		switch sType {
+		case TiKV:
+			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed)
+		case TiFlash:
+			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
+		default:
+			err = errors.Errorf("unsupported storage type: %v", sType)
+		}
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		var resp *tikvrpc.Response
 		failpoint.Inject("invalidCacheAndRetry", func() {
@@ -118,19 +135,20 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 				failpoint.Return(resp, nil, err)
 			}
 		})
-		if ctx == nil {
+		if rpcCtx == nil {
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
 
 			// TODO: Change the returned error to something like "region missing in cache",
 			// and handle this error like EpochNotMatch, which means to re-split the request and retry.
-			resp, err := tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
+			resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
 			return resp, nil, err
 		}
 
-		s.storeAddr = ctx.Addr
-		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
+		var retry bool
+		s.storeAddr = rpcCtx.Addr
+		resp, retry, err = s.sendReqToRegion(bo, rpcCtx, req, timeout)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -138,12 +156,13 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 			continue
 		}
 
-		regionErr, err := resp.GetRegionError()
+		var regionErr *errorpb.Error
+		regionErr, err = resp.GetRegionError()
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			retry, err := s.onRegionError(bo, ctx, &seed, regionErr)
+			retry, err := s.onRegionError(bo, rpcCtx, &seed, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -151,7 +170,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 				continue
 			}
 		}
-		return resp, ctx, nil
+		return resp, rpcCtx, nil
 	}
 }
 
