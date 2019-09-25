@@ -284,21 +284,20 @@ func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) ([]*metapb.Reg
 		return bytes.Compare(regions[i].Meta.GetStartKey(), regions[j].Meta.GetStartKey()) < 0
 	})
 
-	keyLocation := sort.Search(len(regions), func(i int) bool {
+	startPos := sort.Search(len(regions), func(i int) bool {
 		if len(regions[i].Meta.GetEndKey()) == 0 {
 			return true
 		}
 		return bytes.Compare(regions[i].Meta.GetEndKey(), startKey) > 0
 	})
-	regions = regions[keyLocation:]
+	regions = regions[startPos:]
 	if len(endKey) > 0 {
-		var pos int
-		for pos = 1; pos < len(regions); pos++ {
-			if bytes.Compare(regions[pos].Meta.GetStartKey(), endKey) >= 0 {
-				break
-			}
+		endPos := sort.Search(len(regions), func(i int) bool {
+			return bytes.Compare(regions[i].Meta.GetStartKey(), endKey) >= 0
+		})
+		if endPos > 0 {
+			regions = regions[:endPos]
 		}
-		regions = regions[:pos]
 	}
 	if limit > 0 && len(regions) > limit {
 		regions = regions[:limit]
