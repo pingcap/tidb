@@ -67,6 +67,7 @@ func (s *testStringerSuite) TestGroupStringer(c *C) {
 		group := convert2Group(logic)
 		// TODO: restrict the used transformation rules, only need a few rules like 'EnumeratePaths' and 'PushSelDownxxx' here.
 		err = onPhaseExploration(s.sctx, group)
+		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = sql
 			output[i].Result = ToString(group)
