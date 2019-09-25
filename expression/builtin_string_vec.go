@@ -18,6 +18,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -133,5 +134,189 @@ func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinStringIsNullSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		return nil
+	}
+
+Loop:
+	for i := 0; i < input.NumRows(); i++ {
+		str := result.GetBytes(i)
+		for _, c := range str {
+			if c >= utf8.RuneSelf {
+				continue Loop
+			}
+		}
+		for i := range str {
+			if str[i] >= 'a' && str[i] <= 'z' {
+				str[i] -= 'a' - 'A'
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinUpperSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLeftSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf2.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+		runes, leftLength := []rune(str), int(nums[i])
+		if runeLength := len(runes); leftLength > runeLength {
+			leftLength = runeLength
+		} else if leftLength < 0 {
+			leftLength = 0
+		}
+
+		result.AppendString(string(runes[:leftLength]))
+	}
+	return nil
+}
+
+func (b *builtinLeftSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinRightSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf2.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+		runes := []rune(str)
+		strLength, rightLength := len(runes), int(nums[i])
+		if rightLength > strLength {
+			rightLength = strLength
+		} else if rightLength < 0 {
+			rightLength = 0
+		}
+
+		result.AppendString(string(runes[strLength-rightLength:]))
+	}
+	return nil
+}
+
+func (b *builtinRightSig) vectorized() bool {
+	return true
+}
+
+// vecEvalString evals a builtinSpaceSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_space
+func (b *builtinSpaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		num := nums[i]
+		if num < 0 {
+			num = 0
+		}
+		if uint64(num) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("space", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+		if num > mysql.MaxBlobWidth {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(strings.Repeat(" ", int(num)))
+	}
+	return nil
+}
+
+func (b *builtinSpaceSig) vectorized() bool {
+	return true
+}
+
+// vecEvalString evals a REVERSE(str).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
+func (b *builtinReverseSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	for i := 0; i < input.NumRows(); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		str := result.GetString(i)
+		reversed := reverseRunes([]rune(str))
+		result.SetRaw(i, []byte(string(reversed)))
+	}
+	return nil
+}
+
+func (b *builtinReverseSig) vectorized() bool {
 	return true
 }

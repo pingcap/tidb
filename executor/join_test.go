@@ -20,7 +20,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -33,6 +35,34 @@ func (s *testSuite2) TestJoinPanic(c *C) {
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
 	err := tk.ExecToErr("SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
 	c.Check(err, NotNil)
+}
+
+func (s *testSuite2) TestJoinInDisk(c *C) {
+	originCfg := config.GetGlobalConfig()
+	newConf := config.NewConfig()
+	newConf.OOMUseTmpStorage = true
+	config.StoreGlobalConfig(newConf)
+	defer config.StoreGlobalConfig(originCfg)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+
+	// TODO(fengliyuan): how to ensure that it is using disk really?
+	tk.MustExec("set @@tidb_mem_quota_query=1;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	result := tk.MustQuery("select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1")
+	result.Check(testkit.Rows("2 2 2 3"))
 }
 
 func (s *testSuite2) TestJoin(c *C) {
@@ -998,7 +1028,7 @@ func (s *testSuite2) TestMergejoinOrder(c *C) {
 	tk.MustExec("insert into t2 select a*100, b*100 from t1;")
 
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
-		"MergeJoin_20 10000.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
+		"MergeJoin_20 10000.00 root left outer join, left key:Column#1, right key:Column#3, left cond:[ne(Column#1, 3)]",
 		"├─TableReader_12 10000.00 root data:TableScan_11",
 		"│ └─TableScan_11 10000.00 cop table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
 		"└─TableReader_14 6666.67 root data:TableScan_13",
