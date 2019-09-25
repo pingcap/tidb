@@ -42,24 +42,28 @@ type Tracker struct {
 		sync.Mutex
 		children []*Tracker // The children memory trackers
 	}
+	actionMu struct {
+		sync.Mutex
+		actionOnExceed ActionOnExceed
+	}
 
-	label          fmt.Stringer // Label of this "Tracker".
-	bytesConsumed  int64        // Consumed bytes.
-	bytesLimit     int64        // Negative value means no limit.
-	maxConsumed    int64        // max number of bytes consumed during execution.
-	actionOnExceed ActionOnExceed
-	parent         *Tracker // The parent memory tracker.
+	label         fmt.Stringer // Label of this "Tracker".
+	bytesConsumed int64        // Consumed bytes.
+	bytesLimit    int64        // bytesLimit <= 0 means no limit.
+	maxConsumed   int64        // max number of bytes consumed during execution.
+	parent        *Tracker     // The parent memory tracker.
 }
 
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit <= 0" means no limit.
 func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
-	return &Tracker{
-		label:          label,
-		bytesLimit:     bytesLimit,
-		actionOnExceed: &LogOnExceed{},
+	t := &Tracker{
+		label:      label,
+		bytesLimit: bytesLimit,
 	}
+	t.actionMu.actionOnExceed = &LogOnExceed{}
+	return t
 }
 
 // CheckBytesLimit check whether the bytes limit of the tracker is equal to a value.
@@ -76,7 +80,18 @@ func (t *Tracker) SetBytesLimit(bytesLimit int64) {
 
 // SetActionOnExceed sets the action when memory usage exceeds bytesLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
-	t.actionOnExceed = a
+	t.actionMu.Lock()
+	t.actionMu.actionOnExceed = a
+	t.actionMu.Unlock()
+}
+
+// FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesLimit
+// and set the original action as its fallback.
+func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
+	t.actionMu.Lock()
+	defer t.actionMu.Unlock()
+	a.SetFallback(t.actionMu.actionOnExceed)
+	t.actionMu.actionOnExceed = a
 }
 
 // SetLabel sets the label of a Tracker.
@@ -151,12 +166,10 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 // which means this is a memory release operation. When memory usage of a tracker
 // exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bytes int64) {
+	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.parent {
 		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
-			// TODO(fengliyuan): try to find a way to avoid logging at each tracker in chain.
-			if tracker.actionOnExceed != nil {
-				tracker.actionOnExceed.Action(tracker)
-			}
+			rootExceed = tracker
 		}
 
 		for {
@@ -166,6 +179,13 @@ func (t *Tracker) Consume(bytes int64) {
 				continue
 			}
 			break
+		}
+	}
+	if rootExceed != nil {
+		rootExceed.actionMu.Lock()
+		defer rootExceed.actionMu.Unlock()
+		if rootExceed.actionMu.actionOnExceed != nil {
+			rootExceed.actionMu.actionOnExceed.Action(rootExceed)
 		}
 	}
 }
