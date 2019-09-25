@@ -1020,7 +1020,7 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
-		regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, 0)
+		regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 		if err != nil {
 			return nil, err
 		}

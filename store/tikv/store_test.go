@@ -175,7 +175,7 @@ func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey 
 	if c.stop {
 		return nil, nil, errors.Trace(errStopped)
 	}
-	return c.client.ScanRegions(ctx, startKey, nil, limit)
+	return c.client.ScanRegions(ctx, startKey, endKey, limit)
 }
 
 func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
