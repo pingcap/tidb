@@ -58,6 +58,8 @@ const (
 	TypeIndexJoin = "IndexJoin"
 	// TypeIndexMergeJoin is the type of index look up merge join.
 	TypeIndexMergeJoin = "IndexMergeJoin"
+	// TypeIndexHashJoin is the type of index nested loop hash join.
+	TypeIndexHashJoin = "IndexHashJoin"
 	// TypeApply is the type of Apply.
 	TypeApply = "Apply"
 	// TypeMaxOneRow is the type of MaxOneRow.
@@ -111,6 +113,7 @@ const (
 	typeMergeJoinID
 	typeIndexJoinID
 	typeIndexMergeJoinID
+	typeIndexHashJoinID
 	typeApplyID
 	typeMaxOneRowID
 	typeExistsID
@@ -172,6 +175,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeIndexJoinID
 	case TypeIndexMergeJoin:
 		return typeIndexMergeJoinID
+	case TypeIndexHashJoin:
+		return typeIndexHashJoinID
 	case TypeApply:
 		return typeApplyID
 	case TypeMaxOneRow:
@@ -250,6 +255,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeIndexJoin
 	case typeIndexMergeJoinID:
 		return TypeIndexMergeJoin
+	case typeIndexHashJoinID:
+		return TypeIndexHashJoin
 	case typeApplyID:
 		return TypeApply
 	case typeMaxOneRowID:

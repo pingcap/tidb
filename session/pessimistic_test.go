@@ -365,14 +365,13 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	syncCh <- struct{}{}
 	tk.MustQuery("select c from conflict where id = 1").Check(testkit.Rows("3"))
 
-	// Check outdated pessimistic lock is resolved.
+	// Check pessimistic lock is not resolved.
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update conflict set c = 4 where id = 1")
-	time.Sleep(300 * time.Millisecond)
 	tk2.MustExec("begin optimistic")
 	tk2.MustExec("update conflict set c = 5 where id = 1")
-	tk2.MustExec("commit")
-	_, err := tk.Exec("commit")
+	// TODO: ResolveLock block until timeout, takes about 40s, makes CI slow!
+	_, err := tk2.Exec("commit")
 	c.Check(err, NotNil)
 
 	// Update snapshotTS after a conflict, invalidate snapshot cache.
