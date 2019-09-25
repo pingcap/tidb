@@ -40,12 +40,6 @@ type Transformation interface {
 	OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error)
 }
 
-// GetTransformationRules gets the all the candidate transformation rules of the optimizer
-// based on the logical plan node.
-func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
-	return opt.transformationRuleMap[memo.GetOperand(node)]
-}
-
 var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandSelection: {
 		&PushSelDownTableScan{},

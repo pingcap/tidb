@@ -29,22 +29,38 @@ type Optimizer struct {
 	implementationRuleMap map[memo.Operand][]ImplementationRule
 }
 
-// NewDefaultOptimizer returns a cascades optimizer with default transformation
+// NewOptimizer returns a cascades optimizer with default transformation
 // rules and implementation rules.
-func NewDefaultOptimizer() *Optimizer {
+func NewOptimizer() *Optimizer {
 	return &Optimizer{
 		transformationRuleMap: defaultTransformationMap,
 		implementationRuleMap: defaultImplementationMap,
 	}
 }
 
-// NewOptimizerWithTrans returns a cascades optimizer which uses user defined
-// transformation rule map. This will be frequently used in unit tests.
-func NewOptimizerWithTrans(trans map[memo.Operand][]Transformation) *Optimizer {
-	return &Optimizer{
-		transformationRuleMap: trans,
-		implementationRuleMap: defaultImplementationMap,
-	}
+// ResetTransformationRules resets the transformationRuleMap of the optimizer, and returns the optimizer.
+func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]Transformation) *Optimizer {
+	opt.transformationRuleMap = rules
+	return opt
+}
+
+// ResetImplementationRules resets the implementationRuleMap of the optimizer, and returns the optimizer.
+func (opt *Optimizer) ResetImplementationRules(rules map[memo.Operand][]ImplementationRule) *Optimizer {
+	opt.implementationRuleMap = rules
+	return opt
+}
+
+// GetTransformationRules gets the all the candidate transformation rules of the optimizer
+// based on the logical plan node.
+func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
+	return opt.transformationRuleMap[memo.GetOperand(node)]
+}
+
+// GetImplementationRules gets all the candidate implementation rules of the optimizer
+// for the logical plan node.
+func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
+	operand := memo.GetOperand(node)
+	return opt.implementationRuleMap[operand]
 }
 
 // FindBestPlan is the optimization entrance of the cascades planner. The

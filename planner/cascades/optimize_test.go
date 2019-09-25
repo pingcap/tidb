@@ -47,7 +47,7 @@ func (s *testCascadesSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	s.sctx = plannercore.MockContext()
 	s.Parser = parser.New()
-	s.optimizer = NewDefaultOptimizer()
+	s.optimizer = NewOptimizer()
 }
 
 func (s *testCascadesSuite) TearDownSuite(c *C) {
