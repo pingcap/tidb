@@ -355,13 +355,20 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 		}
 	}
 	if canVectorized {
-		return vectorizedFilterConsiderNull2(ctx, filters, iterator, selected, nil)
+		return vectorizedFilter(ctx, filters, iterator, selected, nil)
 	}
-	return vectorizedFilterConsiderNull(ctx, filters, iterator, selected, nil)
+	return rowBasedFilter(ctx, filters, iterator, selected, nil)
 }
 
-// Filters can not be evaluated vectorized.
-func vectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
+// rowBasedFilter filters by row.
+func rowBasedFilter(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
+	input := iterator.GetChunk()
+	if input.Sel() != nil {
+		defer input.SetSel(input.Sel())
+		input = input.CopyReconstruct(nil)
+		iterator = chunk.NewIterator4Chunk(input)
+	}
+
 	selected = selected[:0]
 	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
 		selected = append(selected, true)
@@ -408,8 +415,8 @@ func vectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 	return selected, isNull, nil
 }
 
-// Filters can be evaluated vectorized.
-func vectorizedFilterConsiderNull2(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
+// vectorizedFilter filters by vector.
+func vectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
 	selected, isNull, err := VecEvalBool(ctx, filters, iterator.GetChunk(), selected, isNull)
 	if err != nil {
 		return nil, nil, err
