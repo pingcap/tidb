@@ -449,6 +449,36 @@ func (b *builtinCeilRealSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinRoundWithFracRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	x := result.Float64s()
+	d := buf1.Int64s()
+	result.MergeNulls(buf1)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		x[i] = types.Round(x[i], int(d[i]))
+	}
+	return nil
+}
+
+func (b *builtinRoundWithFracRealSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinTruncateRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
