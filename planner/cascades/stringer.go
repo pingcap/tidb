@@ -77,12 +77,12 @@ func groupExprToString(expr *memo.GroupExpr, idMap map[*memo.Group]int) string {
 	if len(expr.Children) == 0 {
 		fmt.Fprintf(buffer, " %s", expr.ExprNode.ExplainInfo())
 	} else {
-		fmt.Fprintf(buffer, " %s, %s", getChildrenGroupId(expr, idMap), expr.ExprNode.ExplainInfo())
+		fmt.Fprintf(buffer, " %s, %s", getChildrenGroupID(expr, idMap), expr.ExprNode.ExplainInfo())
 	}
 	return buffer.String()
 }
 
-func getChildrenGroupId(expr *memo.GroupExpr, idMap map[*memo.Group]int) string {
+func getChildrenGroupID(expr *memo.GroupExpr, idMap map[*memo.Group]int) string {
 	children := make([]string, 0, len(expr.Children))
 	for _, child := range expr.Children {
 		children = append(children, fmt.Sprintf("Group#%d", idMap[child]))
