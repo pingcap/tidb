@@ -98,23 +98,22 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 		oldCol.Index = newCols[i].Index
 		oldCol.UniqueID = newCols[i].UniqueID
 		oldCol.VirtualExpr = newCols[i].VirtualExpr
-		oldCol.UsedByIndex = newCols[i].UsedByIndex
 		newRoot.Schema().Columns[i] = oldCol
 	}
 	return newRoot
 }
 
-type projectionEliminater struct {
+type projectionEliminator struct {
 }
 
 // optimize implements the logicalOptRule interface.
-func (pe *projectionEliminater) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
+func (pe *projectionEliminator) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false)
 	return root, nil
 }
 
 // eliminate eliminates the redundant projection in a logical plan.
-func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool) LogicalPlan {
+func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool) LogicalPlan {
 	proj, isProj := p.(*LogicalProjection)
 	childFlag := canEliminate
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
@@ -248,6 +247,6 @@ func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column
 	}
 }
 
-func (*projectionEliminater) name() string {
+func (*projectionEliminator) name() string {
 	return "projection_eliminate"
 }

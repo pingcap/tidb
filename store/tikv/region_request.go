@@ -15,11 +15,12 @@ package tikv
 
 import (
 	"context"
+	"sync/atomic"
+	"time"
+
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -69,12 +70,22 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout)
+	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, TiKV)
 	return resp, err
 }
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
-func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, *RPCContext, error) {
+func (s *RegionRequestSender) SendReqCtx(
+	bo *Backoffer,
+	req *tikvrpc.Request,
+	regionID RegionVerID,
+	timeout time.Duration,
+	sType StoreType,
+) (
+	resp *tikvrpc.Response,
+	rpcCtx *RPCContext,
+	err error,
+) {
 	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
 		switch val.(string) {
 		case "timeout":
@@ -101,24 +112,32 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		replicaRead = kv.ReplicaReadLeader
 	}
 	for {
-		ctx, err := s.regionCache.GetRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
+		switch sType {
+		case TiKV:
+			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
+		case TiFlash:
+			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
+		default:
+			err = errors.Errorf("unsupported storage type: %v", sType)
 		}
-		if ctx == nil {
+		if err != nil {
+			return nil, nil, err
+		}
+		if rpcCtx == nil {
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
 
 			// TODO: Change the returned error to something like "region missing in cache",
 			// and handle this error like EpochNotMatch, which means to re-split the request and retry.
-			resp, err := tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
+			resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
 			return resp, nil, err
 		}
 
-		logutil.Eventf(bo.ctx, "send %s request to region %d at %s", req.Type, regionID.id, ctx.Addr)
-		s.storeAddr = ctx.Addr
-		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
+		logutil.Eventf(bo.ctx, "send %s request to region %d at %s", req.Type, regionID.id, rpcCtx.Addr)
+		s.storeAddr = rpcCtx.Addr
+		var retry bool
+		resp, retry, err = s.sendReqToRegion(bo, rpcCtx, req, timeout)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -126,12 +145,13 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 			continue
 		}
 
-		regionErr, err := resp.GetRegionError()
+		var regionErr *errorpb.Error
+		regionErr, err = resp.GetRegionError()
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			retry, err := s.onRegionError(bo, ctx, regionErr)
+			retry, err = s.onRegionError(bo, rpcCtx, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -139,7 +159,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 				continue
 			}
 		}
-		return resp, ctx, nil
+		return resp, rpcCtx, nil
 	}
 }
 
@@ -278,7 +298,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
-	logutil.BgLogger().Debug("tikv reports region error",
+	logutil.BgLogger().Debug("tikv reports region failed",
 		zap.Stringer("regionErr", regionErr),
 		zap.Stringer("ctx", ctx))
 	s.regionCache.InvalidateCachedRegion(ctx.Region)

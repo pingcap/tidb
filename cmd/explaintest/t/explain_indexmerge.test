@@ -1,0 +1,15 @@
+drop table if exists t;
+create table t (a int primary key, b int, c int, d int, e int, f int);
+create index tb on t (b);
+create index tc on t (c);
+create index td on t (d);
+load stats 's/explain_indexmerge_stats_t.json';
+set session tidb_enable_index_merge = on;
+explain select * from t where a < 50 or b < 50;
+explain select * from t where (a < 50 or b < 50) and f > 100;
+explain select * from t where a < 50 or b < 5000000;
+explain select * from t where b < 50 or c < 50;
+explain select * from t where b < 50 or c < 5000000;
+explain select * from t where a < 50 or b < 50 or c < 50;
+explain select * from t where (b < 10000 or c < 10000) and (a < 10 or d < 10) and f < 10;
+explain format="dot" select * from t where (a < 50 or b < 50) and f > 100;

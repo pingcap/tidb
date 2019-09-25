@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
 // GlobalVariableCache caches global variables.
@@ -41,6 +43,8 @@ func (gvc *GlobalVariableCache) Update(rows []chunk.Row, fields []*ast.ResultFie
 	gvc.rows = rows
 	gvc.fields = fields
 	gvc.Unlock()
+
+	checkEnableStmtSummary(rows, fields)
 }
 
 // Get gets the global variables from cache.
@@ -61,6 +65,28 @@ func (gvc *GlobalVariableCache) Disable() {
 	defer gvc.Unlock()
 	gvc.disable = true
 	return
+}
+
+// checkEnableStmtSummary looks for TiDBEnableStmtSummary and notifies StmtSummary
+func checkEnableStmtSummary(rows []chunk.Row, fields []*ast.ResultField) {
+	for _, row := range rows {
+		varName := row.GetString(0)
+		if varName == variable.TiDBEnableStmtSummary {
+			varVal := row.GetDatum(1, &fields[1].Column.FieldType)
+
+			sVal := ""
+			if !varVal.IsNull() {
+				var err error
+				sVal, err = varVal.ToString()
+				if err != nil {
+					return
+				}
+			}
+
+			stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
+			break
+		}
+	}
 }
 
 // GetGlobalVarsCache gets the global variable cache.

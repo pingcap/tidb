@@ -22,12 +22,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -190,10 +190,15 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
 	}
-	prepared, ok := vars.PreparedStmts[e.ExecID]
+	preparedPointer, ok := vars.PreparedStmts[e.ExecID]
 	if !ok {
 		return errors.Trace(ErrStmtNotFound)
 	}
+	preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
+	if !ok {
+		return errors.Errorf("invalid CachedPrepareStmt type")
+	}
+	prepared := preparedObj.PreparedAst
 	vars.StmtCtx.StmtType = prepared.StmtType
 
 	paramLen := len(e.PrepareParams)
@@ -227,6 +232,11 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	}
 
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+		// In order to avoid some correctness issues, we have to clear the
+		// cached plan once the schema version is changed.
+		// Cached plan in prepared struct does NOT have a "cache key" with
+		// schema version like prepared plan cache key
+		prepared.CachedPlan = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		err := Preprocess(sctx, prepared.Stmt, is, InPrepare)
@@ -235,7 +245,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
-	err := e.getPhysicalPlan(ctx, sctx, is, prepared)
+	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
 	}
@@ -243,31 +253,72 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) error {
+func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
+	preparedObj *CachedPrepareStmt, is infoschema.InfoSchema) error {
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, preparedObj.VisitInfos); err != nil {
+			return err
+		}
+	}
+	err := CheckTableLock(sctx, is, preparedObj.VisitInfos)
+	return err
+}
+
+func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
+	prepared := preparedStmt.PreparedAst
+	if prepared.CachedPlan != nil {
+		// Rewriting the expression in the select.where condition  will convert its
+		// type from "paramMarker" to "Constant".When Point Select queries are executed,
+		// the expression in the where condition will not be evaluated,
+		// so you don't need to consider whether prepared.useCache is enabled.
+		plan := prepared.CachedPlan.(Plan)
+		err := e.rebuildRange(plan)
+		if err != nil {
+			return err
+		}
+		if metrics.ResettablePlanCacheCounterFortTest {
+			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+		} else {
+			planCacheCounter.Inc()
+		}
+		e.names = plan.OutputNames()
+		e.Plan = plan
+		return nil
+	}
 	var cacheKey kvcache.Key
-	sessionVars := sctx.GetSessionVars()
-	sessionVars.StmtCtx.UseCache = prepared.UseCache
+	sctx.GetSessionVars().StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
+		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
+			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
+				return err
+			}
 			if metrics.ResettablePlanCacheCounterFortTest {
 				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 			} else {
 				planCacheCounter.Inc()
 			}
-			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
-			err := e.rebuildRange(plan)
+			cachedVal := cacheValue.(*PSTMTPlanCacheValue)
+			err := e.rebuildRange(cachedVal.Plan)
 			if err != nil {
 				return err
 			}
-			e.names = cacheValue.(*PSTMTPlanCacheValue).OutPutNames
-			e.Plan = plan
+			e.names = cachedVal.OutPutNames
+			e.Plan = cachedVal.Plan
 			return nil
 		}
 	}
 	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return err
+	}
+	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+	if err != nil {
+		return err
+	}
+	if ok {
+		// just cache point plan now
+		prepared.CachedPlan = p
 	}
 	e.names = p.OutputNames()
 	e.Plan = p
@@ -349,7 +400,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
-	idxCols, colLengths := expression.IndexInfo2Cols(is.schema.Columns, is.Index)
+	idxCols, colLengths := expression.IndexInfo2PrefixCols(is.schema.Columns, is.Index)
 	if len(idxCols) == 0 {
 		return ranger.FullRange(), nil
 	}
@@ -365,24 +416,6 @@ type Deallocate struct {
 	baseSchemaProducer
 
 	Name string
-}
-
-// Show represents a show plan.
-type Show struct {
-	physicalSchemaProducer
-
-	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName      string
-	Table       *ast.TableName  // Used for showing columns.
-	Column      *ast.ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr
-	Flag        int                  // Some flag parsed from sql, such as FULL.
-	User        *auth.UserIdentity   // Used for show grants.
-	Roles       []*auth.RoleIdentity // Used for show grants.
-	Full        bool
-	IfNotExists bool // Used for `show create database if not exists`
-
-	GlobalScope bool // Used by show variables
 }
 
 // Set represents a plan for set stmt.
@@ -567,52 +600,50 @@ type DDL struct {
 type Explain struct {
 	baseSchemaProducer
 
-	StmtPlan       Plan
+	TargetPlan Plan
+	Format     string
+	Analyze    bool
+	ExecStmt   ast.StmtNode
+
 	Rows           [][]string
 	explainedPlans map[int]bool
-	Format         string
-	Analyze        bool
-	ExecStmt       ast.StmtNode
-	ExecPlan       Plan
 }
 
 // prepareSchema prepares explain's result schema.
 func (e *Explain) prepareSchema() error {
-	switch strings.ToLower(e.Format) {
-	case ast.ExplainFormatROW:
-		retFields := []string{"id", "count", "task", "operator info"}
-		if e.Analyze {
-			retFields = append(retFields, "execution info", "memory")
-		}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
-		}
-		e.SetSchema(schema)
-	case ast.ExplainFormatDOT:
-		retFields := []string{"dot contents"}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
-		}
-		e.SetSchema(schema)
+	var fieldNames []string
+	format := strings.ToLower(e.Format)
+
+	switch {
+	case format == ast.ExplainFormatROW && !e.Analyze:
+		fieldNames = []string{"id", "count", "task", "operator info"}
+	case format == ast.ExplainFormatROW && e.Analyze:
+		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory"}
+	case format == ast.ExplainFormatDOT:
+		fieldNames = []string{"dot contents"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
+
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(fieldNames))...)
+	for _, fieldName := range fieldNames {
+		schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+	}
+	e.SetSchema(schema)
 	return nil
 }
 
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
-	if e.StmtPlan == nil {
+	if e.TargetPlan == nil {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
-		e.explainPlanInRowFormat(e.StmtPlan.(PhysicalPlan), "root", "", true)
+		e.explainPlanInRowFormat(e.TargetPlan, "root", "", true)
 	case ast.ExplainFormatDOT:
-		e.prepareDotInfo(e.StmtPlan.(PhysicalPlan))
+		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -620,48 +651,90 @@ func (e *Explain) RenderResult() error {
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
-func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string, isLastChild bool) {
+func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLastChild bool) {
 	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
 	// For every child we create a new sub-tree rooted by it.
 	childIndent := e.getIndent4Child(indent, isLastChild)
-	for i, child := range p.Children() {
-		if e.explainedPlans[child.ID()] {
-			continue
+
+	if physPlan, ok := p.(PhysicalPlan); ok {
+		for i, child := range physPlan.Children() {
+			if e.explainedPlans[child.ID()] {
+				continue
+			}
+			e.explainPlanInRowFormat(child, taskType, childIndent, i == len(physPlan.Children())-1)
 		}
-		e.explainPlanInRowFormat(child.(PhysicalPlan), taskType, childIndent, i == len(p.Children())-1)
 	}
 
-	switch copPlan := p.(type) {
+	switch x := p.(type) {
 	case *PhysicalTableReader:
-		e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
+		e.explainPlanInRowFormat(x.tablePlan, "cop", childIndent, true)
 	case *PhysicalIndexReader:
-		e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, true)
+		e.explainPlanInRowFormat(x.indexPlan, "cop", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, false)
-		e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
+		e.explainPlanInRowFormat(x.indexPlan, "cop", childIndent, false)
+		e.explainPlanInRowFormat(x.tablePlan, "cop", childIndent, true)
+	case *PhysicalIndexMergeReader:
+		for i := 0; i < len(x.partialPlans); i++ {
+			if x.tablePlan == nil && i == len(x.partialPlans)-1 {
+				e.explainPlanInRowFormat(x.partialPlans[i], "cop", childIndent, true)
+			} else {
+				e.explainPlanInRowFormat(x.partialPlans[i], "cop", childIndent, false)
+			}
+		}
+		if x.tablePlan != nil {
+			e.explainPlanInRowFormat(x.tablePlan, "cop", childIndent, true)
+		}
+	case *Insert:
+		if x.SelectPlan != nil {
+			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+		}
+	case *Update:
+		if x.SelectPlan != nil {
+			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+		}
+	case *Delete:
+		if x.SelectPlan != nil {
+			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+		}
+	case *Execute:
+		if x.Plan != nil {
+			e.explainPlanInRowFormat(x.Plan, "root", childIndent, true)
+		}
 	}
 }
 
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, task type, operator info, and the estemated row count.
-func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
+func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
-	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
+
+	count := "N/A"
+	if si := p.statsInfo(); si != nil {
+		count = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
+	}
 	explainID := p.ExplainID().String()
 	row := []string{e.prettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
+		var analyzeInfo string
 		if runtimeStatsColl.ExistsCopStats(explainID) {
-			row = append(row, runtimeStatsColl.GetCopStats(explainID).String())
+			analyzeInfo = runtimeStatsColl.GetCopStats(explainID).String()
 		} else if runtimeStatsColl.ExistsRootStats(explainID) {
-			row = append(row, runtimeStatsColl.GetRootStats(explainID).String())
+			analyzeInfo = runtimeStatsColl.GetRootStats(explainID).String()
 		} else {
-			row = append(row, "time:0ns, loops:0, rows:0")
+			analyzeInfo = "time:0ns, loops:0, rows:0"
 		}
+		switch p.(type) {
+		case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
+			if s := runtimeStatsColl.GetReaderStats(explainID); s != nil && len(s.String()) > 0 {
+				analyzeInfo += ", " + s.String()
+			}
+		}
+		row = append(row, analyzeInfo)
 
 		tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
 		if tracker != nil {
@@ -739,22 +812,25 @@ func (e *Explain) getIndent4Child(indent string, isLastChild bool) string {
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	buffer := bytes.NewBufferString("")
-	buffer.WriteString(fmt.Sprintf("\ndigraph %s {\n", p.ExplainID()))
+	fmt.Fprintf(buffer, "\ndigraph %s {\n", p.ExplainID())
 	e.prepareTaskDot(p, "root", buffer)
-	buffer.WriteString(fmt.Sprintln("}"))
+	buffer.WriteString("}\n")
 
 	e.Rows = append(e.Rows, []string{buffer.String()})
 }
 
 func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
-	buffer.WriteString(fmt.Sprintf("subgraph cluster%v{\n", p.ID()))
+	fmt.Fprintf(buffer, "subgraph cluster%v{\n", p.ID())
 	buffer.WriteString("node [style=filled, color=lightgrey]\n")
 	buffer.WriteString("color=black\n")
-	buffer.WriteString(fmt.Sprintf("label = \"%s\"\n", taskTp))
+	fmt.Fprintf(buffer, "label = \"%s\"\n", taskTp)
 
 	if len(p.Children()) == 0 {
-		buffer.WriteString(fmt.Sprintf("\"%s\"\n}\n", p.ExplainID()))
-		return
+		if taskTp == "cop" {
+			fmt.Fprintf(buffer, "\"%s\"\n}\n", p.ExplainID())
+			return
+		}
+		fmt.Fprintf(buffer, "\"%s\"\n", p.ExplainID())
 	}
 
 	var copTasks []PhysicalPlan
@@ -774,9 +850,18 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.tablePlan)
 			copTasks = append(copTasks, copPlan.indexPlan)
+		case *PhysicalIndexMergeReader:
+			for i := 0; i < len(copPlan.partialPlans); i++ {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
+				copTasks = append(copTasks, copPlan.partialPlans[i])
+			}
+			if copPlan.tablePlan != nil {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
+				copTasks = append(copTasks, copPlan.tablePlan)
+			}
 		}
 		for _, child := range curPlan.Children() {
-			buffer.WriteString(fmt.Sprintf("\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID()))
+			fmt.Fprintf(buffer, "\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID())
 			planQueue = append(planQueue, child)
 		}
 	}
@@ -788,5 +873,46 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 
 	for i := range pipelines {
 		buffer.WriteString(pipelines[i])
+	}
+}
+
+// IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
+//  1. ctx is auto commit tagged
+//  2. txn is not valid
+//  3. plan is point get by pk, or point get by unique index (no double read)
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
+	// check auto commit
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false, nil
+	}
+
+	// check txn
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return false, err
+	}
+	if txn.Valid() {
+		return false, nil
+	}
+
+	// check plan
+	if proj, ok := p.(*PhysicalProjection); ok {
+		p = proj.Children()[0]
+	}
+
+	switch v := p.(type) {
+	case *PhysicalIndexReader:
+		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
+	case *PhysicalTableReader:
+		tableScan := v.TablePlans[0].(*PhysicalTableScan)
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
+	case *PointGetPlan:
+		// If the PointGetPlan needs to read data using unique index (double read), we
+		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
+		// and the data and index would be inconsistent!
+		return v.IndexInfo == nil, nil
+	default:
+		return false, nil
 	}
 }
