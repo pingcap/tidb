@@ -12,3 +12,21 @@
 // limitations under the License.
 
 package expression
+
+import (
+	"testing"
+
+	. "github.com/pingcap/check"
+)
+
+var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
+}
+
+func (s *testEvaluatorSuite) TestVectorizedBuiltinJSONFunc(c *C) {
+	testVectorizedBuiltinFunc(c, vecBuiltinJSONCases)
+}
+
+func BenchmarkVectorizedBuiltinJSONFunc(b *testing.B) {
+	benchmarkVectorizedBuiltinFunc(b, vecBuiltinJSONCases)
+}
+
