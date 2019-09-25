@@ -909,30 +909,28 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 	}()
 
 	tk.MustExec("use test")
-	tk.MustExec("create table t1(a bigint, b bigint, c bigint)")
-	tk.MustExec("create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))")
-
-	tk.MustQuery("explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c;").Check(testkit.Rows(
-		"IndexMergeJoin_14 12475.01 root inner join, inner:IndexReader_12, outer key:Column#1, inner key:Column#5, other cond:eq(Column#3, Column#7), gt(Column#6, minus(Column#2, 1)), lt(Column#6, plus(Column#2, 1))",
-		"├─TableReader_17 9980.01 root data:Selection_16",
-		"│ └─Selection_16 9980.01 cop not(isnull(Column#1)), not(isnull(Column#3))",
-		"│   └─TableScan_15 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─IndexReader_12 1.25 root index:Selection_11",
-		"  └─Selection_11 1.25 cop not(isnull(Column#5)), not(isnull(Column#7))",
-		"    └─IndexScan_10 1.25 cop table:t2, index:a, b, c, range: decided by [eq(Column#5, Column#1) gt(Column#6, minus(Column#2, 1)) lt(Column#6, plus(Column#2, 1))], keep order:true, stats:pseudo",
-	))
-
-	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
-	tk.MustQuery("explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
-		"Projection_7 0.00 root Column#1, Column#2, Column#4, Column#5",
-		"└─HashRightJoin_9 0.00 root inner join, inner:IndexReader_15, equal:[eq(Column#5, Column#2)]",
-		"  ├─IndexReader_15 0.00 root index:Selection_14",
-		"  │ └─Selection_14 0.00 cop isnull(Column#5), not(isnull(Column#5))",
-		"  │   └─IndexScan_13 10000.00 cop table:t2, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
-		"  └─IndexReader_21 9990.00 root index:Selection_20",
-		"    └─Selection_20 9990.00 cop not(isnull(Column#2))",
-		"      └─IndexScan_19 10000.00 cop table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
-	))
+	var input [][]string
+	var output []struct {
+		SQL  []string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		for j, tt := range ts {
+			if j != len(ts)-1 {
+				tk.MustExec(tt)
+			}
+			s.testData.OnRecord(func() {
+				output[i].SQL = ts
+				if j == len(ts)-1 {
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
+			})
+			if j == len(ts)-1 {
+				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			}
+		}
+	}
 }
 
 func (s *testAnalyzeSuite) TestIssue9805(c *C) {
