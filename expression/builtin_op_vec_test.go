@@ -25,12 +25,12 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.IsTruth:   {},
 	ast.IsFalsity: {},
 	ast.LogicOr: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeLogicOrDataGens()},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGens()},
 	},
 	ast.LogicXor: {},
 	ast.Xor:      {},
 	ast.LogicAnd: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGens()},
 	},
 	ast.UnaryNot:   {},
 	ast.UnaryMinus: {},
@@ -62,7 +62,9 @@ func makeGivenValsOrDefaultGener(vals []interface{}, eType types.EvalType) *give
 	return g
 }
 
-func makeLogicOrDataGens() []dataGenerator {
+func makeBinaryLogicOpDataGens() []dataGenerator {
+	// TODO: This data generator currently only applies to AND and OR operators,
+	// so its name may be too generic.
 	pairs := [][]interface{}{
 		{nil, nil},
 		{0, nil},
