@@ -556,7 +556,7 @@ func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {
 	s.mustPutOK(c, "test", "test2", 5, 8)
 
 	// simulate `getTxnStatus` for txn 2.
-	err := s.store.Cleanup([]byte("test"), 2)
+	err := s.store.Cleanup([]byte("test"), 2, math.MaxUint64)
 	c.Assert(err, IsNil)
 	req = &kvrpcpb.PrewriteRequest{
 		Mutations:    putMutations("test", "test3"),
@@ -712,7 +712,7 @@ func (s *testMVCCLevelDB) TestTxnHeartBeat(c *C) {
 	c.Assert(ttl, Greater, uint64(300))
 
 	// The lock has already been clean up
-	c.Assert(s.store.Cleanup([]byte("pk"), 5), IsNil)
+	c.Assert(s.store.Cleanup([]byte("pk"), 5, math.MaxUint64), IsNil)
 	_, err = s.store.TxnHeartBeat([]byte("pk"), 5, 1000)
 	c.Assert(err, NotNil)
 }
