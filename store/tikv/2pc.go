@@ -620,8 +620,7 @@ func (tm *ttlManager) close() {
 }
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
-	// PessimisticLockTTL is 15s in conf, so the ticker is 5s.
-	// In the test, PessimisticLockTTL is set to 300ms, then ticker is 100ms.
+	// Ticker is set to 1/3 of the PessimisticLockTTL.
 	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 3)
 	defer ticker.Stop()
 	for {
@@ -641,9 +640,17 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				continue
 			}
 
-			// ttl = now - start ts + lock ttl
-			newTTL := uint64(oracle.ExtractPhysical(now)-oracle.ExtractPhysical(c.startTS)) + PessimisticLockTTL
+			uptime := uint64(oracle.ExtractPhysical(now) - oracle.ExtractPhysical(c.startTS))
+			const c10min = 10 * 60 * 1000
+			if uptime > c10min {
+				// Set a 10min maximum lifetime for the ttlManager, so when something goes wrong
+				// the key will not be locked forever.
+				logutil.BgLogger().Info("ttlManager live up to its lifetime",
+					zap.Uint64("txnStartTS", c.startTS))
+				return
+			}
 
+			newTTL := uptime + PessimisticLockTTL
 			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
 				logutil.BgLogger().Warn("send TxnHeartBeat failed",
