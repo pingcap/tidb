@@ -252,23 +252,18 @@ func Copy(src string) string {
 	return string(hack.Slice(src))
 }
 
-// stringerFunc defines string func implement fmt.Stringer.
-type stringerFunc func() string
+// StringerFunc defines string func implement fmt.Stringer.
+type StringerFunc func() string
 
 // String implements fmt.Stringer
-func (l stringerFunc) String() string {
+func (l StringerFunc) String() string {
 	return l()
 }
 
 // MemoizeStr returns memoized version of stringFunc.
 func MemoizeStr(l func() string) fmt.Stringer {
-	var result string
-	return stringerFunc(func() string {
-		if result != "" {
-			return result
-		}
-		result = l()
-		return result
+	return StringerFunc(func() string {
+		return l()
 	})
 }
 

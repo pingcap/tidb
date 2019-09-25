@@ -345,3 +345,28 @@ func (s *testPrepareSuite) TestPrepareWithWindowFunction(c *C) {
 	tk.MustExec("set @a=0, @b=1;")
 	tk.MustQuery("execute stmt2 using @a, @b").Check(testkit.Rows("0", "0"))
 }
+
+func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, v int)")
+	tk.MustExec("insert into t(id, v) values(1, 2),(1, 2),(2, 3);")
+	tk.MustExec("prepare s1 from 'select max(v) from t group by floor(id/?)';")
+	tk.MustExec("set @a=2;")
+	tk.MustQuery("execute s1 using @a;").Sort().Check(testkit.Rows("2", "3"))
+
+	tk.MustExec("prepare s1 from 'select max(v) from t group by ?';")
+	tk.MustExec("set @a=2;")
+	err = tk.ExecToErr("execute s1 using @a;")
+	c.Assert(err.Error(), Equals, "Unknown column '2' in 'group statement'")
+	tk.MustExec("set @a=2.0;")
+	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("3"))
+}

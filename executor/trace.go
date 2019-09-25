@@ -179,6 +179,18 @@ func dfsTree(t *appdash.Trace, prefix string, isLast bool, chk *chunk.Chunk) {
 	chk.AppendString(1, start.Format("15:04:05.000000"))
 	chk.AppendString(2, duration.String())
 
+	// Sort events by their start time
+	sort.Slice(t.Sub, func(i, j int) bool {
+		var istart, jstart time.Time
+		if ievent, err := t.Sub[i].TimespanEvent(); err == nil {
+			istart = ievent.Start()
+		}
+		if jevent, err := t.Sub[j].TimespanEvent(); err == nil {
+			jstart = jevent.Start()
+		}
+		return istart.Before(jstart)
+	})
+
 	for i, sp := range t.Sub {
 		dfsTree(sp, newPrefix, i == (len(t.Sub))-1 /*last element of array*/, chk)
 	}

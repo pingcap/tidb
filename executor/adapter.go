@@ -41,11 +41,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -135,7 +137,8 @@ func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	sessVars := a.stmt.Ctx.GetSessionVars()
-	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), sessVars)
+	pps := types.CloneRow(sessVars.PreparedParams)
+	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), pps)
 	a.stmt.logAudit()
 	a.stmt.SummaryStmt()
 	return err
@@ -267,7 +270,9 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		maxExecutionTime := getMaxExecutionTime(sctx, a.StmtNode)
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
-		a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		}
 	}
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
@@ -629,13 +634,15 @@ func (a *ExecStmt) logAudit() {
 }
 
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
-func FormatSQL(sql string, sessVars *variable.SessionVars) string {
-	cfg := config.GetGlobalConfig()
-	length := len(sql)
-	if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
-		sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
+func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc {
+	return func() string {
+		cfg := config.GetGlobalConfig()
+		length := len(sql)
+		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
+			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
+		}
+		return QueryReplacer.Replace(sql) + pps.String()
 	}
-	return QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
@@ -651,7 +658,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
 	}
-	sql := FormatSQL(a.Text, sessVars)
+	sql := FormatSQL(a.Text, sessVars.PreparedParams)
 
 	var tableIDs, indexNames string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
@@ -667,7 +674,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	_, digest := sessVars.StmtCtx.SQLDigest()
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:       txnTS,
-		SQL:         sql,
+		SQL:         sql.String(),
 		Digest:      digest,
 		TimeTotal:   costTime,
 		TimeParse:   a.Ctx.GetSessionVars().DurationParse,
@@ -680,7 +687,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		Succ:        succ,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
-		slowItems.PrevStmt = sessVars.PrevStmt
+		slowItems.PrevStmt = sessVars.PrevStmt.String()
 	}
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
@@ -694,7 +701,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			userString = sessVars.User.String()
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
-			SQL:        sql,
+			SQL:        sql.String(),
 			Digest:     digest,
 			Start:      a.Ctx.GetSessionVars().StartTime,
 			Duration:   costTime,
