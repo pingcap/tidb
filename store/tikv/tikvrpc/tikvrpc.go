@@ -173,11 +173,6 @@ type Request struct {
 	TxnHeartBeat *kvrpcpb.TxnHeartBeatRequest
 }
 
-// TxnHeartBeat returns TxnHeartBeatRequest in request.
-func (req *Request) TxnHeartBeatRequest() *kvrpcpb.TxnHeartBeatRequest {
-	return req.TxnHeartBeat
-}
-
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
 func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Request {
 	switch req.Type {
