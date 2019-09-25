@@ -40,13 +40,13 @@ type Transformation interface {
 	OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error)
 }
 
-// GetTransformationRules gets the all the candidate transformation rules based
-// on the logical plan node.
-func GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
-	return transformationMap[memo.GetOperand(node)]
+// GetTransformationRules gets the all the candidate transformation rules of the optimizer
+// based on the logical plan node.
+func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
+	return opt.transformationRuleMap[memo.GetOperand(node)]
 }
 
-var transformationMap = map[memo.Operand][]Transformation{
+var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandSelection: {
 		&PushSelDownTableScan{},
 		&PushSelDownTableGather{},
