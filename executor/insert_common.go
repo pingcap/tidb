@@ -61,14 +61,14 @@ type InsertValues struct {
 	evalBuffer      chunk.MutRow
 	evalBufferTypes []*types.FieldType
 
-	// Cache datumLazy for consecutive autoid batch alloc.
-	cache []datumAutoIDLazy
+	// cacheHasValue cache haveValue for consecutive autoid batch alloc.
+	cacheHasValue []bool
 	// Fill the autoID lazily to datum.
 	// This is used for being compatible with JDBC using getGeneratedKeys().
 	// By now in insert multiple values, TiDB can guarantee consecutive autoID in a batch.
 	lazyFillAutoID bool
-	// RowIdx
-	rowIdx int
+	// colIdx will cache the index of autoIncrement column in a row.
+	colIdx int
 }
 
 type defaultVal struct {
@@ -208,20 +208,16 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
 
-	// rowIdx and lazyFillAutoID are correlated.
-	e.rowIdx = -1
 	e.lazyFillAutoID = true
+	e.colIdx = -1
 	evalRowFunc := e.fastEvalRow
 	if !e.allAssignmentsAreConstant {
 		evalRowFunc = e.evalRow
 	}
 
 	rows := make([][]types.Datum, 0, len(e.Lists))
-	// Cache for consecutive autoID batch alloc.
-	e.cache = make([]datumAutoIDLazy, 0, len(e.Lists))
+	e.cacheHasValue = make([]bool, 0, len(e.Lists))
 	for i, list := range e.Lists {
-		// rowIdx for lazy autoID datum allocation, it will reset after batch insert.
-		e.rowIdx++
 		e.rowCount++
 		var row []types.Datum
 		row, err = evalRowFunc(ctx, list, i)
@@ -231,11 +227,11 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		rows = append(rows, row)
 		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 			// Before batch insert, should fill the batch allocated autoIDs.
-			rows, err = e.autoIDAllocN(ctx, rows)
+			rows, err = e.lazyAdjustAutoIncrementDatum(ctx, rows)
 			if err != nil {
 				return err
 			}
-			e.cache = e.cache[:0]
+			e.cacheHasValue = e.cacheHasValue[:0]
 			if err = base.exec(ctx, rows); err != nil {
 				return err
 			}
@@ -243,18 +239,17 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err = e.doBatchInsert(ctx); err != nil {
 				return err
 			}
-			// Reset colIdx cause rows has been cut.
-			e.rowIdx = -1
 		}
 	}
 	// Fill the batch allocated autoIDs.
-	rows, err = e.autoIDAllocN(ctx, rows)
+	rows, err = e.lazyAdjustAutoIncrementDatum(ctx, rows)
 	if err != nil {
 		return err
 	}
 	return base.exec(ctx, rows)
 }
 
+/*
 func (e *InsertValues) autoIDAllocN(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	length := len(e.cache)
@@ -354,6 +349,8 @@ func (e *InsertValues) autoIDAllocN(ctx context.Context, rows [][]types.Datum) (
 	}
 	return rows, nil
 }
+
+*/
 
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
 	if err == nil {
@@ -597,35 +594,26 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 	return defaultVal, nil
 }
 
-// fillColValueLazy is quite same to fillColValue() except it will cache auto increment datum for lazy batch allocation.
-func (e *InsertValues) fillColValueLazy(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (datumAutoIDLazy,
-	error) {
-	if mysql.HasAutoIncrementFlag(column.Flag) {
-		d, err := e.adjustAutoIncrementDatumLazy(ctx, datum, hasValue, column)
-		if err != nil {
-			return datumAutoIDLazy{}, err
-		}
-		return d, nil
-	}
-	if !hasValue {
-		d, err := e.getColDefaultValue(idx, column)
-		if e.filterErr(err) != nil {
-			return datumAutoIDLazy{}, err
-		}
-		return datumAutoIDLazy{isInAutoIncrement: false, datum: d}, nil
-	}
-	return datumAutoIDLazy{isInAutoIncrement: false, datum: datum}, nil
-}
-
 // fillColValue fills the column value if it is not set in the insert statement.
 func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
 	error) {
 	if mysql.HasAutoIncrementFlag(column.Flag) {
-		d, err := e.adjustAutoIncrementDatum(ctx, datum, hasValue, column)
-		if err != nil {
-			return types.Datum{}, err
+		if e.lazyFillAutoID {
+			// cache the colIdx of autoIncrement column for lazy handle.
+			if e.colIdx == -1 {
+				e.colIdx = idx
+			}
+			// cache the hasValue of autoIncrement column for lazy handle.
+			e.cacheHasValue = append(e.cacheHasValue, hasValue)
+			// Store the plain datum of autoIncrement column directly for lazy handle.
+			return datum, nil
+		} else {
+			d, err := e.adjustAutoIncrementDatum(ctx, datum, hasValue, column)
+			if err != nil {
+				return types.Datum{}, err
+			}
+			return d, nil
 		}
-		return d, nil
 	}
 	if !hasValue {
 		d, err := e.getColDefaultValue(idx, column)
@@ -650,28 +638,10 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			gCols = append(gCols, c)
 		} else {
 			// Get the default value for all no value columns, the auto increment column is different from the others.
-			if e.lazyFillAutoID {
-				var datumLazyTmp datumAutoIDLazy
-				if datumLazyTmp, err = e.fillColValueLazy(ctx, row[i], i, c, hasValue[i]); err != nil {
-					return nil, err
-				}
-				// Store the plain datum.
-				row[i] = datumLazyTmp.datum
-				if !datumLazyTmp.isInAutoIncrement {
-					// Handle the bad null error.
-					if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
-						return nil, err
-					}
-				} else {
-					// Cache the autoIncrement datum for lazy batch alloc.
-					datumLazyTmp.rowIdx = e.rowIdx
-					datumLazyTmp.colIdx = i
-					e.cache = append(e.cache, datumLazyTmp)
-				}
-			} else {
-				if row[i], err = e.fillColValue(ctx, row[i], i, c, hasValue[i]); err != nil {
-					return nil, err
-				}
+			if row[i], err = e.fillColValue(ctx, row[i], i, c, hasValue[i]); err != nil {
+				return nil, err
+			}
+			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.Flag)) {
 				// Handle the bad null error.
 				if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
 					return nil, err
@@ -697,6 +667,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	return row, nil
 }
 
+/*
 // adjustAutoIncrementDatumLazy is quite same to adjustAutoIncrementDatum()
 // except it will cache auto increment datum for lazy batch allocation of autoID.
 func (e *InsertValues) adjustAutoIncrementDatumLazy(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (datumAutoIDLazy, error) {
@@ -738,6 +709,157 @@ func (e *InsertValues) adjustAutoIncrementDatumLazy(ctx context.Context, d types
 	// Do the action lazily.
 	return datumAutoIDLazy{isInAutoIncrement: true, kind: AutoIDZero, recordID: recordID, datum: d}, nil
 
+}
+*/
+
+// isAutoNull can help judge whether a datum is AutoIncrement Null quickly.
+// This used to help lazyFillAutoIncrement to find consecutive N datum backwards for batch autoID alloc.
+func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table.Column, hasValue bool) bool {
+	// autoID can find in RetryInfo.
+	if e.ctx.GetSessionVars().RetryInfo.Retrying {
+		return false
+	}
+	var err error
+	var recordID int64
+	if !hasValue {
+		d.SetNull()
+	}
+	if !d.IsNull() {
+		recordID, err = getAutoRecordID(d, &col.FieldType, true)
+		if err != nil {
+			return false
+		}
+	}
+	// Use the value if it's not null and not 0.
+	if recordID != 0 {
+		return false
+	}
+	// Change NULL to auto id.
+	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		return true
+	}
+	return false
+}
+
+// lazyAdjustAutoIncrementDatum is quite same to adjustAutoIncrementDatum()
+// except it will cache auto increment datum previously for lazy batch allocation of autoID.
+func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
+	// Not in lazyFillAutoID mode or no autoIncrement column means no need to fill.
+	if !e.lazyFillAutoID || e.colIdx == -1 {
+		return rows, nil
+	}
+	// Get the autoIncrement column.
+	col := e.Table.Cols()[e.colIdx]
+	// Consider the colIdx of autoIncrement in row are same.
+	length := len(rows)
+	for i := 0; i < length; i++ {
+		autoDatum := rows[i][e.colIdx]
+		hasValue := e.cacheHasValue[i]
+
+		// autoID can find in RetryInfo.
+		retryInfo := e.ctx.GetSessionVars().RetryInfo
+		if retryInfo.Retrying {
+			id, err := retryInfo.GetCurrAutoIncrementID()
+			if err != nil {
+				return nil, err
+			}
+			autoDatum.SetAutoID(id, col.Flag)
+
+			// Handle the bad null error.
+			if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
+				return nil, err
+			}
+			rows[i][e.colIdx] = autoDatum
+			continue
+		}
+
+		var err error
+		var recordID int64
+		if !hasValue {
+			autoDatum.SetNull()
+		}
+		if !autoDatum.IsNull() {
+			recordID, err = getAutoRecordID(autoDatum, &col.FieldType, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		// Use the value if it's not null and not 0.
+		if recordID != 0 {
+			err = e.Table.RebaseAutoID(e.ctx, recordID, true)
+			if err != nil {
+				return nil, err
+			}
+			e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
+			retryInfo.AddAutoIncrementID(recordID)
+
+			// Handle the bad null error.
+			if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
+				return nil, err
+			}
+			rows[i][e.colIdx] = autoDatum
+			continue
+		}
+
+		// Change NULL to auto id.
+		// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+		if autoDatum.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+			// Find consecutive num.
+			start := i
+			cnt := 1
+			for i+1 < length && e.isAutoNull(ctx, rows[i+1][e.colIdx], col, e.cacheHasValue[i+1]) {
+				i++
+				cnt++
+			}
+			// Alloc batch N consecutive autoIDs.
+			recordIDs, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
+			if e.filterErr(err) != nil {
+				return nil, err
+			}
+			// Assign autoIDs to rows.
+			for j := 0; j < cnt; j++ {
+				offset := j + start
+				d := rows[offset][e.colIdx]
+
+				// It's compatible with mysql setting the first allocated autoID to lastInsertID.
+				// Cause autoID may be specified by user, judge only the first row is not suitable.
+				if e.lastInsertID == 0 {
+					e.lastInsertID = uint64(recordIDs[0])
+				}
+
+				d.SetAutoID(recordIDs[j], col.Flag)
+				retryInfo.AddAutoIncrementID(recordIDs[j])
+
+				// The value of d is adjusted by auto ID, so we need to cast it again.
+				d, err := table.CastValue(e.ctx, d, col.ToInfo())
+				if err != nil {
+					return nil, err
+				}
+				// Handle the bad null error.
+				if d, err = col.HandleBadNull(d, e.ctx.GetSessionVars().StmtCtx); err != nil {
+					return nil, err
+				}
+				rows[offset][e.colIdx] = d
+			}
+			continue
+		}
+
+		autoDatum.SetAutoID(recordID, col.Flag)
+		retryInfo.AddAutoIncrementID(recordID)
+
+		// the value of d is adjusted by auto ID, so we need to cast it again.
+		autoDatum, err = table.CastValue(e.ctx, autoDatum, col.ToInfo())
+		if err != nil {
+			return nil, err
+		}
+		// Handle the bad null error.
+		if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
+			return nil, err
+		}
+		rows[i][e.colIdx] = autoDatum
+	}
+	return rows, nil
 }
 
 func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
@@ -901,27 +1023,4 @@ func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64,
 		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	return h, nil
-}
-
-type datumAutoIDType int
-
-const (
-	// AutoIDNull stands for auto increment datum that need get a autoID from allocator.
-	AutoIDNull datumAutoIDType = iota
-	// AutoIDRebase stands for auto increment datum that has a specified value from user,
-	// so allocator need to rebase the value.
-	AutoIDRebase
-	// AutoIDZero stands for 0 value of auto increment datum, it won't replaced by autoID
-	// when sql-model NoAutoValueOnZero is set.
-	AutoIDZero
-)
-
-type datumAutoIDLazy struct {
-	isInAutoIncrement bool
-	kind              datumAutoIDType
-	datum             types.Datum
-	// recordID is for AutoIdRebase type
-	recordID int64
-	rowIdx   int
-	colIdx   int
 }
