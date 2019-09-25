@@ -18,27 +18,25 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/types"
 )
 
-var vecBuiltinOpCases = map[string][]vecExprBenchCase{
-	ast.IsTruth:   {},
-	ast.IsFalsity: {},
-	ast.LogicOr:   {},
-	ast.LogicXor:  {},
-	ast.Xor:       {},
-	ast.LogicAnd: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
-	},
-	ast.UnaryNot:   {},
-	ast.UnaryMinus: {},
-	ast.IsNull:     {},
+var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
+	ast.TiDBVersion:    {},
+	ast.CurrentUser:    {},
+	ast.FoundRows:      {},
+	ast.Database:       {},
+	ast.User:           {},
+	ast.TiDBDecodeKey:  {},
+	ast.RowCount:       {},
+	ast.CurrentRole:    {},
+	ast.TiDBIsDDLOwner: {},
+	ast.ConnectionID:   {},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinOpFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinOpCases)
+func (s *testEvaluatorSuite) TestVectorizedBuiltinInfoFunc(c *C) {
+	testVectorizedBuiltinFunc(c, vecBuiltinInfoCases)
 }
 
-func BenchmarkVectorizedBuiltinOpFunc(b *testing.B) {
-	benchmarkVectorizedBuiltinFunc(b, vecBuiltinOpCases)
+func BenchmarkVectorizedBuiltinInfoFunc(b *testing.B) {
+	benchmarkVectorizedBuiltinFunc(b, vecBuiltinInfoCases)
 }

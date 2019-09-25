@@ -14,9 +14,102 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
+
+func (b *builtinTimeIsNullSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinTimeIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinLogicOrSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinLogicOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinBitOrSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinBitOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinDecimalIsFalseSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinDecimalIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinIntIsFalseSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinIntIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinUnaryMinusRealSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinUnaryMinusRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinBitNegSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinBitNegSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinUnaryMinusDecimalSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinUnaryMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinIntIsNullSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinIntIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinRealIsNullSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinRealIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinUnaryNotRealSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinUnaryNotRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinLogicAndSig) vectorized() bool {
+	return true
+}
 
 func (b *builtinLogicAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -62,6 +155,114 @@ func (b *builtinLogicAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	return nil
 }
 
-func (b *builtinLogicAndSig) vectorized() bool {
-	return true
+func (b *builtinBitXorSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinBitXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinLogicXorSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinLogicXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinBitAndSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinBitAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinRealIsFalseSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinRealIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinUnaryMinusIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinUnaryMinusIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinUnaryNotDecimalSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinUnaryNotDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinUnaryNotIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinUnaryNotIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinDecimalIsNullSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinDecimalIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinLeftShiftSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinLeftShiftSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinRightShiftSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinRightShiftSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinRealIsTrueSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinRealIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinDecimalIsTrueSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinDecimalIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinIntIsTrueSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinIntIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinDurationIsNullSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinDurationIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
 }

@@ -18,27 +18,17 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/types"
 )
 
-var vecBuiltinOpCases = map[string][]vecExprBenchCase{
-	ast.IsTruth:   {},
-	ast.IsFalsity: {},
-	ast.LogicOr:   {},
-	ast.LogicXor:  {},
-	ast.Xor:       {},
-	ast.LogicAnd: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
-	},
-	ast.UnaryNot:   {},
-	ast.UnaryMinus: {},
-	ast.IsNull:     {},
+var vecBuiltinLikeCases = map[string][]vecExprBenchCase{
+	ast.Like:   {},
+	ast.Regexp: {},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinOpFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinOpCases)
+func (s *testEvaluatorSuite) TestVectorizedBuiltinLikeFunc(c *C) {
+	testVectorizedBuiltinFunc(c, vecBuiltinLikeCases)
 }
 
-func BenchmarkVectorizedBuiltinOpFunc(b *testing.B) {
-	benchmarkVectorizedBuiltinFunc(b, vecBuiltinOpCases)
+func BenchmarkVectorizedBuiltinLikeFunc(b *testing.B) {
+	benchmarkVectorizedBuiltinFunc(b, vecBuiltinLikeCases)
 }
