@@ -38,6 +38,10 @@ type Plan interface {
 	ID() int
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
+
+	// ExplainInfo returns operator information to be explained.
+	ExplainInfo() string
+
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
@@ -134,9 +138,6 @@ type PhysicalPlan interface {
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 
-	// ExplainInfo returns operator information to be explained.
-	ExplainInfo() string
-
 	// getChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
 
@@ -179,11 +180,6 @@ type basePhysicalPlan struct {
 
 func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return p.childrenReqProps[idx]
-}
-
-// ExplainInfo implements PhysicalPlan interface.
-func (p *basePhysicalPlan) ExplainInfo() string {
-	return ""
 }
 
 func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
@@ -276,6 +272,11 @@ func (p *basePlan) ID() int {
 // property.StatsInfo implements the Plan interface.
 func (p *basePlan) statsInfo() *property.StatsInfo {
 	return p.stats
+}
+
+// ExplainInfo implements Plan interface.
+func (p *basePlan) ExplainInfo() string {
+	return ""
 }
 
 func (p *basePlan) ExplainID() fmt.Stringer {
