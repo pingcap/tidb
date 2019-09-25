@@ -1134,9 +1134,9 @@ func BenchmarkVectorizedFilterConsiderNull(b *testing.B) {
 	}
 
 	// Add special case to prove only in the int type as column participates in the selection, the
-	// VectorizedFilterConsiderNull2 will be slower than VectorizedFilterConsiderNull.
-	// When some calculations are added, the VectorizedFilterConsiderNull2 for int types will be
-	// faster than VectorizedFilterConsiderNull.
+	// vectorizedFilter will be slower than rowBasedFilter.
+	// When some calculations are added, the vectorizedFilter for int types will be
+	// faster than rowBasedFilter.
 	funcName := ast.Least
 	testCase := vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}}
 	expr, _, input, _ := genVecExprBenchCase(ctx, funcName, testCase)
