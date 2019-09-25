@@ -142,11 +142,6 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.finished.Store(false)
 	e.joinWorkerWaitGroup = sync.WaitGroup{}
 
-	if e.joinType == 1 || e.joinType == 2 {
-		e.outerHashJoin = true
-	} else {
-		e.outerHashJoin = false
-	}
 	return nil
 }
 

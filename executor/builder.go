@@ -998,12 +998,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		joinType:      v.JoinType,
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
 		innerEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
+		outerHashJoin: v.OuterHashJoin,
 	}
 	// reverse the inner and the outer
-	e.outerHashJoin = false
-	if v.JoinType == 1 || v.JoinType == 2 {
+	if e.outerHashJoin {
 		v.InnerChildIdx = 1 - v.InnerChildIdx
-		e.outerHashJoin = true
 		var conds = v.LeftConditions
 		v.LeftConditions = v.RightConditions
 		v.RightConditions = conds
