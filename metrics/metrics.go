@@ -76,7 +76,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DistSQLQueryHistgram)
 	prometheus.MustRegister(DistSQLScanKeysHistogram)
 	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
-	prometheus.MustRegister(DistSQLDecodeTypeCounter)
 	prometheus.MustRegister(DumpFeedbackCounter)
 	prometheus.MustRegister(ExecuteErrorCounter)
 	prometheus.MustRegister(ExecutorCounter)

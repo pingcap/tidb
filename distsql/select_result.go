@@ -153,10 +153,10 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err != nil || r.selectResp == nil {
 			return err
 		}
+		// TODO(Shenghui Wu): add metrics
 		if len(r.selectResp.RowBatchData) == 0 {
 			r.encodeType = tipb.EncodeType_TypeDefault
 		}
-		metrics.DistSQLDecodeTypeCounter.WithLabelValues(r.sqlType, r.encodeType.String()).Add(float64(r.selectRespSize))
 	}
 
 	switch r.encodeType {
@@ -175,7 +175,6 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 			if err != nil || r.selectResp == nil {
 				return err
 			}
-			metrics.DistSQLDecodeTypeCounter.WithLabelValues(r.sqlType, r.encodeType.String()).Add(float64(r.selectRespSize))
 		}
 		err := r.readRowsData(chk)
 		if err != nil {

@@ -52,12 +52,4 @@ var (
 			Help:      "number of partial results for each query.",
 		},
 	)
-
-	DistSQLDecodeTypeCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "distsql",
-			Name:      "decode_type_total",
-			Help:      "Counter of data total for each decode type",
-		}, []string{LblSQLType, LblType})
 )
