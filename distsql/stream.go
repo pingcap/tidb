@@ -43,12 +43,9 @@ type streamResult struct {
 	curr         *tipb.Chunk
 	partialCount int64
 	feedback     *statistics.QueryFeedback
-	encodeType   tipb.EncodeType
 }
 
-func (r *streamResult) Fetch(ctx context.Context, et tipb.EncodeType) {
-	r.encodeType = et
-}
+func (r *streamResult) Fetch(context.Context) {}
 
 func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()

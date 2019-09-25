@@ -220,7 +220,7 @@ func constructLimitPB(count uint64) *tipb.Executor {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
-func buildDescTableScanDAG(startTS uint64, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
+func buildDescTableScanDAG(ctx sessionctx.Context, startTS uint64, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = startTS
 	_, timeZoneOffset := time.Now().In(time.UTC).Zone()
@@ -234,7 +234,7 @@ func buildDescTableScanDAG(startTS uint64, tbl table.PhysicalTable, columns []*m
 	tblScanExec := constructDescTableScanPB(tbl.GetPhysicalID(), pbColumnInfos)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
-	distsql.SetEncodeType(dagReq)
+	distsql.SetEncodeType(ctx, dagReq)
 	return dagReq, nil
 }
 
@@ -248,7 +248,8 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 
 // buildDescTableScan builds a desc table scan upon tblInfo.
 func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
-	dagPB, err := buildDescTableScanDAG(startTS, tbl, columns, limit)
+	sctx := newContext(d.store)
+	dagPB, err := buildDescTableScanDAG(sctx, startTS, tbl, columns, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -267,12 +268,11 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 		return nil, errors.Trace(err)
 	}
 
-	sctx := newContext(d.store)
 	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(columns), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(ctx, dagPB.EncodeType)
+	result.Fetch(ctx)
 	return result, nil
 }
 

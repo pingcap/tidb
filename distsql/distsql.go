@@ -19,7 +19,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -76,6 +75,10 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 			feedback:   fb,
 		}, nil
 	}
+	encodetype := tipb.EncodeType_TypeDefault
+	if useChunkIPC(sctx) {
+		encodetype = tipb.EncodeType_TypeArrow
+	}
 	return &selectResult{
 		label:      "dag",
 		resp:       resp,
@@ -87,6 +90,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		feedback:   fb,
 		sqlType:    label,
 		memTracker: kvReq.MemTracker,
+		encodeType: encodetype,
 	}, nil
 }
 
@@ -117,12 +121,13 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 		label = metrics.LblInternal
 	}
 	result := &selectResult{
-		label:    "analyze",
-		resp:     resp,
-		results:  make(chan resultWithErr, kvReq.Concurrency),
-		closed:   make(chan struct{}),
-		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
-		sqlType:  label,
+		label:      "analyze",
+		resp:       resp,
+		results:    make(chan resultWithErr, kvReq.Concurrency),
+		closed:     make(chan struct{}),
+		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
+		sqlType:    label,
+		encodeType: tipb.EncodeType_TypeDefault,
 	}
 	return result, nil
 }
@@ -134,12 +139,13 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
-		label:    "checksum",
-		resp:     resp,
-		results:  make(chan resultWithErr, kvReq.Concurrency),
-		closed:   make(chan struct{}),
-		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
-		sqlType:  metrics.LblGeneral,
+		label:      "checksum",
+		resp:       resp,
+		results:    make(chan resultWithErr, kvReq.Concurrency),
+		closed:     make(chan struct{}),
+		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
+		sqlType:    metrics.LblGeneral,
+		encodeType: tipb.EncodeType_TypeDefault,
 	}
 	return result, nil
 }
@@ -148,19 +154,19 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 // methods are:
 // 1. TypeArrow: the result is encoded using the Chunk format, refer util/chunk/chunk.go
 // 2. TypeDefault: the result is encoded row by row
-func SetEncodeType(dagReq *tipb.DAGRequest) {
-	if useChunkIPC() {
+func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
+	if useChunkIPC(ctx) {
 		dagReq.EncodeType = tipb.EncodeType_TypeArrow
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeDefault
 	}
 }
 
-func useChunkIPC() bool {
-	if !config.GetGlobalConfig().TiKVClient.EnableArrow {
+func useChunkIPC(ctx sessionctx.Context) bool {
+	if !ctx.GetSessionVars().EnableArrow {
 		return false
 	}
-	if config.GetGlobalConfig().EnableStreaming {
+	if ctx.GetSessionVars().EnableStreaming {
 		return false
 	}
 	return true

@@ -352,6 +352,9 @@ type SessionVars struct {
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
 
+	// EnableArrow indicates whether the coprocessor request can use arrow API.
+	EnableArrow bool
+
 	writeStmtBufs WriteStmtBufs
 
 	// L2CacheSize indicates the size of CPU L2 cache, using byte as unit.
@@ -525,6 +528,14 @@ func NewSessionVars() *SessionVars {
 		enableStreaming = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+
+	var enableArrow string
+	if config.GetGlobalConfig().TiKVClient.EnableArrow {
+		enableArrow = "1"
+	} else {
+		enableArrow = "0"
+	}
+	terror.Log(vars.SetSystemVar(TiDBEnableArrow, enableArrow))
 	return vars
 }
 
@@ -848,6 +859,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
+	case TiDBEnableArrow:
+		s.EnableArrow = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:
 		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
