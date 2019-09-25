@@ -2531,7 +2531,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN 1 FOLLOWING AND 1 PRECEDING )",
 			result: "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
-    },
+		},
 		// Test issue 11943
 		{
 			sql:    "SELECT ROW_NUMBER() OVER (partition by b) + a FROM t",
