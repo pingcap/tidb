@@ -23,7 +23,7 @@ Projection_11	5.00	root	Column#15
   │ └─TableScan_14	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_22	1.00	root	funcs:count(1)
     └─IndexMergeJoin_29	0.50	root	inner join, inner:TableReader_27, outer key:Column#5, inner key:Column#9
-      ├─IndexReader_33	1.00	root	index:IndexScan_32
-      │ └─IndexScan_32	1.00	cop	table:s, index:b, c, d, range: decided by [eq(Column#6, 1) eq(Column#7, 1) eq(Column#8, Column#1)], keep order:false
+      ├─IndexReader_35	1.00	root	index:IndexScan_34
+      │ └─IndexScan_34	1.00	cop	table:s, index:b, c, d, range: decided by [eq(Column#6, 1) eq(Column#7, 1) eq(Column#8, Column#1)], keep order:false
       └─TableReader_27	1.00	root	data:TableScan_26
         └─TableScan_26	1.00	cop	table:t1, range: decided by [Column#5], keep order:true

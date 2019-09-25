@@ -36,11 +36,23 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testAnalyzeSuite{})
 
 type testAnalyzeSuite struct {
+	testData testutil.TestData
+}
+
+func (s *testAnalyzeSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "analyze_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testAnalyzeSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testAnalyzeSuite) loadTableStats(fileName string, dom *domain.Domain) error {
@@ -897,30 +909,28 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 	}()
 
 	tk.MustExec("use test")
-	tk.MustExec("create table t1(a bigint, b bigint, c bigint)")
-	tk.MustExec("create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))")
-
-	tk.MustQuery("explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c;").Check(testkit.Rows(
-		"IndexMergeJoin_14 12475.01 root inner join, inner:IndexReader_12, outer key:Column#1, inner key:Column#5, other cond:eq(Column#3, Column#7), gt(Column#6, minus(Column#2, 1)), lt(Column#6, plus(Column#2, 1))",
-		"├─TableReader_17 9980.01 root data:Selection_16",
-		"│ └─Selection_16 9980.01 cop not(isnull(Column#1)), not(isnull(Column#3))",
-		"│   └─TableScan_15 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─IndexReader_12 1.25 root index:Selection_11",
-		"  └─Selection_11 1.25 cop not(isnull(Column#5)), not(isnull(Column#7))",
-		"    └─IndexScan_10 1.25 cop table:t2, index:a, b, c, range: decided by [eq(Column#5, Column#1) gt(Column#6, minus(Column#2, 1)) lt(Column#6, plus(Column#2, 1))], keep order:true, stats:pseudo",
-	))
-
-	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
-	tk.MustQuery("explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
-		"Projection_7 0.00 root Column#1, Column#2, Column#4, Column#5",
-		"└─HashRightJoin_9 0.00 root inner join, inner:IndexReader_15, equal:[eq(Column#5, Column#2)]",
-		"  ├─IndexReader_15 0.00 root index:Selection_14",
-		"  │ └─Selection_14 0.00 cop isnull(Column#5), not(isnull(Column#5))",
-		"  │   └─IndexScan_13 10000.00 cop table:t2, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
-		"  └─IndexReader_21 9990.00 root index:Selection_20",
-		"    └─Selection_20 9990.00 cop not(isnull(Column#2))",
-		"      └─IndexScan_19 10000.00 cop table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
-	))
+	var input [][]string
+	var output []struct {
+		SQL  []string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		for j, tt := range ts {
+			if j != len(ts)-1 {
+				tk.MustExec(tt)
+			}
+			s.testData.OnRecord(func() {
+				output[i].SQL = ts
+				if j == len(ts)-1 {
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
+			})
+			if j == len(ts)-1 {
+				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			}
+		}
+	}
 }
 
 func (s *testAnalyzeSuite) TestIssue9805(c *C) {
@@ -970,97 +980,28 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int not null, c int not null default 0, index idx_bc(b, c))")
-	tk.MustExec("set session tidb_opt_correlation_exp_factor = 0")
-	// Pseudo stats.
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;").Check(testkit.Rows(
-		"TopN_8 1.00 root Column#1:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
-		"    └─IndexScan_14 10.00 cop table:t, index:b, c, range:[2,2], keep order:false, stats:pseudo",
-	))
-	// Positive correlation.
-	tk.MustExec("insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;").Check(testkit.Rows(
-		"TopN_8 1.00 root Column#1:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[2,2], keep order:false",
-	))
-	// Negative correlation.
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t (a, b) values (1, 25),(2, 24),(3, 23),(4, 23),(5, 21),(6, 20),(7, 19),(8, 18),(9, 17),(10, 16),(11, 15),(12, 14),(13, 13),(14, 12),(15, 11),(16, 10),(17, 9),(18, 8),(19, 7),(20, 6),(21, 5),(22, 4),(23, 3),(24, 2),(25, 1)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b <= 6 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root Column#1:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[-inf,6], keep order:false",
-	))
-	// Outer plan of index join (to test that correct column ID is used).
-	tk.MustQuery("EXPLAIN SELECT *, t1.a IN (SELECT t2.b FROM t t2) FROM t t1 WHERE t1.b <= 6 ORDER BY t1.a limit 1").Check(testkit.Rows(
-		"Limit_17 1.00 root offset:0, count:1",
-		"└─IndexMergeJoin_68 1.00 root left outer semi join, inner:IndexReader_66, outer key:Column#1, inner key:Column#8",
-		"  ├─TopN_27 1.00 root Column#1:asc, offset:0, count:1",
-		"  │ └─IndexReader_35 1.00 root index:TopN_34",
-		"  │   └─TopN_34 1.00 cop Column#1:asc, offset:0, count:1",
-		"  │     └─IndexScan_33 6.00 cop table:t1, index:b, c, range:[-inf,6], keep order:false",
-		"  └─IndexReader_66 1.04 root index:IndexScan_65",
-		"    └─IndexScan_65 1.04 cop table:t2, index:b, c, range: decided by [eq(Column#8, Column#1)], keep order:true",
-	))
-	// Desc TableScan.
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 2),(8, 2),(9, 2),(10, 2),(11, 2),(12, 2),(13, 2),(14, 2),(15, 2),(16, 2),(17, 2),(18, 2),(19, 2),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 1 ORDER BY a desc limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root Column#1:desc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop Column#1:desc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[1,1], keep order:false",
-	))
-	// Correlation threshold not met.
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 2),(10, 1),(11, 1),(12, 1),(13, 1),(14, 2),(15, 2),(16, 1),(17, 2),(18, 1),(19, 2),(20, 1),(21, 2),(22, 1),(23, 1),(24, 1),(25, 1)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1").Check(testkit.Rows(
-		"Limit_11 1.00 root offset:0, count:1",
-		"└─TableReader_22 1.00 root data:Limit_21",
-		"  └─Limit_21 1.00 cop offset:0, count:1",
-		"    └─Selection_20 1.00 cop eq(Column#2, 2)",
-		"      └─TableScan_19 4.17 cop table:t, range:[-inf,+inf], keep order:true",
-	))
-	tk.MustExec("set session tidb_opt_correlation_exp_factor = 1")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root Column#1:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[2,2], keep order:false",
-	))
-	tk.MustExec("set session tidb_opt_correlation_exp_factor = 0")
-	// TableScan has access conditions, but correlation is 1.
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root Column#1:asc, offset:0, count:1",
-		"└─IndexReader_19 1.00 root index:TopN_18",
-		"  └─TopN_18 1.00 cop Column#1:asc, offset:0, count:1",
-		"    └─Selection_17 6.00 cop gt(Column#1, 0)",
-		"      └─IndexScan_16 6.00 cop table:t, index:b, c, range:[2,2], keep order:false",
-	))
-	// Multi-column filter.
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t(a int primary key, b int, c int, d bigint default 2147483648, e bigint default 2147483648, f bigint default 2147483648, index idx(b,d,a,c))")
-	tk.MustExec("insert into t(a, b, c) values (1, 1, 1),(2, 1, 2),(3, 1, 1),(4, 1, 2),(5, 1, 1),(6, 1, 2),(7, 1, 1),(8, 1, 2),(9, 1, 1),(10, 1, 2),(11, 1, 1),(12, 1, 2),(13, 1, 1),(14, 1, 2),(15, 1, 1),(16, 1, 2),(17, 1, 1),(18, 1, 2),(19, 1, 1),(20, 2, 2),(21, 2, 1),(22, 2, 2),(23, 2, 1),(24, 2, 2),(25, 2, 1)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT a FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"Projection_7 1.00 root Column#1",
-		"└─TopN_8 1.00 root Column#1:asc, offset:0, count:1",
-		"  └─IndexReader_17 1.00 root index:TopN_16",
-		"    └─TopN_16 1.00 cop Column#1:asc, offset:0, count:1",
-		"      └─Selection_15 6.00 cop gt(Column#3, 0)",
-		"        └─IndexScan_14 6.00 cop table:t, index:b, d, a, c, range:[2,2], keep order:false",
-	))
+	var input [][]string
+	var output []struct {
+		SQL  []string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		for j, tt := range ts {
+			if j != len(ts)-1 {
+				tk.MustExec(tt)
+			}
+			s.testData.OnRecord(func() {
+				output[i].SQL = ts
+				if j == len(ts)-1 {
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
+			})
+			if j == len(ts)-1 {
+				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			}
+		}
+	}
 }
 
 func (s *testAnalyzeSuite) TestUpdateProjEliminate(c *C) {
