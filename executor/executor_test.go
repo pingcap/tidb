@@ -99,7 +99,7 @@ var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testBatchPointGetSuite{})
-var _ = Suite(&testRecoverTable{})
+var _ = SerialSuites(&testRecoverTable{})
 var _ = Suite(&testFlushSuite{})
 
 type testSuite struct{ *baseTestSuite }
@@ -4544,6 +4544,96 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)
+}
+
+func (s *testRecoverTable) TestFlashbackTable(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_flashback")
+	tk.MustExec("use test_flashback")
+	tk.MustExec("drop table if exists t_flashback")
+	tk.MustExec("create table t_flashback (a int);")
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// clear GC variables first.
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+	// set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// set GC enable.
+	err := gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into t_flashback values (1),(2),(3)")
+	tk.MustExec("drop table t_flashback")
+
+	// Test flash table with wrong time.
+	_, err = tk.Exec(fmt.Sprintf("flashback table t_flashback until timestamp '%v'", time.Now().String()))
+	c.Assert(err.Error(), Equals, "Can't found drop table: t_flashback in ddl history jobs")
+
+	// Test flashback table failed by there is already a new table with the same name.
+	ts := getDDLJobStartTime(tk, "test_flashback", "t_flashback")
+	// if there is a new table with the same name, should return failed.
+	tk.MustExec("create table t_flashback (a int);")
+	_, err = tk.Exec(fmt.Sprintf("flashback table t_flashback until timestamp '%v'", ts))
+	c.Assert(err.Error(), Equals, infoschema.ErrTableExists.GenWithStackByArgs("t_flashback").Error())
+
+	// drop the new table with the same name, then flashback table.
+	tk.MustExec("drop table t_flashback")
+
+	// Test for flashback table.
+	tk.MustExec(fmt.Sprintf("flashback table t_flashback until timestamp '%v'", ts))
+	// check flashback table meta and data record.
+	tk.MustQuery("select * from t_flashback;").Check(testkit.Rows("1", "2", "3"))
+	// check flashback table autoID.
+	tk.MustExec("insert into t_flashback values (4),(5),(6)")
+	tk.MustQuery("select * from t_flashback;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	// check rebase auto id.
+	tk.MustQuery("select a,_tidb_rowid from t_flashback;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003"))
+
+	// Test for flashback to new table.
+	tk.MustExec("drop table t_flashback")
+	ts = getDDLJobStartTime(tk, "test_flashback", "t_flashback")
+	tk.MustExec("create table t_flashback (a int);")
+	tk.MustExec(fmt.Sprintf("flashback table t_flashback until timestamp '%v' to t_flashback2", ts))
+	// check flashback table meta and data record.
+	tk.MustQuery("select * from t_flashback2;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	// check flashback table autoID.
+	tk.MustExec("insert into t_flashback2 values (7),(8),(9)")
+	tk.MustQuery("select * from t_flashback2;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	// check rebase auto id.
+	tk.MustQuery("select a,_tidb_rowid from t_flashback2;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003", "7 10001", "8 10002", "9 10003"))
+
+	// Test for flashback one table multiple time.
+	_, err = tk.Exec(fmt.Sprintf("flashback table t_flashback until timestamp '%v' to t_flashback3", ts))
+	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
+}
+
+func getDDLJobStartTime(tk *testkit.TestKit, dbName, tblName string) string {
+	re := tk.MustQuery("admin show ddl jobs 100")
+	rows := re.Rows()
+	for _, row := range rows {
+		if row[1] == dbName && row[2] == tblName && (row[3] == "drop table" || row[3] == "truncate table") {
+			return row[8].(string)
+		}
+	}
+	return ""
 }
 
 func (s *testSuiteP1) TestPointGetPreparedPlanText(c *C) {
