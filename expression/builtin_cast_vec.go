@@ -413,20 +413,20 @@ func (b *builtinCastDecimalAsRealSig) vecEvalReal(input *chunk.Chunk, result *ch
 		}
 		if inUnionAndUnsigned && d[i].IsNegative() {
 			rs[i] = 0
-		} else {
-			res, err := d[i].ToFloat64()
-			if err != nil {
-				if types.ErrOverflow.Equal(err) {
-					err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
-				}
-				if err != nil {
-					return err
-				}
-				result.SetNull(i, true)
-				continue
-			}
-			rs[i] = res
+			continue
 		}
+		res, err := d[i].ToFloat64()
+		if err != nil {
+			if types.ErrOverflow.Equal(err) {
+				err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+			}
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		rs[i] = res
 	}
 	return nil
 }
