@@ -95,5 +95,5 @@ func getChildrenGroupID(expr *memo.GroupExpr, idMap map[*memo.Group]int) string 
 	if len(expr.Children) == 1 {
 		return "input:" + children[0]
 	}
-	return "input:[" + strings.Join(children, ",") + "] "
+	return "input:[" + strings.Join(children, ",") + "]"
 }
