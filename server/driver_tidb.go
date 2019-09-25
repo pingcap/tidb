@@ -398,11 +398,23 @@ func (trs *tidbResultSet) OnFetchReturned() {
 }
 
 func (trs *tidbResultSet) Columns() []*ColumnInfo {
+	if trs.columns != nil {
+		return trs.columns
+	}
+	if trs.preparedStmt != nil {
+		ps := trs.preparedStmt
+		if colInfos, ok := ps.ColumnInfos.([]*ColumnInfo); ok {
+			trs.columns = colInfos
+		}
+	}
 	if trs.columns == nil {
 		fields := trs.recordSet.Fields()
 		for _, v := range fields {
 			trs.columns = append(trs.columns, convertColumnInfo(v))
 		}
+	}
+	if trs.preparedStmt != nil {
+		trs.preparedStmt.ColumnInfos = trs.columns
 	}
 	return trs.columns
 }

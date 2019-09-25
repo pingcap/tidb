@@ -1456,9 +1456,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 
 	data := cc.alloc.AllocWithLen(4, 1024)
 	var err error
+	columnInfo := rs.Columns()
 	for _, row := range curRows {
 		data = data[0:4]
-		data, err = dumpBinaryRow(data, rs.Columns(), row)
+		data, err = dumpBinaryRow(data, columnInfo, row)
 		if err != nil {
 			return err
 		}
