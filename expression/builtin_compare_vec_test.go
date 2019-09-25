@@ -41,7 +41,8 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 	ast.GE: {
 	},
 	ast.Date: {
-	},	ast.Greatest: {
+	},
+	ast.Greatest: {
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt}},
 	},
