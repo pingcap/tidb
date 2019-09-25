@@ -360,10 +360,6 @@ type tidbResultSet struct {
 	preparedStmt *core.CachedPrepareStmt
 }
 
-func (trs *tidbResultSet) SetPs(ps *core.CachedPrepareStmt) {
-	trs.preparedStmt = ps
-}
-
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 	return trs.recordSet.NewChunk()
 }
