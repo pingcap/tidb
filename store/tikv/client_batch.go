@@ -433,7 +433,7 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 		}
 	}
 	if cli == nil {
-		logutil.BgLogger().Info("no available connections", zap.String("target", target))
+		logutil.BgLogger().Warn("no available connections", zap.String("target", target))
 		for _, entry := range entries {
 			// Please ensure the error is handled in region cache correctly.
 			entry.err = errors.New("no available connections")
