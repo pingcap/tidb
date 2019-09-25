@@ -1028,7 +1028,6 @@ func (b *builtinSubTimeStringNullSig) vecEvalString(input *chunk.Chunk, result *
 	return errors.Errorf("not implemented")
 }
 
-
 func (b *builtinMonthNameSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETDatetime, n)
