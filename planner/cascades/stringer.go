@@ -16,8 +16,9 @@ package cascades
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/planner/memo"
 	"strings"
+
+	"github.com/pingcap/tidb/planner/memo"
 )
 
 // ToString stringifies a Group Tree.
