@@ -59,5 +59,19 @@
         "EXPLAIN SELECT a FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1"
       ]
     ]
+  },
+  {
+    "name": "TestIssue9562",
+    "cases": [
+      [
+        "create table t1(a bigint, b bigint, c bigint)",
+        "create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))",
+        "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c"
+      ],
+      [
+        "create table t(a int, b int, index idx_ab(a, b))",
+        "explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null"
+      ]
+    ]
   }
 ]

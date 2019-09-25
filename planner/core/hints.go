@@ -211,16 +211,22 @@ func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
 	return tblName
 }
 
-func getJoinTableNames(nodeType nodeType, parentOffset int, children ...PhysicalPlan) (res []ast.HintTable) {
-	for _, child := range children {
+func getJoinHints(joinType string, nodeType nodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
+	for i, child := range children {
 		table := extractTableAlias(child)
-		if table != nil {
-			ht := ast.HintTable{TableName: table.name}
-			if child.SelectBlockOffset() != parentOffset {
-				ht.QBName = generateQBName(nodeType, child.SelectBlockOffset())
-			}
-			res = append(res, ht)
+		if table == nil {
+			continue
 		}
+		// Merge the join hints with previous one if their select offsets are the same.
+		if len(res) > 0 && children[i].SelectBlockOffset() == children[i-1].SelectBlockOffset() {
+			res[len(res)-1].Tables = append(res[len(res)-1].Tables, ast.HintTable{TableName: table.name})
+			continue
+		}
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, child.SelectBlockOffset()),
+			HintName: model.NewCIStr(joinType),
+			Tables:   []ast.HintTable{{TableName: table.name}},
+		})
 	}
 	return res
 }
@@ -264,29 +270,13 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 			HintName: model.NewCIStr(HintStreamAgg),
 		})
 	case *PhysicalMergeJoin:
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   generateQBName(nodeType, pp.blockOffset),
-			HintName: model.NewCIStr(HintSMJ),
-			Tables:   getJoinTableNames(nodeType, pp.blockOffset, pp.children[0], pp.children[1]),
-		})
+		res = append(res, getJoinHints(HintSMJ, nodeType, pp.children...)...)
 	case *PhysicalHashJoin:
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   generateQBName(nodeType, pp.blockOffset),
-			HintName: model.NewCIStr(HintHJ),
-			Tables:   getJoinTableNames(nodeType, pp.blockOffset, pp.children[0], pp.children[1]),
-		})
+		res = append(res, getJoinHints(HintHJ, nodeType, pp.children...)...)
 	case *PhysicalIndexJoin:
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   generateQBName(nodeType, pp.blockOffset),
-			HintName: model.NewCIStr(HintINLJ),
-			Tables:   getJoinTableNames(nodeType, pp.blockOffset, pp.children[pp.InnerChildIdx]),
-		})
+		res = append(res, getJoinHints(HintINLJ, nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexMergeJoin:
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   generateQBName(nodeType, pp.blockOffset),
-			HintName: model.NewCIStr(HintINLJ),
-			Tables:   getJoinTableNames(nodeType, pp.blockOffset, pp.children[pp.InnerChildIdx]),
-		})
+		res = append(res, getJoinHints(HintINLJ, nodeType, pp.children[pp.InnerChildIdx])...)
 	}
 	return res
 }
