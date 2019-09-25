@@ -238,7 +238,3 @@ func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
 func (e *analyzeColumnsExec) Close() error {
 	return nil
 }
-
-func (e *analyzeColumnsExec) LogPartialSlow() {
-	return
-}

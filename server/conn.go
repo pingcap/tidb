@@ -1416,7 +1416,9 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 			return err
 		}
 	}
-	rs.LogPartialSlow()
+	if cl, ok := rs.(commandLifeCycle); ok {
+		cl.OnFetchReturned()
+	}
 	return cc.writeEOF(serverStatus)
 }
 

@@ -143,9 +143,9 @@ func (a *recordSet) Close() error {
 	return err
 }
 
-func (a *recordSet) LogPartialSlow() {
+// OnFetchReturned implements commandLifeCycle#OnFetchReturned
+func (a *recordSet) OnFetchReturned() {
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, true)
-	return
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -342,10 +342,6 @@ func (c *chunkRowRecordSet) NewChunk() *chunk.Chunk {
 
 func (c *chunkRowRecordSet) Close() error {
 	return nil
-}
-
-func (c *chunkRowRecordSet) LogPartialSlow() {
-	return
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {

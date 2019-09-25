@@ -141,5 +141,11 @@ type ResultSet interface {
 	StoreFetchedRows(rows []chunk.Row)
 	GetFetchedRows() []chunk.Row
 	Close() error
-	LogPartialSlow()
+}
+
+// commandLifeCycle presents the life cycle event callbacks.
+type commandLifeCycle interface {
+	// OnFetchReturned be called when COM_FETCH returns.
+	// it will be used in server-side cursor.
+	OnFetchReturned()
 }
