@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -171,17 +172,7 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	for i, item := range p.ByItems {
-		order := "asc"
-		if item.Desc {
-			order = "desc"
-		}
-		fmt.Fprintf(buffer, "%s:%s", item.Expr.ExplainInfo(), order)
-		if i+1 < len(p.ByItems) {
-			buffer.WriteString(", ")
-		}
-	}
-	return buffer.String()
+	return explainByItems(buffer, p.ByItems).String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -290,16 +281,7 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	for i, item := range p.ByItems {
-		order := "asc"
-		if item.Desc {
-			order = "desc"
-		}
-		fmt.Fprintf(buffer, "%s:%s", item.Expr.ExplainInfo(), order)
-		if i+1 < len(p.ByItems) {
-			buffer.WriteString(", ")
-		}
-	}
+	buffer = explainByItems(buffer, p.ByItems)
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	return buffer.String()
 }
@@ -444,24 +426,7 @@ func (p *LogicalSelection) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalApply) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "%s", p.JoinType.String())
-	if len(p.EqualConditions) > 0 {
-		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
-	}
-	if len(p.LeftConditions) > 0 {
-		fmt.Fprintf(buffer, ", left cond:%s",
-			expression.SortedExplainExpressionList(p.LeftConditions))
-	}
-	if len(p.RightConditions) > 0 {
-		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.SortedExplainExpressionList(p.RightConditions))
-	}
-	if len(p.OtherConditions) > 0 {
-		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.SortedExplainExpressionList(p.OtherConditions))
-	}
-	return buffer.String()
+	return p.LogicalJoin.ExplainInfo()
 }
 
 // ExplainInfo implements Plan interface.
@@ -498,35 +463,30 @@ func (p *LogicalUnionScan) ExplainInfo() string {
 	return buffer.String()
 }
 
-// ExplainInfo implements Plan interface.
-func (p *LogicalSort) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	for i, item := range p.ByItems {
+func explainByItems(buffer *bytes.Buffer, byItems []*ByItems) *bytes.Buffer {
+	for i, item := range byItems {
 		order := "asc"
 		if item.Desc {
 			order = "desc"
 		}
 		fmt.Fprintf(buffer, "%s:%s", item.Expr.ExplainInfo(), order)
-		if i+1 < len(p.ByItems) {
+		if i+1 < len(byItems) {
 			buffer.WriteString(", ")
 		}
 	}
-	return buffer.String()
+	return buffer
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalSort) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	return explainByItems(buffer, p.ByItems).String()
 }
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	for i, item := range p.ByItems {
-		order := "asc"
-		if item.Desc {
-			order = "desc"
-		}
-		fmt.Fprintf(buffer, "%s:%s", item.Expr.ExplainInfo(), order)
-		if i+1 < len(p.ByItems) {
-			buffer.WriteString(", ")
-		}
-	}
+	buffer = explainByItems(buffer, p.ByItems)
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	return buffer.String()
 }
