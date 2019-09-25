@@ -101,7 +101,7 @@ func (r *RegionStore) follower(seed uint32) int32 {
 		if followerIdx >= r.workTiKVIdx {
 			followerIdx++
 		}
-		if r.stores[followerIdx].storeType != TiKV {
+		if r.stores[followerIdx].storeType != kv.TiKV {
 			continue
 		}
 		if r.storeFails[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].fail) {
@@ -367,7 +367,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 		if store.getResolveState() == needCheck {
 			store.reResolve(c)
 		}
-		if store.storeType != TiFlash {
+		if store.storeType != kv.TiFlash {
 			tikvCnt++
 			continue
 		}
@@ -485,7 +485,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
-		if ctx.Store.storeType == TiKV {
+		if ctx.Store.storeType == kv.TiKV {
 			c.switchNextPeer(r, ctx.PeerIdx, err)
 		} else {
 			c.switchNextFlashPeer(r, ctx.PeerIdx, err)
@@ -1030,7 +1030,7 @@ func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
-func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, idx int) {
+func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (*Store, *metapb.Peer, int) {
 	return r.getStorePeer(rs, rs.follower(followerStoreSeed))
 }
 
@@ -1108,7 +1108,7 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 	}
 
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
-	for rs.stores[nextIdx].storeType == TiFlash {
+	for rs.stores[nextIdx].storeType == kv.TiFlash {
 		nextIdx = (nextIdx + 1) % len(rs.stores)
 	}
 	newRegionStore := rs.clone()
@@ -1160,24 +1160,14 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 		(bytes.Compare(key, r.meta.GetEndKey()) <= 0 || len(r.meta.GetEndKey()) == 0)
 }
 
-// StoreType represents the type of a store.
-type StoreType uint8
-
-const (
-	// TiKV means the type of a store is TiKV.
-	TiKV StoreType = iota
-	// TiFlash means the type of a store is TiFlash.
-	TiFlash
-)
-
 // Store contains a kv process's address.
 type Store struct {
-	addr         string     // loaded store address
-	storeID      uint64     // store's id
-	state        uint64     // unsafe store storeState
-	resolveMutex sync.Mutex // protect pd from concurrent init requests
-	fail         uint32     // store fail count, see RegionStore.storeFails
-	storeType    StoreType  // type of the store
+	addr         string       // loaded store address
+	storeID      uint64       // store's id
+	state        uint64       // unsafe store storeState
+	resolveMutex sync.Mutex   // protect pd from concurrent init requests
+	fail         uint32       // store fail count, see RegionStore.storeFails
+	storeType    kv.StoreType // type of the store
 }
 
 type resolveState uint64
@@ -1222,11 +1212,11 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		addr = store.GetAddress()
 		s.addr = addr
-		s.storeType = TiKV
+		s.storeType = kv.TiKV
 		for _, label := range store.Labels {
 			if label.Key == "engine" {
 				if label.Value == "tiflash" {
-					s.storeType = TiFlash
+					s.storeType = kv.TiFlash
 				}
 				break
 			}
@@ -1267,11 +1257,11 @@ func (s *Store) reResolve(c *RegionCache) {
 		return
 	}
 
-	storeType := TiKV
+	storeType := kv.TiKV
 	for _, label := range store.Labels {
 		if label.Key == "engine" {
 			if label.Value == "tiflash" {
-				storeType = TiFlash
+				storeType = kv.TiFlash
 			}
 			break
 		}
