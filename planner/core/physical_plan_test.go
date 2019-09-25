@@ -673,75 +673,24 @@ func (s *testPlanSuite) TestHintScope(c *C) {
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
-	tests := []struct {
-		sql  string
-		best string
-	}{
-		// join hints
-		{
-			sql:  "select /*+ SM_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			best: "MergeInnerJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
-		},
-		{
-			sql:  "select /*+ SM_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			best: "MergeInnerJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)->Sort}(Column#1,Column#13)->Projection",
-		},
-		{
-			sql:  "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			best: "IndexMergeJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#13,Column#1)->Projection",
-		},
-		{
-			sql:  "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ SM_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			best: "IndexMergeJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#13,Column#1)->Projection",
-		},
-		{
-			sql:  "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ SM_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			best: "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
-		},
-		{
-			sql:  "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			best: "RightHashJoin{TableReader(Table(t))->IndexMergeJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#27,Column#13)}(Column#1,Column#13)->Projection",
-		},
-		{
-			sql:  "select /*+ SM_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			best: "MergeInnerJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
-		},
-		{
-			sql:  "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			best: "IndexMergeJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#13,Column#1)->Projection",
-		},
-		{
-			sql:  "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			best: "RightHashJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(Column#13,Column#27)}(Column#1,Column#13)->Projection",
-		},
-		// aggregation hints
-		{
-			sql:  "select /*+ STREAM_AGG() */ s, count(s) from (select /*+ HASH_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
-			best: "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(Column#1,Column#14)->Projection->HashAgg->Sort->StreamAgg->Projection",
-		},
-		{
-			sql:  "select /*+ HASH_AGG() */ s, count(s) from (select /*+ STREAM_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
-			best: "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(Column#1,Column#14)->Sort->Projection->StreamAgg->HashAgg->Projection",
-		},
-		{
-			sql:  "select /*+ HASH_AGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
-			best: "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(Column#1,Column#14)->Projection->HashAgg->HashAgg->Projection",
-		},
-		{
-			sql:  "select /*+ STREAM_AGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
-			best: "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(Column#1,Column#14)->Projection->HashAgg->Sort->StreamAgg->Projection",
-		},
+	var input []string
+	var output []struct {
+		SQL  string
+		Best string
 	}
-
-	ctx := context.Background()
-	for i, test := range tests {
+	s.testData.GetTestCases(c, &input, &output)
+	for i, test := range input {
 		comment := Commentf("case:%v sql:%s", i, test)
-		stmt, err := s.ParseOneStmt(test.sql, "", "")
+		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, err := planner.Optimize(context.Background(), se, stmt, s.is)
 		c.Assert(err, IsNil)
-		c.Assert(core.ToString(p), Equals, test.best)
+		s.testData.OnRecord(func() {
+			output[i].SQL = test
+			output[i].Best = core.ToString(p)
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Best)
 
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 		c.Assert(warnings, HasLen, 0, comment)
