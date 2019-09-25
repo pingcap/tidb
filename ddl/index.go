@@ -804,6 +804,8 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 	return
 }
 
+var addIndexSpeedCounter = metrics.AddIndexTotalCounter.WithLabelValues("speed")
+
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
 func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *addIndexResult {
 	handleRange := *task
@@ -825,6 +827,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 			return result
 		}
 
+		addIndexSpeedCounter.Add(float64(taskCtx.addedCount))
 		mergeAddIndexCtxToResult(&taskCtx, result)
 		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.addedCount))
 
