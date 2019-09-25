@@ -16,7 +16,6 @@ package mocktikv
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/util/chunk"
 	"io"
 	"time"
 
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/timeutil"

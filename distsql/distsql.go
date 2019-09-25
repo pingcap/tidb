@@ -16,17 +16,16 @@ package distsql
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tipb/go-tipb"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // XAPI error codes.
@@ -145,73 +144,24 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 	return result, nil
 }
 
-// SetEncodeType sets the encoding method for the DAGRequest. Possible encoding
+// SetEncodeType sets the encoding method for the DAGRequest. The supported encoding
 // methods are:
-// 1. arrow: result is encoded using the apache arrow format.
-// 2. default: result is encoded row by row.
+// 1. TypeArrow: the result is encoded using the Chunk format, refer util/chunk/chunk.go
+// 2. TypeDefault: the result is encoded row by row
 func SetEncodeType(dagReq *tipb.DAGRequest) {
-	if useChunkIPC(dagReq) {
+	if useChunkIPC() {
 		dagReq.EncodeType = tipb.EncodeType_TypeArrow
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeDefault
 	}
 }
 
-func useChunkIPC(dagReq *tipb.DAGRequest) bool {
-	if config.GetGlobalConfig().TiKVClient.EnableArrow == false {
+func useChunkIPC() bool {
+	if !config.GetGlobalConfig().TiKVClient.EnableArrow {
 		return false
 	}
-	if config.GetGlobalConfig().EnableStreaming == true {
+	if config.GetGlobalConfig().EnableStreaming {
 		return false
-	}
-	root := dagReq.Executors[len(dagReq.Executors)-1]
-	if root.Aggregation != nil {
-		hashAgg := root.Aggregation
-		for i := range hashAgg.AggFunc {
-			if !typeSupported(hashAgg.AggFunc[i].FieldType.Tp) {
-				return false
-			}
-		}
-		for i := range hashAgg.GroupBy {
-			if !typeSupported(hashAgg.GroupBy[i].FieldType.Tp) {
-				return false
-			}
-		}
-	} else if root.StreamAgg != nil {
-		streamAgg := root.StreamAgg
-		for i := range streamAgg.AggFunc {
-			if !typeSupported(streamAgg.AggFunc[i].FieldType.Tp) {
-				return false
-			}
-		}
-		for i := range streamAgg.GroupBy {
-			if !typeSupported(streamAgg.GroupBy[i].FieldType.Tp) {
-				return false
-			}
-		}
-	} else {
-		for _, executor := range dagReq.Executors {
-			switch executor.GetTp() {
-			case tipb.ExecType_TypeIndexScan:
-				for _, col := range executor.IdxScan.Columns {
-					if !typeSupported(col.Tp) {
-						return false
-					}
-				}
-			case tipb.ExecType_TypeTableScan:
-				for _, col := range executor.TblScan.Columns {
-					if !typeSupported(col.Tp) {
-						return false
-					}
-				}
-			}
-		}
 	}
 	return true
-}
-
-// typeSupported indicate the type support to encode in arrow format.
-func typeSupported(tpInput int32) bool {
-	tp := byte(tpInput)
-	return tp != mysql.TypeBit && tp != mysql.TypeEnum && tp != mysql.TypeSet
 }
