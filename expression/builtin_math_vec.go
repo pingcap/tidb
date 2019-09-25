@@ -733,11 +733,14 @@ func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinAbsUIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinAbsUIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (b *builtinCeilDecToIntSig) vectorized() bool {
