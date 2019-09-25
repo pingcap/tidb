@@ -25,146 +25,65 @@ import (
 )
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
-	ast.CurrentTime: {
-	},
-	ast.Format: {
+	ast.DateLiteral: {
 	},
 	ast.DateDiff: {
 	},
-	ast.LT: {
-	},
-	ast.Day: {
-	},
-	ast.Week: {
-	},
-	ast.YearWeek: {
-	},
-	ast.DayName: {
-	},
-	ast.TimeToSec: {
-	},
-	ast.DayOfMonth: {
-	},
-	ast.Regexp: {
-	},
-	ast.SubDate: {
-	},
-	ast.MakeDate: {
-	},
-	ast.Lower: {
-	},
-	ast.DateLiteral: {
-	},
-	ast.UTCTime: {
-	},
-	ast.Quarter: {
-	},
-	ast.GetFormat: {
-	},
-	ast.StrToDate: {
-	},
-	ast.TimestampAdd: {
-	},
-	ast.FromUnixTime: {
-	},
-	ast.Mul: {
-	},
-	ast.UTCDate: {
-	},
-	ast.Convert: {
-	},
-	ast.SecToTime: {
-	},
-	ast.UTCTimestamp: {
-	},
-	ast.Abs: {
-	},
-	ast.SubTime: {
-	},
-	ast.Bin: {
-	},
-	ast.Length: {
-	},
-	ast.DayOfWeek: {
-	},
-	ast.MicroSecond: {
-	},
-	ast.PeriodAdd: {
-	},
-	ast.CurrentDate: {
-	},
-	ast.Replace: {
-	},
-	ast.UnixTimestamp: {
-	},
-	ast.If: {
-	},
-	ast.AddDate: {
-	},
-	ast.Hour: {
-	},
-	ast.Log: {
-	},
-	ast.Timestamp: {
-	},
-	ast.GE: {
-	},
-	ast.DayOfYear: {
-	},
-	ast.Round: {
-	},
-	ast.FromDays: {
-	},
 	ast.TimeDiff: {
 	},
-	ast.Upper: {
+	ast.DateFormat: {
 	},
-	ast.AddTime: {
-	},
-	ast.MakeTime: {
-	},
-	ast.MonthName: {
-	},
-	ast.And: {
-	},
-	ast.TimeFormat: {
-	},
-	ast.TimestampLiteral: {
-	},
-	ast.ToSeconds: {
-	},
-	ast.TimestampDiff: {
-	},
-	ast.Extract: {
-	},
-	ast.ToDays: {
-	},
-	ast.LastDay: {
-	},
-	ast.ConvertTz: {
-	},
-	ast.Truncate: {
-	},
-	ast.Conv: {
+	ast.Hour: {
 	},
 	ast.Minute: {
 	},
 	ast.Second: {
 	},
-	ast.TimeLiteral: {
-	},
-	ast.Interval: {
+	ast.MicroSecond: {
 	},
 	ast.Now: {
 	},
-	ast.WeekOfYear: {
+	ast.DayOfMonth: {
 	},
-	ast.DateFormat: {
+	ast.DayOfWeek: {
+	},
+	ast.DayOfYear: {
+	},
+	ast.Day: {
+	},
+	ast.CurrentTime: {
+	},
+	ast.CurrentDate: {
+	},
+	ast.MakeDate: {
+	},
+	ast.MakeTime: {
+	},
+	ast.PeriodAdd: {
 	},
 	ast.PeriodDiff: {
 	},
-	ast.Weekday: {
-	}, ast.Month: {
+	ast.Quarter: {
+	},
+	ast.TimeFormat: {
+	},
+	ast.TimeToSec: {
+	},
+	ast.TimestampAdd: {
+	},
+	ast.TimestampDiff: {
+	},
+	ast.TimestampLiteral: {
+	},
+	ast.SubDate: {
+	},
+	ast.AddDate: {
+	},
+	ast.SubTime: {
+	},
+	ast.AddTime: {
+	},
+	ast.Month: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.Year: {

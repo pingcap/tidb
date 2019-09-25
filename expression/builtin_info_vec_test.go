@@ -21,21 +21,13 @@ import (
 )
 
 var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
-	ast.Decode: {
-	},
 	ast.TiDBVersion: {
-	},
-	ast.Date: {
-	},
-	ast.Timestamp: {
 	},
 	ast.CurrentUser: {
 	},
 	ast.FoundRows: {
 	},
 	ast.Database: {
-	},
-	ast.Format: {
 	},
 	ast.User: {
 	},
@@ -45,12 +37,11 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	},
 	ast.CurrentRole: {
 	},
-	ast.Time: {
-	},
 	ast.TiDBIsDDLOwner: {
 	},
 	ast.ConnectionID: {
-	},}
+	},
+}
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinInfoFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinInfoCases)

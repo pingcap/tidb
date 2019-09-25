@@ -22,10 +22,6 @@ import (
 )
 
 var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
-	ast.Conv: {
-	},
-	ast.Interval: {
-	},
 	ast.NE: {
 	},
 	ast.IsNull: {
@@ -34,33 +30,13 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 	},
 	ast.LT: {
 	},
-	ast.Time: {
-	},
-	ast.Field: {
-	},
-	ast.Or: {
-	},
 	ast.Coalesce: {
 	},
 	ast.NullEQ: {
 	},
-	ast.Convert: {
-	},
-	ast.Floor: {
-	},
 	ast.GT: {
 	},
-	ast.Length: {
-	},
-	ast.Bin: {
-	},
-	ast.Ceil: {
-	},
-	ast.If: {
-	},
 	ast.EQ: {
-	},
-	ast.Timestamp: {
 	},
 	ast.GE: {
 	},

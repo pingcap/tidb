@@ -21,8 +21,6 @@ import (
 )
 
 var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
-	ast.Extract: {
-	},
 	ast.JSONKeys: {
 	},
 	ast.JSONArrayAppend: {
@@ -33,8 +31,6 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	},
 	ast.JSONLength: {
 	},
-	ast.NE: {
-	},
 	ast.JSONType: {
 	},
 	ast.JSONArray: {
@@ -42,10 +38,6 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	ast.JSONArrayInsert: {
 	},
 	ast.JSONContains: {
-	},
-	ast.Lower: {
-	},
-	ast.Mod: {
 	},
 	ast.JSONObject: {
 	},
@@ -59,28 +51,15 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	},
 	ast.JSONUnquote: {
 	},
-	ast.Bin: {
-	},
-	ast.InsertFunc: {
-	},
-	ast.Length: {
-	},
 	ast.JSONRemove: {
 	},
 	ast.JSONMerge: {
 	},
-	ast.Replace: {
-	},
-	ast.Quote: {
-	},
-	ast.If: {
-	},
-	ast.GE: {
-	},
 	ast.JSONInsert: {
 	},
 	ast.JSONQuote: {
-	},}
+	},
+}
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinJSONFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinJSONCases)

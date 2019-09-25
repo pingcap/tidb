@@ -21,12 +21,11 @@ import (
 )
 
 var vecBuiltinLikeCases = map[string][]vecExprBenchCase{
-	ast.Bin: {
-	},
-	ast.GE: {
+	ast.Like: {
 	},
 	ast.Regexp: {
-	},}
+	},
+}
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinLikeFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinLikeCases)

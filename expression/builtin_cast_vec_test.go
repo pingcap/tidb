@@ -22,64 +22,7 @@ import (
 )
 
 var vecBuiltinCastCases = map[string][]vecExprBenchCase{
-	ast.Year: {
-	},
-	ast.Truncate: {
-	},
-	ast.Conv: {
-	},
-	ast.Format: {
-	},
-	ast.Trim: {
-	},
-	ast.LE: {
-	},
-	ast.Day: {
-	},
-	ast.DayName: {
-	},
-	ast.Time: {
-	},
-	ast.Sin: {
-	},
-	ast.Charset: {
-	},
-	ast.Field: {
-	},
-	ast.Lower: {
-	},
-	ast.Mod: {
-	},
-	ast.Convert: {
-	},
-	ast.Month: {
-	},
-	ast.Bin: {
-	},
-	ast.Length: {
-	},
-	ast.Sign: {
-	},
-	ast.Collation: {
-	},
-	ast.If: {
-	},
-	ast.Log: {
-	},
-	ast.Date: {
-	},
-	ast.Timestamp: {
-	},
-	ast.GE: {
-	},
-	ast.Round: {
-	},
-	ast.Space: {
-	},
-	ast.Upper: {
-	},
-	ast.And: {
-	}, ast.Cast: {
+	ast.Cast: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{new(randDurInt)}},

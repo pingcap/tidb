@@ -21,38 +21,17 @@ import (
 )
 
 var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
-	ast.CharLength: {
-	},
-	ast.ReleaseLock: {
-	},
-	ast.Length: {
-	},
-	ast.Bin: {
-	},
-	ast.Sleep: {
-	},
-	ast.GetVar: {
-	},
-	ast.Timestamp: {
-	},
-	ast.Date: {
-	},
-	ast.BitCount: {
+	ast.In: {
 	},
 	ast.SetVar: {
 	},
-	ast.IsNull: {
+	ast.GetVar: {
 	},
-	ast.User: {
-	},
-	ast.Time: {
-	},
-	ast.Field: {
+	ast.BitCount: {
 	},
 	ast.GetParam: {
 	},
-	ast.Lower: {
-	},}
+}
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinOtherFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinOtherCases)

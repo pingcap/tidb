@@ -22,102 +22,59 @@ import (
 )
 
 var vecBuiltinStringCases = map[string][]vecExprBenchCase{
-	ast.Convert: {
-	},
-	ast.Bin: {
-	},
 	ast.Length: {
-	},
-	ast.MakeSet: {
-	},
-	ast.Decode: {
 	},
 	ast.ASCII: {
 	},
-	ast.Collation: {
-	},
-	ast.ToBase64: {
-	},
-	ast.Replace: {
-	},
-	ast.Quote: {
-	},
-	ast.BitLength: {
-	},
-	ast.If: {
-	},
-	ast.Oct: {
-	},
-	ast.Strcmp: {
-	},
-	ast.Log: {
-	},
-	ast.Date: {
-	},
-	ast.Timestamp: {
-	},
-	ast.RTrim: {
-	},
-	ast.Substr: {
-	},
-	ast.And: {
-	},
-	ast.FromBase64: {
+	ast.Concat: {
 	},
 	ast.ConcatWS: {
 	},
-	ast.SubstringIndex: {
-	},
-	ast.Conv: {
-	},
-	ast.Ord: {
-	},
-	ast.Instr: {
-	},
-	ast.Rpad: {
-	},
-	ast.LE: {
-	},
-	ast.Format: {
-	},
-	ast.Trim: {
-	},
-	ast.Concat: {
-	},
-	ast.LT: {
-	},
-	ast.Locate: {
-	},
-	ast.Elt: {
-	},
-	ast.Hex: {
-	},
-	ast.Time: {
-	},
-	ast.Sin: {
-	},
-	ast.Charset: {
-	},
-	ast.Lpad: {
-	},
-	ast.Unhex: {
-	},
-	ast.Encode: {
-	},
-	ast.Field: {
-	},
-	ast.FindInSet: {
-	},
-	ast.Or: {
-	},
-	ast.LTrim: {
+	ast.Convert: {
 	},
 	ast.Substring: {
 	},
-	ast.CharLength: {
+	ast.SubstringIndex: {
+	},
+	ast.Locate: {
+	},
+	ast.Hex: {
+	},
+	ast.Unhex: {
+	},
+	ast.Trim: {
+	},
+	ast.LTrim: {
+	},
+	ast.RTrim: {
+	},
+	ast.Lpad: {
+	},
+	ast.Rpad: {
+	},
+	ast.BitLength: {
+	},
+	ast.FindInSet: {
+	},
+	ast.Field: {
+	},
+	ast.MakeSet: {
+	},
+	ast.Oct: {
+	},
+	ast.Ord: {
+	},
+	ast.Quote: {
+	},
+	ast.Bin: {
+	},
+	ast.ToBase64: {
+	},
+	ast.FromBase64: {
 	},
 	ast.ExportSet: {
-	},	ast.Repeat: {
+	},
+	ast.Repeat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
 	},
 	ast.Lower: {
