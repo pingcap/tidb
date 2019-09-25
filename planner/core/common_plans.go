@@ -932,8 +932,6 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!
 		return v.IndexInfo == nil, nil
-	case *BatchPointGetPlan:
-		return v.IndexInfo == nil, nil
 	default:
 		return false, nil
 	}

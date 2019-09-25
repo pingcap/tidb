@@ -217,12 +217,8 @@ func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) boo
 		return false
 	}
 
-	pointGetPlan, ok := p.(*plannercore.PointGetPlan)
-	if ok {
-		return pointGetPlan.IndexInfo == nil
-	}
-	batchPointGetPlan, ok := p.(*plannercore.BatchPointGetPlan)
-	return ok && batchPointGetPlan.IndexInfo == nil
+	v, ok := p.(*plannercore.PointGetPlan)
+	return ok && v.IndexInfo == nil
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
