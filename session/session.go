@@ -1941,10 +1941,6 @@ func (c *multiQueryNoDelayRecordSet) Close() error {
 	return nil
 }
 
-func (c *multiQueryNoDelayRecordSet) LogPartialSlow() {
-	return
-}
-
 func (c *multiQueryNoDelayRecordSet) AffectedRows() uint64 {
 	return c.affectedRows
 }

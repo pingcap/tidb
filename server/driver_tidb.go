@@ -383,8 +383,11 @@ func (trs *tidbResultSet) Close() error {
 	return trs.recordSet.Close()
 }
 
-func (trs *tidbResultSet) LogPartialSlow() {
-	trs.recordSet.LogPartialSlow()
+// OnFetchReturned implements commandLifeCycle#OnFetchReturned
+func (trs *tidbResultSet) OnFetchReturned() {
+	if cl, ok := trs.recordSet.(commandLifeCycle); ok {
+		cl.OnFetchReturned()
+	}
 }
 
 func (trs *tidbResultSet) Columns() []*ColumnInfo {

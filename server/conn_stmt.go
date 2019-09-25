@@ -196,7 +196,9 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		if err != nil {
 			return err
 		}
-		rs.LogPartialSlow()
+		if cl, ok := rs.(commandLifeCycle); ok {
+			cl.OnFetchReturned()
+		}
 		// explicitly flush columnInfo to client.
 		return cc.flush()
 	}
