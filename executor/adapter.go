@@ -394,9 +394,6 @@ func (a *ExecStmt) logAudit() {
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	level := log.GetLevel()
-	if level > zapcore.WarnLevel {
-		return
-	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
