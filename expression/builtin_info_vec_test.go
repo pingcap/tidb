@@ -21,26 +21,16 @@ import (
 )
 
 var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
-	ast.TiDBVersion: {
-	},
-	ast.CurrentUser: {
-	},
-	ast.FoundRows: {
-	},
-	ast.Database: {
-	},
-	ast.User: {
-	},
-	ast.TiDBDecodeKey: {
-	},
-	ast.RowCount: {
-	},
-	ast.CurrentRole: {
-	},
-	ast.TiDBIsDDLOwner: {
-	},
-	ast.ConnectionID: {
-	},
+	ast.TiDBVersion:    {},
+	ast.CurrentUser:    {},
+	ast.FoundRows:      {},
+	ast.Database:       {},
+	ast.User:           {},
+	ast.TiDBDecodeKey:  {},
+	ast.RowCount:       {},
+	ast.CurrentRole:    {},
+	ast.TiDBIsDDLOwner: {},
+	ast.ConnectionID:   {},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinInfoFunc(c *C) {

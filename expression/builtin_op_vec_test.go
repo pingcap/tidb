@@ -21,24 +21,15 @@ import (
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
-	ast.IsTruth: {
-	},
-	ast.IsFalsity: {
-	},
-	ast.LogicOr: {
-	},
-	ast.LogicXor: {
-	},
-	ast.Xor: {
-	},
-	ast.LogicAnd: {
-	},
-	ast.UnaryNot: {
-	},
-	ast.UnaryMinus: {
-	},
-	ast.IsNull: {
-	},
+	ast.IsTruth:    {},
+	ast.IsFalsity:  {},
+	ast.LogicOr:    {},
+	ast.LogicXor:   {},
+	ast.Xor:        {},
+	ast.LogicAnd:   {},
+	ast.UnaryNot:   {},
+	ast.UnaryMinus: {},
+	ast.IsNull:     {},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinOpFunc(c *C) {

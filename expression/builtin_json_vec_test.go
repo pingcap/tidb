@@ -21,44 +21,25 @@ import (
 )
 
 var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
-	ast.JSONKeys: {
-	},
-	ast.JSONArrayAppend: {
-	},
-	ast.JSONContainsPath: {
-	},
-	ast.JSONExtract: {
-	},
-	ast.JSONLength: {
-	},
-	ast.JSONType: {
-	},
-	ast.JSONArray: {
-	},
-	ast.JSONArrayInsert: {
-	},
-	ast.JSONContains: {
-	},
-	ast.JSONObject: {
-	},
-	ast.JSONSet: {
-	},
-	ast.JSONSearch: {
-	},
-	ast.JSONReplace: {
-	},
-	ast.JSONDepth: {
-	},
-	ast.JSONUnquote: {
-	},
-	ast.JSONRemove: {
-	},
-	ast.JSONMerge: {
-	},
-	ast.JSONInsert: {
-	},
-	ast.JSONQuote: {
-	},
+	ast.JSONKeys:         {},
+	ast.JSONArrayAppend:  {},
+	ast.JSONContainsPath: {},
+	ast.JSONExtract:      {},
+	ast.JSONLength:       {},
+	ast.JSONType:         {},
+	ast.JSONArray:        {},
+	ast.JSONArrayInsert:  {},
+	ast.JSONContains:     {},
+	ast.JSONObject:       {},
+	ast.JSONSet:          {},
+	ast.JSONSearch:       {},
+	ast.JSONReplace:      {},
+	ast.JSONDepth:        {},
+	ast.JSONUnquote:      {},
+	ast.JSONRemove:       {},
+	ast.JSONMerge:        {},
+	ast.JSONInsert:       {},
+	ast.JSONQuote:        {},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinJSONFunc(c *C) {

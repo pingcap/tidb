@@ -22,8 +22,7 @@ import (
 )
 
 var vecBuiltinMathCases = map[string][]vecExprBenchCase{
-	ast.Sign: {
-	},
+	ast.Sign: {},
 	ast.Log: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},

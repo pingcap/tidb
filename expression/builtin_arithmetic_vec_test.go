@@ -21,28 +21,17 @@ import (
 )
 
 var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
-	ast.LE: {
-	},
-	ast.Minus: {
-	},
-	ast.Div: {
-	},
-	ast.IntDiv: {
-	},
-	ast.Mod: {
-	},
-	ast.Or: {
-	},
-	ast.Mul: {
-	},
-	ast.Round: {
-	},
-	ast.And: {
-	},
-	ast.Plus: {
-	},
-	ast.NE: {
-	},
+	ast.LE:     {},
+	ast.Minus:  {},
+	ast.Div:    {},
+	ast.IntDiv: {},
+	ast.Mod:    {},
+	ast.Or:     {},
+	ast.Mul:    {},
+	ast.Round:  {},
+	ast.And:    {},
+	ast.Plus:   {},
+	ast.NE:     {},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticFunc(c *C) {

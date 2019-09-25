@@ -21,28 +21,17 @@ import (
 )
 
 var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
-	ast.AesEncrypt: {
-	},
-	ast.Uncompress: {
-	},
-	ast.AesDecrypt: {
-	},
-	ast.Compress: {
-	},
-	ast.MD5: {
-	},
-	ast.SHA: {
-	},
-	ast.RandomBytes: {
-	},
-	ast.UncompressedLength: {
-	},
-	ast.SHA1: {
-	},
-	ast.PasswordFunc: {
-	},
-	ast.SHA2: {
-	},
+	ast.AesEncrypt:         {},
+	ast.Uncompress:         {},
+	ast.AesDecrypt:         {},
+	ast.Compress:           {},
+	ast.MD5:                {},
+	ast.SHA:                {},
+	ast.RandomBytes:        {},
+	ast.UncompressedLength: {},
+	ast.SHA1:               {},
+	ast.PasswordFunc:       {},
+	ast.SHA2:               {},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinEncryptionFunc(c *C) {
