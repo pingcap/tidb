@@ -161,7 +161,19 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Creat
 	return nil
 }
 
-func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) error {
+func checkPartitionNameUnique(pi *model.PartitionInfo) error {
+	partNames := make(map[string]struct{})
+	newPars := pi.Definitions
+	for _, newPar := range newPars {
+		if _, ok := partNames[newPar.Name.L]; ok {
+			return ErrSameNamePartition.GenWithStackByArgs(newPar.Name)
+		}
+		partNames[newPar.Name.L] = struct{}{}
+	}
+	return nil
+}
+
+func checkAddPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) error {
 	partNames := make(map[string]struct{})
 	if tbInfo.Partition != nil {
 		oldPars := tbInfo.Partition.Definitions
