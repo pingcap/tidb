@@ -45,6 +45,10 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{-10, 2000}}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{5, 10}}},
 	},
+	ast.Reverse: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{0.2, types.ETString}}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinStringEvalOneVec(c *C) {
