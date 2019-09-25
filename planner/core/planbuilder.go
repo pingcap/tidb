@@ -157,7 +157,6 @@ const (
 	onClause
 	orderByClause
 	whereClause
-	windowClause
 	groupByClause
 	showStatement
 	globalOrderByClause
@@ -173,7 +172,6 @@ var clauseMsg = map[clauseCode]string{
 	groupByClause:       "group statement",
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
-	windowClause:        "field list", // For window functions that in field list.
 }
 
 // PlanBuilder builds Plan from an ast.Node.
