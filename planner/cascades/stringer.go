@@ -57,9 +57,9 @@ func toString(g *memo.Group, idMap map[*memo.Group]int, visited map[*memo.Group]
 
 // groupToString only stringifies a single Group.
 // Format:
-// Group#1 Columns:[a, b, c]
-//     Selection_13 input:Group#2 gt(a, b)
-//     Projection_15 input:Group#3 a, b, c
+// Group#1 Column: [Column#1,Column#2,Column#13] Unique key: []
+//     Selection_4 input:[Group#2], eq(Column#13, Column#2), gt(Column#1, 10)
+//     Projection_15 input:Group#3 Column#1, Column#2
 func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
 	result := make([]string, 0, g.Equivalents.Len()+1)
 	result = append(result, fmt.Sprintf("Group#%d %s", idMap[g], g.Prop.Schema.String()))
@@ -91,9 +91,6 @@ func getChildrenGroupID(expr *memo.GroupExpr, idMap map[*memo.Group]int) string 
 	children := make([]string, 0, len(expr.Children))
 	for _, child := range expr.Children {
 		children = append(children, fmt.Sprintf("Group#%d", idMap[child]))
-	}
-	if len(expr.Children) == 1 {
-		return "input:" + children[0]
 	}
 	return "input:[" + strings.Join(children, ",") + "]"
 }
