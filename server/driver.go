@@ -143,8 +143,8 @@ type ResultSet interface {
 	Close() error
 }
 
-// commandLifeCycle presents the life cycle event callbacks.
-type commandLifeCycle interface {
+// fetchNotifier represents notifier will be called in COM_FETCH.
+type fetchNotifier interface {
 	// OnFetchReturned be called when COM_FETCH returns.
 	// it will be used in server-side cursor.
 	OnFetchReturned()

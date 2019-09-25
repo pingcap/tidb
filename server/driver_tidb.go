@@ -383,9 +383,9 @@ func (trs *tidbResultSet) Close() error {
 	return trs.recordSet.Close()
 }
 
-// OnFetchReturned implements commandLifeCycle#OnFetchReturned
+// OnFetchReturned implements fetchNotifier#OnFetchReturned
 func (trs *tidbResultSet) OnFetchReturned() {
-	if cl, ok := trs.recordSet.(commandLifeCycle); ok {
+	if cl, ok := trs.recordSet.(fetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
 }
