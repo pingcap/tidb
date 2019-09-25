@@ -196,7 +196,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		if err != nil {
 			return err
 		}
-		if cl, ok := rs.(commandLifeCycle); ok {
+		if cl, ok := rs.(fetchNotifier); ok {
 			cl.OnFetchReturned()
 		}
 		// explicitly flush columnInfo to client.

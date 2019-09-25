@@ -674,7 +674,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ExecDetail:     execDetail,
 		MemMax:         memMax,
 		Succ:           succ,
-		InPrepare:      a.isPreparedStmt,
+		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {

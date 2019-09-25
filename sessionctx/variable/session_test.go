@@ -136,7 +136,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
 # Cop_wait_avg: 0.01 Cop_wait_p90: 0.02 Cop_wait_max: 0.03 Cop_wait_addr: 10.6.131.79
 # Mem_max: 2333
-# In_prepare: true
+# Prepared: true
 # Has_more_results: true
 # Succ: true
 select * from t;`
@@ -154,7 +154,7 @@ select * from t;`
 		CopTasks:       copTasks,
 		ExecDetail:     execDetail,
 		MemMax:         memMax,
-		InPrepare:      true,
+		Prepared:       true,
 		HasMoreResults: true,
 		Succ:           true,
 	})

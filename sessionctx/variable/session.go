@@ -1032,8 +1032,8 @@ const (
 	SlowLogCopWaitAddr = "Cop_wait_addr"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
-	// SlowLogInPrepare is used to indicate whether this sql execute in prepare.
-	SlowLogInPrepare = "In_prepare"
+	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
+	SlowLogPrepared = "Prepared"
 	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
 	SlowLogHasMoreResults = "Has_more_results"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
@@ -1059,7 +1059,7 @@ type SlowQueryLogItems struct {
 	ExecDetail     execdetails.ExecDetails
 	MemMax         int64
 	Succ           bool
-	InPrepare      bool
+	Prepared       bool
 	HasMoreResults bool
 	PrevStmt       string
 }
@@ -1150,7 +1150,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
 	}
 
-	writeSlowLogItem(&buf, SlowLogInPrepare, strconv.FormatBool(logItems.InPrepare))
+	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 

@@ -1416,7 +1416,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 			return err
 		}
 	}
-	if cl, ok := rs.(commandLifeCycle); ok {
+	if cl, ok := rs.(fetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
 	return cc.writeEOF(serverStatus)
