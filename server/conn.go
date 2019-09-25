@@ -1368,6 +1368,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk()
 	gotColumnInfo := false
+	var columnInfo []*ColumnInfo
 	for {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
@@ -1383,6 +1384,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			}
 			gotColumnInfo = true
 		}
+		if columnInfo == nil {
+			columnInfo = rs.Columns()
+		}
 		rowCount := req.NumRows()
 		if rowCount == 0 {
 			break
@@ -1390,9 +1394,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
-				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
+				data, err = dumpBinaryRow(data, columnInfo, req.GetRow(i))
 			} else {
-				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i))
+				data, err = dumpTextRow(data, columnInfo, req.GetRow(i))
 			}
 			if err != nil {
 				return err
