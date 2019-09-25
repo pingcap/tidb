@@ -78,7 +78,11 @@ func groupExprToString(expr *memo.GroupExpr, idMap map[*memo.Group]int) string {
 	if len(expr.Children) == 0 {
 		fmt.Fprintf(buffer, " %s", expr.ExprNode.ExplainInfo())
 	} else {
-		fmt.Fprintf(buffer, " %s, %s", getChildrenGroupID(expr, idMap), expr.ExprNode.ExplainInfo())
+		fmt.Fprintf(buffer, " %s", getChildrenGroupID(expr, idMap))
+		explainInfo := expr.ExprNode.ExplainInfo()
+		if len(explainInfo) != 0 {
+			fmt.Fprintf(buffer, ", %s", explainInfo)
+		}
 	}
 	return buffer.String()
 }
