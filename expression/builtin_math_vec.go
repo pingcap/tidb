@@ -445,6 +445,40 @@ func (b *builtinCeilRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colum
 	return nil
 }
 
+func (b *builtinCeilRealSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTruncateRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf1)
+	x := result.Float64s()
+	d := buf1.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		x[i] = types.Truncate(x[i], int(d[i]))
+	}
+	return nil
+}
+
+func (b *builtinTruncateRealSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinAbsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
@@ -479,10 +513,6 @@ func (b *builtinAbsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	return nil
 }
 
-func (b *builtinCeilRealSig) vectorized() bool {
-	return true
-}
-
 func (b *builtinAbsIntSig) vectorized() bool {
 	return true
 }
@@ -492,5 +522,36 @@ func (b *builtinRoundIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinRoundIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinRoundWithFracIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	i64s := result.Int64s()
+	frac := buf.Int64s()
+	result.MergeNulls(buf)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		i64s[i] = int64(types.Round(float64(i64s[i]), int(frac[i])))
+	}
+	return nil
+}
+
+func (b *builtinRoundWithFracIntSig) vectorized() bool {
 	return true
 }

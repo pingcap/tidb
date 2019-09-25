@@ -362,7 +362,7 @@ func loadConfig() string {
 // hotReloadConfigItems lists all config items which support hot-reload.
 var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
 	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
-	"OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength"}
+	"OOMUseTmpStorage", "OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength"}
 
 func reloadConfig(nc, c *config.Config) {
 	// Just a part of config items need to be reload explicitly.
