@@ -2049,10 +2049,12 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
-	defer b.popSelectOffset()
 	b.pushTableHints(sel.TableHints, typeSelect, sel.QueryBlockOffset)
-	// table hints are only visible in the current SELECT statement.
-	defer b.popTableHints()
+	defer func() {
+		defer b.popSelectOffset()
+		// table hints are only visible in the current SELECT statement.
+		defer b.popTableHints()
+	}()
 
 	if sel.SelectStmtOpts != nil {
 		origin := b.inStraightJoin
@@ -2700,10 +2702,12 @@ func buildColumns2Handle(
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	defer b.popSelectOffset()
 	b.pushTableHints(update.TableHints, typeUpdate, 0)
-	// table hints are only visible in the current UPDATE statement.
-	defer b.popTableHints()
+	defer func() {
+		defer b.popSelectOffset()
+		// table hints are only visible in the current UPDATE statement.
+		defer b.popTableHints()
+	}()
 
 	// update subquery table should be forbidden
 	var asNameList []string
@@ -2941,10 +2945,12 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	defer b.popSelectOffset()
 	b.pushTableHints(delete.TableHints, typeDelete, 0)
-	// table hints are only visible in the current DELETE statement.
-	defer b.popTableHints()
+	defer func() {
+		defer b.popSelectOffset()
+		// table hints are only visible in the current DELETE statement.
+		defer b.popTableHints()
+	}()
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {
