@@ -29,14 +29,7 @@ type ImplementationRule interface {
 	OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error)
 }
 
-// GetImplementationRules gets all the candidate implementation rules for the
-// logical plan node.
-func GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
-	operand := memo.GetOperand(node)
-	return implementationMap[operand]
-}
-
-var implementationMap = map[memo.Operand][]ImplementationRule{
+var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandTableDual: {
 		&ImplTableDual{},
 	},
