@@ -4782,6 +4782,14 @@ func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR_MONTH)`).Check(testkit.Rows("2009-05-28 22:08:28"))
 }
 
+func (s *testIntegrationSuite) TestIssue12301(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (d decimal(19, 0), i bigint(11))")
+	tk.MustExec("insert into t values (123456789012, 123456789012)")
+	tk.MustQuery("select * from t where d = i").Check(testkit.Rows("123456789012 123456789012"))
+}
+
 func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
