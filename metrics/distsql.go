@@ -58,6 +58,6 @@ var (
 			Namespace: "tidb",
 			Subsystem: "distsql",
 			Name:      "decode_type_total",
-			Help:      "Counter of each decode type",
+			Help:      "Counter of data total for each decode type",
 		}, []string{LblSQLType, LblType})
 )
