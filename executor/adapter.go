@@ -821,31 +821,32 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 // getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
 func getPlanTree(p plannercore.Plan) string {
 	cfg := config.GetGlobalConfig()
-	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 1 {
-		var selectPlan plannercore.PhysicalPlan
-		if physicalPlan, ok := p.(plannercore.PhysicalPlan); ok {
-			selectPlan = physicalPlan
-		} else {
-			switch x := p.(type) {
-			case *plannercore.Delete:
+	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
+		return ""
+	}
+	var selectPlan plannercore.PhysicalPlan
+	if physicalPlan, ok := p.(plannercore.PhysicalPlan); ok {
+		selectPlan = physicalPlan
+	} else {
+		switch x := p.(type) {
+		case *plannercore.Delete:
+			selectPlan = x.SelectPlan
+		case *plannercore.Update:
+			selectPlan = x.SelectPlan
+		case *plannercore.Insert:
+			if x.SelectPlan != nil {
 				selectPlan = x.SelectPlan
-			case *plannercore.Update:
-				selectPlan = x.SelectPlan
-			case *plannercore.Insert:
-				if x.SelectPlan != nil {
-					selectPlan = x.SelectPlan
-				}
-			}
-		}
-		if selectPlan != nil {
-			planTree, err := plannercore.EncodePlan(selectPlan)
-			if err == nil {
-				return planTree
-			} else {
-				logutil.BgLogger().Error("encode plan tree error", zap.Error(err))
 			}
 		}
 	}
+	if selectPlan == nil {
+		return ""
+	}
+	planTree, err := plannercore.EncodePlan(selectPlan)
+	if err == nil {
+		return planTree
+	}
+	logutil.BgLogger().Error("encode plan tree error", zap.Error(err))
 	return ""
 }
 
