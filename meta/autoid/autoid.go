@@ -14,6 +14,7 @@
 package autoid
 
 import (
+	"context"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -254,7 +255,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 		return 0, ErrAutoincReadFailed
 	}
 	alloc.base = int64(uint64(alloc.base) + 1)
-	logutil.BgLogger().Debug("alloc unsigned ID",
+	logutil.Logger(context.TODO()).Debug("alloc unsigned ID",
 		zap.Uint64("ID", uint64(alloc.base)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
@@ -293,7 +294,7 @@ func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 		return 0, ErrAutoincReadFailed
 	}
 	alloc.base++
-	logutil.BgLogger().Debug("alloc signed ID",
+	logutil.Logger(context.TODO()).Debug("alloc signed ID",
 		zap.Uint64("ID", uint64(alloc.base)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
@@ -412,7 +413,7 @@ func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) 
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
-	logutil.BgLogger().Debug("alloc N signed ID",
+	logutil.Logger(context.TODO()).Debug("alloc N signed ID",
 		zap.Uint64("from ID", uint64(alloc.base)),
 		zap.Uint64("to ID", uint64(alloc.base+N1)),
 		zap.Int64("table ID", tableID),
@@ -473,7 +474,7 @@ func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
-	logutil.BgLogger().Debug("alloc unsigned ID",
+	logutil.Logger(context.TODO()).Debug("alloc unsigned ID",
 		zap.Uint64(" from ID", uint64(alloc.base)),
 		zap.Uint64("to ID", uint64(alloc.base+N1)),
 		zap.Int64("table ID", tableID),
