@@ -59,5 +59,5 @@ var (
 			Subsystem: "distsql",
 			Name:      "decode_type_total",
 			Help:      "Counter of each decode type",
-		}, []string{LblType})
+		}, []string{LblSQLType, LblType})
 )
