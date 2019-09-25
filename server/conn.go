@@ -1314,7 +1314,6 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 
 func (cc *clientConn) writeColumnInfo(rs ResultSet, serverStatus uint16) error {
 	var err error
-	data := cc.alloc.AllocWithLen(4, 1024)
 	ps := rs.PrepareStmt()
 	storer := func(columnBytes []byte) {
 		if ps != nil {
@@ -1323,40 +1322,38 @@ func (cc *clientConn) writeColumnInfo(rs ResultSet, serverStatus uint16) error {
 			ps.ColumnsInfoBytes = append(ps.ColumnsInfoBytes, destBytes)
 		}
 	}
-	defer func() {
-		if ps != nil {
-			if err != nil {
-				ps.ColumnsInfoBytes = nil
-			}
-		}
-	}()
 	// try to use cached column info bytes writing packet directly
 	if ps != nil && ps.ColumnsInfoBytes != nil {
-		return cc.writeColumnInfoByBytes(data, ps.ColumnsInfoBytes, serverStatus)
+		return cc.writeColumnInfoByBytes(ps.ColumnsInfoBytes, serverStatus)
 	}
 	columns := rs.Columns()
+	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
-	storer(data[4:])
+	storer(data)
 	if err = cc.writePacket(data); err != nil {
+		if ps != nil {
+			ps.ColumnsInfoBytes = nil
+		}
 		return err
 	}
 	for _, v := range columns {
 		data = data[0:4]
 		data = v.Dump(data)
-		storer(data[4:])
+		storer(data)
 		if err = cc.writePacket(data); err != nil {
+			if ps != nil {
+				ps.ColumnsInfoBytes = nil
+			}
 			return err
 		}
 	}
 	return cc.writeEOF(serverStatus)
 }
 
-func (cc *clientConn) writeColumnInfoByBytes(data []byte, columnsInfoBytes [][]byte, serverStatus uint16) error {
+func (cc *clientConn) writeColumnInfoByBytes(columnsInfoBytes [][]byte, serverStatus uint16) error {
 	var err error
 	for _, content := range columnsInfoBytes {
-		curData := data[0:4]
-		curData = append(curData, content...)
-		if err = cc.writePacket(curData); err != nil {
+		if err = cc.writePacket(content); err != nil {
 			return err
 		}
 	}
