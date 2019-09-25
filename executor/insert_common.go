@@ -551,25 +551,45 @@ func (e *InsertValues) handleWarning(err error) {
 func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(row []types.Datum) (int64, error)) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
-	err := e.batchGetInsertKeys(e.ctx, e.Table, rows)
+
+	// Get keys need to be checked.
+	toBeCheckedRows, err := e.getKeysNeedCheck(e.ctx, e.Table, rows)
 	if err != nil {
 		return err
 	}
-	// append warnings and get no duplicated error rows
-	for i, r := range e.toBeCheckedRows {
+
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+
+	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
+	if _, err = prefetchUniqueIndices(txn, toBeCheckedRows); err != nil {
+		return err
+	}
+
+	for i, r := range toBeCheckedRows {
+		// skip := false
 		if r.handleKey != nil {
-			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
-				rows[i] = nil
+			_, err := txn.Get(r.handleKey.newKV.key)
+			if err == nil {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 				continue
 			}
+			if !kv.IsErrNotFound(err) {
+				return err
+			}
 		}
 		for _, uk := range r.uniqueKeys {
-			if _, found := e.dupKVs[string(uk.newKV.key)]; found {
+			_, err := txn.Get(uk.newKV.key)
+			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				rows[i] = nil
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 				break
+			}
+			if !kv.IsErrNotFound(err) {
+				return err
 			}
 		}
 		// If row was checked with no duplicate keys,
@@ -580,12 +600,6 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 			_, err = addRecord(rows[i])
 			if err != nil {
 				return err
-			}
-			if r.handleKey != nil {
-				e.dupKVs[string(r.handleKey.newKV.key)] = r.handleKey.newKV.value
-			}
-			for _, uk := range r.uniqueKeys {
-				e.dupKVs[string(uk.newKV.key)] = []byte{}
 			}
 		}
 	}
