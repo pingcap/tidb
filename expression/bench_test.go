@@ -311,6 +311,43 @@ func (g *randLenStrGener) gen() interface{} {
 	return string(buf)
 }
 
+// dataTimeStrGener is used to generate strings which are dataTime format
+type dataTimeStrGener struct{}
+
+func (g *dataTimeStrGener) gen() interface{} {
+	year := rand.Intn(2200)
+	month := rand.Intn(10) + 1
+	day := rand.Intn(20) + 1
+	hour := rand.Intn(12)
+	minute := rand.Intn(60)
+	second := rand.Intn(60)
+
+	return fmt.Sprintf("%d-%d-%d %d:%d:%d",
+		year, month, day, hour, minute, second)
+}
+
+// timeStrGener is used to generate strings which are time format
+type timeStrGener struct{}
+
+func (g *timeStrGener) gen() interface{} {
+	year := rand.Intn(2200)
+	month := rand.Intn(10) + 1
+	day := rand.Intn(20) + 1
+
+	return fmt.Sprintf("%d-%d-%d", year, month, day)
+}
+
+// dataStrGener is used to generate strings which are data format
+type dataStrGener struct{}
+
+func (g *dataStrGener) gen() interface{} {
+	hour := rand.Intn(12)
+	minute := rand.Intn(60)
+	second := rand.Intn(60)
+
+	return fmt.Sprintf("%d:%d:%d", hour, minute, second)
+}
+
 type randDurInt struct{}
 
 func (g *randDurInt) gen() interface{} {
