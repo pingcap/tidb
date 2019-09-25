@@ -82,6 +82,7 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	},
 	ast.Floor: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: nil},
+	},
 	ast.Truncate: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{-10, 10}}},
 	},
