@@ -43,9 +43,6 @@ import (
 // 3. The main thread receives the join results.
 type IndexNestedLoopHashJoin struct {
 	IndexLookUpJoin
-	// resultCh is used to
-	// - keepOuterOrder is false: transfer the join results
-	// - keepOuterOrder is true: transfer the error in finishJoinWorkers
 	resultCh          chan *indexHashJoinResult
 	joinChkResourceCh []chan *chunk.Chunk
 	// We build individual joiner for each inner worker when using chunk-based
