@@ -1910,6 +1910,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		colLens:           is.IdxColLens,
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
+		PushedLimit:       v.PushedLimit,
 	}
 	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
 		e.physicalTableID = physicalTableID
