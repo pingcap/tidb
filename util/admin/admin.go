@@ -119,13 +119,18 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		return nil, nil
 	}
 
-	jobs, err := GetDDLJobs(txn)
+	errs := make([]error, len(ids))
+	t := meta.NewMeta(txn)
+	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	addIdxJobs, err := getDDLJobsInQueue(t, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := append(generalJobs, addIdxJobs...)
 
-	errs := make([]error, len(ids))
-	t := meta.NewMeta(txn)
 	for i, id := range ids {
 		found := false
 		for j, job := range jobs {
@@ -158,7 +163,8 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				continue
 			}
 			if job.Type == model.ActionAddIndex {
-				err = t.UpdateDDLJob(int64(j), job, true, meta.AddIndexJobListKey)
+				offset := int64(j - len(generalJobs))
+				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
 			} else {
 				err = t.UpdateDDLJob(int64(j), job, true)
 			}

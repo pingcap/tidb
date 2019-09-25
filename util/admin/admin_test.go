@@ -254,6 +254,38 @@ func (s *testSuite) TestCancelJobs(c *C) {
 	c.Assert(errs[0], NotNil)
 	c.Assert(errs[0].Error(), Equals, "[admin:6]This job:101 is almost finished, can't be cancelled now")
 
+	// When both types of jobs exist in the DDL queue,
+	// we first cancel the job with a larger ID.
+	job = &model.Job{
+		ID:       1000,
+		SchemaID: 1,
+		TableID:  2,
+		Type:     model.ActionAddIndex,
+	}
+	job1 := &model.Job{
+		ID:       1001,
+		SchemaID: 1,
+		TableID:  2,
+		Type:     model.ActionAddColumn,
+	}
+	job2 := &model.Job{
+		ID:       1002,
+		SchemaID: 1,
+		TableID:  2,
+		Type:     model.ActionAddIndex,
+	}
+	err = t.EnQueueDDLJob(job, meta.AddIndexJobListKey)
+	c.Assert(err, IsNil)
+	err = t.EnQueueDDLJob(job1)
+	c.Assert(err, IsNil)
+	err = t.EnQueueDDLJob(job2, meta.AddIndexJobListKey)
+	c.Assert(err, IsNil)
+	errs, err = CancelJobs(txn, []int64{job1.ID, job.ID, job2.ID})
+	c.Assert(err, IsNil)
+	for _, err := range errs {
+		c.Assert(err, IsNil)
+	}
+
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 }
