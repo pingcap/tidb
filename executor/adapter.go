@@ -753,9 +753,8 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
-	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.Ctx.GetSessionVars().StartTime)
-	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
+	threshold := time.Duration(int64(0))
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
 	}
