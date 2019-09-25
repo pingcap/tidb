@@ -350,7 +350,9 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 
 	regionStore := cachedRegion.getStore()
 
-	tikvCnt, sIdx := 0, int(regionStore.workTiFlashIdx)
+	// tikvCnt is to check whether the TiFlash store exist.
+	// sIdx is for load balance of TiFlash store.
+	tikvCnt, sIdx := 0, int(atomic.AddInt32(&regionStore.workTiFlashIdx, 1))
 	for i := range regionStore.stores {
 		storeIdx := (sIdx + i) % len(regionStore.stores)
 		store := regionStore.stores[storeIdx]
@@ -369,6 +371,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			tikvCnt++
 			continue
 		}
+		atomic.StoreInt32(&regionStore.workTiFlashIdx, int32(storeIdx))
 		peer := cachedRegion.meta.Peers[storeIdx]
 		storeFailEpoch := atomic.LoadUint32(&store.fail)
 		if storeFailEpoch != regionStore.storeFails[storeIdx] {
