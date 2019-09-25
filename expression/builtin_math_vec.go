@@ -443,10 +443,45 @@ func (b *builtinFloorRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colu
 		f64s[i] = math.Floor(f64s[i])
 	}
 	return nil
-
 }
 
 func (b *builtinFloorRealSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCeilRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Ceil(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinCeilRealSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinRoundRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = types.Round(f64s[i], 0)
+	}
+	return nil
+}
+
+func (b *builtinRoundRealSig) vectorized() bool {
 	return true
 }
 
