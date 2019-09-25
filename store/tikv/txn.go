@@ -301,6 +301,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
+	defer committer.ttlManager.close()
 	if err := committer.initKeysAndMutations(); err != nil {
 		return errors.Trace(err)
 	}
@@ -309,7 +310,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 
 	defer func() {
-		committer.ttlManager.close()
 		ctxValue := ctx.Value(execdetails.CommitDetailCtxKey)
 		if ctxValue != nil {
 			commitDetail := ctxValue.(**execdetails.CommitDetails)

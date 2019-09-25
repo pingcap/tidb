@@ -53,6 +53,8 @@ const (
 var (
 	tikvSecondaryLockCleanupFailureCounterCommit   = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
+	tiKVTxnHeartBeatHistogramOK                    = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("ok")
+	tiKVTxnHeartBeatHistogramError                 = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("err")
 )
 
 // Global variable set by config file.
@@ -651,13 +653,16 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			}
 
 			newTTL := uptime + PessimisticLockTTL
+			startTime := time.Now()
 			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
+				tiKVTxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
 				logutil.BgLogger().Warn("send TxnHeartBeat failed",
 					zap.Error(err),
 					zap.Uint64("txnStartTS", c.startTS))
 				return
 			}
+			tiKVTxnHeartBeatHistogramOK.Observe(time.Since(startTime).Seconds())
 		}
 	}
 }
