@@ -167,7 +167,7 @@ func (e *InsertExec) updateDupRow(ctx context.Context, txn kv.Transaction, row t
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
 func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.Datum) error {
 	// Get keys need to be checked.
-	toBeCheckedRows, err := e.getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
+	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
 	if err != nil {
 		return err
 	}

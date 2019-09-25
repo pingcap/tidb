@@ -25,6 +25,9 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.InetNtoa: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 	},
+	ast.IsIPv4: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinMiscellaneousCasesEvalOneVec(c *C) {
