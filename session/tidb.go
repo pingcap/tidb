@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -224,9 +225,10 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// If it is not a select statement, we record its slow log here,
 		// then it could include the transaction commit time.
 		if rs == nil {
-			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil)
+			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil, false)
 			s.(*executor.ExecStmt).SummaryStmt()
-			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), sessVars)
+			pps := types.CloneRow(sessVars.PreparedParams)
+			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), pps)
 		}
 	}()
 
