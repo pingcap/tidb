@@ -225,33 +225,30 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 
 type illegalFunctionChecker struct {
 	hasIllegalFunc bool
-	hasGroupByFunc bool
+	hasAggFunc     bool
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch node := inNode.(type) {
 	case *ast.FuncCallExpr:
-		// blocked functions
+		// blocked functions is not allowed
 		if _, found := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]; found {
 			c.hasIllegalFunc = true
 			return inNode, true
 		}
-		// if it is not a build in function, throw error
-		if _, found := expression.Funcs[node.FnName.L]; !found {
+		// non-builtin functions is not allowed
+		if !expression.IsBuiltinFuncName(node.FnName.L) {
 			c.hasIllegalFunc = true
 			return inNode, true
 		}
+	case *ast.ValuesExpr, *ast.SubqueryExpr:
+		// values(x) is not allowed &
+		// Subquery is not allowed
+		c.hasIllegalFunc = true
+		return inNode, true
 	case *ast.AggregateFuncExpr:
 		// Aggregate function is not allowed
-		c.hasGroupByFunc = true
-		return inNode, true
-	case *ast.ValuesExpr:
-		// values(x) is not allowed
-		c.hasIllegalFunc = true
-		return inNode, true
-	case *ast.UnionSelectList:
-		// Subquery with union is not allowed
-		c.hasIllegalFunc = true
+		c.hasAggFunc = true
 		return inNode, true
 	}
 	return inNode, false
@@ -270,7 +267,7 @@ func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 	if c.hasIllegalFunc {
 		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(colName)
 	}
-	if c.hasGroupByFunc {
+	if c.hasAggFunc {
 		return ErrInvalidGroupFuncUse
 	}
 	return nil
