@@ -583,6 +583,8 @@ func (h *rpcHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldType 
 		schema := make([]*types.FieldType, 0, len(hashAgg.AggFunc)+len(hashAgg.GroupBy))
 		for i := range hashAgg.AggFunc {
 			if hashAgg.AggFunc[i].Tp == tipb.ExprType_Avg {
+				// Avg function requests two columns : Count , Sum
+				// This line addend the Count(TypeLonglong) to the schema.
 				schema = append(schema, types.NewFieldType(mysql.TypeLonglong))
 			}
 			schema = append(schema, expression.PbTypeToFieldType(hashAgg.AggFunc[i].FieldType))
