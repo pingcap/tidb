@@ -18,15 +18,18 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
-	ast.IsTruth:    {},
-	ast.IsFalsity:  {},
-	ast.LogicOr:    {},
-	ast.LogicXor:   {},
-	ast.Xor:        {},
-	ast.LogicAnd:   {},
+	ast.IsTruth:   {},
+	ast.IsFalsity: {},
+	ast.LogicOr:   {},
+	ast.LogicXor:  {},
+	ast.Xor:       {},
+	ast.LogicAnd: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
 	ast.UnaryNot:   {},
 	ast.UnaryMinus: {},
 	ast.IsNull:     {},
