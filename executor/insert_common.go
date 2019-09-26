@@ -515,8 +515,10 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 
 // fillRow fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
-// When lazyFillAutoID is true, fill row will cache auto increment datum for lazy
-// batch allocation. This case is used in insert|replace into values (row),(row),(row)...
+// When lazyFillAutoID is true, fill row will lazy handle auto increment datum for lazy batch allocation.
+// `insert|replace values` can guarantee consecutive autoID in a batch.
+// Other statements like `insert select from` don't guarantee consecutive autoID.
+// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool) ([]types.Datum, error) {
 	gCols := make([]*table.Column, 0)
 	for i, c := range e.Table.Cols() {
